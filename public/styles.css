@@ -1,0 +1,131 @@
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  background: #f3f4f6;
+  color: #111827;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+a {
+  color: inherit;
+}
+
+.shell {
+  box-sizing: border-box;
+  margin: 0 auto;
+  max-width: 720px;
+  min-height: 100vh;
+  padding: 48px 20px 64px;
+}
+
+.shell h1,
+.shell h2,
+.shell p,
+.shell pre,
+.shell ul {
+  margin-top: 0;
+}
+
+.game-list,
+.stack {
+  margin-top: 24px;
+}
+
+.game-link {
+  display: inline-block;
+  min-width: 180px;
+  padding: 16px 18px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  text-decoration: none;
+}
+
+.game-link__title {
+  display: block;
+  font-size: 1.1rem;
+}
+
+.level-list {
+  padding-left: 20px;
+}
+
+pre {
+  overflow-x: auto;
+  padding: 16px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.play-body {
+  background: #e8eef4;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
+.play-shell {
+  min-height: 100vh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 20px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.play-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+.play-header h1,
+.play-header p {
+  margin: 0;
+}
+
+.play-stage {
+  width: min(88vmin, calc(100vh - 160px), 720px);
+  max-width: 100%;
+  flex: 0 1 auto;
+}
+
+.maze-frame {
+  background: #000000;
+  padding: 18px;
+  box-sizing: border-box;
+}
+
+.maze-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #cdb18d;
+}
+
+@media (max-width: 640px) {
+  .play-shell {
+    padding: 16px;
+    gap: 12px;
+  }
+
+  .play-stage {
+    width: min(94vmin, calc(100vh - 132px), 520px);
+  }
+
+  .maze-frame {
+    padding: 10px;
+  }
+}
