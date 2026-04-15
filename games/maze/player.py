@@ -70,6 +70,13 @@ class Hole(MazeSprite):
         super().__init__(x, y, name="hole")
 
 
+class PlayerGate(MazeSprite):
+    token = "g"
+
+    def __init__(self, x: int, y: int) -> None:
+        super().__init__(x, y, name="player_gate")
+
+
 class Box(MazeSprite):
     token = "b"
     solid = True
@@ -94,16 +101,26 @@ class Player(MazeSprite):
         super().__init__(x, y, name=name)
 
     def try_move(self, dx: int, dy: int, *, allow_push: bool = True) -> bool:
-        if allow_push and isinstance(self.world, MazeWorld):
-            pushable = self.world.pushable_at(self.x + dx, self.y + dy)
-            if pushable is not None:
-                snapshot = self.world.snapshot_state()
-                push_budget = self.world.contiguous_player_count(self, dx, dy)
-                if self.world.try_push_actor(pushable, dx, dy, push_budget) is None:
-                    self.world.restore_state(snapshot)
-                    return False
+        gate_snapshot_owner = False
 
-        return super().try_move(dx, dy, allow_push=allow_push)
+        if isinstance(self.world, MazeWorld) and self.world.gate_snapshot is None:
+            self.world.gate_snapshot = self.world.compute_raised_player_gates()
+            gate_snapshot_owner = True
+
+        try:
+            if allow_push and isinstance(self.world, MazeWorld):
+                pushable = self.world.pushable_at(self.x + dx, self.y + dy)
+                if pushable is not None:
+                    snapshot = self.world.snapshot_state()
+                    push_budget = self.world.contiguous_player_count(self, dx, dy)
+                    if self.world.try_push_actor(pushable, dx, dy, push_budget) is None:
+                        self.world.restore_state(snapshot)
+                        return False
+
+            return super().try_move(dx, dy, allow_push=allow_push)
+        finally:
+            if gate_snapshot_owner and isinstance(self.world, MazeWorld):
+                self.world.gate_snapshot = None
 
 
 class PythonPlayer(Player):
@@ -127,6 +144,7 @@ class MazeWorld(GridWorld):
         "wall": Wall,
         "player": PythonPlayer,
         "circle_player": CirclePlayer,
+        "player_gate": PlayerGate,
         "box": Box,
         "weightless_box": WeightlessBox,
         "exit": Exit,
@@ -138,6 +156,7 @@ class MazeWorld(GridWorld):
     def __init__(self, parser: dict[str, Any] | None = None, raw_level: str = "") -> None:
         super().__init__(parser=parser or {}, raw_level=raw_level)
         self.tiles: dict[tuple[int, int], list[MazeSprite]] = {}
+        self.gate_snapshot: set[tuple[int, int]] | None = None
         if raw_level:
             self.parse_level(raw_level)
 
@@ -214,6 +233,36 @@ class MazeWorld(GridWorld):
                 return sprite
         return None
 
+    def has_mobile_actor_at(self, x: int, y: int) -> bool:
+        return any(isinstance(sprite, (Player, Box, WeightlessBox)) for sprite in self.tiles.get((x, y), []))
+
+    def compute_raised_player_gates(self) -> set[tuple[int, int]]:
+        raised: set[tuple[int, int]] = set()
+
+        for (x, y), sprites in self.tiles.items():
+            if not any(sprite.name == "player_gate" for sprite in sprites):
+                continue
+
+            if self.has_mobile_actor_at(x, y):
+                continue
+
+            if (
+                self.player_at(x + 1, y) is not None
+                or self.player_at(x - 1, y) is not None
+                or self.player_at(x, y + 1) is not None
+                or self.player_at(x, y - 1) is not None
+            ):
+                raised.add((x, y))
+
+        return raised
+
+    def is_raised_player_gate(self, x: int, y: int) -> bool:
+        if not self.tile_has_name(x, y, "player_gate"):
+            return False
+
+        gate_positions = self.gate_snapshot if self.gate_snapshot is not None else self.compute_raised_player_gates()
+        return (x, y) in gate_positions
+
     def contiguous_player_count(self, player: Player, dx: int, dy: int) -> int:
         count = 1
         check_x = player.x
@@ -269,6 +318,9 @@ class MazeWorld(GridWorld):
             target_y = member.y + dy
 
             if not self.in_bounds(target_x, target_y):
+                return False
+
+            if self.is_raised_player_gate(target_x, target_y):
                 return False
 
             for occupant in self.tiles.get((target_x, target_y), []):
@@ -357,6 +409,9 @@ class MazeWorld(GridWorld):
             if not self.in_bounds(target_x, target_y):
                 return None
 
+            if self.is_raised_player_gate(target_x, target_y):
+                return None
+
             for occupant in self.tiles.get((target_x, target_y), []):
                 if id(occupant) in member_ids:
                     continue
@@ -410,6 +465,9 @@ class MazeWorld(GridWorld):
 
     def can_move_to(self, x: int, y: int, sprite: Sprite | None = None) -> bool:
         if not self.in_bounds(x, y):
+            return False
+
+        if self.is_raised_player_gate(x, y):
             return False
 
         for occupant in self.tiles.get((x, y), []):

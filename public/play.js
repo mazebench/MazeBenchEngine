@@ -11,6 +11,8 @@
   const NOISE_FPS = 8;
   const NOISE_FRAME_MS = 1000 / NOISE_FPS;
   const MOVE_DURATION_MS = 98;
+  const GATE_RISE_DURATION_MS = 220;
+  const GATE_FALL_DURATION_MS = 180;
   const HOLE_FALL_DURATION_MS = 300;
   const HOLE_SINK_DISTANCE = TILE_SIZE * 0.42;
   const playShell = document.querySelector(".play-shell");
@@ -78,6 +80,11 @@
   let renderer = null;
   let noiseFrameId = null;
   let lastNoiseTickMs = 0;
+  let liveRaisedPlayerGates = new Set();
+  let gateRenderOverride = null;
+  let gateAnimationFrameId = null;
+  let gateAnimationsInitialized = false;
+  const gateAnimations = new Map();
 
   if (!sceneCtx || (!gl && !fallbackCtx)) {
     return;
@@ -456,8 +463,53 @@
     return state.terrain[y]?.[x] || { type: "empty", label: "Empty", imageUrl: null };
   }
 
-  function isWall(x, y) {
+  function isPlayerGate(x, y) {
+    return terrainAt(x, y).type === "player_gate";
+  }
+
+  function computeRaisedPlayerGateSet(actors = state.actors) {
+    const activeActors = actors.filter((actor) => !actor.removed);
+    const occupied = new Set(activeActors.map((actor) => posKey(actor.x, actor.y)));
+    const players = activeActors.filter((actor) => isPlayerActor(actor));
+    const raised = new Set();
+
+    for (let y = 0; y < state.height; y += 1) {
+      for (let x = 0; x < state.width; x += 1) {
+        if (!isPlayerGate(x, y) || occupied.has(posKey(x, y))) {
+          continue;
+        }
+
+        if (players.some((actor) => Math.abs(actor.x - x) + Math.abs(actor.y - y) === 1)) {
+          raised.add(posKey(x, y));
+        }
+      }
+    }
+
+    return raised;
+  }
+
+  function eachPlayerGate(callback) {
+    for (let y = 0; y < state.height; y += 1) {
+      for (let x = 0; x < state.width; x += 1) {
+        if (!isPlayerGate(x, y)) {
+          continue;
+        }
+
+        callback(x, y, posKey(x, y));
+      }
+    }
+  }
+
+  function isRaisedPlayerGate(x, y, gateState = liveRaisedPlayerGates) {
+    return isPlayerGate(x, y) && gateState.has(posKey(x, y));
+  }
+
+  function isTerrainWall(x, y) {
     return terrainAt(x, y).type === "wall";
+  }
+
+  function isWall(x, y, gateState = liveRaisedPlayerGates) {
+    return isTerrainWall(x, y) || isRaisedPlayerGate(x, y, gateState);
   }
 
   function isIce(x, y) {
@@ -474,6 +526,125 @@
 
   function isGroundCell(cell) {
     return cell.type !== "wall" && cell.type !== "hole" && cell.type !== "empty";
+  }
+
+  function easeOutBack(progress) {
+    const overshoot = 1.45;
+    const shifted = progress - 1;
+    return 1 + (overshoot + 1) * shifted * shifted * shifted + overshoot * shifted * shifted;
+  }
+
+  function gateAnimationValue(animation, now) {
+    if (!animation) {
+      return 0;
+    }
+
+    if (animation.startMs === null || animation.from === animation.to) {
+      return animation.to;
+    }
+
+    const progress = clamp((now - animation.startMs) / animation.durationMs, 0, 1);
+    const eased =
+      animation.to > animation.from ? easeOutBack(progress) : easeInOutQuad(progress);
+    return animation.from + (animation.to - animation.from) * eased;
+  }
+
+  function gateLiftAt(x, y, now = performance.now()) {
+    const animation = gateAnimations.get(posKey(x, y));
+    const target = liveRaisedPlayerGates.has(posKey(x, y)) ? 1 : 0;
+    const value = animation ? gateAnimationValue(animation, now) : target;
+    return clamp(value, 0, 1.08);
+  }
+
+  function startGateAnimationLoop() {
+    if (gateAnimationFrameId !== null) {
+      return;
+    }
+
+    function step(now) {
+      let hasActiveAnimation = false;
+
+      gateAnimations.forEach((animation) => {
+        if (animation.startMs === null) {
+          return;
+        }
+
+        if (now - animation.startMs >= animation.durationMs) {
+          animation.from = animation.to;
+          animation.startMs = null;
+          return;
+        }
+
+        hasActiveAnimation = true;
+      });
+
+      render();
+
+      if (hasActiveAnimation) {
+        gateAnimationFrameId = window.requestAnimationFrame(step);
+        return;
+      }
+
+      gateAnimationFrameId = null;
+    }
+
+    gateAnimationFrameId = window.requestAnimationFrame(step);
+  }
+
+  function syncGateAnimationTargets(now = performance.now()) {
+    if (!gateAnimationsInitialized) {
+      eachPlayerGate((x, y, key) => {
+        const target = liveRaisedPlayerGates.has(key) ? 1 : 0;
+        gateAnimations.set(key, {
+          from: target,
+          to: target,
+          startMs: null,
+          durationMs: GATE_RISE_DURATION_MS
+        });
+      });
+      gateAnimationsInitialized = true;
+      return;
+    }
+
+    let hasActiveAnimation = false;
+
+    eachPlayerGate((x, y, key) => {
+      const target = liveRaisedPlayerGates.has(key) ? 1 : 0;
+      const animation = gateAnimations.get(key);
+
+      if (!animation) {
+        gateAnimations.set(key, {
+          from: target,
+          to: target,
+          startMs: null,
+          durationMs: GATE_RISE_DURATION_MS
+        });
+        return;
+      }
+
+      if (animation.startMs !== null && now - animation.startMs >= animation.durationMs) {
+        animation.from = animation.to;
+        animation.startMs = null;
+      }
+
+      const current = gateAnimationValue(animation, now);
+
+      if (animation.to !== target) {
+        animation.from = current;
+        animation.to = target;
+        animation.startMs = now;
+        animation.durationMs =
+          target > current ? GATE_RISE_DURATION_MS : GATE_FALL_DURATION_MS;
+      }
+
+      if (animation.startMs !== null) {
+        hasActiveAnimation = true;
+      }
+    });
+
+    if (hasActiveAnimation) {
+      startGateAnimationLoop();
+    }
   }
 
   function syncFuzzyToggle() {
@@ -631,6 +802,15 @@
       return;
     }
 
+    if (cell.type === "player_gate") {
+      sceneCtx.fillStyle = "#c75652";
+      sceneCtx.fillRect(left, top, TILE_SIZE, TILE_SIZE);
+      sceneCtx.strokeStyle = "rgba(0, 0, 0, 0.18)";
+      sceneCtx.lineWidth = 1.5;
+      sceneCtx.strokeRect(left + 0.75, top + 0.75, TILE_SIZE - 1.5, TILE_SIZE - 1.5);
+      return;
+    }
+
     if (cell.type === "ice") {
       const centerX = left + TILE_SIZE * 0.5;
       const centerY = top + TILE_SIZE * 0.5;
@@ -663,6 +843,10 @@
   function groundFaceColor(cell) {
     if (cell.type === "ice") {
       return "#7fb6db";
+    }
+
+    if (cell.type === "player_gate") {
+      return "#a84d46";
     }
 
     return "#b89c73";
@@ -707,10 +891,10 @@
     const right = left + TILE_SIZE;
     const bottom = top + TILE_SIZE;
     const image = cell.imageUrl ? imageCache.get(cell.imageUrl) : null;
-    const openTop = !isWall(x, y - 1);
-    const openRight = !isWall(x + 1, y);
-    const openBottom = !isWall(x, y + 1);
-    const openLeft = !isWall(x - 1, y);
+    const openTop = !isTerrainWall(x, y - 1);
+    const openRight = !isTerrainWall(x + 1, y);
+    const openBottom = !isTerrainWall(x, y + 1);
+    const openLeft = !isTerrainWall(x - 1, y);
 
     paintFloorTile(x, y, { imageUrl: null });
 
@@ -736,8 +920,8 @@
       !openBottom &&
       x < state.width - 1 &&
       y < state.height - 1 &&
-      isWall(x + 1, y + 1) &&
-      !isWall(x + 1, y)
+      isTerrainWall(x + 1, y + 1) &&
+      !isTerrainWall(x + 1, y)
         ? bottom - faceHeight
         : bottom - radii.br;
     const leftCornerWallTop =
@@ -745,8 +929,8 @@
       !openBottom &&
       x > 0 &&
       y < state.height - 1 &&
-      isWall(x - 1, y + 1) &&
-      !isWall(x - 1, y)
+      isTerrainWall(x - 1, y + 1) &&
+      !isTerrainWall(x - 1, y)
         ? bottom - faceHeight
         : bottom - radii.bl;
 
@@ -769,11 +953,13 @@
     sceneCtx.fillStyle = "#23262c";
     sceneCtx.fillRect(left, wallTop, TILE_SIZE, wallHeight);
 
-    if (y < state.height - 1 && !isWall(x, y + 1)) {
+    if (y < state.height - 1 && !isTerrainWall(x, y + 1)) {
       const shineTop = bottom - faceHeight;
       const shineBorderWidth = 3;
-      const leftNeighborHasShine = x > 0 && isWall(x - 1, y) && !isWall(x - 1, y + 1);
-      const rightNeighborHasShine = x < state.width - 1 && isWall(x + 1, y) && !isWall(x + 1, y + 1);
+      const leftNeighborHasShine =
+        x > 0 && isTerrainWall(x - 1, y) && !isTerrainWall(x - 1, y + 1);
+      const rightNeighborHasShine =
+        x < state.width - 1 && isTerrainWall(x + 1, y) && !isTerrainWall(x + 1, y + 1);
       sceneCtx.fillStyle = "#4f5560";
       sceneCtx.fillRect(left, shineTop, TILE_SIZE, faceHeight);
       sceneCtx.lineWidth = shineBorderWidth;
@@ -839,6 +1025,75 @@
     sceneCtx.stroke();
   }
 
+  function paintRaisedPlayerGateTile(x, y, cell, lift = 1) {
+    if (lift <= 0.001) {
+      return;
+    }
+
+    void cell;
+
+    const left = x * TILE_SIZE;
+    const top = y * TILE_SIZE;
+    const right = left + TILE_SIZE;
+    const bottom = top + TILE_SIZE;
+    const faceHeight = Math.round(TILE_SIZE * 0.26);
+    const liftHeight = y > 0 ? faceHeight : 0;
+    const travel = liftHeight * lift;
+    const platformTop = top - travel;
+    const platformBottom = bottom - travel;
+    const borderAlpha = clamp(lift, 0, 1);
+    const borderColor = `rgba(0, 0, 0, ${borderAlpha})`;
+    const radius = TILE_SIZE * 0.18;
+    const radii = {
+      tl: radius,
+      tr: radius,
+      br: 0,
+      bl: 0
+    };
+
+    if (x === 0 && y === 0) {
+      radii.tl = 0;
+    }
+    if (x === state.width - 1 && y === 0) {
+      radii.tr = 0;
+    }
+
+    roundRectPath(sceneCtx, left, platformTop, TILE_SIZE, TILE_SIZE + travel, radii);
+    sceneCtx.save();
+    sceneCtx.clip();
+    sceneCtx.fillStyle = "#c75652";
+    sceneCtx.fillRect(left, platformTop, TILE_SIZE, TILE_SIZE + travel);
+
+    if (travel > 0.001) {
+      sceneCtx.fillStyle = "#d86c63";
+      sceneCtx.fillRect(left, platformBottom, TILE_SIZE, Math.min(faceHeight, travel));
+    }
+    sceneCtx.restore();
+
+    sceneCtx.lineWidth = 3;
+    sceneCtx.strokeStyle = borderColor;
+    sceneCtx.beginPath();
+    sceneCtx.moveTo(left + radii.tl, platformTop);
+    sceneCtx.lineTo(right - radii.tr, platformTop);
+    sceneCtx.moveTo(right, platformTop + radii.tr);
+    sceneCtx.lineTo(right, bottom);
+    sceneCtx.moveTo(right, bottom);
+    sceneCtx.lineTo(left, bottom);
+    sceneCtx.moveTo(left, bottom);
+    sceneCtx.lineTo(left, platformTop + radii.tl);
+    sceneCtx.moveTo(left + radii.tl, platformTop);
+    sceneCtx.quadraticCurveTo(left, platformTop, left, platformTop + radii.tl);
+    sceneCtx.moveTo(right - radii.tr, platformTop);
+    sceneCtx.quadraticCurveTo(right, platformTop, right, platformTop + radii.tr);
+
+    if (travel > 0.001) {
+      sceneCtx.moveTo(left, platformBottom);
+      sceneCtx.lineTo(right, platformBottom);
+    }
+
+    sceneCtx.stroke();
+  }
+
   function paintExit(x, y, cell) {
     paintFloorTile(x, y, cell);
 
@@ -860,12 +1115,17 @@
     sceneCtx.stroke();
   }
 
-  function paintGround() {
+  function paintGround(now = performance.now()) {
     for (let y = 0; y < state.height; y += 1) {
       for (let x = 0; x < state.width; x += 1) {
         const cell = terrainAt(x, y);
+        const gateLift = cell.type === "player_gate" ? gateLiftAt(x, y, now) : 0;
 
         if (cell.type === "wall") {
+          continue;
+        }
+
+        if (cell.type === "player_gate" && gateLift > 0.001) {
           continue;
         }
 
@@ -880,6 +1140,10 @@
 
     for (let y = 0; y < state.height; y += 1) {
       for (let x = 0; x < state.width; x += 1) {
+        if (isPlayerGate(x, y) && gateLiftAt(x, y, now) > 0.001) {
+          continue;
+        }
+
         paintGroundDropFace(x, y, terrainAt(x, y));
       }
     }
@@ -1148,15 +1412,16 @@
     sceneCtx.restore();
   }
 
-  function paintDepthSortedScene() {
+  function paintDepthSortedScene(now = performance.now()) {
     const drawItems = [];
     const animatedWeightlessGroups = new Set();
 
     for (let y = 0; y < state.height; y += 1) {
       for (let x = 0; x < state.width; x += 1) {
         const cell = terrainAt(x, y);
+        const gateLift = cell.type === "player_gate" ? gateLiftAt(x, y, now) : 0;
 
-        if (cell.type !== "wall") {
+        if (cell.type !== "wall" && gateLift <= 0.001) {
           continue;
         }
 
@@ -1165,6 +1430,11 @@
           tieBreaker: 0,
           order: drawItems.length,
           paint: function () {
+            if (cell.type === "player_gate") {
+              paintRaisedPlayerGateTile(x, y, cell, gateLift);
+              return;
+            }
+
             paintWallTile(x, y, cell);
           }
         });
@@ -1399,9 +1669,12 @@
   }
 
   function render() {
+    const now = performance.now();
+    liveRaisedPlayerGates = gateRenderOverride || computeRaisedPlayerGateSet();
+    syncGateAnimationTargets(now);
     sceneCtx.clearRect(0, 0, boardRect.width, boardRect.height);
-    paintGround();
-    paintDepthSortedScene();
+    paintGround(now);
+    paintDepthSortedScene(now);
     const settings = getEffectSettings();
 
     if (!renderWithShader(sceneCanvas, settings)) {
@@ -1409,23 +1682,23 @@
     }
   }
 
-  function canMoveInto(x, y, occupied) {
+  function canMoveInto(x, y, occupied, gateState = liveRaisedPlayerGates) {
     if (!isInsideBoard(x, y)) {
       return false;
     }
 
-    if (isWall(x, y)) {
+    if (isWall(x, y, gateState)) {
       return false;
     }
 
     return !occupied.has(posKey(x, y));
   }
 
-  function findSlideDestination(startX, startY, dx, dy, occupied) {
+  function findSlideDestination(startX, startY, dx, dy, occupied, gateState = liveRaisedPlayerGates) {
     let nextX = startX;
     let nextY = startY;
 
-    while (canMoveInto(nextX + dx, nextY + dy, occupied)) {
+    while (canMoveInto(nextX + dx, nextY + dy, occupied, gateState)) {
       nextX += dx;
       nextY += dy;
 
@@ -1437,12 +1710,12 @@
     return { x: nextX, y: nextY };
   }
 
-  function moveBox(box, dx, dy, occupied, moves) {
+  function moveBox(box, dx, dy, occupied, moves, gateState = liveRaisedPlayerGates) {
     const fromX = box.x;
     const fromY = box.y;
     occupied.delete(posKey(fromX, fromY));
 
-    const target = findSlideDestination(fromX, fromY, dx, dy, occupied);
+    const target = findSlideDestination(fromX, fromY, dx, dy, occupied, gateState);
 
     if (target.x === fromX && target.y === fromY) {
       occupied.add(posKey(fromX, fromY));
@@ -1481,12 +1754,12 @@
     return count;
   }
 
-  function canMoveWeightlessGroup(members, dx, dy, occupied) {
+  function canMoveWeightlessGroup(members, dx, dy, occupied, gateState = liveRaisedPlayerGates) {
     return members.every((member) => {
       const targetX = member.x + dx;
       const targetY = member.y + dy;
 
-      if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY)) {
+      if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY, gateState)) {
         return false;
       }
 
@@ -1494,7 +1767,7 @@
     });
   }
 
-  function moveWeightlessGroup(groupId, dx, dy, occupied, moves) {
+  function moveWeightlessGroup(groupId, dx, dy, occupied, moves, gateState = liveRaisedPlayerGates) {
     const members = weightlessGroupMembers(groupId);
 
     if (members.length === 0) {
@@ -1513,7 +1786,7 @@
 
     let moved = false;
 
-    while (canMoveWeightlessGroup(members, dx, dy, occupied)) {
+    while (canMoveWeightlessGroup(members, dx, dy, occupied, gateState)) {
       members.forEach((member) => {
         member.x += dx;
         member.y += dy;
@@ -1554,7 +1827,16 @@
     return true;
   }
 
-  function attemptPushActor(actor, dx, dy, occupied, moves, budget, handled = new Set()) {
+  function attemptPushActor(
+    actor,
+    dx,
+    dy,
+    occupied,
+    moves,
+    budget,
+    handled = new Set(),
+    gateState = liveRaisedPlayerGates
+  ) {
     const entityKey = pushEntityKey(actor);
 
     if (handled.has(entityKey)) {
@@ -1577,7 +1859,7 @@
       const targetX = member.x + dx;
       const targetY = member.y + dy;
 
-      if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY)) {
+      if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY, gateState)) {
         return null;
       }
 
@@ -1600,7 +1882,16 @@
     }
 
     for (const blocker of blockers) {
-      const result = attemptPushActor(blocker, dx, dy, occupied, moves, remainingBudget, handled);
+      const result = attemptPushActor(
+        blocker,
+        dx,
+        dy,
+        occupied,
+        moves,
+        remainingBudget,
+        handled,
+        gateState
+      );
 
       if (result === null) {
         return null;
@@ -1611,8 +1902,8 @@
 
     const moved =
       actor.type === "weightless_box"
-        ? moveWeightlessGroup(actor.groupId, dx, dy, occupied, moves)
-        : moveBox(actor, dx, dy, occupied, moves);
+        ? moveWeightlessGroup(actor.groupId, dx, dy, occupied, moves, gateState)
+        : moveBox(actor, dx, dy, occupied, moves, gateState);
 
     if (!moved) {
       return null;
@@ -1674,6 +1965,7 @@
       actor.removed = Boolean(toRemoved);
     });
 
+    gateRenderOverride = null;
     isAnimating = false;
     animationFrameId = null;
     render();
@@ -1855,6 +2147,7 @@
 
     const players = state.actors.filter((actor) => isPlayerActor(actor) && !actor.removed);
     let occupied = buildOccupiedSet();
+    const raisedPlayerGates = computeRaisedPlayerGateSet();
     const orderedPlayers = players.slice().sort(sortActorsForMove(dx, dy));
     const previousPositions = cloneActorPositions();
     const moves = [];
@@ -1872,7 +2165,7 @@
         const targetY = nextY + dy;
         const isInitialStep = nextX === fromX && nextY === fromY;
 
-        if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY)) {
+        if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY, raisedPlayerGates)) {
           break;
         }
 
@@ -1885,7 +2178,16 @@
             const attemptSnapshot = cloneActorPositions();
             const moveCount = moves.length;
             const pushBudget = countSupportingPlayers(player, dx, dy);
-            const result = attemptPushActor(blockingActor, dx, dy, occupied, moves, pushBudget);
+            const result = attemptPushActor(
+              blockingActor,
+              dx,
+              dy,
+              occupied,
+              moves,
+              pushBudget,
+              new Set(),
+              raisedPlayerGates
+            );
 
             if (result !== null) {
               didMoveBlockingActor = true;
@@ -1899,7 +2201,7 @@
           if (!didMoveBlockingActor) {
             break;
           }
-        } else if (!canMoveInto(targetX, targetY, occupied)) {
+        } else if (!canMoveInto(targetX, targetY, occupied, raisedPlayerGates)) {
           break;
         }
 
@@ -1928,6 +2230,7 @@
 
     if (moves.length > 0) {
       applyHoleFalls(moves);
+      gateRenderOverride = raisedPlayerGates;
       moveHistory.push(previousPositions);
       animateMoves(moves);
     }
@@ -1945,6 +2248,7 @@
       return;
     }
 
+    gateRenderOverride = computeRaisedPlayerGateSet();
     const moves = buildMovesToPositions(previousPositions);
 
     if (moves.length > 0) {
@@ -1952,6 +2256,7 @@
       return;
     }
 
+    gateRenderOverride = null;
     render();
   }
 
@@ -1962,6 +2267,7 @@
     }
 
     moveHistory.length = 0;
+    gateRenderOverride = computeRaisedPlayerGateSet();
     const moves = buildMovesToPositions(initialPositions);
 
     if (moves.length > 0) {
@@ -1969,6 +2275,7 @@
       return;
     }
 
+    gateRenderOverride = null;
     render();
   }
 

@@ -13,6 +13,9 @@
     "circle_player": {
       "token": "cp"
     },
+    "player_gate": {
+      "token": "g"
+    },
     "box": {
       "token": "b",
       "image": "images/crate.png"
