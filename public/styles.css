@@ -167,9 +167,10 @@ pre {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   text-align: center;
   flex: 0 0 auto;
+  width: 100%;
   max-width: calc(100vw - 40px - var(--shadow-lg));
 }
 
@@ -185,37 +186,38 @@ pre {
   border-radius: 6px;
   background: #ffd84d;
   box-shadow: var(--shadow-md) var(--shadow-md) 0 #000000;
-  margin-right: var(--shadow-md);
-  margin-bottom: var(--shadow-md);
   font-size: clamp(1.95rem, 5.4vw, 3.35rem);
   font-weight: 900;
   line-height: 0.95;
 }
 
+.play-header-meta {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
 .play-header p {
-  display: inline-block;
+  display: block;
   padding: 7px 10px;
   border: 3px solid #000000;
   border-radius: 6px;
   background: #ffffff;
   box-shadow: var(--shadow-xs) var(--shadow-xs) 0 #000000;
-  margin-right: var(--shadow-xs);
-  margin-bottom: var(--shadow-xs);
   font-size: 0.9rem;
   font-weight: 800;
 }
 
-.play-header p:first-of-type {
-  background: #7ee0a1;
-}
-
-.play-header p:last-of-type {
+.play-header-meta p {
   background: #ff7b72;
 }
 
-.play-nav {
-  width: 100%;
-  max-width: 100%;
+.play-header-meta .back-link {
+  margin-right: 0;
+  margin-bottom: 0;
 }
 
 .play-stage {
@@ -252,24 +254,7 @@ pre {
   image-rendering: auto;
 }
 
-.play-controls {
-  width: 100%;
-  max-width: 100%;
-  flex: 0 0 auto;
-  display: flex;
-  justify-content: center;
-  padding: 10px;
-  border: 4px solid #000000;
-  border-radius: 6px;
-  background: #ffffff;
-  box-sizing: border-box;
-  box-shadow: var(--shadow-md) var(--shadow-md) 0 #000000;
-  margin-right: var(--shadow-md);
-  margin-bottom: var(--shadow-md);
-}
-
-.play-controls,
-.play-controls button {
+.play-header-meta button {
   touch-action: auto;
 }
 
@@ -285,9 +270,8 @@ pre {
 }
 
 .effect-toggle {
-  width: 100%;
-  max-width: 420px;
-  min-width: 0;
+  width: auto;
+  min-width: 86px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -353,17 +337,9 @@ pre {
     width: 100%;
   }
 
-  .play-nav {
-    width: 100%;
-  }
-
   .maze-frame {
     padding: 10px;
     margin-right: var(--shadow-md);
     margin-bottom: var(--shadow-md);
-  }
-
-  .play-controls {
-    justify-content: center;
   }
 }

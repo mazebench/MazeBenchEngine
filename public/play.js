@@ -11,10 +11,9 @@
   const NOISE_FPS = 12;
   const MOVE_DURATION_MS = 98;
   const playShell = document.querySelector(".play-shell");
-  const playNav = document.querySelector(".play-nav");
+  const playHeader = document.querySelector(".play-header");
   const playStage = document.querySelector(".play-stage");
   const mazeFrame = document.querySelector(".maze-frame");
-  const playControls = document.querySelector(".play-controls");
   const fuzzyToggle = document.getElementById("fuzzy-toggle");
 
   const state = {
@@ -344,7 +343,7 @@
   }
 
   function syncPlayLayout() {
-    if (!playShell || !playNav || !playStage || !mazeFrame) {
+    if (!playShell || !playHeader || !playStage || !mazeFrame) {
       return;
     }
 
@@ -362,11 +361,7 @@
     mazeFrame.style.width = `${boardSize}px`;
     mazeFrame.style.height = `${boardSize}px`;
     const controlWidth = Math.min(playStage.clientWidth, boardSize + marginRight);
-    playNav.style.width = `${controlWidth}px`;
-
-    if (playControls) {
-      playControls.style.width = `${controlWidth}px`;
-    }
+    playHeader.style.width = `${controlWidth}px`;
   }
 
   function preloadImages() {

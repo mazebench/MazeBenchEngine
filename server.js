@@ -340,8 +340,24 @@ function renderGamePage(game) {
 
 function renderPlayPage(game, level) {
   const levelState = getLevelState(game, level);
+  const hasBoard = levelState.width > 0 && levelState.height > 0;
+  const fuzzyToggleMarkup = hasBoard
+    ? `<button
+          id="fuzzy-toggle"
+          class="effect-toggle is-active"
+          type="button"
+          aria-pressed="true"
+          aria-label="Fuzzy noise"
+          title="Fuzzy"
+        >
+          <span class="effect-icon effect-icon--fuzzy" aria-hidden="true"></span>
+          <span class="effect-toggle-track" aria-hidden="true">
+            <span class="effect-toggle-thumb"></span>
+          </span>
+        </button>`
+    : "";
   const boardMarkup =
-    levelState.width > 0 && levelState.height > 0
+    hasBoard
       ? `<section class="play-stage" aria-label="${escapeHtml(game.name)} board">
           <div class="maze-frame">
             <canvas
@@ -353,21 +369,6 @@ function renderPlayPage(game, level) {
             ></canvas>
           </div>
         </section>
-        <section class="play-controls" aria-label="Display effects">
-          <button
-            id="fuzzy-toggle"
-            class="effect-toggle is-active"
-            type="button"
-            aria-pressed="true"
-            aria-label="Fuzzy noise"
-            title="Fuzzy"
-          >
-            <span class="effect-icon effect-icon--fuzzy" aria-hidden="true"></span>
-            <span class="effect-toggle-track" aria-hidden="true">
-              <span class="effect-toggle-thumb"></span>
-            </span>
-          </button>
-        </section>
         <script>window.__PLAY_DATA__ = ${serializeForScript(levelState)};</script>
         <script src="/play.js" defer></script>`
       : `<section class="play-stage"><p>This level is empty.</p></section>`;
@@ -376,12 +377,13 @@ function renderPlayPage(game, level) {
     title: `${game.name} ${level.label}`,
     bodyClass: "play-body",
     body: `<main class="play-shell">
-      <nav class="play-nav">
-        <a class="back-link" href="/games/${encodeURIComponent(game.id)}">Back</a>
-      </nav>
       <header class="play-header">
         <h1>${escapeHtml(game.name)}</h1>
-        <p>${escapeHtml(level.label)}</p>
+        <div class="play-header-meta">
+          <a class="back-link" href="/games/${encodeURIComponent(game.id)}">Back</a>
+          <p>${escapeHtml(level.label)}</p>
+          ${fuzzyToggleMarkup}
+        </div>
       </header>
       ${boardMarkup}
     </main>`
