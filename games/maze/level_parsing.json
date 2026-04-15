@@ -14,6 +14,9 @@
       "token": "b",
       "image": "images/crate.png"
     },
+    "weightless_box": {
+      "tokens": ["M0", "M1"]
+    },
     "exit": {
       "token": "e"
     },

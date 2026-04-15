@@ -9,6 +9,18 @@ from games.shared import GridWorld, Sprite
 MAZE_DIR = Path(__file__).resolve().parent
 
 
+def config_tokens(config: dict[str, Any]) -> list[str]:
+    token = config.get("token")
+    if isinstance(token, str) and token:
+        return [token]
+
+    tokens = config.get("tokens")
+    if isinstance(tokens, list):
+        return [token for token in tokens if isinstance(token, str) and token]
+
+    return []
+
+
 class MazeSprite(Sprite):
     token = "?"
     solid = False
@@ -59,19 +71,31 @@ class Box(MazeSprite):
         super().__init__(x, y, name="box")
 
 
+class WeightlessBox(MazeSprite):
+    token = "M"
+    solid = True
+
+    def __init__(self, x: int, y: int, *, group_key: str) -> None:
+        self.group_key = group_key
+        super().__init__(x, y, name="weightless_box")
+
+
 class Player(MazeSprite):
     token = "p"
 
     def __init__(self, x: int, y: int, *, name: str = "player") -> None:
         super().__init__(x, y, name=name)
 
-    def try_move(self, dx: int, dy: int) -> bool:
-        if isinstance(self.world, MazeWorld):
-            pushable = self.world.box_at(self.x + dx, self.y + dy)
-            if pushable is not None and not pushable.try_move(dx, dy):
+    def try_move(self, dx: int, dy: int, *, allow_push: bool = True) -> bool:
+        if allow_push and isinstance(self.world, MazeWorld):
+            pushable = self.world.pushable_at(self.x + dx, self.y + dy)
+            if isinstance(pushable, WeightlessBox):
+                if not self.world.try_move_weightless_group(pushable.group_key, dx, dy):
+                    return False
+            elif pushable is not None and not pushable.try_move(dx, dy):
                 return False
 
-        return super().try_move(dx, dy)
+        return super().try_move(dx, dy, allow_push=allow_push)
 
 
 class PythonPlayer(Player):
@@ -88,6 +112,7 @@ class MazeWorld(GridWorld):
         "wall": Wall,
         "player": PythonPlayer,
         "box": Box,
+        "weightless_box": WeightlessBox,
         "exit": Exit,
         "ice": Ice,
         "floor": Floor,
@@ -119,22 +144,25 @@ class MazeWorld(GridWorld):
         for y, row in enumerate(rows):
             for x, cell in enumerate(row):
                 for token in self.tokens_from_cell(cell):
-                    object_name = self.object_name_for_token(token)
-                    if object_name is None:
+                    definition = self.object_definition_for_token(token)
+                    if definition is None:
                         continue
 
-                    sprite = self.build_sprite(object_name, x, y)
+                    sprite = self.build_sprite(definition["name"], x, y, token=definition["token"])
                     self.add_sprite(sprite)
 
         return rows
 
-    def object_name_for_token(self, token: str) -> str | None:
+    def object_definition_for_token(self, token: str) -> dict[str, str] | None:
         for object_name, config in self.parser.get("objects", {}).items():
-            if config.get("token") == token:
-                return object_name
+            if token in config_tokens(config):
+                return {"name": object_name, "token": token}
         return None
 
-    def build_sprite(self, object_name: str, x: int, y: int) -> MazeSprite:
+    def build_sprite(self, object_name: str, x: int, y: int, *, token: str | None = None) -> MazeSprite:
+        if object_name == "weightless_box":
+            return WeightlessBox(x, y, group_key=token or WeightlessBox.token)
+
         sprite_class = self.object_classes.get(object_name, MazeSprite)
         return sprite_class(x, y)
 
@@ -146,13 +174,36 @@ class MazeWorld(GridWorld):
     def tile_has_name(self, x: int, y: int, name: str) -> bool:
         return any(sprite.name == name for sprite in self.tiles.get((x, y), []))
 
-    def box_at(self, x: int, y: int) -> Box | None:
+    def pushable_at(self, x: int, y: int) -> Box | WeightlessBox | None:
         for sprite in self.tiles.get((x, y), []):
-            if isinstance(sprite, Box):
+            if isinstance(sprite, (Box, WeightlessBox)):
                 return sprite
         return None
 
-    def update_sprite_position(self, sprite: Sprite, old_position: tuple[int, int]) -> None:
+    def weightless_group_members(self, group_key: str) -> list[WeightlessBox]:
+        return [
+            sprite
+            for sprite in self.sprites
+            if isinstance(sprite, WeightlessBox) and sprite.group_key == group_key
+        ]
+
+    def can_move_weightless_group(self, members: list[WeightlessBox], dx: int, dy: int) -> bool:
+        for member in members:
+            target_x = member.x + dx
+            target_y = member.y + dy
+
+            if not self.in_bounds(target_x, target_y):
+                return False
+
+            for occupant in self.tiles.get((target_x, target_y), []):
+                if occupant in members:
+                    continue
+                if getattr(occupant, "solid", False):
+                    return False
+
+        return True
+
+    def sync_sprite_tile(self, sprite: Sprite, old_position: tuple[int, int]) -> None:
         old_tile = self.tiles.get(old_position, [])
         if sprite in old_tile:
             old_tile.remove(sprite)
@@ -160,11 +211,42 @@ class MazeWorld(GridWorld):
             del self.tiles[old_position]
         self.tiles.setdefault(sprite.position, []).append(sprite)
 
+    def try_move_weightless_group(self, group_key: str, dx: int, dy: int) -> bool:
+        members = self.weightless_group_members(group_key)
+
+        if not members:
+            return False
+
+        moved = False
+
+        while self.can_move_weightless_group(members, dx, dy):
+            old_positions = [(member, member.position) for member in members]
+
+            for member in members:
+                member.x += dx
+                member.y += dy
+
+            for member, old_position in old_positions:
+                self.sync_sprite_tile(member, old_position)
+
+            moved = True
+
+            if not all(self.tile_has_name(member.x, member.y, "ice") for member in members):
+                break
+
+        return moved
+
+    def update_sprite_position(self, sprite: Sprite, old_position: tuple[int, int]) -> None:
+        self.sync_sprite_tile(sprite, old_position)
+
+        if isinstance(sprite, WeightlessBox):
+            return
+
         dx = sprite.x - old_position[0]
         dy = sprite.y - old_position[1]
 
         if (dx, dy) != (0, 0) and self.tile_has_name(sprite.x, sprite.y, "ice"):
-            sprite.try_move(dx, dy)
+            sprite.try_move(dx, dy, allow_push=False)
 
     def can_move_to(self, x: int, y: int, sprite: Sprite | None = None) -> bool:
         if not self.in_bounds(x, y):

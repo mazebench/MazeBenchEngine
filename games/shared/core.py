@@ -94,7 +94,8 @@ class Sprite:
         if not self.try_move(dx, dy):
             raise ValueError(f"{self.name} cannot move to {(self.x + dx, self.y + dy)}")
 
-    def try_move(self, dx: int, dy: int) -> bool:
+    def try_move(self, dx: int, dy: int, *, allow_push: bool = True) -> bool:
+        del allow_push
         target_x = self.x + dx
         target_y = self.y + dy
 

@@ -308,6 +308,20 @@
     );
   }
 
+  function isPushableActor(actor) {
+    return actor?.type === "box" || actor?.type === "weightless_box";
+  }
+
+  function weightlessGroupMembers(groupId) {
+    return state.actors.filter((actor) => actor.type === "weightless_box" && actor.groupId === groupId);
+  }
+
+  function isWeightlessBoxAt(groupId, x, y) {
+    return state.actors.some(
+      (actor) => actor.type === "weightless_box" && actor.groupId === groupId && actor.x === x && actor.y === y
+    );
+  }
+
   function isInsideBoard(x, y) {
     return x >= 0 && x < state.width && y >= 0 && y < state.height;
   }
@@ -691,6 +705,128 @@
     }
   }
 
+  function paintWeightlessBox(actor) {
+    const left = actor.renderX * TILE_SIZE;
+    const top = actor.renderY * TILE_SIZE;
+    const right = left + TILE_SIZE;
+    const bottom = top + TILE_SIZE;
+    const openTop = !isWeightlessBoxAt(actor.groupId, actor.x, actor.y - 1);
+    const openRight = !isWeightlessBoxAt(actor.groupId, actor.x + 1, actor.y);
+    const openBottom = !isWeightlessBoxAt(actor.groupId, actor.x, actor.y + 1);
+    const openLeft = !isWeightlessBoxAt(actor.groupId, actor.x - 1, actor.y);
+    const faceHeight = Math.round(TILE_SIZE * 0.26);
+    const hasFloorAbove = actor.y > 0 && openTop;
+    const liftHeight = hasFloorAbove ? faceHeight : 0;
+    const wallTop = top - liftHeight;
+    const wallHeight = TILE_SIZE + liftHeight;
+    const radius = TILE_SIZE * 0.18;
+    const radii = {
+      tl: openTop && openLeft ? radius : 0,
+      tr: openTop && openRight ? radius : 0,
+      br: 0,
+      bl: 0
+    };
+    const rightCornerWallTop =
+      openRight &&
+      !openBottom &&
+      actor.x < state.width - 1 &&
+      actor.y < state.height - 1 &&
+      isWeightlessBoxAt(actor.groupId, actor.x + 1, actor.y + 1) &&
+      !isWeightlessBoxAt(actor.groupId, actor.x + 1, actor.y)
+        ? bottom - faceHeight
+        : bottom - radii.br;
+    const leftCornerWallTop =
+      openLeft &&
+      !openBottom &&
+      actor.x > 0 &&
+      actor.y < state.height - 1 &&
+      isWeightlessBoxAt(actor.groupId, actor.x - 1, actor.y + 1) &&
+      !isWeightlessBoxAt(actor.groupId, actor.x - 1, actor.y)
+        ? bottom - faceHeight
+        : bottom - radii.bl;
+
+    roundRectPath(sceneCtx, left, wallTop, TILE_SIZE, wallHeight, radii);
+    sceneCtx.save();
+    sceneCtx.clip();
+    sceneCtx.fillStyle = "#315991";
+    sceneCtx.fillRect(left, wallTop, TILE_SIZE, wallHeight);
+
+    if (openBottom) {
+      const shineTop = bottom - faceHeight;
+      const shineBorderWidth = 3;
+      const leftNeighborHasShine =
+        actor.x > 0 &&
+        isWeightlessBoxAt(actor.groupId, actor.x - 1, actor.y) &&
+        !isWeightlessBoxAt(actor.groupId, actor.x - 1, actor.y + 1);
+      const rightNeighborHasShine =
+        actor.x < state.width - 1 &&
+        isWeightlessBoxAt(actor.groupId, actor.x + 1, actor.y) &&
+        !isWeightlessBoxAt(actor.groupId, actor.x + 1, actor.y + 1);
+      sceneCtx.fillStyle = "#79abeb";
+      sceneCtx.fillRect(left, shineTop, TILE_SIZE, faceHeight);
+      sceneCtx.lineWidth = shineBorderWidth;
+      sceneCtx.strokeStyle = "#000000";
+      sceneCtx.beginPath();
+      sceneCtx.moveTo(left, shineTop + shineBorderWidth / 2);
+      sceneCtx.lineTo(right, shineTop + shineBorderWidth / 2);
+      sceneCtx.stroke();
+      sceneCtx.fillStyle = "#000000";
+      if (!openLeft && !leftNeighborHasShine) {
+        sceneCtx.fillRect(left, shineTop, shineBorderWidth, faceHeight);
+      }
+      if (!openRight && !rightNeighborHasShine) {
+        sceneCtx.fillRect(right - shineBorderWidth, shineTop, shineBorderWidth, faceHeight);
+      }
+    }
+    sceneCtx.restore();
+
+    sceneCtx.lineWidth = 3;
+    sceneCtx.strokeStyle = "#000000";
+    sceneCtx.beginPath();
+
+    if (openTop) {
+      sceneCtx.moveTo(left + radii.tl, wallTop);
+      sceneCtx.lineTo(right - radii.tr, wallTop);
+    }
+
+    if (openRight) {
+      sceneCtx.moveTo(right, wallTop + radii.tr);
+      sceneCtx.lineTo(right, rightCornerWallTop);
+    }
+
+    if (openBottom) {
+      sceneCtx.moveTo(right - radii.br, bottom);
+      sceneCtx.lineTo(left + radii.bl, bottom);
+    }
+
+    if (openLeft) {
+      sceneCtx.moveTo(left, leftCornerWallTop);
+      sceneCtx.lineTo(left, wallTop + radii.tl);
+    }
+
+    if (radii.tl > 0) {
+      sceneCtx.moveTo(left + radii.tl, wallTop);
+      sceneCtx.quadraticCurveTo(left, wallTop, left, wallTop + radii.tl);
+    }
+
+    if (radii.tr > 0) {
+      sceneCtx.moveTo(right - radii.tr, wallTop);
+      sceneCtx.quadraticCurveTo(right, wallTop, right, wallTop + radii.tr);
+    }
+
+    if (radii.br > 0) {
+      sceneCtx.moveTo(right, bottom - radii.br);
+      sceneCtx.quadraticCurveTo(right, bottom, right - radii.br, bottom);
+    }
+
+    if (radii.bl > 0) {
+      sceneCtx.moveTo(left + radii.bl, bottom);
+      sceneCtx.quadraticCurveTo(left, bottom, left, bottom - radii.bl);
+    }
+
+    sceneCtx.stroke();
+  }
+
   function paintDepthSortedScene() {
     const drawItems = [];
 
@@ -716,7 +852,7 @@
     state.actors.forEach((actor, index) => {
       drawItems.push({
         depth: actor.renderY + 1,
-        tieBreaker: 1,
+        tieBreaker: actor.type === "player" ? 2 : 1,
         order: index,
         paint: function () {
           paintActor(actor);
@@ -743,6 +879,11 @@
     const left = actor.renderX * TILE_SIZE;
     const top = actor.renderY * TILE_SIZE;
     const image = actor.imageUrl ? imageCache.get(actor.imageUrl) : null;
+
+    if (actor.type === "weightless_box") {
+      paintWeightlessBox(actor);
+      return;
+    }
 
     if (image) {
       if (actor.type === "box") {
@@ -933,6 +1074,75 @@
     return true;
   }
 
+  function canMoveWeightlessGroup(members, dx, dy, occupied) {
+    return members.every((member) => {
+      const targetX = member.x + dx;
+      const targetY = member.y + dy;
+
+      if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY)) {
+        return false;
+      }
+
+      return !occupied.has(posKey(targetX, targetY));
+    });
+  }
+
+  function moveWeightlessGroup(groupId, dx, dy, occupied, moves) {
+    const members = weightlessGroupMembers(groupId);
+
+    if (members.length === 0) {
+      return false;
+    }
+
+    const startPositions = members.map((actor) => ({
+      actor,
+      fromX: actor.x,
+      fromY: actor.y
+    }));
+
+    members.forEach((member) => {
+      occupied.delete(posKey(member.x, member.y));
+    });
+
+    let moved = false;
+
+    while (canMoveWeightlessGroup(members, dx, dy, occupied)) {
+      members.forEach((member) => {
+        member.x += dx;
+        member.y += dy;
+      });
+
+      moved = true;
+
+      if (!members.every((member) => isIce(member.x, member.y))) {
+        break;
+      }
+    }
+
+    if (!moved) {
+      startPositions.forEach(({ fromX, fromY }) => {
+        occupied.add(posKey(fromX, fromY));
+      });
+      return false;
+    }
+
+    startPositions.forEach(({ actor, fromX, fromY }) => {
+      moves.push({
+        actor,
+        fromX,
+        fromY,
+        toX: actor.x,
+        toY: actor.y
+      });
+    });
+
+    members.forEach((member) => {
+      occupied.add(posKey(member.x, member.y));
+    });
+
+    return true;
+  }
+
   function easeInOutQuad(progress) {
     if (progress < 0.5) {
       return 2 * progress * progress;
@@ -965,7 +1175,14 @@
 
     isAnimating = true;
     const startTime = performance.now();
-    const moveDuration = typeof durationMs === "number" ? durationMs : MOVE_DURATION_MS;
+    const moveDuration =
+      typeof durationMs === "number"
+        ? durationMs
+        : MOVE_DURATION_MS *
+          Math.max(
+            1,
+            ...moves.map(({ fromX, fromY, toX, toY }) => Math.abs(toX - fromX) + Math.abs(toY - fromY))
+          );
 
     function step(now) {
       const progress = Math.min(1, (now - startTime) / moveDuration);
@@ -1064,6 +1281,7 @@
       while (true) {
         const targetX = nextX + dx;
         const targetY = nextY + dy;
+        const isInitialStep = nextX === fromX && nextY === fromY;
 
         if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY)) {
           break;
@@ -1072,7 +1290,16 @@
         const blockingActor = actorAt(targetX, targetY, (actor) => actor !== player);
 
         if (blockingActor) {
-          if (blockingActor.type !== "box" || !moveBox(blockingActor, dx, dy, occupied, moves)) {
+          let didMoveBlockingActor = false;
+
+          if (isInitialStep && isPushableActor(blockingActor)) {
+            didMoveBlockingActor =
+              blockingActor.type === "weightless_box"
+                ? moveWeightlessGroup(blockingActor.groupId, dx, dy, occupied, moves)
+                : moveBox(blockingActor, dx, dy, occupied, moves);
+          }
+
+          if (!didMoveBlockingActor) {
             break;
           }
         } else if (!canMoveInto(targetX, targetY, occupied)) {

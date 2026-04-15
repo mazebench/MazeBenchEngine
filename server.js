@@ -128,6 +128,18 @@ function parseCellStack(parser, cell) {
   return cell ? [cell] : [];
 }
 
+function getDefinitionTokens(config) {
+  if (typeof config?.token === "string" && config.token.length > 0) {
+    return [config.token];
+  }
+
+  if (Array.isArray(config?.tokens)) {
+    return config.tokens.filter((token) => typeof token === "string" && token.length > 0);
+  }
+
+  return [];
+}
+
 function getObjectDefinitions(game) {
   const definitions = Object.entries(game.parser?.objects || {}).map(([name, config]) => {
     const relativeImagePath = typeof config?.image === "string" ? config.image : null;
@@ -135,7 +147,7 @@ function getObjectDefinitions(game) {
 
     return {
       name,
-      token: config?.token,
+      tokens: getDefinitionTokens(config),
       imageUrl: assetPath ? buildGameAssetUrl(game.id, relativeImagePath) : null,
       label: titleCase(name)
     };
@@ -145,8 +157,15 @@ function getObjectDefinitions(game) {
     byName: new Map(definitions.map((definition) => [definition.name, definition])),
     byToken: new Map(
       definitions
-        .filter((definition) => typeof definition.token === "string")
-        .map((definition) => [definition.token, definition])
+        .flatMap((definition) =>
+          definition.tokens.map((token) => [
+            token,
+            {
+              ...definition,
+              token
+            }
+          ])
+        )
     )
   };
 }
@@ -160,7 +179,11 @@ function buildTerrainCell(type, definition = null) {
 }
 
 function isActorDefinition(definition) {
-  return definition?.name === "player" || definition?.name === "box";
+  return (
+    definition?.name === "player" ||
+    definition?.name === "box" ||
+    definition?.name === "weightless_box"
+  );
 }
 
 function buildCellState(cellDefinitions, floorDefinition, exitDefinition) {
@@ -216,6 +239,7 @@ function getLevelState(game, level) {
 
         actors.push({
           type: definition.name,
+          groupId: definition.name === "weightless_box" ? definition.token : null,
           label: definition.label,
           imageUrl: definition.imageUrl,
           x: index,
