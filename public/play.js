@@ -72,6 +72,14 @@
     return;
   }
 
+  const FRAGMENT_PRECISION =
+    gl &&
+    typeof gl.getShaderPrecisionFormat === "function" &&
+    gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT)?.precision > 0
+      ? "highp"
+      : "mediump";
+  const NOISE_PHASE_CYCLE = FRAGMENT_PRECISION === "highp" ? 4096 : 128;
+
   const VERTEX_SHADER_SOURCE = `
     attribute vec2 a_position;
     varying vec2 v_uv;
@@ -83,7 +91,7 @@
   `;
 
   const FRAGMENT_SHADER_SOURCE = `
-    precision mediump float;
+    precision ${FRAGMENT_PRECISION} float;
 
     varying vec2 v_uv;
 
@@ -331,7 +339,7 @@
       const phaseStep = Math.floor(elapsed / NOISE_FRAME_MS);
 
       if (phaseStep > 0) {
-        state.effects.noisePhase += phaseStep;
+        state.effects.noisePhase = (state.effects.noisePhase + phaseStep) % NOISE_PHASE_CYCLE;
         lastNoiseTickMs += phaseStep * NOISE_FRAME_MS;
 
         if (!isAnimating) {
