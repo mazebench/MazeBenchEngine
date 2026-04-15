@@ -159,13 +159,17 @@ function buildTerrainCell(type, definition = null) {
   };
 }
 
+function isActorDefinition(definition) {
+  return definition?.name === "player" || definition?.name === "box";
+}
+
 function buildCellState(cellDefinitions, floorDefinition, exitDefinition) {
   const wallDefinition = cellDefinitions.find((definition) => definition.name === "wall") || null;
   const exitCellDefinition = cellDefinitions.find((definition) => definition.name === "exit") || null;
   const terrainDefinition =
     wallDefinition ||
     exitCellDefinition ||
-    cellDefinitions.find((definition) => definition.name !== "player") ||
+    cellDefinitions.find((definition) => !isActorDefinition(definition)) ||
     null;
 
   if (terrainDefinition?.name === "exit") {
@@ -176,7 +180,7 @@ function buildCellState(cellDefinitions, floorDefinition, exitDefinition) {
     return buildTerrainCell(terrainDefinition.name, terrainDefinition);
   }
 
-  if (cellDefinitions.some((definition) => definition.name === "player")) {
+  if (cellDefinitions.some((definition) => isActorDefinition(definition))) {
     return buildTerrainCell("floor", floorDefinition);
   }
 
@@ -206,12 +210,12 @@ function getLevelState(game, level) {
       terrainRow.push(buildCellState(cellDefinitions, floorDefinition, exitDefinition));
 
       cellDefinitions.forEach((definition) => {
-        if (definition.name !== "player") {
+        if (!isActorDefinition(definition)) {
           return;
         }
 
         actors.push({
-          type: "player",
+          type: definition.name,
           label: definition.label,
           imageUrl: definition.imageUrl,
           x: index,

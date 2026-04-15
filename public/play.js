@@ -296,6 +296,18 @@
     return state.actors.map((actor) => ({ x: actor.x, y: actor.y }));
   }
 
+  function actorAt(x, y, predicate = null) {
+    return (
+      state.actors.find((actor) => {
+        if (actor.x !== x || actor.y !== y) {
+          return false;
+        }
+
+        return typeof predicate === "function" ? predicate(actor) : true;
+      }) || null
+    );
+  }
+
   function isInsideBoard(x, y) {
     return x >= 0 && x < state.width && y >= 0 && y < state.height;
   }
@@ -685,6 +697,16 @@
     const image = actor.imageUrl ? imageCache.get(actor.imageUrl) : null;
 
     if (image) {
+      if (actor.type === "box") {
+        const drawWidth = TILE_SIZE;
+        const drawHeight = drawWidth * (image.height / image.width);
+        const drawLeft = left;
+        const drawTop = top + TILE_SIZE - drawHeight;
+
+        sceneCtx.drawImage(image, drawLeft, drawTop, drawWidth, drawHeight);
+        return;
+      }
+
       sceneCtx.drawImage(image, left, top, TILE_SIZE, TILE_SIZE);
       return;
     }
@@ -694,6 +716,38 @@
       sceneCtx.beginPath();
       sceneCtx.arc(left + TILE_SIZE / 2, top + TILE_SIZE / 2, TILE_SIZE * 0.338, 0, Math.PI * 2);
       sceneCtx.fill();
+      sceneCtx.lineWidth = 3;
+      sceneCtx.strokeStyle = "#000000";
+      sceneCtx.stroke();
+      return;
+    }
+
+    if (actor.type === "box") {
+      const inset = TILE_SIZE * 0.19;
+      const boxLeft = left + inset;
+      const boxTop = top + inset;
+      const boxSize = TILE_SIZE - inset * 2;
+      const boxBottom = boxTop + boxSize;
+      const lipHeight = Math.max(6, Math.round(TILE_SIZE * 0.12));
+      const radius = Math.min(8, TILE_SIZE * 0.12);
+
+      roundRectPath(sceneCtx, boxLeft, boxTop, boxSize, boxSize, {
+        tl: radius,
+        tr: radius,
+        br: radius * 0.75,
+        bl: radius * 0.75
+      });
+      sceneCtx.fillStyle = "#2a2d33";
+      sceneCtx.fill();
+      sceneCtx.lineWidth = 3;
+      sceneCtx.strokeStyle = "#000000";
+      sceneCtx.stroke();
+
+      sceneCtx.fillStyle = "#5b616d";
+      sceneCtx.fillRect(boxLeft, boxBottom - lipHeight, boxSize, lipHeight);
+      sceneCtx.beginPath();
+      sceneCtx.moveTo(boxLeft, boxBottom - lipHeight);
+      sceneCtx.lineTo(boxLeft + boxSize, boxBottom - lipHeight);
       sceneCtx.lineWidth = 3;
       sceneCtx.strokeStyle = "#000000";
       sceneCtx.stroke();
@@ -791,6 +845,47 @@
     return !occupied.has(posKey(x, y));
   }
 
+  function findSlideDestination(startX, startY, dx, dy, occupied) {
+    let nextX = startX;
+    let nextY = startY;
+
+    while (canMoveInto(nextX + dx, nextY + dy, occupied)) {
+      nextX += dx;
+      nextY += dy;
+
+      if (!isIce(nextX, nextY)) {
+        break;
+      }
+    }
+
+    return { x: nextX, y: nextY };
+  }
+
+  function moveBox(box, dx, dy, occupied, moves) {
+    const fromX = box.x;
+    const fromY = box.y;
+    occupied.delete(posKey(fromX, fromY));
+
+    const target = findSlideDestination(fromX, fromY, dx, dy, occupied);
+
+    if (target.x === fromX && target.y === fromY) {
+      occupied.add(posKey(fromX, fromY));
+      return false;
+    }
+
+    box.x = target.x;
+    box.y = target.y;
+    moves.push({
+      actor: box,
+      fromX,
+      fromY,
+      toX: target.x,
+      toY: target.y
+    });
+    occupied.add(posKey(box.x, box.y));
+    return true;
+  }
+
   function easeInOutQuad(progress) {
     if (progress < 0.5) {
       return 2 * progress * progress;
@@ -823,14 +918,7 @@
 
     isAnimating = true;
     const startTime = performance.now();
-    const moveDuration =
-      typeof durationMs === "number"
-        ? durationMs
-        : MOVE_DURATION_MS *
-          Math.max(
-            1,
-            ...moves.map(({ fromX, fromY, toX, toY }) => Math.abs(toX - fromX) + Math.abs(toY - fromY))
-          );
+    const moveDuration = typeof durationMs === "number" ? durationMs : MOVE_DURATION_MS;
 
     function step(now) {
       const progress = Math.min(1, (now - startTime) / moveDuration);
@@ -923,19 +1011,36 @@
       const fromY = player.y;
       occupied.delete(posKey(player.x, player.y));
 
-      let nextX = player.x;
-      let nextY = player.y;
+      let nextX = fromX;
+      let nextY = fromY;
 
-      while (canMoveInto(nextX + dx, nextY + dy, occupied)) {
-        nextX += dx;
-        nextY += dy;
+      while (true) {
+        const targetX = nextX + dx;
+        const targetY = nextY + dy;
+
+        if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY)) {
+          break;
+        }
+
+        const blockingActor = actorAt(targetX, targetY, (actor) => actor !== player);
+
+        if (blockingActor) {
+          if (blockingActor.type !== "box" || !moveBox(blockingActor, dx, dy, occupied, moves)) {
+            break;
+          }
+        } else if (!canMoveInto(targetX, targetY, occupied)) {
+          break;
+        }
+
+        nextX = targetX;
+        nextY = targetY;
 
         if (!isIce(nextX, nextY)) {
           break;
         }
       }
 
-      if (nextX !== player.x || nextY !== player.y) {
+      if (nextX !== fromX || nextY !== fromY) {
         player.x = nextX;
         player.y = nextY;
         moves.push({

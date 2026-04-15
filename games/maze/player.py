@@ -51,11 +51,27 @@ class Ice(MazeSprite):
         super().__init__(x, y, name="ice")
 
 
+class Box(MazeSprite):
+    token = "b"
+    solid = True
+
+    def __init__(self, x: int, y: int) -> None:
+        super().__init__(x, y, name="box")
+
+
 class Player(MazeSprite):
     token = "p"
 
     def __init__(self, x: int, y: int, *, name: str = "player") -> None:
         super().__init__(x, y, name=name)
+
+    def try_move(self, dx: int, dy: int) -> bool:
+        if isinstance(self.world, MazeWorld):
+            pushable = self.world.box_at(self.x + dx, self.y + dy)
+            if pushable is not None and not pushable.try_move(dx, dy):
+                return False
+
+        return super().try_move(dx, dy)
 
 
 class PythonPlayer(Player):
@@ -71,6 +87,7 @@ class MazeWorld(GridWorld):
     object_classes: dict[str, type[MazeSprite]] = {
         "wall": Wall,
         "player": PythonPlayer,
+        "box": Box,
         "exit": Exit,
         "ice": Ice,
         "floor": Floor,
@@ -128,6 +145,12 @@ class MazeWorld(GridWorld):
 
     def tile_has_name(self, x: int, y: int, name: str) -> bool:
         return any(sprite.name == name for sprite in self.tiles.get((x, y), []))
+
+    def box_at(self, x: int, y: int) -> Box | None:
+        for sprite in self.tiles.get((x, y), []):
+            if isinstance(sprite, Box):
+                return sprite
+        return None
 
     def update_sprite_position(self, sprite: Sprite, old_position: tuple[int, int]) -> None:
         old_tile = self.tiles.get(old_position, [])

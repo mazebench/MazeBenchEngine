@@ -10,6 +10,10 @@
     "player": {
       "token": "p"
     },
+    "box": {
+      "token": "b",
+      "image": "images/crate.png"
+    },
     "exit": {
       "token": "e"
     },
