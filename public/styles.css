@@ -269,9 +269,10 @@ pre {
 }
 
 .play-controls,
-.play-controls input {
+.play-controls button {
   touch-action: auto;
 }
+
 .effect-icon {
   position: relative;
   display: block;
@@ -283,18 +284,56 @@ pre {
   overflow: hidden;
 }
 
-.effect-slider {
+.effect-toggle {
   width: 100%;
   max-width: 420px;
   min-width: 0;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
   padding: 8px 10px;
   border: 3px solid #000000;
   border-radius: 6px;
   background: #eef1e8;
   box-sizing: border-box;
+  cursor: pointer;
+}
+
+.effect-toggle:focus-visible {
+  outline: 3px solid #8dc7ff;
+  outline-offset: 2px;
+}
+
+.effect-toggle-track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 22px;
+  border: 2px solid #000000;
+  border-radius: 999px;
+  background: #8e9488;
+  box-sizing: border-box;
+}
+
+.effect-toggle-thumb {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #000000;
+  border-radius: 999px;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.effect-toggle.is-active .effect-toggle-track {
+  background: #7ee0a1;
+}
+
+.effect-toggle.is-active .effect-toggle-thumb {
+  left: 21px;
 }
 
 .effect-icon--fuzzy {
@@ -302,40 +341,6 @@ pre {
     radial-gradient(circle at 20% 25%, #111111 0 1.2px, transparent 1.2px) 0 0 / 8px 8px,
     radial-gradient(circle at 70% 60%, #111111 0 1.2px, transparent 1.2px) 0 0 / 10px 10px,
     #ffffff;
-}
-
-.effect-range {
-  appearance: none;
-  width: 100%;
-  min-width: 0;
-  height: 6px;
-  margin: 0;
-  border-radius: 999px;
-  background: #111111;
-  outline: none;
-}
-
-.effect-range::-webkit-slider-thumb {
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  border: 2px solid #000000;
-  border-radius: 999px;
-  background: #ffffff;
-}
-
-.effect-range::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
-  border: 2px solid #000000;
-  border-radius: 999px;
-  background: #ffffff;
-}
-
-.effect-range::-moz-range-track {
-  height: 6px;
-  border-radius: 999px;
-  background: #111111;
 }
 
 @media (max-width: 640px) {

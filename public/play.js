@@ -7,13 +7,15 @@
   }
 
   const TILE_SIZE = 64;
+  const FUZZY_AMOUNT = 0.1;
+  const NOISE_FPS = 12;
   const MOVE_DURATION_MS = 98;
   const playShell = document.querySelector(".play-shell");
   const playNav = document.querySelector(".play-nav");
   const playStage = document.querySelector(".play-stage");
   const mazeFrame = document.querySelector(".maze-frame");
   const playControls = document.querySelector(".play-controls");
-  const fuzzyInput = document.getElementById("fuzzy-input");
+  const fuzzyToggle = document.getElementById("fuzzy-toggle");
 
   const state = {
     width: playData.width,
@@ -25,7 +27,7 @@
       renderY: actor.y
     })),
     effects: {
-      fuzzy: fuzzyInput ? Number(fuzzyInput.value) : 0.1
+      fuzzyEnabled: fuzzyToggle ? fuzzyToggle.getAttribute("aria-pressed") === "true" : true
     }
   };
 
@@ -62,6 +64,7 @@
   let isAnimating = false;
   let queuedAction = null;
   let renderer = null;
+  let noiseIntervalId = null;
 
   if (!sceneCtx || (!gl && !fallbackCtx)) {
     return;
@@ -91,7 +94,6 @@
     uniform float u_mask;
     uniform float u_ghosting;
     uniform float u_noise;
-    uniform float u_slotMask;
     uniform float u_vignetteStrength;
     uniform float u_time;
 
@@ -127,28 +129,9 @@
       float rowBand = 1.0;
       float column = floor(logicalCoord.x / stride);
       float row = floor(logicalCoord.y / rowBand);
-      float dim = 0.78;
-      float lit = 1.12;
-      vec3 maskColor;
-
-      if (u_slotMask > 0.5) {
-        float phase = mod(column + mod(row, 2.0), 3.0);
-        float slotGate = mod(row, 2.0) < 0.5 ? 1.0 : 0.88;
-        maskColor = vec3(
-          (phase < 0.5 ? lit : dim) * slotGate,
-          (phase >= 0.5 && phase < 1.5 ? lit : dim) * slotGate,
-          (phase >= 1.5 ? lit : dim) * slotGate
-        );
-      } else {
-        float phase = mod(column, 3.0);
-        maskColor = vec3(
-          phase < 0.5 ? lit : dim,
-          (phase >= 0.5 && phase < 1.5) ? lit : dim,
-          phase >= 1.5 ? lit : dim
-        );
-      }
-
-      return mix(vec3(1.0), maskColor, u_mask);
+      float phase = mod(column + mod(row, 2.0), 3.0);
+      float monoMask = phase < 0.5 ? 1.08 : (phase < 1.5 ? 0.98 : 0.88);
+      return vec3(mix(1.0, monoMask, u_mask));
     }
 
     void main() {
@@ -160,19 +143,17 @@
       vec2 uvPerPixel = 1.0 / u_logicalResolution;
       vec2 ghostOffset = uvPerPixel * vec2(0.25 + u_ghosting * 4.2, 0.16);
       float bleedShift = 0.4 + u_bleed * 2.6;
-      float bleedR = sampleSource(v_uv - vec2(uvPerPixel.x * bleedShift, 0.0)).r;
-      float bleedB = sampleSource(v_uv + vec2(uvPerPixel.x * bleedShift, 0.0)).b;
+      vec3 bleedLeft = sampleSource(v_uv - vec2(uvPerPixel.x * bleedShift, 0.0));
+      vec3 bleedRight = sampleSource(v_uv + vec2(uvPerPixel.x * bleedShift, 0.0));
+      vec3 bleedShifted = (bleedLeft + bleed + bleedRight) / 3.0;
       vec3 ghost = sampleSource(v_uv + ghostOffset);
-      float softMix = u_softness * 0.9;
+      float blurStrength = 0.5;
+      float softMix = u_softness * 0.9 * blurStrength;
+      vec3 color = mix(base, soft, softMix);
+      color = mix(color, bleedShifted, u_bleed * 0.82 * blurStrength);
 
-      vec3 color = vec3(
-        mix(mix(base.r, soft.r, softMix), bleedR, u_bleed * 0.85),
-        mix(mix(base.g, soft.g, softMix), bleed.g, u_bleed * 0.78),
-        mix(mix(base.b, soft.b, softMix), bleedB, u_bleed * 0.85)
-      );
-
-      color += max(vec3(0.0), bloom - base) * (u_bloom * 0.45);
-      color += ghost * (u_ghosting * 0.4);
+      color += max(vec3(0.0), bloom - base) * (u_bloom * 0.45 * blurStrength);
+      color = mix(color, ghost, u_ghosting * 0.22 * blurStrength);
 
       float scanPhase = fract(logicalCoord.y);
       float beamProfile = 0.35 + 0.65 * (0.5 - 0.5 * cos(scanPhase * 6.28318530718));
@@ -184,7 +165,10 @@
       float vignette = mix(1.0, 1.0 - pow(edgeDistance, 2.2) * 0.32, u_vignetteStrength);
       color *= vignette;
 
-      float grain = (hashNoise(logicalCoord + vec2(u_time * 37.0, u_time * 19.0)) - 0.5) * u_noise;
+      float noisePhase = floor(u_time * 12.0);
+      float grain = (
+        hashNoise(floor(logicalCoord) + vec2(noisePhase * 17.0, noisePhase * 31.0)) - 0.5
+      ) * u_noise;
       color += grain;
 
       gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
@@ -287,7 +271,6 @@
         mask: glContext.getUniformLocation(program, "u_mask"),
         ghosting: glContext.getUniformLocation(program, "u_ghosting"),
         noise: glContext.getUniformLocation(program, "u_noise"),
-        slotMask: glContext.getUniformLocation(program, "u_slotMask"),
         vignetteStrength: glContext.getUniformLocation(program, "u_vignetteStrength"),
         time: glContext.getUniformLocation(program, "u_time")
       }
@@ -314,6 +297,32 @@
 
   function isWall(x, y) {
     return terrainAt(x, y).type === "wall";
+  }
+
+  function syncFuzzyToggle() {
+    if (!fuzzyToggle) {
+      return;
+    }
+
+    fuzzyToggle.classList.toggle("is-active", state.effects.fuzzyEnabled);
+    fuzzyToggle.setAttribute("aria-pressed", state.effects.fuzzyEnabled ? "true" : "false");
+  }
+
+  function syncNoiseTicker() {
+    if (noiseIntervalId !== null) {
+      window.clearInterval(noiseIntervalId);
+      noiseIntervalId = null;
+    }
+
+    if (!state.effects.fuzzyEnabled) {
+      return;
+    }
+
+    noiseIntervalId = window.setInterval(function () {
+      if (!isAnimating) {
+        render();
+      }
+    }, 1000 / NOISE_FPS);
   }
 
   function setupCanvas() {
@@ -597,8 +606,8 @@
   }
 
   function getEffectSettings() {
-    const fuzzy = clamp(state.effects.fuzzy, 0, 0.1);
-    const fuzzyMix = clamp(fuzzy / 0.1, 0, 1);
+    const fuzzy = state.effects.fuzzyEnabled ? FUZZY_AMOUNT : 0;
+    const fuzzyMix = clamp(fuzzy / FUZZY_AMOUNT, 0, 1);
 
     return {
       bleed: clamp(0.78 * fuzzyMix, 0, 1),
@@ -608,7 +617,6 @@
       mask: clamp(0.03 * fuzzyMix, 0, 1),
       ghosting: clamp(0.03 * fuzzyMix, 0, 1),
       noise: fuzzy,
-      slotMask: 1,
       vignetteStrength: fuzzyMix
     };
   }
@@ -648,7 +656,6 @@
     gl.uniform1f(renderer.uniforms.mask, settings.mask);
     gl.uniform1f(renderer.uniforms.ghosting, settings.ghosting);
     gl.uniform1f(renderer.uniforms.noise, settings.noise);
-    gl.uniform1f(renderer.uniforms.slotMask, settings.slotMask);
     gl.uniform1f(renderer.uniforms.vignetteStrength, settings.vignetteStrength);
     gl.uniform1f(renderer.uniforms.time, performance.now() * 0.001);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -927,15 +934,19 @@
     event.preventDefault();
   }
 
-  if (fuzzyInput) {
-    fuzzyInput.addEventListener("input", function () {
-      state.effects.fuzzy = Number(fuzzyInput.value);
+  if (fuzzyToggle) {
+    fuzzyToggle.addEventListener("click", function () {
+      state.effects.fuzzyEnabled = !state.effects.fuzzyEnabled;
+      syncFuzzyToggle();
+      syncNoiseTicker();
       render();
     });
   }
 
   syncPlayLayout();
   setupCanvas();
+  syncFuzzyToggle();
+  syncNoiseTicker();
   preloadImages().finally(render);
   window.addEventListener("keydown", handleKeydown);
   window.addEventListener("wheel", preventScroll, { passive: false });

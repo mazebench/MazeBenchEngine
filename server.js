@@ -354,19 +354,19 @@ function renderPlayPage(game, level) {
           </div>
         </section>
         <section class="play-controls" aria-label="Display effects">
-          <label class="effect-slider" for="fuzzy-input" title="Fuzzy">
+          <button
+            id="fuzzy-toggle"
+            class="effect-toggle is-active"
+            type="button"
+            aria-pressed="true"
+            aria-label="Fuzzy noise"
+            title="Fuzzy"
+          >
             <span class="effect-icon effect-icon--fuzzy" aria-hidden="true"></span>
-            <input
-              id="fuzzy-input"
-              class="effect-range"
-              type="range"
-              min="0"
-              max="0.1"
-              step="0.005"
-              value="0.1"
-              aria-label="Fuzzy noise"
-            >
-          </label>
+            <span class="effect-toggle-track" aria-hidden="true">
+              <span class="effect-toggle-thumb"></span>
+            </span>
+          </button>
         </section>
         <script>window.__PLAY_DATA__ = ${serializeForScript(levelState)};</script>
         <script src="/play.js" defer></script>`
