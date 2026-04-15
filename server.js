@@ -116,6 +116,18 @@ function parseLevelCells(parser, row) {
   return Array.from(row);
 }
 
+function parseCellStack(parser, cell) {
+  const blockAdder = parser?.rules?.block_adder;
+
+  if (typeof blockAdder === "string" && blockAdder.length > 0) {
+    return String(cell)
+      .split(blockAdder)
+      .filter((token) => token.length > 0);
+  }
+
+  return cell ? [cell] : [];
+}
+
 function getObjectDefinitions(game) {
   const definitions = Object.entries(game.parser?.objects || {}).map(([name, config]) => {
     const relativeImagePath = typeof config?.image === "string" ? config.image : null;
@@ -147,6 +159,30 @@ function buildTerrainCell(type, definition = null) {
   };
 }
 
+function buildCellState(cellDefinitions, floorDefinition, exitDefinition) {
+  const wallDefinition = cellDefinitions.find((definition) => definition.name === "wall") || null;
+  const exitCellDefinition = cellDefinitions.find((definition) => definition.name === "exit") || null;
+  const terrainDefinition =
+    wallDefinition ||
+    exitCellDefinition ||
+    cellDefinitions.find((definition) => definition.name !== "player") ||
+    null;
+
+  if (terrainDefinition?.name === "exit") {
+    return buildTerrainCell("exit", exitDefinition || terrainDefinition);
+  }
+
+  if (terrainDefinition) {
+    return buildTerrainCell(terrainDefinition.name, terrainDefinition);
+  }
+
+  if (cellDefinitions.some((definition) => definition.name === "player")) {
+    return buildTerrainCell("floor", floorDefinition);
+  }
+
+  return buildTerrainCell("empty");
+}
+
 function getLevelState(game, level) {
   const levelPath = path.join(GAMES_DIR, game.id, "levels", level.fileName);
   const rawLevel = loadText(levelPath, "");
@@ -162,33 +198,27 @@ function getLevelState(game, level) {
     const terrainRow = [];
 
     Array.from({ length: columnCount }, (_, index) => {
-        const token = row[index] || " ";
-        const definition = definitions.byToken.get(token);
+      const cell = row[index] || "";
+      const cellDefinitions = parseCellStack(game.parser, cell)
+        .map((token) => definitions.byToken.get(token))
+        .filter(Boolean);
 
-        if (!definition) {
-          terrainRow.push(buildTerrainCell("empty"));
+      terrainRow.push(buildCellState(cellDefinitions, floorDefinition, exitDefinition));
+
+      cellDefinitions.forEach((definition) => {
+        if (definition.name !== "player") {
           return;
         }
 
-        if (definition.name === "player") {
-          terrainRow.push(buildTerrainCell("floor", floorDefinition));
-          actors.push({
-            type: "player",
-            label: definition.label,
-            imageUrl: definition.imageUrl,
-            x: index,
-            y
-          });
-          return;
-        }
-
-        if (definition.name === "exit") {
-          terrainRow.push(buildTerrainCell("exit", exitDefinition || definition));
-          return;
-        }
-
-        terrainRow.push(buildTerrainCell(definition.name, definition));
+        actors.push({
+          type: "player",
+          label: definition.label,
+          imageUrl: definition.imageUrl,
+          x: index,
+          y
+        });
       });
+    });
 
     terrain.push(terrainRow);
   });

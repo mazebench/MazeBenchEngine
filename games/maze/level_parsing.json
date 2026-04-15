@@ -13,6 +13,9 @@
     "exit": {
       "token": "e"
     },
+    "ice": {
+      "token": "i"
+    },
     "floor": {
       "token": "."
     }

@@ -32,6 +32,14 @@ class GridWorld:
 
         return [list(row) for row in raw_rows]
 
+    def tokens_from_cell(self, cell: str) -> list[str]:
+        block_adder = self.parser.get("rules", {}).get("block_adder", "")
+
+        if isinstance(block_adder, str) and block_adder:
+            return [token for token in str(cell).split(block_adder) if token]
+
+        return [cell] if cell else []
+
     def load_level(self, raw_level: str) -> list[list[str]]:
         self.raw_level = raw_level
         rows = self.rows_from_level()

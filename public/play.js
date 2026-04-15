@@ -298,6 +298,10 @@
     return terrainAt(x, y).type === "wall";
   }
 
+  function isIce(x, y) {
+    return terrainAt(x, y).type === "ice";
+  }
+
   function syncFuzzyToggle() {
     if (!fuzzyToggle) {
       return;
@@ -404,6 +408,28 @@
 
     if (image) {
       sceneCtx.drawImage(image, left, top, TILE_SIZE, TILE_SIZE);
+      return;
+    }
+
+    if (cell.type === "ice") {
+      const centerX = left + TILE_SIZE * 0.5;
+      const centerY = top + TILE_SIZE * 0.5;
+      const shineHalfWidth = TILE_SIZE * 0.27;
+      const shineHalfHeight = TILE_SIZE * 0.12;
+
+      sceneCtx.fillStyle = "#a9d6f4";
+      sceneCtx.fillRect(left, top, TILE_SIZE, TILE_SIZE);
+      sceneCtx.strokeStyle = "rgba(110, 170, 212, 0.6)";
+      sceneCtx.lineWidth = 1.5;
+      sceneCtx.strokeRect(left + 0.75, top + 0.75, TILE_SIZE - 1.5, TILE_SIZE - 1.5);
+      sceneCtx.strokeStyle = "rgba(255, 255, 255, 0.7)";
+      sceneCtx.lineWidth = 3.5;
+      sceneCtx.lineCap = "round";
+      sceneCtx.beginPath();
+      sceneCtx.moveTo(centerX - shineHalfWidth, centerY + shineHalfHeight);
+      sceneCtx.lineTo(centerX + shineHalfWidth, centerY - shineHalfHeight);
+      sceneCtx.stroke();
+      sceneCtx.lineCap = "butt";
       return;
     }
 
@@ -740,16 +766,24 @@
     }
   }
 
-  function animateMoves(moves) {
+  function animateMoves(moves, durationMs = null) {
     if (moves.length === 0) {
       return;
     }
 
     isAnimating = true;
     const startTime = performance.now();
+    const moveDuration =
+      typeof durationMs === "number"
+        ? durationMs
+        : MOVE_DURATION_MS *
+          Math.max(
+            1,
+            ...moves.map(({ fromX, fromY, toX, toY }) => Math.abs(toX - fromX) + Math.abs(toY - fromY))
+          );
 
     function step(now) {
-      const progress = Math.min(1, (now - startTime) / MOVE_DURATION_MS);
+      const progress = Math.min(1, (now - startTime) / moveDuration);
       const eased = easeInOutQuad(progress);
 
       moves.forEach(({ actor, fromX, fromY, toX, toY }) => {
@@ -839,10 +873,19 @@
       const fromY = player.y;
       occupied.delete(posKey(player.x, player.y));
 
-      const nextX = player.x + dx;
-      const nextY = player.y + dy;
+      let nextX = player.x;
+      let nextY = player.y;
 
-      if (canMoveInto(nextX, nextY, occupied)) {
+      while (canMoveInto(nextX + dx, nextY + dy, occupied)) {
+        nextX += dx;
+        nextY += dy;
+
+        if (!isIce(nextX, nextY)) {
+          break;
+        }
+      }
+
+      if (nextX !== player.x || nextY !== player.y) {
         player.x = nextX;
         player.y = nextY;
         moves.push({
@@ -895,7 +938,7 @@
     const moves = buildMovesToPositions(initialPositions);
 
     if (moves.length > 0) {
-      animateMoves(moves);
+      animateMoves(moves, MOVE_DURATION_MS);
       return;
     }
 

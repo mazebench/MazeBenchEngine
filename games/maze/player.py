@@ -44,6 +44,13 @@ class Exit(MazeSprite):
         super().__init__(x, y, name="exit")
 
 
+class Ice(MazeSprite):
+    token = "i"
+
+    def __init__(self, x: int, y: int) -> None:
+        super().__init__(x, y, name="ice")
+
+
 class Player(MazeSprite):
     token = "p"
 
@@ -65,6 +72,7 @@ class MazeWorld(GridWorld):
         "wall": Wall,
         "player": PythonPlayer,
         "exit": Exit,
+        "ice": Ice,
         "floor": Floor,
     }
 
@@ -83,7 +91,7 @@ class MazeWorld(GridWorld):
     def register_object_class(self, name: str, object_class: type[MazeSprite]) -> None:
         self.object_classes = {**self.object_classes, name: object_class}
 
-    def parse_level(self, raw_level: str | None = None) -> list[str]:
+    def parse_level(self, raw_level: str | None = None) -> list[list[str]]:
         if raw_level is not None:
             self.raw_level = raw_level
 
@@ -92,13 +100,14 @@ class MazeWorld(GridWorld):
 
         rows = self.load_level(self.raw_level)
         for y, row in enumerate(rows):
-            for x, token in enumerate(row):
-                object_name = self.object_name_for_token(token)
-                if object_name is None:
-                    continue
+            for x, cell in enumerate(row):
+                for token in self.tokens_from_cell(cell):
+                    object_name = self.object_name_for_token(token)
+                    if object_name is None:
+                        continue
 
-                sprite = self.build_sprite(object_name, x, y)
-                self.add_sprite(sprite)
+                    sprite = self.build_sprite(object_name, x, y)
+                    self.add_sprite(sprite)
 
         return rows
 
@@ -117,6 +126,9 @@ class MazeWorld(GridWorld):
         self.tiles.setdefault(sprite.position, []).append(sprite)
         return sprite
 
+    def tile_has_name(self, x: int, y: int, name: str) -> bool:
+        return any(sprite.name == name for sprite in self.tiles.get((x, y), []))
+
     def update_sprite_position(self, sprite: Sprite, old_position: tuple[int, int]) -> None:
         old_tile = self.tiles.get(old_position, [])
         if sprite in old_tile:
@@ -124,6 +136,12 @@ class MazeWorld(GridWorld):
         if not old_tile and old_position in self.tiles:
             del self.tiles[old_position]
         self.tiles.setdefault(sprite.position, []).append(sprite)
+
+        dx = sprite.x - old_position[0]
+        dy = sprite.y - old_position[1]
+
+        if (dx, dy) != (0, 0) and self.tile_has_name(sprite.x, sprite.y, "ice"):
+            sprite.try_move(dx, dy)
 
     def can_move_to(self, x: int, y: int, sprite: Sprite | None = None) -> bool:
         if not self.in_bounds(x, y):
