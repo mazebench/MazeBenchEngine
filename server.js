@@ -102,18 +102,18 @@ function resolveGameAssetPath(gameId, relativePath) {
   return assetPath;
 }
 
-function parseLevelRows(parser, rawLevel) {
+function parseLevelRows(rawLevel) {
+  return rawLevel.split(/\r?\n/).filter((row) => row.length > 0);
+}
+
+function parseLevelCells(parser, row) {
   const separator = parser?.rules?.separator;
 
-  if (separator === "") {
-    return rawLevel.split(/\r?\n/).filter((row) => row.length > 0);
-  }
-
   if (typeof separator === "string" && separator.length > 0) {
-    return rawLevel.split(separator).filter((row) => row.length > 0);
+    return row.split(separator);
   }
 
-  return rawLevel.split(/\r?\n/).filter((row) => row.length > 0);
+  return Array.from(row);
 }
 
 function getObjectDefinitions(game) {
@@ -150,7 +150,7 @@ function buildTerrainCell(type, definition = null) {
 function getLevelState(game, level) {
   const levelPath = path.join(GAMES_DIR, game.id, "levels", level.fileName);
   const rawLevel = loadText(levelPath, "");
-  const rows = parseLevelRows(game.parser, rawLevel);
+  const rows = parseLevelRows(rawLevel).map((row) => parseLevelCells(game.parser, row));
   const columnCount = rows.reduce((maxColumns, row) => Math.max(maxColumns, row.length), 0);
   const definitions = getObjectDefinitions(game);
   const floorDefinition = definitions.byName.get("floor") || null;

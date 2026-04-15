@@ -20,16 +20,19 @@ class GridWorld:
     def dimensions(self) -> tuple[int, int]:
         return (self.width, self.height)
 
-    def rows_from_level(self) -> list[str]:
+    def rows_from_level(self) -> list[list[str]]:
         if not self.raw_level:
             return []
 
-        separator = self.parser.get("rules", {}).get("separator", "\n")
-        if separator == "":
-            return [row for row in self.raw_level.splitlines() if row]
-        return [row for row in self.raw_level.split(separator) if row]
+        raw_rows = [row for row in self.raw_level.splitlines() if row]
+        separator = self.parser.get("rules", {}).get("separator", "")
 
-    def load_level(self, raw_level: str) -> list[str]:
+        if isinstance(separator, str) and separator:
+            return [row.split(separator) for row in raw_rows]
+
+        return [list(row) for row in raw_rows]
+
+    def load_level(self, raw_level: str) -> list[list[str]]:
         self.raw_level = raw_level
         rows = self.rows_from_level()
         self.width = max((len(row) for row in rows), default=0)

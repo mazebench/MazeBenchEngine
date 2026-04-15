@@ -432,6 +432,11 @@
       return;
     }
 
+    const faceHeight = Math.round(TILE_SIZE * 0.26);
+    const hasFloorAbove = y > 0 && openTop;
+    const liftHeight = hasFloorAbove ? faceHeight : 0;
+    const wallTop = top - liftHeight;
+    const wallHeight = TILE_SIZE + liftHeight;
     const radius = TILE_SIZE * 0.18;
     const radii = {
       tl: openTop && openLeft ? radius : 0,
@@ -439,6 +444,24 @@
       br: 0,
       bl: 0
     };
+    const rightCornerWallTop =
+      openRight &&
+      !openBottom &&
+      x < state.width - 1 &&
+      y < state.height - 1 &&
+      isWall(x + 1, y + 1) &&
+      !isWall(x + 1, y)
+        ? bottom - faceHeight
+        : bottom - radii.br;
+    const leftCornerWallTop =
+      openLeft &&
+      !openBottom &&
+      x > 0 &&
+      y < state.height - 1 &&
+      isWall(x - 1, y + 1) &&
+      !isWall(x - 1, y)
+        ? bottom - faceHeight
+        : bottom - radii.bl;
 
     if (x === 0 && y === 0) {
       radii.tl = 0;
@@ -453,20 +476,19 @@
       radii.bl = 0;
     }
 
-    roundRectPath(sceneCtx, left, top, TILE_SIZE, TILE_SIZE, radii);
+    roundRectPath(sceneCtx, left, wallTop, TILE_SIZE, wallHeight, radii);
     sceneCtx.save();
     sceneCtx.clip();
     sceneCtx.fillStyle = "#23262c";
-    sceneCtx.fillRect(left, top, TILE_SIZE, TILE_SIZE);
+    sceneCtx.fillRect(left, wallTop, TILE_SIZE, wallHeight);
 
     if (y < state.height - 1 && !isWall(x, y + 1)) {
-      const shineHeight = Math.round(TILE_SIZE * 0.26);
-      const shineTop = bottom - shineHeight;
+      const shineTop = bottom - faceHeight;
       const shineBorderWidth = 3;
       const leftNeighborHasShine = x > 0 && isWall(x - 1, y) && !isWall(x - 1, y + 1);
       const rightNeighborHasShine = x < state.width - 1 && isWall(x + 1, y) && !isWall(x + 1, y + 1);
       sceneCtx.fillStyle = "#4f5560";
-      sceneCtx.fillRect(left, shineTop, TILE_SIZE, shineHeight);
+      sceneCtx.fillRect(left, shineTop, TILE_SIZE, faceHeight);
       sceneCtx.lineWidth = shineBorderWidth;
       sceneCtx.strokeStyle = "#000000";
       sceneCtx.beginPath();
@@ -475,10 +497,10 @@
       sceneCtx.stroke();
       sceneCtx.fillStyle = "#000000";
       if (!openLeft && !leftNeighborHasShine) {
-        sceneCtx.fillRect(left, shineTop, shineBorderWidth, shineHeight);
+        sceneCtx.fillRect(left, shineTop, shineBorderWidth, faceHeight);
       }
       if (!openRight && !rightNeighborHasShine) {
-        sceneCtx.fillRect(right - shineBorderWidth, shineTop, shineBorderWidth, shineHeight);
+        sceneCtx.fillRect(right - shineBorderWidth, shineTop, shineBorderWidth, faceHeight);
       }
     }
     sceneCtx.restore();
@@ -488,13 +510,13 @@
     sceneCtx.beginPath();
 
     if (openTop) {
-      sceneCtx.moveTo(left + radii.tl, top);
-      sceneCtx.lineTo(right - radii.tr, top);
+      sceneCtx.moveTo(left + radii.tl, wallTop);
+      sceneCtx.lineTo(right - radii.tr, wallTop);
     }
 
     if (openRight) {
-      sceneCtx.moveTo(right, top + radii.tr);
-      sceneCtx.lineTo(right, bottom - radii.br);
+      sceneCtx.moveTo(right, wallTop + radii.tr);
+      sceneCtx.lineTo(right, rightCornerWallTop);
     }
 
     if (openBottom) {
@@ -503,18 +525,18 @@
     }
 
     if (openLeft) {
-      sceneCtx.moveTo(left, bottom - radii.bl);
-      sceneCtx.lineTo(left, top + radii.tl);
+      sceneCtx.moveTo(left, leftCornerWallTop);
+      sceneCtx.lineTo(left, wallTop + radii.tl);
     }
 
     if (radii.tl > 0) {
-      sceneCtx.moveTo(left + radii.tl, top);
-      sceneCtx.quadraticCurveTo(left, top, left, top + radii.tl);
+      sceneCtx.moveTo(left + radii.tl, wallTop);
+      sceneCtx.quadraticCurveTo(left, wallTop, left, wallTop + radii.tl);
     }
 
     if (radii.tr > 0) {
-      sceneCtx.moveTo(right - radii.tr, top);
-      sceneCtx.quadraticCurveTo(right, top, right, top + radii.tr);
+      sceneCtx.moveTo(right - radii.tr, wallTop);
+      sceneCtx.quadraticCurveTo(right, wallTop, right, wallTop + radii.tr);
     }
 
     if (radii.br > 0) {
@@ -551,7 +573,7 @@
     sceneCtx.stroke();
   }
 
-  function paintTerrain() {
+  function paintGround() {
     for (let y = 0; y < state.height; y += 1) {
       for (let x = 0; x < state.width; x += 1) {
         const cell = terrainAt(x, y);
@@ -568,7 +590,9 @@
         paintFloorTile(x, y, cell);
       }
     }
+  }
 
+  function paintWalls() {
     for (let y = 0; y < state.height; y += 1) {
       for (let x = 0; x < state.width; x += 1) {
         const cell = terrainAt(x, y);
@@ -669,8 +693,9 @@
 
   function render() {
     sceneCtx.clearRect(0, 0, boardRect.width, boardRect.height);
-    paintTerrain();
+    paintGround();
     state.actors.forEach(paintActor);
+    paintWalls();
     const settings = getEffectSettings();
 
     if (!renderWithShader(sceneCanvas, settings)) {

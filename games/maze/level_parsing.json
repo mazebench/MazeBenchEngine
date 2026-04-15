@@ -1,6 +1,7 @@
 {
   "rules": {
-    "separator": ""
+    "separator": " ",
+    "block_adder": "+"
   },
   "objects": {
     "wall": {
