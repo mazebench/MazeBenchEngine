@@ -89,11 +89,12 @@ class Player(MazeSprite):
     def try_move(self, dx: int, dy: int, *, allow_push: bool = True) -> bool:
         if allow_push and isinstance(self.world, MazeWorld):
             pushable = self.world.pushable_at(self.x + dx, self.y + dy)
-            if isinstance(pushable, WeightlessBox):
-                if not self.world.try_move_weightless_group(pushable.group_key, dx, dy):
+            if pushable is not None:
+                snapshot = self.world.snapshot_state()
+                push_budget = self.world.contiguous_player_count(self, dx, dy)
+                if self.world.try_push_actor(pushable, dx, dy, push_budget) is None:
+                    self.world.restore_state(snapshot)
                     return False
-            elif pushable is not None and not pushable.try_move(dx, dy):
-                return False
 
         return super().try_move(dx, dy, allow_push=allow_push)
 
@@ -180,12 +181,59 @@ class MazeWorld(GridWorld):
                 return sprite
         return None
 
+    def player_at(self, x: int, y: int) -> Player | None:
+        for sprite in self.tiles.get((x, y), []):
+            if isinstance(sprite, Player):
+                return sprite
+        return None
+
+    def contiguous_player_count(self, player: Player, dx: int, dy: int) -> int:
+        count = 1
+        check_x = player.x
+        check_y = player.y
+
+        while True:
+            check_x -= dx
+            check_y -= dy
+
+            if self.player_at(check_x, check_y) is None:
+                break
+
+            count += 1
+
+        return count
+
     def weightless_group_members(self, group_key: str) -> list[WeightlessBox]:
         return [
             sprite
             for sprite in self.sprites
             if isinstance(sprite, WeightlessBox) and sprite.group_key == group_key
         ]
+
+    def push_entity_key(self, sprite: Box | WeightlessBox) -> tuple[str, str | int]:
+        if isinstance(sprite, WeightlessBox):
+            return ("weightless", sprite.group_key)
+
+        return ("box", id(sprite))
+
+    def push_weight(self, sprite: Box | WeightlessBox) -> int:
+        return 1 if isinstance(sprite, Box) else 0
+
+    def push_actor_members(self, sprite: Box | WeightlessBox) -> list[Box | WeightlessBox]:
+        if isinstance(sprite, WeightlessBox):
+            return self.weightless_group_members(sprite.group_key)
+
+        return [sprite]
+
+    def snapshot_state(self) -> list[tuple[Sprite, tuple[int, int]]]:
+        return [(sprite, sprite.position) for sprite in self.sprites]
+
+    def restore_state(self, snapshot: list[tuple[Sprite, tuple[int, int]]]) -> None:
+        self.tiles.clear()
+
+        for sprite, position in snapshot:
+            sprite.x, sprite.y = position
+            self.tiles.setdefault(sprite.position, []).append(sprite)
 
     def can_move_weightless_group(self, members: list[WeightlessBox], dx: int, dy: int) -> bool:
         for member in members:
@@ -235,6 +283,75 @@ class MazeWorld(GridWorld):
                 break
 
         return moved
+
+    def try_push_actor(
+        self,
+        sprite: Box | WeightlessBox,
+        dx: int,
+        dy: int,
+        budget: int,
+        handled: set[tuple[str, str | int]] | None = None,
+    ) -> int | None:
+        if handled is None:
+            handled = set()
+
+        entity_key = self.push_entity_key(sprite)
+
+        if entity_key in handled:
+            return budget
+
+        cost = self.push_weight(sprite)
+
+        if budget < cost:
+            return None
+
+        remaining_budget = budget - cost
+        members = self.push_actor_members(sprite)
+        member_ids = {id(member) for member in members}
+        blockers: list[Box | WeightlessBox] = []
+        blocker_keys: set[tuple[str, str | int]] = set()
+
+        for member in members:
+            target_x = member.x + dx
+            target_y = member.y + dy
+
+            if not self.in_bounds(target_x, target_y):
+                return None
+
+            for occupant in self.tiles.get((target_x, target_y), []):
+                if id(occupant) in member_ids:
+                    continue
+
+                if not isinstance(occupant, (Box, WeightlessBox)):
+                    if getattr(occupant, "solid", False):
+                        return None
+                    continue
+
+                blocker_key = self.push_entity_key(occupant)
+
+                if blocker_key not in blocker_keys:
+                    blockers.append(occupant)
+                    blocker_keys.add(blocker_key)
+
+        for blocker in blockers:
+            result = self.try_push_actor(blocker, dx, dy, remaining_budget, handled)
+
+            if result is None:
+                return None
+
+            remaining_budget = result
+
+        moved = (
+            self.try_move_weightless_group(sprite.group_key, dx, dy)
+            if isinstance(sprite, WeightlessBox)
+            else sprite.try_move(dx, dy, allow_push=False)
+        )
+
+        if not moved:
+            return None
+
+        handled.add(entity_key)
+        return remaining_budget
 
     def update_sprite_position(self, sprite: Sprite, old_position: tuple[int, int]) -> None:
         self.sync_sprite_tile(sprite, old_position)

@@ -296,6 +296,29 @@
     return state.actors.map((actor) => ({ x: actor.x, y: actor.y }));
   }
 
+  function restoreActorPositions(positions) {
+    state.actors.forEach((actor, index) => {
+      const target = positions[index];
+
+      if (!target) {
+        return;
+      }
+
+      actor.x = target.x;
+      actor.y = target.y;
+    });
+  }
+
+  function buildOccupiedSet(excludedActor = null) {
+    const occupied = new Set(state.actors.map((actor) => posKey(actor.x, actor.y)));
+
+    if (excludedActor) {
+      occupied.delete(posKey(excludedActor.x, excludedActor.y));
+    }
+
+    return occupied;
+  }
+
   function actorAt(x, y, predicate = null) {
     return (
       state.actors.find((actor) => {
@@ -308,8 +331,20 @@
     );
   }
 
+  function pushEntityKey(actor) {
+    return actor.type === "weightless_box" ? `weightless:${actor.groupId}` : actor;
+  }
+
+  function pushWeight(actor) {
+    return actor.type === "box" ? 1 : 0;
+  }
+
   function isPushableActor(actor) {
     return actor?.type === "box" || actor?.type === "weightless_box";
+  }
+
+  function pushActorMembers(actor) {
+    return actor.type === "weightless_box" ? weightlessGroupMembers(actor.groupId) : [actor];
   }
 
   function weightlessGroupMembers(groupId) {
@@ -1074,6 +1109,25 @@
     return true;
   }
 
+  function countSupportingPlayers(player, dx, dy) {
+    let count = 1;
+    let checkX = player.x;
+    let checkY = player.y;
+
+    while (true) {
+      checkX -= dx;
+      checkY -= dy;
+
+      if (!actorAt(checkX, checkY, (actor) => actor.type === "player")) {
+        break;
+      }
+
+      count += 1;
+    }
+
+    return count;
+  }
+
   function canMoveWeightlessGroup(members, dx, dy, occupied) {
     return members.every((member) => {
       const targetX = member.x + dx;
@@ -1141,6 +1195,74 @@
     });
 
     return true;
+  }
+
+  function attemptPushActor(actor, dx, dy, occupied, moves, budget, handled = new Set()) {
+    const entityKey = pushEntityKey(actor);
+
+    if (handled.has(entityKey)) {
+      return budget;
+    }
+
+    const cost = pushWeight(actor);
+
+    if (budget < cost) {
+      return null;
+    }
+
+    let remainingBudget = budget - cost;
+    const members = pushActorMembers(actor);
+    const memberSet = new Set(members);
+    const blockers = [];
+    const blockerKeys = new Set();
+
+    for (const member of members) {
+      const targetX = member.x + dx;
+      const targetY = member.y + dy;
+
+      if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY)) {
+        return null;
+      }
+
+      const blocker = actorAt(targetX, targetY, (candidate) => !memberSet.has(candidate));
+
+      if (!blocker) {
+        continue;
+      }
+
+      if (!isPushableActor(blocker)) {
+        return null;
+      }
+
+      const blockerKey = pushEntityKey(blocker);
+
+      if (!blockerKeys.has(blockerKey)) {
+        blockers.push(blocker);
+        blockerKeys.add(blockerKey);
+      }
+    }
+
+    for (const blocker of blockers) {
+      const result = attemptPushActor(blocker, dx, dy, occupied, moves, remainingBudget, handled);
+
+      if (result === null) {
+        return null;
+      }
+
+      remainingBudget = result;
+    }
+
+    const moved =
+      actor.type === "weightless_box"
+        ? moveWeightlessGroup(actor.groupId, dx, dy, occupied, moves)
+        : moveBox(actor, dx, dy, occupied, moves);
+
+    if (!moved) {
+      return null;
+    }
+
+    handled.add(entityKey);
+    return remainingBudget;
   }
 
   function easeInOutQuad(progress) {
@@ -1265,7 +1387,7 @@
     }
 
     const players = state.actors.filter((actor) => actor.type === "player");
-    const occupied = new Set(state.actors.map((actor) => posKey(actor.x, actor.y)));
+    let occupied = buildOccupiedSet();
     const orderedPlayers = players.slice().sort(sortActorsForMove(dx, dy));
     const previousPositions = cloneActorPositions();
     const moves = [];
@@ -1293,10 +1415,18 @@
           let didMoveBlockingActor = false;
 
           if (isInitialStep && isPushableActor(blockingActor)) {
-            didMoveBlockingActor =
-              blockingActor.type === "weightless_box"
-                ? moveWeightlessGroup(blockingActor.groupId, dx, dy, occupied, moves)
-                : moveBox(blockingActor, dx, dy, occupied, moves);
+            const attemptSnapshot = cloneActorPositions();
+            const moveCount = moves.length;
+            const pushBudget = countSupportingPlayers(player, dx, dy);
+            const result = attemptPushActor(blockingActor, dx, dy, occupied, moves, pushBudget);
+
+            if (result !== null) {
+              didMoveBlockingActor = true;
+            } else {
+              restoreActorPositions(attemptSnapshot);
+              moves.length = moveCount;
+              occupied = buildOccupiedSet(player);
+            }
           }
 
           if (!didMoveBlockingActor) {
