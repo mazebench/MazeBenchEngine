@@ -351,6 +351,19 @@
     return state.actors.filter((actor) => actor.type === "weightless_box" && actor.groupId === groupId);
   }
 
+  function weightlessGroupRenderOffset(groupId) {
+    const anchor = weightlessGroupMembers(groupId)[0];
+
+    if (!anchor) {
+      return { x: 0, y: 0 };
+    }
+
+    return {
+      x: Math.round(anchor.renderX * TILE_SIZE) - anchor.x * TILE_SIZE,
+      y: Math.round(anchor.renderY * TILE_SIZE) - anchor.y * TILE_SIZE
+    };
+  }
+
   function isWeightlessBoxAt(groupId, x, y) {
     return state.actors.some(
       (actor) => actor.type === "weightless_box" && actor.groupId === groupId && actor.x === x && actor.y === y
@@ -741,8 +754,9 @@
   }
 
   function paintWeightlessBox(actor) {
-    const left = actor.renderX * TILE_SIZE;
-    const top = actor.renderY * TILE_SIZE;
+    const groupOffset = weightlessGroupRenderOffset(actor.groupId);
+    const left = actor.x * TILE_SIZE + groupOffset.x;
+    const top = actor.y * TILE_SIZE + groupOffset.y;
     const right = left + TILE_SIZE;
     const bottom = top + TILE_SIZE;
     const openTop = !isWeightlessBoxAt(actor.groupId, actor.x, actor.y - 1);
