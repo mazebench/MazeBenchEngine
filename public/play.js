@@ -363,6 +363,14 @@
     return actor.type === "weightless_box" ? `weightless:${actor.groupId}` : actor;
   }
 
+  function isPlayerActorType(type) {
+    return type === "player" || type === "circle_player";
+  }
+
+  function isPlayerActor(actor) {
+    return isPlayerActorType(actor?.type);
+  }
+
   function pushWeight(actor) {
     return actor.type === "box" ? 1 : 0;
   }
@@ -1010,6 +1018,71 @@
     context.stroke();
   }
 
+  function paintRaisedPlayer(actor, context = sceneCtx) {
+    const scale = actor.renderScale ?? 1;
+
+    if (scale <= 0.001) {
+      return;
+    }
+
+    const sink = actor.renderSink ?? 0;
+    const left = actor.renderX * TILE_SIZE;
+    const top = actor.renderY * TILE_SIZE;
+    const bottom = top + TILE_SIZE;
+    const faceHeight = Math.round(TILE_SIZE * 0.26);
+    const liftHeight = actor.renderY > 0 ? faceHeight : 0;
+    const blockTop = top - liftHeight;
+    const blockHeight = TILE_SIZE + liftHeight;
+    const radius = TILE_SIZE * 0.18;
+    const radii = {
+      tl: radius,
+      tr: radius,
+      br: 0,
+      bl: 0
+    };
+
+    context.save();
+    context.translate(left + TILE_SIZE / 2, bottom + sink);
+    context.scale(scale, scale);
+    context.translate(-(left + TILE_SIZE / 2), -bottom);
+
+    roundRectPath(context, left, blockTop, TILE_SIZE, blockHeight, radii);
+    context.save();
+    context.clip();
+    context.fillStyle = "#4d8b52";
+    context.fillRect(left, blockTop, TILE_SIZE, blockHeight);
+
+    const shineTop = bottom - faceHeight;
+    const shineBorderWidth = 3;
+    context.fillStyle = "#86cb7d";
+    context.fillRect(left, shineTop, TILE_SIZE, faceHeight);
+    context.lineWidth = shineBorderWidth;
+    context.strokeStyle = "#000000";
+    context.beginPath();
+    context.moveTo(left, shineTop + shineBorderWidth / 2);
+    context.lineTo(left + TILE_SIZE, shineTop + shineBorderWidth / 2);
+    context.stroke();
+    context.restore();
+
+    context.lineWidth = 3;
+    context.strokeStyle = "#000000";
+    context.beginPath();
+    context.moveTo(left + radii.tl, blockTop);
+    context.lineTo(left + TILE_SIZE - radii.tr, blockTop);
+    context.moveTo(left + TILE_SIZE, blockTop + radii.tr);
+    context.lineTo(left + TILE_SIZE, bottom);
+    context.moveTo(left + TILE_SIZE, bottom);
+    context.lineTo(left, bottom);
+    context.moveTo(left, bottom);
+    context.lineTo(left, blockTop + radii.tl);
+    context.moveTo(left + radii.tl, blockTop);
+    context.quadraticCurveTo(left, blockTop, left, blockTop + radii.tl);
+    context.moveTo(left + TILE_SIZE - radii.tr, blockTop);
+    context.quadraticCurveTo(left + TILE_SIZE, blockTop, left + TILE_SIZE, blockTop + radii.tr);
+    context.stroke();
+    context.restore();
+  }
+
   function animatedWeightlessGroupMembers(groupId) {
     return weightlessGroupMembers(groupId, { includeRemoved: true }).filter(
       (member) => !member.removed || member.renderScale > 0.001
@@ -1134,7 +1207,7 @@
 
       drawItems.push({
         depth: actor.renderY + 1,
-        tieBreaker: actor.type === "player" ? 2 : 1,
+        tieBreaker: isPlayerActor(actor) ? 2 : 1,
         order: index,
         paint: function () {
           paintActor(actor);
@@ -1199,7 +1272,7 @@
       return;
     }
 
-    if (actor.type === "player") {
+    if (actor.type === "circle_player") {
       sceneCtx.fillStyle = "#5aa95c";
       sceneCtx.beginPath();
       sceneCtx.arc(
@@ -1213,6 +1286,11 @@
       sceneCtx.lineWidth = 3;
       sceneCtx.strokeStyle = "#000000";
       sceneCtx.stroke();
+      return;
+    }
+
+    if (actor.type === "player") {
+      paintRaisedPlayer(actor);
       return;
     }
 
@@ -1393,7 +1471,7 @@
       checkX -= dx;
       checkY -= dy;
 
-      if (!actorAt(checkX, checkY, (actor) => actor.type === "player")) {
+      if (!actorAt(checkX, checkY, (actor) => isPlayerActor(actor))) {
         break;
       }
 
@@ -1775,7 +1853,7 @@
       return;
     }
 
-    const players = state.actors.filter((actor) => actor.type === "player" && !actor.removed);
+    const players = state.actors.filter((actor) => isPlayerActor(actor) && !actor.removed);
     let occupied = buildOccupiedSet();
     const orderedPlayers = players.slice().sort(sortActorsForMove(dx, dy));
     const previousPositions = cloneActorPositions();

@@ -181,6 +181,7 @@ function buildTerrainCell(type, definition = null) {
 function isActorDefinition(definition) {
   return (
     definition?.name === "player" ||
+    definition?.name === "circle_player" ||
     definition?.name === "box" ||
     definition?.name === "weightless_box"
   );

@@ -115,10 +115,18 @@ class PythonPlayer(Player):
         return (0, 0)
 
 
+class CirclePlayer(Player):
+    token = "cp"
+
+    def __init__(self, x: int, y: int) -> None:
+        super().__init__(x, y, name="circle_player")
+
+
 class MazeWorld(GridWorld):
     object_classes: dict[str, type[MazeSprite]] = {
         "wall": Wall,
         "player": PythonPlayer,
+        "circle_player": CirclePlayer,
         "box": Box,
         "weightless_box": WeightlessBox,
         "exit": Exit,
@@ -412,8 +420,8 @@ class MazeWorld(GridWorld):
 
         return True
 
-    def find_player(self) -> PythonPlayer | None:
+    def find_player(self) -> Player | None:
         for sprite in self.sprites:
-            if isinstance(sprite, PythonPlayer):
+            if isinstance(sprite, Player):
                 return sprite
         return None

@@ -10,6 +10,9 @@
     "player": {
       "token": "p"
     },
+    "circle_player": {
+      "token": "cp"
+    },
     "box": {
       "token": "b",
       "image": "images/crate.png"
