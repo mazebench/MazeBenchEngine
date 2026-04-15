@@ -21,6 +21,10 @@ def config_tokens(config: dict[str, Any]) -> list[str]:
     return []
 
 
+def is_actor_object_name(object_name: str) -> bool:
+    return object_name in {"player", "circle_player", "box", "floating_floor", "weightless_box"}
+
+
 class MazeSprite(Sprite):
     token = "?"
     solid = False
@@ -85,6 +89,14 @@ class Box(MazeSprite):
         super().__init__(x, y, name="box")
 
 
+class FloatingFloor(MazeSprite):
+    token = "f"
+    solid = True
+
+    def __init__(self, x: int, y: int) -> None:
+        super().__init__(x, y, name="floating_floor")
+
+
 class WeightlessBox(MazeSprite):
     token = "M"
     solid = True
@@ -146,6 +158,7 @@ class MazeWorld(GridWorld):
         "circle_player": CirclePlayer,
         "player_gate": PlayerGate,
         "box": Box,
+        "floating_floor": FloatingFloor,
         "weightless_box": WeightlessBox,
         "exit": Exit,
         "ice": Ice,
@@ -179,11 +192,26 @@ class MazeWorld(GridWorld):
         rows = self.load_level(self.raw_level)
         for y, row in enumerate(rows):
             for x, cell in enumerate(row):
+                cell_definitions: list[dict[str, str]] = []
+
                 for token in self.tokens_from_cell(cell):
                     definition = self.object_definition_for_token(token)
                     if definition is None:
                         continue
 
+                    cell_definitions.append(definition)
+
+                has_wall = any(definition["name"] == "wall" for definition in cell_definitions)
+                has_actor = any(is_actor_object_name(definition["name"]) for definition in cell_definitions)
+                has_explicit_ground = any(
+                    definition["name"] != "wall" and not is_actor_object_name(definition["name"])
+                    for definition in cell_definitions
+                )
+
+                if (has_wall or has_actor) and not has_explicit_ground:
+                    cell_definitions.append({"name": "floor", "token": Floor.token})
+
+                for definition in cell_definitions:
                     sprite = self.build_sprite(definition["name"], x, y, token=definition["token"])
                     self.add_sprite(sprite)
 
@@ -221,9 +249,9 @@ class MazeWorld(GridWorld):
     def tile_has_name(self, x: int, y: int, name: str) -> bool:
         return any(sprite.name == name for sprite in self.tiles.get((x, y), []))
 
-    def pushable_at(self, x: int, y: int) -> Box | WeightlessBox | None:
+    def pushable_at(self, x: int, y: int) -> Box | FloatingFloor | WeightlessBox | None:
         for sprite in self.tiles.get((x, y), []):
-            if isinstance(sprite, (Box, WeightlessBox)):
+            if isinstance(sprite, (Box, FloatingFloor, WeightlessBox)):
                 return sprite
         return None
 
@@ -234,7 +262,10 @@ class MazeWorld(GridWorld):
         return None
 
     def has_mobile_actor_at(self, x: int, y: int) -> bool:
-        return any(isinstance(sprite, (Player, Box, WeightlessBox)) for sprite in self.tiles.get((x, y), []))
+        return any(
+            isinstance(sprite, (Player, Box, FloatingFloor, WeightlessBox))
+            for sprite in self.tiles.get((x, y), [])
+        )
 
     def compute_raised_player_gates(self) -> set[tuple[int, int]]:
         raised: set[tuple[int, int]] = set()
@@ -286,20 +317,34 @@ class MazeWorld(GridWorld):
             if isinstance(sprite, WeightlessBox) and sprite.group_key == group_key
         ]
 
-    def push_entity_key(self, sprite: Box | WeightlessBox) -> tuple[str, str | int]:
+    def push_entity_key(self, sprite: Box | FloatingFloor | WeightlessBox) -> tuple[str, str | int]:
         if isinstance(sprite, WeightlessBox):
             return ("weightless", sprite.group_key)
 
+        if isinstance(sprite, FloatingFloor):
+            return ("floating_floor", id(sprite))
+
         return ("box", id(sprite))
 
-    def push_weight(self, sprite: Box | WeightlessBox) -> int:
-        return 1 if isinstance(sprite, Box) else 0
+    def push_weight(self, sprite: Box | FloatingFloor | WeightlessBox) -> int:
+        return 1 if isinstance(sprite, (Box, FloatingFloor)) else 0
 
-    def push_actor_members(self, sprite: Box | WeightlessBox) -> list[Box | WeightlessBox]:
+    def push_actor_members(
+        self,
+        sprite: Box | FloatingFloor | WeightlessBox,
+    ) -> list[Box | FloatingFloor | WeightlessBox]:
         if isinstance(sprite, WeightlessBox):
             return self.weightless_group_members(sprite.group_key)
 
         return [sprite]
+
+    def fill_hole_with_floor(self, x: int, y: int) -> None:
+        for sprite in list(self.tiles.get((x, y), [])):
+            if sprite.name == "hole":
+                self.remove_sprite(sprite)
+
+        if not self.tile_has_name(x, y, "floor"):
+            self.add_sprite(Floor(x, y))
 
     def snapshot_state(self) -> list[tuple[Sprite, tuple[int, int]]]:
         return [(sprite, sprite.position) for sprite in self.sprites]
@@ -377,7 +422,7 @@ class MazeWorld(GridWorld):
 
     def try_push_actor(
         self,
-        sprite: Box | WeightlessBox,
+        sprite: Box | FloatingFloor | WeightlessBox,
         dx: int,
         dy: int,
         budget: int,
@@ -399,7 +444,7 @@ class MazeWorld(GridWorld):
         remaining_budget = budget - cost
         members = self.push_actor_members(sprite)
         member_ids = {id(member) for member in members}
-        blockers: list[Box | WeightlessBox] = []
+        blockers: list[Box | FloatingFloor | WeightlessBox] = []
         blocker_keys: set[tuple[str, str | int]] = set()
 
         for member in members:
@@ -416,7 +461,7 @@ class MazeWorld(GridWorld):
                 if id(occupant) in member_ids:
                     continue
 
-                if not isinstance(occupant, (Box, WeightlessBox)):
+                if not isinstance(occupant, (Box, FloatingFloor, WeightlessBox)):
                     if getattr(occupant, "solid", False):
                         return None
                     continue
@@ -454,6 +499,8 @@ class MazeWorld(GridWorld):
             return
 
         if self.tile_has_name(sprite.x, sprite.y, "hole"):
+            if isinstance(sprite, FloatingFloor):
+                self.fill_hole_with_floor(sprite.x, sprite.y)
             self.remove_sprite(sprite)
             return
 

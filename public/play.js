@@ -15,6 +15,11 @@
   const GATE_FALL_DURATION_MS = 180;
   const HOLE_FALL_DURATION_MS = 300;
   const HOLE_SINK_DISTANCE = TILE_SIZE * 0.42;
+  const FLOATING_FLOOR_HOVER_BASE = TILE_SIZE * 0.12;
+  const FLOATING_FLOOR_HOVER_BOB = TILE_SIZE * 0.045;
+  const FLOATING_FLOOR_HOVER_PERIOD_MS = 2400;
+  const FLOATING_FLOOR_HOVER_FPS = 30;
+  const FLOATING_FLOOR_HOVER_FRAME_MS = 1000 / FLOATING_FLOOR_HOVER_FPS;
   const playShell = document.querySelector(".play-shell");
   const playHeader = document.querySelector(".play-header");
   const playStage = document.querySelector(".play-stage");
@@ -27,6 +32,8 @@
     terrain: playData.terrain,
     actors: playData.actors.map((actor) => ({
       ...actor,
+      hoverSeed:
+        (((actor.x + 1) * 0.61803398875 + (actor.y + 1) * 1.41421356237) % 1) * Math.PI * 2,
       renderX: actor.x,
       renderY: actor.y,
       renderScale: 1,
@@ -44,6 +51,10 @@
     row.forEach((cell) => {
       if (cell.imageUrl) {
         imageUrls.add(cell.imageUrl);
+      }
+
+      if (cell.underlay?.imageUrl) {
+        imageUrls.add(cell.underlay.imageUrl);
       }
     });
   });
@@ -73,12 +84,15 @@
     y: actor.y,
     removed: actor.removed
   }));
+  const initialTerrain = cloneTerrainState(state.terrain);
   const moveHistory = [];
   let animationFrameId = null;
   let isAnimating = false;
   let queuedAction = null;
   let renderer = null;
   let noiseFrameId = null;
+  let floatingFloorFrameId = null;
+  let lastFloatingFloorTickMs = 0;
   let lastNoiseTickMs = 0;
   let liveRaisedPlayerGates = new Set();
   let gateRenderOverride = null;
@@ -318,6 +332,21 @@
     }));
   }
 
+  function cloneTerrainCell(cell) {
+    return {
+      ...cell,
+      underlay: cell?.underlay ? cloneTerrainCell(cell.underlay) : null
+    };
+  }
+
+  function cloneTerrainState(terrain) {
+    return terrain.map((row) => row.map((cell) => cloneTerrainCell(cell)));
+  }
+
+  function restoreTerrainState(terrain) {
+    state.terrain = cloneTerrainState(terrain);
+  }
+
   function restoreActorPositions(positions) {
     state.actors.forEach((actor, index) => {
       const target = positions[index];
@@ -379,11 +408,11 @@
   }
 
   function pushWeight(actor) {
-    return actor.type === "box" ? 1 : 0;
+    return actor.type === "box" || actor.type === "floating_floor" ? 1 : 0;
   }
 
   function isPushableActor(actor) {
-    return actor?.type === "box" || actor?.type === "weightless_box";
+    return actor?.type === "box" || actor?.type === "floating_floor" || actor?.type === "weightless_box";
   }
 
   function pushActorMembers(actor) {
@@ -460,7 +489,22 @@
   }
 
   function terrainAt(x, y) {
-    return state.terrain[y]?.[x] || { type: "empty", label: "Empty", imageUrl: null };
+    return (
+      state.terrain[y]?.[x] || {
+        type: "empty",
+        label: "Empty",
+        imageUrl: null,
+        underlay: null
+      }
+    );
+  }
+
+  function groundSurfaceCell(cell) {
+    if (cell?.type === "wall" && cell.underlay) {
+      return cell.underlay;
+    }
+
+    return cell;
   }
 
   function isPlayerGate(x, y) {
@@ -525,7 +569,22 @@
   }
 
   function isGroundCell(cell) {
-    return cell.type !== "wall" && cell.type !== "hole" && cell.type !== "empty";
+    const groundCell = groundSurfaceCell(cell);
+    return groundCell.type !== "wall" && groundCell.type !== "hole" && groundCell.type !== "empty";
+  }
+
+  function hasVisibleFloatingFloorActors() {
+    return state.actors.some(
+      (actor) =>
+        actor.type === "floating_floor" && (!actor.removed || (actor.renderScale ?? 0) > 0.001)
+    );
+  }
+
+  function floatingFloorHoverOffset(actor, now = performance.now()) {
+    const oscillation =
+      Math.sin((now / FLOATING_FLOOR_HOVER_PERIOD_MS) * Math.PI * 2 + (actor.hoverSeed || 0)) *
+      FLOATING_FLOOR_HOVER_BOB;
+    return FLOATING_FLOOR_HOVER_BASE + oscillation;
   }
 
   function easeOutBack(progress) {
@@ -692,6 +751,43 @@
     noiseFrameId = window.requestAnimationFrame(step);
   }
 
+  function syncFloatingFloorTicker() {
+    if (floatingFloorFrameId !== null) {
+      window.cancelAnimationFrame(floatingFloorFrameId);
+      floatingFloorFrameId = null;
+    }
+
+    if (!hasVisibleFloatingFloorActors()) {
+      lastFloatingFloorTickMs = 0;
+      return;
+    }
+
+    lastFloatingFloorTickMs = 0;
+
+    function step(now) {
+      if (!hasVisibleFloatingFloorActors()) {
+        floatingFloorFrameId = null;
+        lastFloatingFloorTickMs = 0;
+        return;
+      }
+
+      if (
+        lastFloatingFloorTickMs === 0 ||
+        now - lastFloatingFloorTickMs >= FLOATING_FLOOR_HOVER_FRAME_MS
+      ) {
+        lastFloatingFloorTickMs = now;
+
+        if (!isAnimating) {
+          render();
+        }
+      }
+
+      floatingFloorFrameId = window.requestAnimationFrame(step);
+    }
+
+    floatingFloorFrameId = window.requestAnimationFrame(step);
+  }
+
   if (gl) {
     canvas.addEventListener("webglcontextlost", function (event) {
       event.preventDefault();
@@ -701,12 +797,18 @@
         window.cancelAnimationFrame(noiseFrameId);
         noiseFrameId = null;
       }
+
+      if (floatingFloorFrameId !== null) {
+        window.cancelAnimationFrame(floatingFloorFrameId);
+        floatingFloorFrameId = null;
+      }
     });
 
     canvas.addEventListener("webglcontextrestored", function () {
       renderer = initializeRenderer(gl);
       setupCanvas();
       syncNoiseTicker();
+      syncFloatingFloorTicker();
       if (!isAnimating) {
         render();
       }
@@ -841,11 +943,13 @@
   }
 
   function groundFaceColor(cell) {
-    if (cell.type === "ice") {
+    const groundCell = groundSurfaceCell(cell);
+
+    if (groundCell.type === "ice") {
       return "#7fb6db";
     }
 
-    if (cell.type === "player_gate") {
+    if (groundCell.type === "player_gate") {
       return "#a84d46";
     }
 
@@ -857,6 +961,7 @@
       return;
     }
 
+    const groundCell = groundSurfaceCell(cell);
     const left = x * TILE_SIZE;
     const faceTop = (y + 1) * TILE_SIZE;
     const faceHeight = Math.round(TILE_SIZE * 0.24);
@@ -866,7 +971,7 @@
     const rightNeighborHasFace =
       x < state.width - 1 && isGroundCell(terrainAt(x + 1, y)) && isHole(x + 1, y + 1);
 
-    sceneCtx.fillStyle = groundFaceColor(cell);
+    sceneCtx.fillStyle = groundFaceColor(groundCell);
     sceneCtx.fillRect(left, faceTop, TILE_SIZE, faceHeight);
     sceneCtx.lineWidth = borderWidth;
     sceneCtx.strokeStyle = "#000000";
@@ -896,7 +1001,7 @@
     const openBottom = !isTerrainWall(x, y + 1);
     const openLeft = !isTerrainWall(x - 1, y);
 
-    paintFloorTile(x, y, { imageUrl: null });
+    paintFloorTile(x, y, groundSurfaceCell(cell));
 
     if (image) {
       sceneCtx.drawImage(image, left, top, TILE_SIZE, TILE_SIZE);
@@ -1347,6 +1452,73 @@
     context.restore();
   }
 
+  function paintFloatingFloor(actor, context = sceneCtx, now = performance.now()) {
+    const scale = actor.renderScale ?? 1;
+
+    if (scale <= 0.001) {
+      return;
+    }
+
+    const sink = actor.renderSink ?? 0;
+    const left = actor.renderX * TILE_SIZE;
+    const top = actor.renderY * TILE_SIZE;
+    const right = left + TILE_SIZE;
+    const bottom = top + TILE_SIZE;
+    const hover = Math.max(0, floatingFloorHoverOffset(actor, now));
+    const platformTop = top - hover + sink;
+    const platformBottom = bottom - hover + sink;
+    const radius = Math.min(7, TILE_SIZE * 0.11);
+
+    context.save();
+    context.translate(left + TILE_SIZE / 2, bottom + sink);
+    context.scale(scale, scale);
+    context.translate(-(left + TILE_SIZE / 2), -(bottom + sink));
+
+    roundRectPath(context, left, platformTop, TILE_SIZE, TILE_SIZE + hover, {
+      tl: radius,
+      tr: radius,
+      br: 0,
+      bl: 0
+    });
+    context.save();
+    context.clip();
+    context.fillStyle = "#d6bd94";
+    context.fillRect(left, platformTop, TILE_SIZE, TILE_SIZE + hover);
+    context.strokeStyle = "rgba(0, 0, 0, 0.12)";
+    context.lineWidth = 1.5;
+    context.strokeRect(left + 0.75, platformTop + 0.75, TILE_SIZE - 1.5, TILE_SIZE - 1.5);
+
+    if (hover > 0.001) {
+      context.fillStyle = "#b89c73";
+      context.fillRect(left, platformBottom, TILE_SIZE, hover);
+    }
+    context.restore();
+
+    context.lineWidth = 3;
+    context.strokeStyle = "#000000";
+    context.beginPath();
+    context.moveTo(left + radius, platformTop);
+    context.lineTo(right - radius, platformTop);
+    context.moveTo(right, platformTop + radius);
+    context.lineTo(right, bottom + sink);
+    context.moveTo(right, bottom + sink);
+    context.lineTo(left, bottom + sink);
+    context.moveTo(left, bottom + sink);
+    context.lineTo(left, platformTop + radius);
+    context.moveTo(left + radius, platformTop);
+    context.quadraticCurveTo(left, platformTop, left, platformTop + radius);
+    context.moveTo(right - radius, platformTop);
+    context.quadraticCurveTo(right, platformTop, right, platformTop + radius);
+
+    if (hover > 0.001) {
+      context.moveTo(left, platformBottom);
+      context.lineTo(right, platformBottom);
+    }
+
+    context.stroke();
+    context.restore();
+  }
+
   function animatedWeightlessGroupMembers(groupId) {
     return weightlessGroupMembers(groupId, { includeRemoved: true }).filter(
       (member) => !member.removed || member.renderScale > 0.001
@@ -1480,7 +1652,7 @@
         tieBreaker: isPlayerActor(actor) ? 2 : 1,
         order: index,
         paint: function () {
-          paintActor(actor);
+          paintActor(actor, now);
         }
       });
     });
@@ -1500,7 +1672,7 @@
     drawItems.forEach((item) => item.paint());
   }
 
-  function paintActor(actor) {
+  function paintActor(actor, now = performance.now()) {
     if (actor.removed) {
       return;
     }
@@ -1519,6 +1691,11 @@
     if (actor.type === "weightless_box") {
       const groupState = weightlessGroupRenderState(actor.groupId);
       paintWeightlessBoxTile(actor, groupState.offsetX, groupState.offsetY);
+      return;
+    }
+
+    if (actor.type === "floating_floor") {
+      paintFloatingFloor(actor, sceneCtx, now);
       return;
     }
 
@@ -1942,10 +2119,37 @@
         return;
       }
 
+      if (move.actor.type === "floating_floor" && isHole(move.actor.x, move.actor.y)) {
+        move.toRemoved = true;
+        move.skipHoleFall = true;
+        move.visibleDuringMove = true;
+        move.fillsHole = true;
+        move.fillHoleX = move.actor.x;
+        move.fillHoleY = move.actor.y;
+        return;
+      }
+
       if (isHole(move.actor.x, move.actor.y)) {
         move.toRemoved = true;
       }
     });
+  }
+
+  function buildFloorTerrainCell() {
+    return {
+      type: "floor",
+      label: "Floor",
+      imageUrl: null,
+      underlay: null
+    };
+  }
+
+  function fillHoleAt(x, y) {
+    if (!isInsideBoard(x, y)) {
+      return;
+    }
+
+    state.terrain[y][x] = buildFloorTerrainCell();
   }
 
   function easeInOutQuad(progress) {
@@ -1957,17 +2161,26 @@
   }
 
   function finishAnimation(moves) {
-    moves.forEach(({ actor, toX, toY, toRemoved = false }) => {
+    moves.forEach(({ actor, toX, toY, toRemoved = false, skipHoleFall = false }) => {
       actor.renderX = toX;
       actor.renderY = toY;
       actor.renderScale = toRemoved ? 0 : 1;
-      actor.renderSink = toRemoved ? HOLE_SINK_DISTANCE : 0;
+      actor.renderSink = toRemoved && !skipHoleFall ? HOLE_SINK_DISTANCE : 0;
       actor.removed = Boolean(toRemoved);
+    });
+
+    moves.forEach(({ fillsHole = false, fillHoleX = null, fillHoleY = null }) => {
+      if (!fillsHole || typeof fillHoleX !== "number" || typeof fillHoleY !== "number") {
+        return;
+      }
+
+      fillHoleAt(fillHoleX, fillHoleY);
     });
 
     gateRenderOverride = null;
     isAnimating = false;
     animationFrameId = null;
+    syncFloatingFloorTicker();
     render();
 
     if (queuedAction) {
@@ -1985,7 +2198,8 @@
     isAnimating = true;
     const startTime = performance.now();
     const holeStateMoves = moves.filter(
-      ({ fromRemoved = false, toRemoved = false }) => fromRemoved !== toRemoved
+      ({ fromRemoved = false, toRemoved = false, skipHoleFall = false }) =>
+        !skipHoleFall && fromRemoved !== toRemoved
     );
     const moveDuration =
       typeof durationMs === "number"
@@ -2008,9 +2222,23 @@
         const progress = Math.min(1, (now - fallStartTime) / HOLE_FALL_DURATION_MS);
         const eased = easeInOutQuad(progress);
 
-        moves.forEach(({ actor, toX, toY, fromRemoved = false, toRemoved = false }) => {
+        moves.forEach(
+          ({
+            actor,
+            toX,
+            toY,
+            fromRemoved = false,
+            toRemoved = false,
+            skipHoleFall = false
+          }) => {
           actor.renderX = toX;
           actor.renderY = toY;
+
+          if (skipHoleFall) {
+            actor.renderScale = 1;
+            actor.renderSink = 0;
+            return;
+          }
 
           if (fromRemoved && !toRemoved) {
             actor.renderScale = eased;
@@ -2026,7 +2254,8 @@
 
           actor.renderScale = toRemoved ? 0 : 1;
           actor.renderSink = toRemoved ? HOLE_SINK_DISTANCE : 0;
-        });
+          }
+        );
 
         render();
 
@@ -2045,19 +2274,29 @@
       const progress = Math.min(1, (now - startTime) / moveDuration);
       const eased = easeInOutQuad(progress);
 
-      moves.forEach(({ actor, fromX, fromY, toX, toY, fromRemoved = false, toRemoved = false }) => {
-        actor.renderX = fromX + (toX - fromX) * eased;
-        actor.renderY = fromY + (toY - fromY) * eased;
+      moves.forEach(
+        ({
+          actor,
+          fromX,
+          fromY,
+          toX,
+          toY,
+          fromRemoved = false,
+          visibleDuringMove = false
+        }) => {
+          actor.renderX = fromX + (toX - fromX) * eased;
+          actor.renderY = fromY + (toY - fromY) * eased;
 
-        if (fromRemoved) {
-          actor.renderScale = 0;
-          actor.renderSink = HOLE_SINK_DISTANCE;
-          return;
+          if (fromRemoved && !visibleDuringMove) {
+            actor.renderScale = 0;
+            actor.renderSink = HOLE_SINK_DISTANCE;
+            return;
+          }
+
+          actor.renderScale = 1;
+          actor.renderSink = 0;
         }
-
-        actor.renderScale = 1;
-        actor.renderSink = 0;
-      });
+      );
 
       render();
 
@@ -2132,7 +2371,9 @@
         toX: target.x,
         toY: target.y,
         fromRemoved,
-        toRemoved
+        toRemoved,
+        skipHoleFall: actor.type === "floating_floor" && fromRemoved !== toRemoved,
+        visibleDuringMove: actor.type === "floating_floor" && fromRemoved !== toRemoved
       });
     });
 
@@ -2149,7 +2390,10 @@
     let occupied = buildOccupiedSet();
     const raisedPlayerGates = computeRaisedPlayerGateSet();
     const orderedPlayers = players.slice().sort(sortActorsForMove(dx, dy));
-    const previousPositions = cloneActorPositions();
+    const previousState = {
+      actors: cloneActorPositions(),
+      terrain: cloneTerrainState(state.terrain)
+    };
     const moves = [];
 
     orderedPlayers.forEach((player) => {
@@ -2231,7 +2475,7 @@
     if (moves.length > 0) {
       applyHoleFalls(moves);
       gateRenderOverride = raisedPlayerGates;
-      moveHistory.push(previousPositions);
+      moveHistory.push(previousState);
       animateMoves(moves);
     }
   }
@@ -2242,14 +2486,15 @@
       return;
     }
 
-    const previousPositions = moveHistory.pop();
+    const previousState = moveHistory.pop();
 
-    if (!previousPositions) {
+    if (!previousState) {
       return;
     }
 
+    restoreTerrainState(previousState.terrain);
     gateRenderOverride = computeRaisedPlayerGateSet();
-    const moves = buildMovesToPositions(previousPositions);
+    const moves = buildMovesToPositions(previousState.actors);
 
     if (moves.length > 0) {
       animateMoves(moves);
@@ -2257,6 +2502,7 @@
     }
 
     gateRenderOverride = null;
+    syncFloatingFloorTicker();
     render();
   }
 
@@ -2267,6 +2513,7 @@
     }
 
     moveHistory.length = 0;
+    restoreTerrainState(initialTerrain);
     gateRenderOverride = computeRaisedPlayerGateSet();
     const moves = buildMovesToPositions(initialPositions);
 
@@ -2276,6 +2523,7 @@
     }
 
     gateRenderOverride = null;
+    syncFloatingFloorTicker();
     render();
   }
 
@@ -2344,6 +2592,7 @@
   setupCanvas();
   syncFuzzyToggle();
   syncNoiseTicker();
+  syncFloatingFloorTicker();
   preloadImages().finally(render);
   window.addEventListener("keydown", handleKeydown);
   window.addEventListener("wheel", preventScroll, { passive: false });

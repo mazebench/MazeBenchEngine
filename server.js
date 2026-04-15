@@ -170,11 +170,12 @@ function getObjectDefinitions(game) {
   };
 }
 
-function buildTerrainCell(type, definition = null) {
+function buildTerrainCell(type, definition = null, options = {}) {
   return {
     type,
     label: definition?.label || titleCase(type),
-    imageUrl: definition?.imageUrl || null
+    imageUrl: definition?.imageUrl || null,
+    underlay: options.underlay || null
   };
 }
 
@@ -183,18 +184,36 @@ function isActorDefinition(definition) {
     definition?.name === "player" ||
     definition?.name === "circle_player" ||
     definition?.name === "box" ||
+    definition?.name === "floating_floor" ||
     definition?.name === "weightless_box"
   );
 }
 
+function isTerrainDefinition(definition) {
+  return Boolean(definition) && !isActorDefinition(definition);
+}
+
 function buildCellState(cellDefinitions, floorDefinition, exitDefinition) {
-  const wallDefinition = cellDefinitions.find((definition) => definition.name === "wall") || null;
-  const exitCellDefinition = cellDefinitions.find((definition) => definition.name === "exit") || null;
+  const terrainDefinitions = cellDefinitions.filter((definition) => isTerrainDefinition(definition));
+  const wallDefinition = terrainDefinitions.find((definition) => definition.name === "wall") || null;
+  const exitCellDefinition = terrainDefinitions.find((definition) => definition.name === "exit") || null;
   const terrainDefinition =
     wallDefinition ||
     exitCellDefinition ||
-    cellDefinitions.find((definition) => !isActorDefinition(definition)) ||
+    terrainDefinitions[0] ||
     null;
+
+  if (wallDefinition) {
+    const underlayDefinition =
+      terrainDefinitions.find((definition) => definition.name !== "wall") || floorDefinition || null;
+
+    return buildTerrainCell("wall", wallDefinition, {
+      underlay: buildTerrainCell(
+        underlayDefinition?.name || "floor",
+        underlayDefinition
+      )
+    });
+  }
 
   if (terrainDefinition?.name === "exit") {
     return buildTerrainCell("exit", exitDefinition || terrainDefinition);

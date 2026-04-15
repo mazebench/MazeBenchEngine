@@ -20,6 +20,9 @@
       "token": "b",
       "image": "images/crate.png"
     },
+    "floating_floor": {
+      "token": "f"
+    },
     "weightless_box": {
       "tokens": ["M0", "M1"]
     },
