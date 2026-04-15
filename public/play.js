@@ -7,16 +7,12 @@
   }
 
   const TILE_SIZE = 64;
-  const DEFAULT_PIXELS_PER_TILE = 8;
   const MOVE_DURATION_MS = 98;
   const playShell = document.querySelector(".play-shell");
   const playNav = document.querySelector(".play-nav");
   const playStage = document.querySelector(".play-stage");
   const mazeFrame = document.querySelector(".maze-frame");
   const playControls = document.querySelector(".play-controls");
-  const modeButtons = Array.from(document.querySelectorAll(".render-mode-button"));
-  const pixelInput = document.getElementById("pixel-input");
-  const crtInput = document.getElementById("crt-input");
   const fuzzyInput = document.getElementById("fuzzy-input");
 
   const state = {
@@ -29,10 +25,7 @@
       renderY: actor.y
     })),
     effects: {
-      mode: "pixelated",
-      pixelsPerTile: pixelInput ? Number(pixelInput.value) : DEFAULT_PIXELS_PER_TILE,
-      crt: crtInput ? Number(crtInput.value) : 0,
-      fuzzy: fuzzyInput ? Number(fuzzyInput.value) : 0
+      fuzzy: fuzzyInput ? Number(fuzzyInput.value) : 0.1
     }
   };
 
@@ -56,8 +49,6 @@
   };
   const sceneCanvas = document.createElement("canvas");
   const sceneCtx = sceneCanvas.getContext("2d");
-  const pixelCanvas = document.createElement("canvas");
-  const pixelCtx = pixelCanvas.getContext("2d");
   const gl = canvas.getContext("webgl", {
     alpha: false,
     antialias: false,
@@ -72,7 +63,7 @@
   let queuedAction = null;
   let renderer = null;
 
-  if (!sceneCtx || !pixelCtx || (!gl && !fallbackCtx)) {
+  if (!sceneCtx || (!gl && !fallbackCtx)) {
     return;
   }
 
@@ -93,7 +84,6 @@
 
     uniform sampler2D u_texture;
     uniform vec2 u_logicalResolution;
-    uniform float u_blockSize;
     uniform float u_bleed;
     uniform float u_bloom;
     uniform float u_softness;
@@ -133,8 +123,8 @@
         return vec3(1.0);
       }
 
-      float stride = max(1.0, floor(u_blockSize * 0.55 + 0.5));
-      float rowBand = max(1.0, floor(u_blockSize * 0.7 + 0.5));
+      float stride = 1.0;
+      float rowBand = 1.0;
       float column = floor(logicalCoord.x / stride);
       float row = floor(logicalCoord.y / rowBand);
       float dim = 0.78;
@@ -162,15 +152,14 @@
     }
 
     void main() {
-      float sampleScale = max(1.0, u_blockSize);
       vec2 logicalCoord = v_uv * u_logicalResolution;
       vec3 base = sampleSource(v_uv);
-      vec3 soft = blurCross(v_uv, mix(0.55, 2.4, u_softness) * sampleScale);
-      vec3 bloom = blurCross(v_uv, (0.8 + u_bloom * 3.0) * sampleScale);
-      vec3 bleed = blurCross(v_uv, (0.45 + u_bleed * 1.85) * sampleScale);
+      vec3 soft = blurCross(v_uv, mix(0.55, 2.4, u_softness));
+      vec3 bloom = blurCross(v_uv, 0.8 + u_bloom * 3.0);
+      vec3 bleed = blurCross(v_uv, 0.45 + u_bleed * 1.85);
       vec2 uvPerPixel = 1.0 / u_logicalResolution;
-      vec2 ghostOffset = uvPerPixel * vec2((0.25 + u_ghosting * 4.2) * sampleScale, 0.16 * sampleScale);
-      float bleedShift = (0.4 + u_bleed * 2.6) * sampleScale;
+      vec2 ghostOffset = uvPerPixel * vec2(0.25 + u_ghosting * 4.2, 0.16);
+      float bleedShift = 0.4 + u_bleed * 2.6;
       float bleedR = sampleSource(v_uv - vec2(uvPerPixel.x * bleedShift, 0.0)).r;
       float bleedB = sampleSource(v_uv + vec2(uvPerPixel.x * bleedShift, 0.0)).b;
       vec3 ghost = sampleSource(v_uv + ghostOffset);
@@ -185,7 +174,7 @@
       color += max(vec3(0.0), bloom - base) * (u_bloom * 0.45);
       color += ghost * (u_ghosting * 0.4);
 
-      float scanPhase = fract(logicalCoord.y / sampleScale);
+      float scanPhase = fract(logicalCoord.y);
       float beamProfile = 0.35 + 0.65 * (0.5 - 0.5 * cos(scanPhase * 6.28318530718));
       float beam = mix(1.0, beamProfile, u_scanlines);
       color *= beam;
@@ -291,7 +280,6 @@
       uniforms: {
         texture: glContext.getUniformLocation(program, "u_texture"),
         logicalResolution: glContext.getUniformLocation(program, "u_logicalResolution"),
-        blockSize: glContext.getUniformLocation(program, "u_blockSize"),
         bleed: glContext.getUniformLocation(program, "u_bleed"),
         bloom: glContext.getUniformLocation(program, "u_bloom"),
         softness: glContext.getUniformLocation(program, "u_softness"),
@@ -328,17 +316,6 @@
     return terrainAt(x, y).type === "wall";
   }
 
-  function syncDisplayMode() {
-    const isPixelated = state.effects.mode === "pixelated";
-    canvas.classList.toggle("is-pixelated", isPixelated);
-
-    modeButtons.forEach((button) => {
-      const isActive = button.dataset.mode === state.effects.mode;
-      button.classList.toggle("is-active", isActive);
-      button.setAttribute("aria-pressed", isActive ? "true" : "false");
-    });
-  }
-
   function setupCanvas() {
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(boardRect.width * dpr);
@@ -346,12 +323,8 @@
     canvas.style.aspectRatio = `${state.width} / ${state.height}`;
     sceneCanvas.width = boardRect.width;
     sceneCanvas.height = boardRect.height;
-    pixelCanvas.width = state.width * state.effects.pixelsPerTile;
-    pixelCanvas.height = state.height * state.effects.pixelsPerTile;
     sceneCtx.setTransform(1, 0, 0, 1, 0, 0);
-    pixelCtx.setTransform(1, 0, 0, 1, 0, 0);
     sceneCtx.imageSmoothingEnabled = false;
-    pixelCtx.imageSmoothingEnabled = true;
 
     if (renderer && gl) {
       gl.viewport(0, 0, canvas.width, canvas.height);
@@ -359,8 +332,6 @@
       fallbackCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       fallbackCtx.imageSmoothingEnabled = false;
     }
-
-    syncDisplayMode();
   }
 
   function syncPlayLayout() {
@@ -625,28 +596,20 @@
     }
   }
 
-  function paintPixelatedScene() {
-    pixelCtx.clearRect(0, 0, pixelCanvas.width, pixelCanvas.height);
-    pixelCtx.drawImage(sceneCanvas, 0, 0, pixelCanvas.width, pixelCanvas.height);
-  }
-
   function getEffectSettings() {
-    const crt = clamp(state.effects.crt, 0, 1);
     const fuzzy = clamp(state.effects.fuzzy, 0, 0.1);
     const fuzzyMix = clamp(fuzzy / 0.1, 0, 1);
-    const pixelsPerTile = clamp(state.effects.pixelsPerTile, 1, 16);
 
     return {
-      bleed: clamp(0.28 * crt + 0.78 * fuzzyMix, 0, 1),
-      bloom: clamp(0.2 * crt + 0.38 * fuzzyMix, 0, 1),
-      softness: clamp(0.06 * crt + 0.74 * fuzzyMix, 0, 1),
-      scanlines: clamp(0.58 * crt + 0.16 * fuzzyMix, 0, 1),
-      mask: clamp(0.5 * crt + 0.03 * fuzzyMix, 0, 1),
-      ghosting: clamp(0.05 * crt + 0.03 * fuzzyMix, 0, 1),
-      noise: Math.min(0.1, fuzzy + crt * 0.018),
-      slotMask: fuzzyMix > crt ? 1 : 0,
-      vignetteStrength: Math.max(crt, fuzzyMix),
-      blockSize: state.effects.mode === "pixelated" ? TILE_SIZE / pixelsPerTile : 1
+      bleed: clamp(0.78 * fuzzyMix, 0, 1),
+      bloom: clamp(0.38 * fuzzyMix, 0, 1),
+      softness: clamp(0.74 * fuzzyMix, 0, 1),
+      scanlines: clamp(0.16 * fuzzyMix, 0, 1),
+      mask: clamp(0.03 * fuzzyMix, 0, 1),
+      ghosting: clamp(0.03 * fuzzyMix, 0, 1),
+      noise: fuzzy,
+      slotMask: 1,
+      vignetteStrength: fuzzyMix
     };
   }
 
@@ -668,17 +631,16 @@
     gl.texParameteri(
       gl.TEXTURE_2D,
       gl.TEXTURE_MIN_FILTER,
-      state.effects.mode === "pixelated" ? gl.NEAREST : gl.LINEAR
+      gl.LINEAR
     );
     gl.texParameteri(
       gl.TEXTURE_2D,
       gl.TEXTURE_MAG_FILTER,
-      state.effects.mode === "pixelated" ? gl.NEAREST : gl.LINEAR
+      gl.LINEAR
     );
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
     gl.uniform1i(renderer.uniforms.texture, 0);
     gl.uniform2f(renderer.uniforms.logicalResolution, boardRect.width, boardRect.height);
-    gl.uniform1f(renderer.uniforms.blockSize, settings.blockSize);
     gl.uniform1f(renderer.uniforms.bleed, settings.bleed);
     gl.uniform1f(renderer.uniforms.bloom, settings.bloom);
     gl.uniform1f(renderer.uniforms.softness, settings.softness);
@@ -699,7 +661,7 @@
     }
 
     fallbackCtx.clearRect(0, 0, boardRect.width, boardRect.height);
-    fallbackCtx.imageSmoothingEnabled = state.effects.mode !== "pixelated";
+    fallbackCtx.imageSmoothingEnabled = false;
     fallbackCtx.drawImage(sourceCanvas, 0, 0, boardRect.width, boardRect.height);
   }
 
@@ -707,13 +669,10 @@
     sceneCtx.clearRect(0, 0, boardRect.width, boardRect.height);
     paintTerrain();
     state.actors.forEach(paintActor);
-    paintPixelatedScene();
-
-    const sourceCanvas = state.effects.mode === "pixelated" ? pixelCanvas : sceneCanvas;
     const settings = getEffectSettings();
 
-    if (!renderWithShader(sourceCanvas, settings)) {
-      renderFallback(sourceCanvas);
+    if (!renderWithShader(sceneCanvas, settings)) {
+      renderFallback(sceneCanvas);
     }
   }
 
@@ -966,35 +925,6 @@
 
   function preventScroll(event) {
     event.preventDefault();
-  }
-
-  modeButtons.forEach((button) => {
-    button.addEventListener("click", function () {
-      const nextMode = button.dataset.mode;
-
-      if (!nextMode || nextMode === state.effects.mode) {
-        return;
-      }
-
-      state.effects.mode = nextMode;
-      syncDisplayMode();
-      render();
-    });
-  });
-
-  if (pixelInput) {
-    pixelInput.addEventListener("input", function () {
-      state.effects.pixelsPerTile = Number(pixelInput.value);
-      setupCanvas();
-      render();
-    });
-  }
-
-  if (crtInput) {
-    crtInput.addEventListener("input", function () {
-      state.effects.crt = Number(crtInput.value);
-      render();
-    });
   }
 
   if (fuzzyInput) {

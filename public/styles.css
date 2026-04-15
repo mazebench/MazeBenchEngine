@@ -252,18 +252,12 @@ pre {
   image-rendering: auto;
 }
 
-.maze-canvas.is-pixelated {
-  image-rendering: pixelated;
-}
-
 .play-controls {
   width: 100%;
   max-width: 100%;
   flex: 0 0 auto;
-  display: grid;
-  grid-template-columns: auto repeat(3, minmax(0, 1fr));
-  align-items: center;
-  gap: 10px;
+  display: flex;
+  justify-content: center;
   padding: 10px;
   border: 4px solid #000000;
   border-radius: 6px;
@@ -275,40 +269,9 @@ pre {
 }
 
 .play-controls,
-.play-controls button,
 .play-controls input {
   touch-action: auto;
 }
-
-.render-mode-toggle {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 6px;
-  padding: 5px;
-  border: 3px solid #000000;
-  border-radius: 6px;
-  background: #ffd84d;
-  box-sizing: border-box;
-}
-
-.render-mode-button {
-  width: 40px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  cursor: pointer;
-}
-
-.render-mode-button.is-active {
-  background: #ffffff;
-  box-shadow: inset 0 0 0 2px #000000;
-}
-
-.render-mode-icon,
 .effect-icon {
   position: relative;
   display: block;
@@ -320,19 +283,9 @@ pre {
   overflow: hidden;
 }
 
-.render-mode-icon--smooth {
-  border-radius: 999px;
-  background: linear-gradient(135deg, #8dc7ff 0%, #7ee0a1 100%);
-}
-
-.render-mode-icon--pixelated {
-  background:
-    linear-gradient(#000000 0 0) 0 50% / 100% 2px no-repeat,
-    linear-gradient(#000000 0 0) 50% 0 / 2px 100% no-repeat,
-    conic-gradient(from 90deg, #ff7b72 0 25%, #8dc7ff 0 50%, #7ee0a1 0 75%, #ffd84d 0 100%);
-}
-
 .effect-slider {
+  width: 100%;
+  max-width: 420px;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -342,21 +295,6 @@ pre {
   border-radius: 6px;
   background: #eef1e8;
   box-sizing: border-box;
-}
-
-.effect-icon--crt {
-  background:
-    repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.55) 0 1px, transparent 1px 4px),
-    linear-gradient(90deg, #ff7b72 0 34%, #7ee0a1 34% 67%, #8dc7ff 67% 100%);
-}
-
-.effect-icon--pixelate {
-  background:
-    linear-gradient(#000000 0 0) 33% 0 / 2px 100% no-repeat,
-    linear-gradient(#000000 0 0) 66% 0 / 2px 100% no-repeat,
-    linear-gradient(#000000 0 0) 0 33% / 100% 2px no-repeat,
-    linear-gradient(#000000 0 0) 0 66% / 100% 2px no-repeat,
-    conic-gradient(from 90deg, #ffd84d 0 25%, #8dc7ff 0 50%, #7ee0a1 0 75%, #ff7b72 0 100%);
 }
 
 .effect-icon--fuzzy {
@@ -421,10 +359,6 @@ pre {
   }
 
   .play-controls {
-    grid-template-columns: 1fr;
-  }
-
-  .render-mode-toggle {
-    justify-self: start;
+    justify-content: center;
   }
 }

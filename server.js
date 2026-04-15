@@ -354,54 +354,6 @@ function renderPlayPage(game, level) {
           </div>
         </section>
         <section class="play-controls" aria-label="Display effects">
-          <div class="render-mode-toggle" role="group" aria-label="Render mode">
-            <button
-              type="button"
-              class="render-mode-button"
-              data-mode="smooth"
-              aria-pressed="false"
-              aria-label="No pixels mode"
-              title="No pixels"
-            >
-              <span class="render-mode-icon render-mode-icon--smooth" aria-hidden="true"></span>
-            </button>
-            <button
-              type="button"
-              class="render-mode-button is-active"
-              data-mode="pixelated"
-              aria-pressed="true"
-              aria-label="Pixelated mode"
-              title="Pixelated"
-            >
-              <span class="render-mode-icon render-mode-icon--pixelated" aria-hidden="true"></span>
-            </button>
-          </div>
-          <label class="effect-slider" for="pixel-input" title="Pixelation">
-            <span class="effect-icon effect-icon--pixelate" aria-hidden="true"></span>
-            <input
-              id="pixel-input"
-              class="effect-range"
-              type="range"
-              min="1"
-              max="16"
-              step="1"
-              value="8"
-              aria-label="Pixelation amount"
-            >
-          </label>
-          <label class="effect-slider" for="crt-input" title="CRT">
-            <span class="effect-icon effect-icon--crt" aria-hidden="true"></span>
-            <input
-              id="crt-input"
-              class="effect-range"
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value="0"
-              aria-label="CRT intensity"
-            >
-          </label>
           <label class="effect-slider" for="fuzzy-input" title="Fuzzy">
             <span class="effect-icon effect-icon--fuzzy" aria-hidden="true"></span>
             <input
