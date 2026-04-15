@@ -40,6 +40,7 @@
       renderY: actor.y,
       renderScale: 1,
       renderSink: 0,
+      renderInHole: false,
       removed: false
     })),
     effects: {
@@ -364,6 +365,7 @@
       actor.renderY = target.y;
       actor.renderScale = actor.removed ? 0 : 1;
       actor.renderSink = actor.removed ? HOLE_SINK_DISTANCE : 0;
+      actor.renderInHole = false;
     });
   }
 
@@ -1594,6 +1596,13 @@
     });
 
     sceneCtx.save();
+    if (groupState.sink > 0.001) {
+      sceneCtx.beginPath();
+      members.forEach((member) => {
+        sceneCtx.rect(member.x * TILE_SIZE, member.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      });
+      sceneCtx.clip();
+    }
     sceneCtx.translate(groupState.centerX, groupState.centerY + groupState.sink);
     sceneCtx.scale(groupState.scale, groupState.scale);
     sceneCtx.translate(-groupState.centerX, -groupState.centerY);
@@ -1654,8 +1663,9 @@
           }
 
           drawItems.push({
-            depth: Math.max(...members.map((member) => member.renderY)) + 1,
-            tieBreaker: 1,
+            depth:
+              (actor.renderInHole ? 0 : 1) + Math.max(...members.map((member) => member.renderY)),
+            tieBreaker: actor.renderInHole ? -1 : 1,
             order: index,
             paint: function () {
               paintWeightlessGroup(actor.groupId);
@@ -1666,8 +1676,8 @@
       }
 
       drawItems.push({
-        depth: actor.renderY + 1,
-        tieBreaker: isPlayerActor(actor) ? 2 : 1,
+        depth: actor.renderY + (actor.renderInHole ? 0 : 1),
+        tieBreaker: actor.renderInHole ? -1 : isPlayerActor(actor) ? 2 : 1,
         order: index,
         paint: function () {
           paintActor(actor, now);
@@ -1705,15 +1715,29 @@
     const left = actor.renderX * TILE_SIZE;
     const top = actor.renderY * TILE_SIZE;
     const image = actor.imageUrl ? imageCache.get(actor.imageUrl) : null;
+    const clipToHole = sink > 0.001;
+
+    if (clipToHole) {
+      sceneCtx.save();
+      sceneCtx.beginPath();
+      sceneCtx.rect(left, top, TILE_SIZE, TILE_SIZE);
+      sceneCtx.clip();
+    }
 
     if (actor.type === "weightless_box") {
       const groupState = weightlessGroupRenderState(actor.groupId);
       paintWeightlessBoxTile(actor, groupState.offsetX, groupState.offsetY);
+      if (clipToHole) {
+        sceneCtx.restore();
+      }
       return;
     }
 
     if (actor.type === "floating_floor") {
       paintFloatingFloor(actor, sceneCtx, now);
+      if (clipToHole) {
+        sceneCtx.restore();
+      }
       return;
     }
 
@@ -1725,6 +1749,9 @@
         const drawTop = top + TILE_SIZE - drawHeight + sink;
 
         sceneCtx.drawImage(image, drawLeft, drawTop, drawWidth, drawHeight);
+        if (clipToHole) {
+          sceneCtx.restore();
+        }
         return;
       }
 
@@ -1734,6 +1761,9 @@
       const drawTop = top + (TILE_SIZE - drawHeight) / 2 + sink;
 
       sceneCtx.drawImage(image, drawLeft, drawTop, drawWidth, drawHeight);
+      if (clipToHole) {
+        sceneCtx.restore();
+      }
       return;
     }
 
@@ -1751,11 +1781,17 @@
       sceneCtx.lineWidth = 3;
       sceneCtx.strokeStyle = "#000000";
       sceneCtx.stroke();
+      if (clipToHole) {
+        sceneCtx.restore();
+      }
       return;
     }
 
     if (actor.type === "player") {
       paintRaisedPlayer(actor);
+      if (clipToHole) {
+        sceneCtx.restore();
+      }
       return;
     }
 
@@ -1792,6 +1828,10 @@
       sceneCtx.lineWidth = 3;
       sceneCtx.strokeStyle = "#000000";
       sceneCtx.stroke();
+      sceneCtx.restore();
+    }
+
+    if (clipToHole) {
       sceneCtx.restore();
     }
   }
@@ -2184,6 +2224,7 @@
       actor.renderY = toY;
       actor.renderScale = toRemoved ? 0 : 1;
       actor.renderSink = toRemoved && !skipHoleFall ? HOLE_SINK_DISTANCE : 0;
+      actor.renderInHole = false;
       actor.removed = Boolean(toRemoved);
     });
 
@@ -2216,8 +2257,12 @@
     isAnimating = true;
     const startTime = performance.now();
     const holeStateMoves = moves.filter(
-      ({ fromRemoved = false, toRemoved = false, skipHoleFall = false }) =>
-        !skipHoleFall && fromRemoved !== toRemoved
+      ({
+        fromRemoved = false,
+        toRemoved = false,
+        skipHoleFall = false,
+        snapHoleRestore = false
+      }) => !skipHoleFall && !snapHoleRestore && fromRemoved !== toRemoved
     );
     const moveDuration =
       typeof durationMs === "number"
@@ -2251,6 +2296,7 @@
           }) => {
           actor.renderX = toX;
           actor.renderY = toY;
+          actor.renderInHole = !skipHoleFall && fromRemoved !== toRemoved;
 
           if (skipHoleFall) {
             actor.renderScale = 1;
@@ -2304,6 +2350,7 @@
         }) => {
           actor.renderX = fromX + (toX - fromX) * eased;
           actor.renderY = fromY + (toY - fromY) * eased;
+          actor.renderInHole = false;
 
           if (fromRemoved && !visibleDuringMove) {
             actor.renderScale = 0;
@@ -2374,6 +2421,7 @@
         actor.renderY = target.y;
         actor.renderScale = toRemoved ? 0 : 1;
         actor.renderSink = toRemoved ? HOLE_SINK_DISTANCE : 0;
+        actor.renderInHole = false;
         actor.removed = toRemoved;
         return;
       }
@@ -2382,6 +2430,7 @@
       actor.renderY = fromY;
       actor.renderScale = fromRemoved ? 0 : 1;
       actor.renderSink = fromRemoved ? HOLE_SINK_DISTANCE : 0;
+      actor.renderInHole = false;
       moves.push({
         actor,
         fromX,
@@ -2390,8 +2439,12 @@
         toY: target.y,
         fromRemoved,
         toRemoved,
+        snapHoleRestore: fromRemoved && !toRemoved,
         skipHoleFall: actor.type === "floating_floor" && fromRemoved !== toRemoved,
-        visibleDuringMove: actor.type === "floating_floor" && fromRemoved !== toRemoved
+        visibleDuringMove:
+          fromRemoved && !toRemoved
+            ? true
+            : actor.type === "floating_floor" && fromRemoved !== toRemoved
       });
     });
 
