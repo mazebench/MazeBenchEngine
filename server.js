@@ -175,7 +175,8 @@ function buildTerrainCell(type, definition = null, options = {}) {
     type,
     label: definition?.label || titleCase(type),
     imageUrl: definition?.imageUrl || null,
-    underlay: options.underlay || null
+    underlay: options.underlay || null,
+    raised: Boolean(options.raised)
   };
 }
 
@@ -221,7 +222,9 @@ function buildCellState(cellDefinitions, floorDefinition, exitDefinition) {
   }
 
   if (terrainDefinition) {
-    return buildTerrainCell(terrainDefinition.name, terrainDefinition);
+    return buildTerrainCell(terrainDefinition.name, terrainDefinition, {
+      raised: terrainDefinition.name === "player_lift" ? false : undefined
+    });
   }
 
   if (cellDefinitions.some((definition) => isActorDefinition(definition))) {

@@ -27,7 +27,9 @@
       terrainAt,
       isHole,
       isPlayerGate,
+      isPlayerLift,
       gateLiftAt,
+      playerLiftAt,
       isTerrainWall,
       shouldHideElevatedSideStroke,
       isWeightlessBoxAt,
@@ -35,7 +37,8 @@
       weightlessGroupMembers,
       floatingFloorHoverOffset,
       isCollectibleActor,
-      isPlayerActor
+      isPlayerActor,
+      actorRenderElevation
     } = app;
 
     function roundRectPath(context, x, y, width, height, radii) {
@@ -74,6 +77,17 @@
         sceneCtx.strokeStyle = "rgba(0, 0, 0, 0.18)";
         sceneCtx.lineWidth = 1.5;
         sceneCtx.strokeRect(left + 0.75, top + 0.75, TILE_SIZE - 1.5, TILE_SIZE - 1.5);
+        return;
+      }
+
+      if (cell.type === "player_lift") {
+        sceneCtx.fillStyle = "#8a63d2";
+        sceneCtx.fillRect(left, top, TILE_SIZE, TILE_SIZE);
+        sceneCtx.strokeStyle = "rgba(0, 0, 0, 0.2)";
+        sceneCtx.lineWidth = 1.5;
+        sceneCtx.strokeRect(left + 0.75, top + 0.75, TILE_SIZE - 1.5, TILE_SIZE - 1.5);
+        sceneCtx.fillStyle = "rgba(255, 255, 255, 0.18)";
+        sceneCtx.fillRect(left + TILE_SIZE * 0.16, top + TILE_SIZE * 0.16, TILE_SIZE * 0.68, TILE_SIZE * 0.16);
         return;
       }
 
@@ -117,11 +131,20 @@
         return "#a84d46";
       }
 
+      if (groundCell.type === "player_lift") {
+        return "#6f4eb4";
+      }
+
       return "#b89c73";
     }
 
     function paintGroundDropFace(x, y, cell) {
-      if (y >= state.height - 1 || !isGroundCell(cell) || !isHole(x, y + 1)) {
+      if (
+        y >= state.height - 1 ||
+        !isGroundCell(cell) ||
+        !isHole(x, y + 1) ||
+        (cell.type === "player_lift" && cell.raised === true)
+      ) {
         return;
       }
 
@@ -379,6 +402,90 @@
       sceneCtx.stroke();
     }
 
+    function paintRaisedPlayerLiftTile(x, y, cell, lift = 1) {
+      if (lift <= 0.001) {
+        return;
+      }
+
+      void cell;
+
+      const left = x * TILE_SIZE;
+      const top = y * TILE_SIZE;
+      const right = left + TILE_SIZE;
+      const bottom = top + TILE_SIZE;
+      const faceHeight = Math.round(TILE_SIZE * 0.26);
+      const liftHeight = y > 0 ? faceHeight : 0;
+      const travel = liftHeight * lift;
+      const platformTop = top - travel;
+      const platformBottom = bottom - travel;
+      const borderAlpha = clamp(lift, 0, 1);
+      const borderColor = `rgba(0, 0, 0, ${borderAlpha})`;
+      const radius = TILE_SIZE * 0.18;
+      const radii = {
+        tl: radius,
+        tr: radius,
+        br: 0,
+        bl: 0
+      };
+      const hideRightLiftStroke = travel > 0.001 && shouldHideElevatedSideStroke(x, y, 1);
+      const hideLeftLiftStroke = travel > 0.001 && shouldHideElevatedSideStroke(x, y, -1);
+
+      if (x === 0 && y === 0) {
+        radii.tl = 0;
+      }
+      if (x === state.width - 1 && y === 0) {
+        radii.tr = 0;
+      }
+
+      roundRectPath(sceneCtx, left, platformTop, TILE_SIZE, TILE_SIZE + travel, radii);
+      sceneCtx.save();
+      sceneCtx.clip();
+      sceneCtx.fillStyle = "#8a63d2";
+      sceneCtx.fillRect(left, platformTop, TILE_SIZE, TILE_SIZE + travel);
+
+      sceneCtx.fillStyle = "rgba(255, 255, 255, 0.18)";
+      sceneCtx.fillRect(
+        left + TILE_SIZE * 0.16,
+        platformTop + TILE_SIZE * 0.16,
+        TILE_SIZE * 0.68,
+        TILE_SIZE * 0.16
+      );
+
+      if (travel > 0.001) {
+        sceneCtx.fillStyle = "#6f4eb4";
+        sceneCtx.fillRect(left, platformBottom, TILE_SIZE, Math.min(faceHeight, travel));
+      }
+      sceneCtx.restore();
+
+      sceneCtx.lineWidth = 3;
+      sceneCtx.strokeStyle = borderColor;
+      sceneCtx.beginPath();
+      sceneCtx.moveTo(left + radii.tl, platformTop);
+      sceneCtx.lineTo(right - radii.tr, platformTop);
+      sceneCtx.moveTo(right, platformTop + radii.tr);
+      sceneCtx.lineTo(right, hideRightLiftStroke ? platformBottom : bottom);
+      sceneCtx.moveTo(right, bottom);
+      sceneCtx.lineTo(left, bottom);
+      if (hideLeftLiftStroke) {
+        sceneCtx.moveTo(left, platformTop + radii.tl);
+        sceneCtx.lineTo(left, platformBottom);
+      } else {
+        sceneCtx.moveTo(left, bottom);
+        sceneCtx.lineTo(left, platformTop + radii.tl);
+      }
+      sceneCtx.moveTo(left + radii.tl, platformTop);
+      sceneCtx.quadraticCurveTo(left, platformTop, left, platformTop + radii.tl);
+      sceneCtx.moveTo(right - radii.tr, platformTop);
+      sceneCtx.quadraticCurveTo(right, platformTop, right, platformTop + radii.tr);
+
+      if (travel > 0.001) {
+        sceneCtx.moveTo(left, platformBottom);
+        sceneCtx.lineTo(right, platformBottom);
+      }
+
+      sceneCtx.stroke();
+    }
+
     function paintExit(x, y, cell) {
       paintFloorTile(x, y, cell);
 
@@ -405,12 +512,17 @@
         for (let x = 0; x < state.width; x += 1) {
           const cell = terrainAt(x, y);
           const gateLift = cell.type === "player_gate" ? gateLiftAt(x, y, now) : 0;
+          const playerLift = cell.type === "player_lift" ? playerLiftAt(x, y, now) : 0;
 
           if (cell.type === "wall") {
             continue;
           }
 
           if (cell.type === "player_gate" && gateLift > 0.001) {
+            continue;
+          }
+
+          if (cell.type === "player_lift" && playerLift > 0.001) {
             continue;
           }
 
@@ -425,7 +537,10 @@
 
       for (let y = 0; y < state.height; y += 1) {
         for (let x = 0; x < state.width; x += 1) {
-          if (isPlayerGate(x, y) && gateLiftAt(x, y, now) > 0.001) {
+          if (
+            (isPlayerGate(x, y) && gateLiftAt(x, y, now) > 0.001) ||
+            (isPlayerLift(x, y) && playerLiftAt(x, y, now) > 0.001)
+          ) {
             continue;
           }
 
@@ -590,11 +705,12 @@
       }
 
       const sink = actor.renderSink ?? 0;
+      const surfaceLift = Math.round(TILE_SIZE * 0.26 * actorRenderElevation(actor));
       const left = actor.renderX * TILE_SIZE;
-      const top = actor.renderY * TILE_SIZE;
+      const top = actor.renderY * TILE_SIZE - surfaceLift;
       const bottom = top + TILE_SIZE;
       const faceHeight = Math.round(TILE_SIZE * 0.26);
-      const liftHeight = actor.renderY > 0 ? faceHeight : 0;
+      const liftHeight = top > 0 ? faceHeight : 0;
       const blockTop = top - liftHeight;
       const blockHeight = TILE_SIZE + liftHeight;
       const radius = TILE_SIZE * 0.18;
@@ -847,8 +963,9 @@
         for (let x = 0; x < state.width; x += 1) {
           const cell = terrainAt(x, y);
           const gateLift = cell.type === "player_gate" ? gateLiftAt(x, y, now) : 0;
+          const playerLift = cell.type === "player_lift" ? playerLiftAt(x, y, now) : 0;
 
-          if (cell.type !== "wall" && gateLift <= 0.001) {
+          if (cell.type !== "wall" && gateLift <= 0.001 && playerLift <= 0.001) {
             continue;
           }
 
@@ -859,6 +976,11 @@
             paint: function () {
               if (cell.type === "player_gate") {
                 paintRaisedPlayerGateTile(x, y, cell, gateLift);
+                return;
+              }
+
+              if (cell.type === "player_lift") {
+                paintRaisedPlayerLiftTile(x, y, cell, playerLift);
                 return;
               }
 
@@ -940,8 +1062,9 @@
       }
 
       const sink = actor.renderSink ?? 0;
+      const surfaceLift = Math.round(TILE_SIZE * 0.26 * actorRenderElevation(actor));
       const left = actor.renderX * TILE_SIZE;
-      const top = actor.renderY * TILE_SIZE;
+      const top = actor.renderY * TILE_SIZE - surfaceLift;
       const image = actor.imageUrl ? imageCache.get(actor.imageUrl) : null;
       const clipToHole = sink > 0.001;
 
@@ -1171,6 +1294,7 @@
 
       app.liveRaisedPlayerGates = app.gateRenderOverride || app.computeRaisedPlayerGateSet();
       app.syncGateAnimationTargets(now);
+      app.syncPlayerLiftAnimationTargets(now);
       sceneCtx.clearRect(0, 0, boardRect.width, boardRect.height);
       paintGround(now);
       paintDepthSortedScene(now);
@@ -1188,6 +1312,7 @@
       paintGroundDropFace,
       paintWallTile,
       paintRaisedPlayerGateTile,
+      paintRaisedPlayerLiftTile,
       paintExit,
       paintGround,
       paintWalls,

@@ -25,6 +25,8 @@
       ICE_SLIDE_DURATION_MULTIPLIER: 0.82,
       GATE_RISE_DURATION_MS: 220,
       GATE_FALL_DURATION_MS: 180,
+      PLAYER_LIFT_RISE_DURATION_MS: 220,
+      PLAYER_LIFT_FALL_DURATION_MS: 180,
       HOLE_FALL_DURATION_MS: 300,
       HOLE_SINK_DISTANCE: 64 * 0.42,
       GEM_HOVER_BASE: 64 * 0.035,
@@ -49,6 +51,8 @@
             (((actor.x + 1) * 0.61803398875 + (actor.y + 1) * 1.41421356237) % 1) * Math.PI * 2,
           renderX: actor.x,
           renderY: actor.y,
+          elevation: 0,
+          renderElevation: 0,
           renderScale: 1,
           renderSink: 0,
           renderInHole: false,
@@ -76,7 +80,10 @@
       gateRenderOverride: null,
       gateAnimationFrameId: null,
       gateAnimationsInitialized: false,
-      gateAnimations: new Map()
+      gateAnimations: new Map(),
+      playerLiftAnimationFrameId: null,
+      playerLiftAnimationsInitialized: false,
+      playerLiftAnimations: new Map()
     };
 
     app.NOISE_FRAME_MS = 1000 / app.NOISE_FPS;
@@ -336,7 +343,8 @@
       return app.state.actors.map((actor) => ({
         x: actor.x,
         y: actor.y,
-        removed: actor.removed
+        removed: actor.removed,
+        elevation: actor.elevation ?? 0
       }));
     }
 
@@ -366,8 +374,10 @@
         actor.x = target.x;
         actor.y = target.y;
         actor.removed = Boolean(target.removed);
+        actor.elevation = target.elevation ?? 0;
         actor.renderX = target.x;
         actor.renderY = target.y;
+        actor.renderElevation = actor.elevation;
         actor.renderScale = actor.removed ? 0 : 1;
         actor.renderSink = actor.removed ? app.HOLE_SINK_DISTANCE : 0;
         actor.renderInHole = false;
@@ -416,6 +426,22 @@
 
     function isPlayerActor(actor) {
       return isPlayerActorType(actor?.type);
+    }
+
+    function actorElevation(actor) {
+      if (!isPlayerActor(actor)) {
+        return 0;
+      }
+
+      return actor?.elevation ?? 0;
+    }
+
+    function actorRenderElevation(actor) {
+      if (!isPlayerActor(actor)) {
+        return 0;
+      }
+
+      return actor?.renderElevation ?? actor?.elevation ?? 0;
     }
 
     function isCollectibleActor(actor) {
@@ -509,7 +535,8 @@
           type: "empty",
           label: "Empty",
           imageUrl: null,
-          underlay: null
+          underlay: null,
+          raised: false
         }
       );
     }
@@ -526,17 +553,83 @@
       return terrainAt(x, y).type === "player_gate";
     }
 
+    function isPlayerLift(x, y) {
+      return terrainAt(x, y).type === "player_lift";
+    }
+
+    function eachPlayerLift(callback) {
+      for (let y = 0; y < app.state.height; y += 1) {
+        for (let x = 0; x < app.state.width; x += 1) {
+          if (!isPlayerLift(x, y)) {
+            continue;
+          }
+
+          callback(x, y, posKey(x, y));
+        }
+      }
+    }
+
+    function isRaisedPlayerLift(x, y) {
+      return isPlayerLift(x, y) && terrainAt(x, y).raised === true;
+    }
+
+    function setPlayerLiftRaised(x, y, raised) {
+      if (!isPlayerLift(x, y)) {
+        return false;
+      }
+
+      terrainAt(x, y).raised = Boolean(raised);
+      return terrainAt(x, y).raised;
+    }
+
+    function togglePlayerLiftAt(x, y) {
+      return setPlayerLiftRaised(x, y, !isRaisedPlayerLift(x, y));
+    }
+
+    function terrainSurfaceHeightAt(x, y, gateState = app.liveRaisedPlayerGates) {
+      if (!isInsideBoard(x, y)) {
+        return null;
+      }
+
+      if (isTerrainWall(x, y) || isRaisedPlayerGate(x, y, gateState) || isRaisedPlayerLift(x, y)) {
+        return 1;
+      }
+
+      const cell = terrainAt(x, y);
+
+      if (cell.type === "hole" || cell.type === "empty") {
+        return null;
+      }
+
+      return 0;
+    }
+
     function computeRaisedPlayerGateSet(actors = app.state.actors) {
       const activeActors = actors.filter((actor) => !actor.removed);
-      const occupied = new Set(
-        activeActors.filter((actor) => !isCollectibleActor(actor)).map((actor) => posKey(actor.x, actor.y))
+      const occupiedGround = new Set(
+        activeActors
+          .filter((actor) => !isCollectibleActor(actor) && actorElevation(actor) === 0)
+          .map((actor) => posKey(actor.x, actor.y))
       );
       const players = activeActors.filter((actor) => isPlayerActor(actor));
       const raised = new Set();
 
       for (let y = 0; y < app.state.height; y += 1) {
         for (let x = 0; x < app.state.width; x += 1) {
-          if (!isPlayerGate(x, y) || occupied.has(posKey(x, y))) {
+          if (!isPlayerGate(x, y)) {
+            continue;
+          }
+
+          if (
+            players.some(
+              (actor) => actorElevation(actor) === 1 && actor.x === x && actor.y === y
+            )
+          ) {
+            raised.add(posKey(x, y));
+            continue;
+          }
+
+          if (occupiedGround.has(posKey(x, y))) {
             continue;
           }
 
@@ -570,7 +663,7 @@
     }
 
     function isWall(x, y, gateState = app.liveRaisedPlayerGates) {
-      return isTerrainWall(x, y) || isRaisedPlayerGate(x, y, gateState);
+      return isTerrainWall(x, y) || isRaisedPlayerGate(x, y, gateState) || isRaisedPlayerLift(x, y);
     }
 
     function elevatedBlockFamiliesAt(x, y, gateState = app.liveRaisedPlayerGates) {
@@ -582,6 +675,10 @@
 
       if (isRaisedPlayerGate(x, y, gateState)) {
         families.add("terrain:player_gate");
+      }
+
+      if (isRaisedPlayerLift(x, y)) {
+        families.add("terrain:player_lift");
       }
 
       app.state.actors.forEach((actor) => {
@@ -809,6 +906,120 @@
       }
     }
 
+    function playerLiftAt(x, y, now = performance.now()) {
+      const animation = app.playerLiftAnimations.get(posKey(x, y));
+      const target = isRaisedPlayerLift(x, y) ? 1 : 0;
+      const value = animation ? gateAnimationValue(animation, now) : target;
+      return clamp(value, 0, 1.08);
+    }
+
+    function startPlayerLiftAnimationLoop() {
+      if (app.playerLiftAnimationFrameId !== null) {
+        return;
+      }
+
+      function step(now) {
+        let hasActiveAnimation = false;
+
+        app.playerLiftAnimations.forEach((animation) => {
+          if (animation.startMs === null) {
+            return;
+          }
+
+          if (now - animation.startMs >= animation.durationMs) {
+            animation.from = animation.to;
+            animation.startMs = null;
+            return;
+          }
+
+          hasActiveAnimation = true;
+        });
+
+        app.render();
+
+        if (hasActiveAnimation) {
+          app.playerLiftAnimationFrameId = window.requestAnimationFrame(step);
+          return;
+        }
+
+        app.playerLiftAnimationFrameId = null;
+      }
+
+      app.playerLiftAnimationFrameId = window.requestAnimationFrame(step);
+    }
+
+    function syncPlayerLiftAnimationTargets(now = performance.now()) {
+      if (!app.playerLiftAnimationsInitialized) {
+        eachPlayerLift((x, y, key) => {
+          const target = isRaisedPlayerLift(x, y) ? 1 : 0;
+          app.playerLiftAnimations.set(key, {
+            from: target,
+            to: target,
+            startMs: null,
+            durationMs: app.PLAYER_LIFT_RISE_DURATION_MS
+          });
+        });
+        app.playerLiftAnimationsInitialized = true;
+        return;
+      }
+
+      let hasActiveAnimation = false;
+
+      eachPlayerLift((x, y, key) => {
+        const target = isRaisedPlayerLift(x, y) ? 1 : 0;
+        const animation = app.playerLiftAnimations.get(key);
+
+        if (!animation) {
+          app.playerLiftAnimations.set(key, {
+            from: target,
+            to: target,
+            startMs: null,
+            durationMs: app.PLAYER_LIFT_RISE_DURATION_MS
+          });
+          return;
+        }
+
+        if (animation.startMs !== null && now - animation.startMs >= animation.durationMs) {
+          animation.from = animation.to;
+          animation.startMs = null;
+        }
+
+        const current = gateAnimationValue(animation, now);
+
+        if (animation.to !== target) {
+          animation.from = current;
+          animation.to = target;
+          animation.startMs = now;
+          animation.durationMs =
+            target > current ? app.PLAYER_LIFT_RISE_DURATION_MS : app.PLAYER_LIFT_FALL_DURATION_MS;
+        }
+
+        if (animation.startMs !== null) {
+          hasActiveAnimation = true;
+        }
+      });
+
+      if (hasActiveAnimation) {
+        startPlayerLiftAnimationLoop();
+      }
+    }
+
+    function initializeActorElevations() {
+      const gateState = computeRaisedPlayerGateSet(app.state.actors);
+
+      app.state.actors.forEach((actor) => {
+        if (!isPlayerActor(actor)) {
+          actor.elevation = 0;
+          actor.renderElevation = 0;
+          return;
+        }
+
+        const elevation = terrainSurfaceHeightAt(actor.x, actor.y, gateState) === 1 ? 1 : 0;
+        actor.elevation = elevation;
+        actor.renderElevation = elevation;
+      });
+    }
+
     function syncFuzzyToggle() {
       if (!app.fuzzyToggle) {
         return;
@@ -967,6 +1178,8 @@
       pushEntityKey,
       isPlayerActorType,
       isPlayerActor,
+      actorElevation,
+      actorRenderElevation,
       isCollectibleActor,
       pushWeight,
       isPushableActor,
@@ -978,6 +1191,12 @@
       terrainAt,
       groundSurfaceCell,
       isPlayerGate,
+      isPlayerLift,
+      eachPlayerLift,
+      isRaisedPlayerLift,
+      setPlayerLiftRaised,
+      togglePlayerLiftAt,
+      terrainSurfaceHeightAt,
       computeRaisedPlayerGateSet,
       eachPlayerGate,
       isRaisedPlayerGate,
@@ -996,8 +1215,12 @@
       easeInOutQuad,
       gateAnimationValue,
       gateLiftAt,
+      playerLiftAt,
       startGateAnimationLoop,
       syncGateAnimationTargets,
+      startPlayerLiftAnimationLoop,
+      syncPlayerLiftAnimationTargets,
+      initializeActorElevations,
       syncFuzzyToggle,
       syncNoiseTicker,
       syncFloatingFloorTicker,
@@ -1006,6 +1229,7 @@
       preloadImages
     });
 
+    initializeActorElevations();
     app.initialPositions = cloneActorPositions();
     app.initialTerrain = cloneTerrainState(app.state.terrain);
     app.renderer = app.gl ? initializeRenderer(app.gl) : null;

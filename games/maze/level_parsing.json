@@ -20,6 +20,9 @@
     "player_gate": {
       "token": "g"
     },
+    "player_lift": {
+      "token": "l"
+    },
     "box": {
       "token": "b",
       "image": "images/crate.png"

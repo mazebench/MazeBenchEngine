@@ -81,6 +81,14 @@ class PlayerGate(MazeSprite):
         super().__init__(x, y, name="player_gate")
 
 
+class PlayerLift(MazeSprite):
+    token = "l"
+
+    def __init__(self, x: int, y: int) -> None:
+        self.raised = False
+        super().__init__(x, y, name="player_lift")
+
+
 class Box(MazeSprite):
     token = "b"
     solid = True
@@ -117,6 +125,7 @@ class Player(MazeSprite):
     token = "p"
 
     def __init__(self, x: int, y: int, *, name: str = "player") -> None:
+        self.elevation = 0
         super().__init__(x, y, name=name)
 
     def try_move(self, dx: int, dy: int, *, allow_push: bool = True) -> bool:
@@ -164,6 +173,7 @@ class MazeWorld(GridWorld):
         "player": PythonPlayer,
         "circle_player": CirclePlayer,
         "player_gate": PlayerGate,
+        "player_lift": PlayerLift,
         "box": Box,
         "gem": Gem,
         "floating_floor": FloatingFloor,
@@ -269,27 +279,76 @@ class MazeWorld(GridWorld):
                 return sprite
         return None
 
+    def player_lift_at(self, x: int, y: int) -> PlayerLift | None:
+        for sprite in self.tiles.get((x, y), []):
+            if isinstance(sprite, PlayerLift):
+                return sprite
+        return None
+
+    def player_elevation(self, sprite: Sprite | None) -> int:
+        if not isinstance(sprite, Player):
+            return 0
+        return sprite.elevation
+
+    def is_raised_player_lift(self, x: int, y: int) -> bool:
+        lift = self.player_lift_at(x, y)
+        return lift.raised if lift is not None else False
+
+    def set_player_lift_raised(self, x: int, y: int, raised: bool) -> bool:
+        lift = self.player_lift_at(x, y)
+        if lift is None:
+            return False
+        lift.raised = raised
+        return lift.raised
+
+    def terrain_surface_height(self, x: int, y: int) -> int | None:
+        if not self.in_bounds(x, y):
+            return None
+
+        if self.tile_has_name(x, y, "wall") or self.is_raised_player_gate(x, y) or self.is_raised_player_lift(x, y):
+            return 1
+
+        if self.tile_has_name(x, y, "hole"):
+            return None
+
+        return 0
+
     def has_mobile_actor_at(self, x: int, y: int) -> bool:
         return any(
             isinstance(sprite, (Player, Box, FloatingFloor, WeightlessBox))
             for sprite in self.tiles.get((x, y), [])
         )
 
+    def has_ground_mobile_actor_at(self, x: int, y: int) -> bool:
+        return any(
+            (
+                isinstance(sprite, Player)
+                and self.player_elevation(sprite) == 0
+            )
+            or isinstance(sprite, (Box, FloatingFloor, WeightlessBox))
+            for sprite in self.tiles.get((x, y), [])
+        )
+
     def compute_raised_player_gates(self) -> set[tuple[int, int]]:
         raised: set[tuple[int, int]] = set()
+        players = [sprite for sprite in self.sprites if isinstance(sprite, Player)]
 
         for (x, y), sprites in self.tiles.items():
             if not any(sprite.name == "player_gate" for sprite in sprites):
                 continue
 
-            if self.has_mobile_actor_at(x, y):
+            if any(player.x == x and player.y == y and self.player_elevation(player) == 1 for player in players):
+                raised.add((x, y))
+                continue
+
+            if self.has_ground_mobile_actor_at(x, y):
                 continue
 
             if (
-                self.player_at(x + 1, y) is not None
-                or self.player_at(x - 1, y) is not None
-                or self.player_at(x, y + 1) is not None
-                or self.player_at(x, y - 1) is not None
+                any(player.x == x + 1 and player.y == y for player in players)
+                or any(player.x == x - 1 and player.y == y for player in players)
+                or any(player.x == x and player.y == y + 1 for player in players)
+                or any(player.x == x and player.y == y - 1 for player in players)
             ):
                 raised.add((x, y))
 
@@ -311,7 +370,8 @@ class MazeWorld(GridWorld):
             check_x -= dx
             check_y -= dy
 
-            if self.player_at(check_x, check_y) is None:
+            occupant = self.player_at(check_x, check_y)
+            if occupant is None or self.player_elevation(occupant) != self.player_elevation(player):
                 break
 
             count += 1
@@ -359,15 +419,27 @@ class MazeWorld(GridWorld):
             if sprite.name == "gem":
                 self.remove_sprite(sprite)
 
-    def snapshot_state(self) -> list[tuple[Sprite, tuple[int, int]]]:
-        return [(sprite, sprite.position) for sprite in self.sprites]
+    def snapshot_state(self) -> list[tuple[Sprite, tuple[int, int], dict[str, Any]]]:
+        snapshot: list[tuple[Sprite, tuple[int, int], dict[str, Any]]] = []
+        for sprite in self.sprites:
+            state: dict[str, Any] = {}
+            if isinstance(sprite, Player):
+                state["elevation"] = sprite.elevation
+            if isinstance(sprite, PlayerLift):
+                state["raised"] = sprite.raised
+            snapshot.append((sprite, sprite.position, state))
+        return snapshot
 
-    def restore_state(self, snapshot: list[tuple[Sprite, tuple[int, int]]]) -> None:
+    def restore_state(self, snapshot: list[tuple[Sprite, tuple[int, int], dict[str, Any]]]) -> None:
         self.sprites.clear()
         self.tiles.clear()
 
-        for sprite, position in snapshot:
+        for sprite, position, state in snapshot:
             sprite.x, sprite.y = position
+            if isinstance(sprite, Player):
+                sprite.elevation = state.get("elevation", 0)
+            if isinstance(sprite, PlayerLift):
+                sprite.raised = state.get("raised", False)
             self.add_sprite(sprite)
 
     def can_move_weightless_group(self, members: list[WeightlessBox], dx: int, dy: int) -> bool:
@@ -379,6 +451,9 @@ class MazeWorld(GridWorld):
                 return False
 
             if self.is_raised_player_gate(target_x, target_y):
+                return False
+
+            if self.is_raised_player_lift(target_x, target_y):
                 return False
 
             for occupant in self.tiles.get((target_x, target_y), []):
@@ -470,6 +545,9 @@ class MazeWorld(GridWorld):
             if self.is_raised_player_gate(target_x, target_y):
                 return None
 
+            if self.is_raised_player_lift(target_x, target_y):
+                return None
+
             for occupant in self.tiles.get((target_x, target_y), []):
                 if id(occupant) in member_ids:
                     continue
@@ -511,26 +589,66 @@ class MazeWorld(GridWorld):
         if isinstance(sprite, WeightlessBox):
             return
 
+        if isinstance(sprite, Player):
+            lift = self.player_lift_at(sprite.x, sprite.y)
+            if lift is not None and sprite.position != old_position:
+                lift.raised = not lift.raised
+                sprite.elevation = 1 if lift.raised else 0
+            else:
+                sprite.elevation = 1 if self.terrain_surface_height(sprite.x, sprite.y) == 1 else 0
+
         if self.tile_has_name(sprite.x, sprite.y, "hole"):
             if isinstance(sprite, FloatingFloor):
                 self.fill_hole_with_floor(sprite.x, sprite.y)
             self.remove_sprite(sprite)
             return
 
-        if isinstance(sprite, Player):
+        if isinstance(sprite, Player) and sprite.elevation == 0:
             self.collect_gems_at(sprite.x, sprite.y)
 
         dx = sprite.x - old_position[0]
         dy = sprite.y - old_position[1]
 
-        if (dx, dy) != (0, 0) and self.tile_has_name(sprite.x, sprite.y, "ice"):
+        if (
+            (dx, dy) != (0, 0)
+            and self.tile_has_name(sprite.x, sprite.y, "ice")
+            and not isinstance(sprite, Player)
+        ):
+            sprite.try_move(dx, dy, allow_push=False)
+            return
+
+        if (
+            (dx, dy) != (0, 0)
+            and isinstance(sprite, Player)
+            and sprite.elevation == 0
+            and self.tile_has_name(sprite.x, sprite.y, "ice")
+        ):
             sprite.try_move(dx, dy, allow_push=False)
 
     def can_move_to(self, x: int, y: int, sprite: Sprite | None = None) -> bool:
         if not self.in_bounds(x, y):
             return False
 
-        if self.is_raised_player_gate(x, y):
+        if isinstance(sprite, Player):
+            current_elevation = self.player_elevation(sprite)
+            if self.terrain_surface_height(x, y) != current_elevation:
+                return False
+
+            for occupant in self.tiles.get((x, y), []):
+                if occupant is sprite or occupant.name == "gem":
+                    continue
+
+                if isinstance(occupant, Player):
+                    if self.player_elevation(occupant) == current_elevation:
+                        return False
+                    continue
+
+                if current_elevation == 0 and getattr(occupant, "solid", False):
+                    return False
+
+            return True
+
+        if self.is_raised_player_gate(x, y) or self.is_raised_player_lift(x, y):
             return False
 
         for occupant in self.tiles.get((x, y), []):

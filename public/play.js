@@ -44,6 +44,11 @@
         window.cancelAnimationFrame(app.floatingFloorFrameId);
         app.floatingFloorFrameId = null;
       }
+
+      if (app.playerLiftAnimationFrameId !== null) {
+        window.cancelAnimationFrame(app.playerLiftAnimationFrameId);
+        app.playerLiftAnimationFrameId = null;
+      }
     });
 
     app.canvas.addEventListener("webglcontextrestored", function () {
@@ -51,6 +56,7 @@
       app.setupCanvas();
       app.syncNoiseTicker();
       app.syncFloatingFloorTicker();
+      app.syncPlayerLiftAnimationTargets();
       if (!app.isAnimating) {
         app.render();
       }

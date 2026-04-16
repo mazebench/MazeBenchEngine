@@ -8,6 +8,8 @@
       initialPositions,
       initialTerrain,
       MOVE_DURATION_MS,
+      PLAYER_LIFT_RISE_DURATION_MS,
+      PLAYER_LIFT_FALL_DURATION_MS,
       ICE_SLIDE_DURATION_MULTIPLIER,
       HOLE_FALL_DURATION_MS,
       HOLE_SINK_DISTANCE
@@ -23,6 +25,7 @@
       actorAt,
       pushEntityKey,
       isPlayerActor,
+      actorElevation,
       isCollectibleActor,
       pushWeight,
       isPushableActor,
@@ -30,10 +33,15 @@
       weightlessGroupMembers,
       isInsideBoard,
       isWall,
+      terrainSurfaceHeightAt,
+      isPlayerLift,
+      isRaisedPlayerLift,
+      setPlayerLiftRaised,
       computeRaisedPlayerGateSet,
       isIce,
       isHole,
       isIceOrHole,
+      easeOutBack,
       easeInOutQuad,
       syncFloatingFloorTicker
     } = app;
@@ -100,7 +108,13 @@
         checkX -= dx;
         checkY -= dy;
 
-        if (!actorAt(checkX, checkY, (actor) => isPlayerActor(actor))) {
+        if (
+          !actorAt(
+            checkX,
+            checkY,
+            (actor) => isPlayerActor(actor) && actorElevation(actor) === actorElevation(player)
+          )
+        ) {
           break;
         }
 
@@ -108,6 +122,17 @@
       }
 
       return count;
+    }
+
+    function blockingActorAtElevation(x, y, elevation, mover) {
+      return actorAt(
+        x,
+        y,
+        (actor) =>
+          actor !== mover &&
+          !isCollectibleActor(actor) &&
+          actorElevation(actor) === elevation
+      );
     }
 
     function collectGemsAt(x, y, moves, collectedGems) {
@@ -362,7 +387,8 @@
         type: "floor",
         label: "Floor",
         imageUrl: null,
-        underlay: null
+        underlay: null,
+        raised: false
       };
     }
 
@@ -375,14 +401,25 @@
     }
 
     function finishAnimation(moves) {
-      moves.forEach(({ actor, toX, toY, toRemoved = false, skipHoleFall = false }) => {
+      moves.forEach(
+        ({
+          actor,
+          toX,
+          toY,
+          toRemoved = false,
+          skipHoleFall = false,
+          toElevation = actor.elevation ?? 0
+        }) => {
         actor.renderX = toX;
         actor.renderY = toY;
+        actor.elevation = toElevation;
+        actor.renderElevation = toElevation;
         actor.renderScale = toRemoved ? 0 : 1;
         actor.renderSink = toRemoved && !skipHoleFall ? HOLE_SINK_DISTANCE : 0;
         actor.renderInHole = false;
         actor.removed = Boolean(toRemoved);
-      });
+        }
+      );
 
       moves.forEach(({ fillsHole = false, fillHoleX = null, fillHoleY = null }) => {
         if (!fillsHole || typeof fillHoleX !== "number" || typeof fillHoleY !== "number") {
@@ -405,13 +442,15 @@
       }
     }
 
-    function animateMoves(moves, durationMs = null) {
+    function animateMoves(moves, durationMs = null, options = {}) {
       if (moves.length === 0) {
         return;
       }
 
       app.isAnimating = true;
       const startTime = performance.now();
+      const startLiftPhaseCallback =
+        typeof options.startLiftPhase === "function" ? options.startLiftPhase : null;
       const holeStateMoves = moves.filter(
         ({
           fromRemoved = false,
@@ -419,6 +458,9 @@
           skipHoleFall = false,
           snapHoleRestore = false
         }) => !skipHoleFall && !snapHoleRestore && fromRemoved !== toRemoved
+      );
+      const liftStateMoves = moves.filter(
+        ({ fromElevation = 0, toElevation = fromElevation }) => fromElevation !== toElevation
       );
       const moveDuration =
         typeof durationMs === "number"
@@ -433,6 +475,78 @@
                     : Math.abs(toX - fromX) + Math.abs(toY - fromY)
               )
             );
+
+      function startLiftPhase() {
+        if (startLiftPhaseCallback) {
+          startLiftPhaseCallback();
+          app.render();
+        }
+
+        if (liftStateMoves.length === 0) {
+          startFallPhase();
+          return;
+        }
+
+        const liftStartTime = performance.now();
+
+        function stepLift(now) {
+          let hasActiveLift = false;
+
+          moves.forEach(
+            ({
+              actor,
+              toX,
+              toY,
+              fromElevation = actor.elevation ?? 0,
+              toElevation = fromElevation,
+              fromRemoved = false,
+              visibleDuringMove = false
+            }) => {
+              actor.renderX = toX;
+              actor.renderY = toY;
+              actor.renderInHole = false;
+
+              if (fromRemoved && !visibleDuringMove) {
+                actor.renderScale = 0;
+                actor.renderSink = HOLE_SINK_DISTANCE;
+              } else {
+                actor.renderScale = 1;
+                actor.renderSink = 0;
+              }
+
+              if (fromElevation === toElevation) {
+                actor.renderElevation = toElevation;
+                return;
+              }
+
+              const duration =
+                toElevation > fromElevation
+                  ? PLAYER_LIFT_RISE_DURATION_MS
+                  : PLAYER_LIFT_FALL_DURATION_MS;
+              const progress = Math.min(1, (now - liftStartTime) / duration);
+              const eased =
+                toElevation > fromElevation ? easeOutBack(progress) : easeInOutQuad(progress);
+
+              actor.renderElevation = fromElevation + (toElevation - fromElevation) * eased;
+
+              if (progress < 1) {
+                hasActiveLift = true;
+              }
+            }
+          );
+
+          app.render();
+
+          if (hasActiveLift) {
+            app.animationFrameId = window.requestAnimationFrame(stepLift);
+            return;
+          }
+
+          startFallPhase();
+        }
+
+        app.animationFrameId = window.requestAnimationFrame(stepLift);
+      }
 
       function startFallPhase() {
         if (holeStateMoves.length === 0) {
@@ -453,10 +567,12 @@
               toY,
               fromRemoved = false,
               toRemoved = false,
-              skipHoleFall = false
+              skipHoleFall = false,
+              toElevation = actor.elevation ?? 0
             }) => {
               actor.renderX = toX;
               actor.renderY = toY;
+              actor.renderElevation = toElevation;
               actor.renderInHole = !skipHoleFall && fromRemoved !== toRemoved;
 
               if (skipHoleFall) {
@@ -507,10 +623,13 @@
             toX,
             toY,
             fromRemoved = false,
-            visibleDuringMove = false
+            visibleDuringMove = false,
+            fromElevation = actor.elevation ?? 0,
+            toElevation = fromElevation
           }) => {
             actor.renderX = fromX + (toX - fromX) * eased;
             actor.renderY = fromY + (toY - fromY) * eased;
+            actor.renderElevation = fromElevation;
             actor.renderInHole = false;
 
             if (fromRemoved && !visibleDuringMove) {
@@ -531,7 +650,7 @@
           return;
         }
 
-        startFallPhase();
+        startLiftPhase();
       }
 
       if (app.animationFrameId !== null) {
@@ -570,16 +689,25 @@
         const fromY = actor.y;
         const fromRemoved = Boolean(actor.removed);
         const toRemoved = Boolean(target.removed);
+        const fromElevation = actor.elevation ?? 0;
+        const toElevation = target.elevation ?? 0;
         actor.x = target.x;
         actor.y = target.y;
+        actor.elevation = toElevation;
 
         if (!toRemoved) {
           actor.removed = false;
         }
 
-        if (fromX === target.x && fromY === target.y && fromRemoved === toRemoved) {
+        if (
+          fromX === target.x &&
+          fromY === target.y &&
+          fromRemoved === toRemoved &&
+          fromElevation === toElevation
+        ) {
           actor.renderX = target.x;
           actor.renderY = target.y;
+          actor.renderElevation = toElevation;
           actor.renderScale = toRemoved ? 0 : 1;
           actor.renderSink = toRemoved ? HOLE_SINK_DISTANCE : 0;
           actor.renderInHole = false;
@@ -589,6 +717,7 @@
 
         actor.renderX = fromX;
         actor.renderY = fromY;
+        actor.renderElevation = fromElevation;
         actor.renderScale = fromRemoved ? 0 : 1;
         actor.renderSink = fromRemoved ? HOLE_SINK_DISTANCE : 0;
         actor.renderInHole = false;
@@ -600,6 +729,8 @@
           toY: target.y,
           fromRemoved,
           toRemoved,
+          fromElevation,
+          toElevation,
           snapHoleRestore: fromRemoved && !toRemoved,
           skipHoleFall: actor.type === "floating_floor" && fromRemoved !== toRemoved,
           visibleDuringMove:
@@ -628,10 +759,12 @@
       };
       const moves = [];
       const collectedGems = new Set();
+      const pendingLiftToggles = [];
 
       orderedPlayers.forEach((player) => {
         const fromX = player.x;
         const fromY = player.y;
+        const fromElevation = actorElevation(player);
         occupied.delete(posKey(player.x, player.y));
 
         let nextX = fromX;
@@ -641,21 +774,18 @@
           const targetX = nextX + dx;
           const targetY = nextY + dy;
           const isInitialStep = nextX === fromX && nextY === fromY;
+          const targetSurfaceHeight = terrainSurfaceHeightAt(targetX, targetY, raisedPlayerGates);
 
-          if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY, raisedPlayerGates)) {
+          if (!isInsideBoard(targetX, targetY) || targetSurfaceHeight !== fromElevation) {
             break;
           }
 
-          const blockingActor = actorAt(
-            targetX,
-            targetY,
-            (actor) => actor !== player && !isCollectibleActor(actor)
-          );
+          const blockingActor = blockingActorAtElevation(targetX, targetY, fromElevation, player);
 
           if (blockingActor) {
             let didMoveBlockingActor = false;
 
-            if (isInitialStep && isPushableActor(blockingActor)) {
+            if (fromElevation === 0 && isInitialStep && isPushableActor(blockingActor)) {
               const attemptSnapshot = cloneActorPositions();
               const moveCount = moves.length;
               const pushBudget = countSupportingPlayers(player, dx, dy);
@@ -682,14 +812,12 @@
             if (!didMoveBlockingActor) {
               break;
             }
-          } else if (!canMoveInto(targetX, targetY, occupied, raisedPlayerGates)) {
-            break;
           }
 
           nextX = targetX;
           nextY = targetY;
 
-          if (!isIce(nextX, nextY)) {
+          if (fromElevation !== 0 || !isIce(nextX, nextY)) {
             break;
           }
         }
@@ -697,6 +825,20 @@
         if (nextX !== fromX || nextY !== fromY) {
           player.x = nextX;
           player.y = nextY;
+          let toElevation = fromElevation;
+
+          if (isPlayerLift(nextX, nextY)) {
+            const toRaised = !isRaisedPlayerLift(nextX, nextY);
+            pendingLiftToggles.push({
+              x: nextX,
+              y: nextY,
+              raised: toRaised
+            });
+            toElevation = toRaised ? 1 : 0;
+          } else {
+            toElevation = terrainSurfaceHeightAt(nextX, nextY, raisedPlayerGates) ?? fromElevation;
+          }
+
           const travelDistance = Math.abs(nextX - fromX) + Math.abs(nextY - fromY);
           moves.push({
             actor: player,
@@ -704,12 +846,19 @@
             fromY,
             toX: nextX,
             toY: nextY,
+            fromElevation,
+            toElevation,
             timingDistance:
               travelDistance > 1
                 ? 1 + (travelDistance - 1) * ICE_SLIDE_DURATION_MULTIPLIER
                 : travelDistance
           });
-          collectGemsAlongPath(fromX, fromY, nextX, nextY, moves, collectedGems);
+
+          if (fromElevation === 0 && (toElevation === 0 || isPlayerLift(nextX, nextY))) {
+            collectGemsAlongPath(fromX, fromY, nextX, nextY, moves, collectedGems);
+          } else if (toElevation === 0) {
+            collectGemsAt(nextX, nextY, moves, collectedGems);
+          }
         }
 
         occupied.add(posKey(player.x, player.y));
@@ -719,7 +868,13 @@
         applyHoleFalls(moves);
         app.gateRenderOverride = raisedPlayerGates;
         moveHistory.push(previousState);
-        animateMoves(moves);
+        animateMoves(moves, null, {
+          startLiftPhase: () => {
+            pendingLiftToggles.forEach(({ x, y, raised }) => {
+              setPlayerLiftRaised(x, y, raised);
+            });
+          }
+        });
       }
     }
 
