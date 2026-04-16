@@ -1362,50 +1362,56 @@
     }
     context.restore();
 
+    function traceOutline() {
+      context.beginPath();
+
+      if (openTop) {
+        context.moveTo(left + radii.tl, wallTop);
+        context.lineTo(right - radii.tr, wallTop);
+      }
+
+      if (openRight) {
+        context.moveTo(right, wallTop + radii.tr);
+        context.lineTo(right, rightCornerWallTop);
+      }
+
+      if (openBottom) {
+        context.moveTo(right - radii.br, bottom);
+        context.lineTo(left + radii.bl, bottom);
+      }
+
+      if (openLeft) {
+        context.moveTo(left, leftCornerWallTop);
+        context.lineTo(left, wallTop + radii.tl);
+      }
+
+      if (radii.tl > 0) {
+        context.moveTo(left + radii.tl, wallTop);
+        context.quadraticCurveTo(left, wallTop, left, wallTop + radii.tl);
+      }
+
+      if (radii.tr > 0) {
+        context.moveTo(right - radii.tr, wallTop);
+        context.quadraticCurveTo(right, wallTop, right, wallTop + radii.tr);
+      }
+
+      if (radii.br > 0) {
+        context.moveTo(right, bottom - radii.br);
+        context.quadraticCurveTo(right, bottom, right - radii.br, bottom);
+      }
+
+      if (radii.bl > 0) {
+        context.moveTo(left + radii.bl, bottom);
+        context.quadraticCurveTo(left, bottom, left, bottom - radii.bl);
+      }
+    }
+
     context.lineWidth = 3;
+    context.strokeStyle = "#315991";
+    traceOutline();
+    context.stroke();
     context.strokeStyle = "#000000";
-    context.beginPath();
-
-    if (openTop) {
-      context.moveTo(left + radii.tl, wallTop);
-      context.lineTo(right - radii.tr, wallTop);
-    }
-
-    if (openRight) {
-      context.moveTo(right, wallTop + radii.tr);
-      context.lineTo(right, rightCornerWallTop);
-    }
-
-    if (openBottom) {
-      context.moveTo(right - radii.br, bottom);
-      context.lineTo(left + radii.bl, bottom);
-    }
-
-    if (openLeft) {
-      context.moveTo(left, leftCornerWallTop);
-      context.lineTo(left, wallTop + radii.tl);
-    }
-
-    if (radii.tl > 0) {
-      context.moveTo(left + radii.tl, wallTop);
-      context.quadraticCurveTo(left, wallTop, left, wallTop + radii.tl);
-    }
-
-    if (radii.tr > 0) {
-      context.moveTo(right - radii.tr, wallTop);
-      context.quadraticCurveTo(right, wallTop, right, wallTop + radii.tr);
-    }
-
-    if (radii.br > 0) {
-      context.moveTo(right, bottom - radii.br);
-      context.quadraticCurveTo(right, bottom, right - radii.br, bottom);
-    }
-
-    if (radii.bl > 0) {
-      context.moveTo(left + radii.bl, bottom);
-      context.quadraticCurveTo(left, bottom, left, bottom - radii.bl);
-    }
-
+    traceOutline();
     context.stroke();
   }
 
@@ -1455,21 +1461,28 @@
     context.stroke();
     context.restore();
 
+    function tracePlayerOutline() {
+      context.beginPath();
+      context.moveTo(left + radii.tl, blockTop);
+      context.lineTo(left + TILE_SIZE - radii.tr, blockTop);
+      context.moveTo(left + TILE_SIZE, blockTop + radii.tr);
+      context.lineTo(left + TILE_SIZE, bottom);
+      context.moveTo(left + TILE_SIZE, bottom);
+      context.lineTo(left, bottom);
+      context.moveTo(left, bottom);
+      context.lineTo(left, blockTop + radii.tl);
+      context.moveTo(left + radii.tl, blockTop);
+      context.quadraticCurveTo(left, blockTop, left, blockTop + radii.tl);
+      context.moveTo(left + TILE_SIZE - radii.tr, blockTop);
+      context.quadraticCurveTo(left + TILE_SIZE, blockTop, left + TILE_SIZE, blockTop + radii.tr);
+    }
+
     context.lineWidth = 3;
+    context.strokeStyle = "#4d8b52";
+    tracePlayerOutline();
+    context.stroke();
     context.strokeStyle = "#000000";
-    context.beginPath();
-    context.moveTo(left + radii.tl, blockTop);
-    context.lineTo(left + TILE_SIZE - radii.tr, blockTop);
-    context.moveTo(left + TILE_SIZE, blockTop + radii.tr);
-    context.lineTo(left + TILE_SIZE, bottom);
-    context.moveTo(left + TILE_SIZE, bottom);
-    context.lineTo(left, bottom);
-    context.moveTo(left, bottom);
-    context.lineTo(left, blockTop + radii.tl);
-    context.moveTo(left + radii.tl, blockTop);
-    context.quadraticCurveTo(left, blockTop, left, blockTop + radii.tl);
-    context.moveTo(left + TILE_SIZE - radii.tr, blockTop);
-    context.quadraticCurveTo(left + TILE_SIZE, blockTop, left + TILE_SIZE, blockTop + radii.tr);
+    tracePlayerOutline();
     context.stroke();
     context.restore();
   }
