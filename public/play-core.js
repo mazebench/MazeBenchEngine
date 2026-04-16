@@ -284,8 +284,8 @@
 
       if (players.length === 0) {
         return {
-          x: app.boardRect.width / 2,
-          y: app.boardRect.height / 2
+          x: app.cameraTargetX + app.viewportRect.width / 2,
+          y: app.cameraTargetY + app.viewportRect.height / 2
         };
       }
 
