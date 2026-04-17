@@ -12,6 +12,7 @@ const MAZE_LEVEL_GRID_SIZE = 26;
 const MAZE_WORLD_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const MAZE_WORLD_LEVEL_ID_PATTERN = /^level_([A-Z])x([A-Z])$/;
 const MAZE_DEFAULT_LEVEL_ID = "level_AxA";
+const MAZE_AUTHOR_DEFAULT_SIZE = 14;
 
 function escapeHtml(value) {
   return String(value)
@@ -157,6 +158,16 @@ function defaultLevelIdForGame(game) {
   }
 
   return game?.levels?.[0]?.id || null;
+}
+
+function clampMazeLevelDimension(value, fallback = MAZE_AUTHOR_DEFAULT_SIZE) {
+  const numericValue = Number(value);
+
+  if (!Number.isInteger(numericValue)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.min(MAZE_LEVEL_GRID_SIZE, numericValue));
 }
 
 function parseLevelCells(parser, row) {
@@ -348,6 +359,205 @@ function getLevelState(game, level) {
   };
 }
 
+function getLevelFilePath(game, level) {
+  return path.join(GAMES_DIR, game.id, "levels", level.fileName);
+}
+
+function buildBlankEditorCells(width, height, fillToken) {
+  return Array.from({ length: height }, () => Array.from({ length: width }, () => fillToken));
+}
+
+function serializeEditorCells(parser, cells) {
+  const separator =
+    typeof parser?.rules?.separator === "string" && parser.rules.separator.length > 0
+      ? parser.rules.separator
+      : " ";
+
+  return cells.map((row) => row.join(separator)).join("\n");
+}
+
+function normalizeEditorCellValue(game, definitions, cell, floorToken) {
+  const blockAdder =
+    typeof game.parser?.rules?.block_adder === "string" && game.parser.rules.block_adder.length > 0
+      ? game.parser.rules.block_adder
+      : "+";
+  const trimmedCell = String(cell ?? "").trim();
+
+  if (!trimmedCell) {
+    return floorToken;
+  }
+
+  const tokens = parseCellStack(game.parser, trimmedCell).map((token) => String(token).trim()).filter(Boolean);
+
+  if (tokens.length === 0) {
+    return floorToken;
+  }
+
+  const invalidToken = tokens.find((token) => !definitions.byToken.has(token));
+
+  if (invalidToken) {
+    throw new Error(`Unknown token "${invalidToken}".`);
+  }
+
+  return tokens.join(blockAdder);
+}
+
+function getLevelEditorState(game, level) {
+  const levelPath = getLevelFilePath(game, level);
+  const definitions = getObjectDefinitions(game);
+  const floorToken = definitions.byName.get("floor")?.tokens?.[0] || ".";
+  const rawLevel = loadText(levelPath, "");
+  const rawRows = parseLevelRows(rawLevel).map((row) => parseLevelCells(game.parser, row));
+  const exists = fs.existsSync(levelPath);
+  const width = exists
+    ? clampMazeLevelDimension(
+        rawRows.reduce((maxColumns, row) => Math.max(maxColumns, row.length), 0),
+        MAZE_AUTHOR_DEFAULT_SIZE
+      )
+    : MAZE_AUTHOR_DEFAULT_SIZE;
+  const height = exists
+    ? clampMazeLevelDimension(rawRows.length, MAZE_AUTHOR_DEFAULT_SIZE)
+    : MAZE_AUTHOR_DEFAULT_SIZE;
+  const cells =
+    exists && rawRows.length > 0
+      ? Array.from({ length: height }, (_, y) =>
+          Array.from({ length: width }, (_, x) =>
+            normalizeEditorCellValue(game, definitions, rawRows[y]?.[x] || floorToken, floorToken)
+          )
+        )
+      : buildBlankEditorCells(width, height, floorToken);
+
+  return {
+    cells,
+    exists,
+    fileName: level.fileName,
+    filePath: path.relative(ROOT_DIR, levelPath).replace(/\\/g, "/"),
+    height,
+    levelId: level.id,
+    label: level.label,
+    rawText: serializeEditorCells(game.parser, cells),
+    width
+  };
+}
+
+function sanitizeEditorPayload(game, payload) {
+  if (!Array.isArray(payload?.cells)) {
+    throw new Error("Level payload must include a cells array.");
+  }
+
+  const definitions = getObjectDefinitions(game);
+  const floorToken = definitions.byName.get("floor")?.tokens?.[0] || ".";
+  const width = clampMazeLevelDimension(payload?.width, MAZE_AUTHOR_DEFAULT_SIZE);
+  const height = clampMazeLevelDimension(payload?.height, MAZE_AUTHOR_DEFAULT_SIZE);
+  const cells = Array.from({ length: height }, (_, y) =>
+    Array.from({ length: width }, (_, x) =>
+      normalizeEditorCellValue(game, definitions, payload.cells?.[y]?.[x] ?? floorToken, floorToken)
+    )
+  );
+
+  return {
+    cells,
+    height,
+    rawText: serializeEditorCells(game.parser, cells),
+    width
+  };
+}
+
+function buildAuthorPalette(game) {
+  const definitions = getObjectDefinitions(game);
+  const palette = [];
+
+  Object.entries(game.parser?.objects || {}).forEach(([name, config]) => {
+    const definition = definitions.byName.get(name);
+    const tokens = getDefinitionTokens(config);
+
+    tokens.forEach((token) => {
+      palette.push({
+        imageUrl: definition?.imageUrl || null,
+        label:
+          tokens.length > 1
+            ? `${definition?.label || titleCase(name)} ${token}`
+            : definition?.label || titleCase(name),
+        name,
+        token
+      });
+    });
+  });
+
+  return palette;
+}
+
+function buildAuthorPageData(game, level) {
+  const definitions = getObjectDefinitions(game);
+  const floorToken = definitions.byName.get("floor")?.tokens?.[0] || ".";
+  const wallToken = definitions.byName.get("wall")?.tokens?.[0] || floorToken;
+  const initialLevel = getLevelEditorState(game, level);
+
+  return {
+    authorApiBaseUrl: `/api/author/${encodeURIComponent(game.id)}`,
+    blockAdder:
+      typeof game.parser?.rules?.block_adder === "string" && game.parser.rules.block_adder.length > 0
+        ? game.parser.rules.block_adder
+        : "+",
+    defaultFloorToken: floorToken,
+    defaultLevelId: MAZE_DEFAULT_LEVEL_ID,
+    defaultSize: MAZE_AUTHOR_DEFAULT_SIZE,
+    defaultWallToken: wallToken,
+    existingLevels: game.levels
+      .filter((candidate) => isMazeWorldLevelId(candidate.id))
+      .map((candidate) => ({
+        authorUrl: `/author/${encodeURIComponent(game.id)}/${encodeURIComponent(candidate.id)}`,
+        id: candidate.id,
+        label: candidate.label,
+        playUrl: `/play/${encodeURIComponent(game.id)}/${encodeURIComponent(candidate.id)}`
+      })),
+    game: {
+      id: game.id,
+      name: game.name
+    },
+    initialLevel,
+    letters: Array.from(MAZE_WORLD_LETTERS),
+    maxBoardSize: MAZE_LEVEL_GRID_SIZE,
+    palette: buildAuthorPalette(game),
+    separator:
+      typeof game.parser?.rules?.separator === "string" && game.parser.rules.separator.length > 0
+        ? game.parser.rules.separator
+        : " "
+  };
+}
+
+function readRequestBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      body += chunk;
+
+      if (body.length > 1024 * 1024) {
+        reject(new Error("Request body is too large."));
+        request.destroy();
+      }
+    });
+    request.on("end", () => resolve(body));
+    request.on("error", reject);
+  });
+}
+
+async function readJsonBody(request) {
+  const body = await readRequestBody(request);
+
+  if (!body.trim()) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    throw new Error("Request body must be valid JSON.");
+  }
+}
+
 function listGames() {
   if (!fs.existsSync(GAMES_DIR)) {
     return [];
@@ -497,6 +707,10 @@ function renderGamePage(game) {
   const startLink = startLevelId
     ? `<a class="back-link" href="/play/${encodeURIComponent(game.id)}/${encodeURIComponent(startLevelId)}">Play</a>`
     : "";
+  const authorLink =
+    game.id === "maze" && startLevelId
+      ? `<a class="back-link" href="/author/${encodeURIComponent(game.id)}/${encodeURIComponent(startLevelId)}">Author</a>`
+      : "";
   const levelsSection =
     game.id === "maze"
       ? ""
@@ -517,6 +731,7 @@ function renderGamePage(game) {
       </nav>
       <h1>${escapeHtml(game.name)}</h1>
       ${startLink}
+      ${authorLink}
       ${levelsSection}
     </main>`
   });
@@ -568,11 +783,93 @@ function renderPlayPage(game, level) {
         <h1>${escapeHtml(game.name)}</h1>
         <div class="play-header-meta">
           <a class="back-link" href="/games/${encodeURIComponent(game.id)}">Back</a>
+          <a class="back-link" href="/author/${encodeURIComponent(game.id)}/${encodeURIComponent(level.id)}">Author</a>
           <p>${escapeHtml(level.label)}</p>
           ${fuzzyToggleMarkup}
         </div>
       </header>
       ${boardMarkup}
+    </main>`
+  });
+}
+
+function renderAuthorPage(game, level) {
+  const authorData = buildAuthorPageData(game, level);
+
+  return renderPage({
+    title: `${game.name} Author`,
+    body: `<main class="shell author-shell">
+      <nav class="page-nav">
+        <a class="back-link" href="/games/${encodeURIComponent(game.id)}">Back</a>
+        <a class="back-link" id="author-play-link" href="/play/${encodeURIComponent(game.id)}/${encodeURIComponent(level.id)}">Play</a>
+      </nav>
+      <header class="author-header">
+        <h1>${escapeHtml(game.name)} Author</h1>
+        <p class="author-subtitle">Paint a maze level, tune the grid, and save a real <code>level_BxB.txt</code> file.</p>
+      </header>
+      <section class="author-toolbar">
+        <div class="author-toolbar__group">
+          <label class="field">
+            <span>Column</span>
+            <select id="level-column" aria-label="Level column"></select>
+          </label>
+          <label class="field">
+            <span>Row</span>
+            <select id="level-row" aria-label="Level row"></select>
+          </label>
+          <div class="author-meta">
+            <span class="author-meta__label">File</span>
+            <span id="current-file-name" class="author-meta__value"></span>
+          </div>
+        </div>
+        <div class="author-toolbar__group">
+          <label class="field">
+            <span>Width</span>
+            <input id="board-width" type="number" min="1" max="${MAZE_LEVEL_GRID_SIZE}" inputmode="numeric">
+          </label>
+          <label class="field">
+            <span>Height</span>
+            <input id="board-height" type="number" min="1" max="${MAZE_LEVEL_GRID_SIZE}" inputmode="numeric">
+          </label>
+          <button id="resize-level" class="tool-button" type="button">Resize</button>
+          <button id="clear-level" class="tool-button" type="button">Clear</button>
+          <button id="frame-level" class="tool-button" type="button">Frame Walls</button>
+          <button id="save-level" class="tool-button tool-button--primary" type="button">Save</button>
+        </div>
+      </section>
+      <p id="author-status" class="author-status" role="status" aria-live="polite"></p>
+      <div class="author-layout">
+        <aside class="author-sidebar">
+          <section class="author-panel">
+            <h2>Paint</h2>
+            <div id="palette" class="palette"></div>
+          </section>
+          <section class="author-panel">
+            <h2>Cell</h2>
+            <p id="selected-cell-label" class="author-panel__copy"></p>
+            <label class="field">
+              <span>Raw value</span>
+              <input id="cell-value" type="text" spellcheck="false" aria-label="Selected cell raw value">
+            </label>
+            <button id="apply-cell-value" class="tool-button" type="button">Apply Cell</button>
+          </section>
+          <section class="author-panel">
+            <h2>Existing World Levels</h2>
+            <div id="existing-levels" class="author-level-pills"></div>
+          </section>
+        </aside>
+        <section class="author-workspace">
+          <section class="author-grid-shell">
+            <div id="author-grid" class="author-grid" aria-label="Maze author grid"></div>
+          </section>
+          <section class="author-panel">
+            <h2>Text Output</h2>
+            <textarea id="raw-output" class="raw-output" readonly spellcheck="false"></textarea>
+          </section>
+        </section>
+      </div>
+      <script>window.__AUTHOR_DATA__ = ${serializeForScript(authorData)};</script>
+      <script src="/author.js" defer></script>
     </main>`
   });
 }
@@ -586,7 +883,8 @@ function renderNotFound() {
   });
 }
 
-const server = http.createServer((request, response) => {
+const server = http.createServer(async (request, response) => {
+  try {
   const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
   const segments = url.pathname.split("/").filter(Boolean);
 
@@ -624,6 +922,11 @@ const server = http.createServer((request, response) => {
       path.join(PUBLIC_DIR, "play-gameplay.js"),
       "application/javascript; charset=utf-8"
     );
+    return;
+  }
+
+  if (url.pathname === "/author.js") {
+    sendFile(response, path.join(PUBLIC_DIR, "author.js"), "application/javascript; charset=utf-8");
     return;
   }
 
@@ -665,6 +968,48 @@ const server = http.createServer((request, response) => {
     }
 
     sendHtml(response, 200, renderGamePage(game));
+    return;
+  }
+
+  if (segments.length === 2 && segments[0] === "author") {
+    const game = getGame(segments[1]);
+    if (!game || game.id !== "maze") {
+      sendHtml(response, 404, renderNotFound());
+      return;
+    }
+
+    const level = getLevel(game, MAZE_DEFAULT_LEVEL_ID);
+    if (!level) {
+      sendHtml(response, 404, renderNotFound());
+      return;
+    }
+
+    sendHtml(response, 200, renderAuthorPage(game, level));
+    return;
+  }
+
+  if (segments.length === 3 && segments[0] === "author") {
+    const game = getGame(segments[1]);
+    if (!game || game.id !== "maze") {
+      sendHtml(response, 404, renderNotFound());
+      return;
+    }
+
+    if (!isMazeWorldLevelId(segments[2])) {
+      sendRedirect(
+        response,
+        `/author/${encodeURIComponent(game.id)}/${encodeURIComponent(MAZE_DEFAULT_LEVEL_ID)}`
+      );
+      return;
+    }
+
+    const level = getLevel(game, segments[2]);
+    if (!level) {
+      sendHtml(response, 404, renderNotFound());
+      return;
+    }
+
+    sendHtml(response, 200, renderAuthorPage(game, level));
     return;
   }
 
@@ -727,7 +1072,49 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (segments.length === 4 && segments[0] === "api" && segments[1] === "author") {
+    const game = getGame(segments[2]);
+    if (!game || game.id !== "maze" || !isMazeWorldLevelId(segments[3])) {
+      sendHtml(response, 404, renderNotFound());
+      return;
+    }
+
+    const level = getLevel(game, segments[3]);
+    if (!level) {
+      sendHtml(response, 404, renderNotFound());
+      return;
+    }
+
+    if (request.method === "GET") {
+      sendJson(response, 200, getLevelEditorState(game, level));
+      return;
+    }
+
+    if (request.method === "POST") {
+      const payload = await readJsonBody(request);
+      const editorState = sanitizeEditorPayload(game, payload);
+      const levelPath = getLevelFilePath(game, level);
+      fs.writeFileSync(levelPath, editorState.rawText, "utf8");
+      sendJson(response, 200, {
+        ...getLevelEditorState(game, level),
+        message: `Saved ${level.fileName}.`,
+        playUrl: `/play/${encodeURIComponent(game.id)}/${encodeURIComponent(level.id)}`
+      });
+      return;
+    }
+
+    response.writeHead(405, { Allow: "GET, POST" });
+    response.end();
+    return;
+  }
+
   sendHtml(response, 404, renderNotFound());
+  } catch (error) {
+    const statusCode = error?.message === "Request body is too large." ? 413 : 400;
+    sendJson(response, statusCode, {
+      error: error instanceof Error ? error.message : "Something went wrong."
+    });
+  }
 });
 
 server.listen(PORT, HOST, () => {

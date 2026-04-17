@@ -258,6 +258,341 @@ pre {
   touch-action: auto;
 }
 
+.tool-button {
+  display: inline-block;
+  padding: 10px 14px;
+  border: 3px solid #000000;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: var(--shadow-sm) var(--shadow-sm) 0 #000000;
+  margin-right: var(--shadow-sm);
+  margin-bottom: var(--shadow-sm);
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.tool-button--primary {
+  background: #7ee0a1;
+}
+
+.tool-button:active,
+.tool-button.is-active {
+  transform: translate(2px, 2px);
+  box-shadow: calc(var(--shadow-sm) - 2px) calc(var(--shadow-sm) - 2px) 0 #000000;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.field span {
+  line-height: 1;
+}
+
+.field input,
+.field select,
+.raw-output {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 3px solid #000000;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: var(--shadow-xs) var(--shadow-xs) 0 #000000;
+  color: inherit;
+  font: inherit;
+}
+
+.field input,
+.field select {
+  min-height: 46px;
+}
+
+.author-shell {
+  max-width: 1380px;
+}
+
+.author-header {
+  margin-bottom: 20px;
+}
+
+.author-subtitle {
+  display: inline-block;
+  max-width: 760px;
+  padding: 10px 14px;
+  border: 3px solid #000000;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: var(--shadow-xs) var(--shadow-xs) 0 #000000;
+  margin-right: var(--shadow-xs);
+  margin-bottom: var(--shadow-xs);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.author-subtitle code {
+  font-size: 0.95em;
+}
+
+.author-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  align-items: flex-end;
+  margin-bottom: 10px;
+}
+
+.author-toolbar__group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.author-meta {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-height: 46px;
+  padding: 10px 14px;
+  border: 3px solid #000000;
+  border-radius: 6px;
+  background: #ffd84d;
+  box-shadow: var(--shadow-xs) var(--shadow-xs) 0 #000000;
+  margin-right: var(--shadow-xs);
+  margin-bottom: var(--shadow-xs);
+}
+
+.author-meta__label {
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.author-meta__value {
+  font-weight: 800;
+}
+
+.author-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin: 0 0 22px;
+  padding: 8px 12px;
+  border: 3px solid #000000;
+  border-radius: 6px;
+  background: #8dc7ff;
+  box-shadow: var(--shadow-xs) var(--shadow-xs) 0 #000000;
+  font-weight: 800;
+}
+
+.author-status.is-success {
+  background: #7ee0a1;
+}
+
+.author-status.is-warning {
+  background: #ffd84d;
+}
+
+.author-status.is-error {
+  background: #ff7b72;
+}
+
+.author-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.author-sidebar,
+.author-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.author-panel {
+  padding: 16px;
+  border: 3px solid #000000;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: var(--shadow-md) var(--shadow-md) 0 #000000;
+  margin-right: var(--shadow-md);
+  margin-bottom: var(--shadow-md);
+}
+
+.author-panel h2,
+.author-panel p {
+  margin-top: 0;
+}
+
+.author-panel h2 {
+  margin-bottom: calc(10px + var(--shadow-xs));
+}
+
+.author-panel__copy {
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.palette {
+  display: grid;
+  gap: 10px;
+}
+
+.palette__button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  text-align: left;
+}
+
+.palette__button.is-active {
+  background: #ffd84d;
+}
+
+.palette__swatch {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #000000;
+  border-radius: 4px;
+  background: #ffffff;
+  overflow: hidden;
+  flex: 0 0 auto;
+  font-size: 0.85rem;
+  font-weight: 900;
+}
+
+.palette__swatch img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.palette__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.palette__label {
+  font-weight: 900;
+}
+
+.palette__token {
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.author-level-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.author-level-pill {
+  display: inline-block;
+  padding: 8px 10px;
+  border: 3px solid #000000;
+  border-radius: 6px;
+  background: #eef1e8;
+  box-shadow: var(--shadow-xs) var(--shadow-xs) 0 #000000;
+  margin-right: var(--shadow-xs);
+  margin-bottom: var(--shadow-xs);
+  color: inherit;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.author-level-pill.is-active {
+  background: #ff7b72;
+}
+
+.author-grid-shell {
+  overflow: auto;
+  padding: 16px;
+  border: 4px solid #000000;
+  border-radius: 6px;
+  background: #ffd84d;
+  box-shadow: var(--shadow-lg) var(--shadow-lg) 0 #000000;
+  margin-right: var(--shadow-lg);
+  margin-bottom: var(--shadow-lg);
+}
+
+.author-grid {
+  --author-cell-size: 32px;
+  display: grid;
+  gap: 4px;
+  justify-content: start;
+}
+
+.author-grid__cell {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 2px solid #000000;
+  border-radius: 4px;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.author-grid__cell.is-selected {
+  outline: 3px solid #ff7b72;
+  outline-offset: 1px;
+}
+
+.raw-output {
+  min-height: 240px;
+  resize: vertical;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  line-height: 1.4;
+}
+
+@media (max-width: 1100px) {
+  .author-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .author-grid {
+    --author-cell-size: 28px;
+  }
+
+  .author-grid__cell {
+    width: 28px;
+    height: 28px;
+    font-size: 0.6rem;
+  }
+
+  .author-toolbar__group {
+    width: 100%;
+  }
+}
+
 .effect-icon {
   position: relative;
   display: block;
