@@ -15,6 +15,7 @@
     existingLevels: document.getElementById("existing-levels"),
     frameLevel: document.getElementById("frame-level"),
     grid: document.getElementById("author-grid"),
+    levelNeighbors: document.getElementById("level-neighbors"),
     levelColumn: document.getElementById("level-column"),
     levelRow: document.getElementById("level-row"),
     palette: document.getElementById("palette"),
@@ -47,6 +48,7 @@
   };
 
   const toolByToken = new Map(authorData.palette.map((tool) => [tool.token, tool]));
+  const letterIndexByValue = new Map(authorData.letters.map((letter, index) => [letter, index]));
   const state = {
     cells: cloneCells(authorData.initialLevel.cells),
     exists: authorData.initialLevel.exists,
@@ -88,6 +90,27 @@
 
   function levelIdFromSelectors() {
     return "level_" + elements.levelColumn.value + "x" + elements.levelRow.value;
+  }
+
+  function adjacentLevelId(levelId, dx, dy) {
+    const coordinates = parseLevelCoordinates(levelId);
+    const letterCount = authorData.letters.length;
+
+    if (!coordinates || letterCount === 0) {
+      return levelId;
+    }
+
+    const columnIndex = letterIndexByValue.get(coordinates.column);
+    const rowIndex = letterIndexByValue.get(coordinates.row);
+
+    if (typeof columnIndex !== "number" || typeof rowIndex !== "number") {
+      return levelId;
+    }
+
+    const nextColumnIndex = (columnIndex + dx + letterCount) % letterCount;
+    const nextRowIndex = (rowIndex + dy + letterCount) % letterCount;
+
+    return "level_" + authorData.letters[nextColumnIndex] + "x" + authorData.letters[nextRowIndex];
   }
 
   function normalizeCellValue(value) {
@@ -200,6 +223,17 @@
       .join("");
   }
 
+  function renderNeighborButtons() {
+    Array.from(elements.levelNeighbors.querySelectorAll("[data-dx][data-dy]")).forEach(function (button) {
+      const dx = Number(button.dataset.dx);
+      const dy = Number(button.dataset.dy);
+      const nextLevelId = adjacentLevelId(state.levelId, dx, dy);
+      button.dataset.levelId = nextLevelId;
+      button.title = "Go to " + nextLevelId.replace("level_", "");
+      button.setAttribute("aria-label", "Go to " + nextLevelId);
+    });
+  }
+
   function updateCellButton(button, x, y) {
     const value = state.cells[y][x];
     const descriptor = getCellDescriptor(value);
@@ -307,6 +341,7 @@
   function renderAll() {
     renderStatus();
     renderMeta();
+    renderNeighborButtons();
     renderGrid();
     renderSelectedCell();
     renderRawOutput();
@@ -585,6 +620,20 @@
     }
   });
   elements.saveLevel.addEventListener("click", saveLevel);
+
+  elements.levelNeighbors.addEventListener("click", function (event) {
+    const button = event.target.closest("[data-level-id]");
+
+    if (!button) {
+      return;
+    }
+
+    const nextLevelId = button.dataset.levelId;
+
+    if (nextLevelId && nextLevelId !== state.levelId) {
+      loadLevel(nextLevelId);
+    }
+  });
 
   elements.existingLevels.addEventListener("click", function (event) {
     const link = event.target.closest("[data-level-id]");

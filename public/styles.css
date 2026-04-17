@@ -356,6 +356,40 @@ pre {
   align-items: flex-end;
 }
 
+.author-neighbors {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 56px));
+  grid-template-areas:
+    ". up ."
+    "left . right"
+    ". down .";
+  gap: 8px;
+  align-items: center;
+}
+
+.author-neighbors__button {
+  min-height: 46px;
+  margin-right: 0;
+  margin-bottom: 0;
+  padding: 10px 8px;
+}
+
+.author-neighbors__button--up {
+  grid-area: up;
+}
+
+.author-neighbors__button--left {
+  grid-area: left;
+}
+
+.author-neighbors__button--right {
+  grid-area: right;
+}
+
+.author-neighbors__button--down {
+  grid-area: down;
+}
+
 .author-meta {
   display: flex;
   flex-direction: column;
@@ -578,6 +612,14 @@ pre {
 }
 
 @media (max-width: 640px) {
+  .author-neighbors {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "up down"
+      "left right";
+    width: 100%;
+  }
+
   .author-grid {
     --author-cell-size: 28px;
   }

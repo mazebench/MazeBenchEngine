@@ -817,6 +817,12 @@ function renderAuthorPage(game, level) {
             <span>Row</span>
             <select id="level-row" aria-label="Level row"></select>
           </label>
+          <div id="level-neighbors" class="author-neighbors" aria-label="Neighbor levels">
+            <button class="tool-button author-neighbors__button author-neighbors__button--up" type="button" data-dx="0" data-dy="-1">Up</button>
+            <button class="tool-button author-neighbors__button author-neighbors__button--left" type="button" data-dx="-1" data-dy="0">Left</button>
+            <button class="tool-button author-neighbors__button author-neighbors__button--right" type="button" data-dx="1" data-dy="0">Right</button>
+            <button class="tool-button author-neighbors__button author-neighbors__button--down" type="button" data-dx="0" data-dy="1">Down</button>
+          </div>
           <div class="author-meta">
             <span class="author-meta__label">File</span>
             <span id="current-file-name" class="author-meta__value"></span>

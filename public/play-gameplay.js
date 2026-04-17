@@ -50,6 +50,7 @@
       applyLevelState,
       loadLevelState,
       captureSceneSnapshot,
+      captureForegroundOccluderSnapshot,
       captureViewportSnapshot,
       viewportPositionForActor,
       startLevelTransition
@@ -167,6 +168,10 @@
       const outgoingSceneSnapshot = captureSceneSnapshot({
         skipActorsPredicate: (actor) => isPlayerActor(actor)
       });
+      const outgoingForegroundSnapshot = captureForegroundOccluderSnapshot({
+        occludingActor: transition.player,
+        skipActorsPredicate: (actor) => isPlayerActor(actor)
+      });
       const outgoingSnapshot = captureViewportSnapshot({
         skipActorsPredicate: (actor) => isPlayerActor(actor)
       });
@@ -226,6 +231,16 @@
           canvas: outgoingSceneSnapshot,
           cameraX: outgoingCameraX,
           cameraY: outgoingCameraY,
+          boardRect: {
+            width: previousLevelSnapshot.width * app.TILE_SIZE,
+            height: previousLevelSnapshot.height * app.TILE_SIZE
+          },
+          viewportRect: {
+            width: app.viewportRect.width,
+            height: app.viewportRect.height
+          }
+        }, {
+          canvas: outgoingForegroundSnapshot,
           boardRect: {
             width: previousLevelSnapshot.width * app.TILE_SIZE,
             height: previousLevelSnapshot.height * app.TILE_SIZE

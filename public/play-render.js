@@ -1000,7 +1000,7 @@
       return Math.ceil(renderY);
     }
 
-    function paintDepthSortedScene(now = performance.now()) {
+    function buildDrawItems(now = performance.now()) {
       const drawItems = [];
       const animatedWeightlessGroups = new Set();
 
@@ -1093,7 +1093,21 @@
         return left.order - right.order;
       });
 
-      drawItems.forEach((item) => item.paint());
+      return drawItems;
+    }
+
+    function paintDepthSortedScene(now = performance.now(), itemFilter = null) {
+      const drawItems = buildDrawItems(now);
+
+      drawItems.forEach((item) => {
+        if (typeof itemFilter === "function" && !itemFilter(item)) {
+          return;
+        }
+
+        item.paint();
+      });
+
+      return drawItems;
     }
 
     function paintActor(actor, now = performance.now()) {
@@ -1517,6 +1531,58 @@
       return snapshot;
     }
 
+    function captureForegroundOccluderSnapshot(options = {}, now = performance.now()) {
+      const skipActorsPredicate =
+        typeof options.skipActorsPredicate === "function" ? options.skipActorsPredicate : null;
+      const occludingActor = options.occludingActor || null;
+      const hiddenActors = [];
+
+      if (!occludingActor) {
+        return null;
+      }
+
+      const occluderDepth = actorDepthRow(occludingActor) + (occludingActor.renderInHole ? 0 : 1);
+      const occluderTieBreaker =
+        occludingActor.renderInHole
+          ? -1
+          : isCollectibleActor(occludingActor)
+            ? 0
+            : isPlayerActor(occludingActor)
+              ? 2
+              : 1;
+
+      app.liveRaisedPlayerGates = app.gateRenderOverride || app.computeRaisedPlayerGateSet();
+      app.syncGateAnimationTargets(now);
+      app.syncPlayerLiftAnimationTargets(now);
+
+      if (skipActorsPredicate) {
+        state.actors.forEach((actor) => {
+          if (!skipActorsPredicate(actor)) {
+            return;
+          }
+
+          hiddenActors.push({
+            actor,
+            removed: actor.removed
+          });
+          actor.removed = true;
+        });
+      }
+
+      sceneCtx.clearRect(0, 0, boardRect.width, boardRect.height);
+      paintDepthSortedScene(now, function (item) {
+        return (
+          item.depth > occluderDepth ||
+          (item.depth === occluderDepth && item.tieBreaker > occluderTieBreaker)
+        );
+      });
+      const snapshot = cloneCanvas(sceneCanvas, boardRect.width, boardRect.height);
+      hiddenActors.forEach(({ actor, removed }) => {
+        actor.removed = removed;
+      });
+      return snapshot;
+    }
+
     function startLevelTransitionLoop() {
       if (app.levelTransitionFrameId !== null) {
         return;
@@ -1530,10 +1596,19 @@
       app.levelTransitionFrameId = window.requestAnimationFrame(step);
     }
 
-    function startLevelTransition(fromCanvas, toCanvas, dx, dy, player = null, fromScene = null) {
+    function startLevelTransition(
+      fromCanvas,
+      toCanvas,
+      dx,
+      dy,
+      player = null,
+      fromScene = null,
+      fromForeground = null
+    ) {
       app.levelTransition = {
         fromCanvas,
         fromScene,
+        fromForeground,
         toCanvas,
         dx,
         dy,
@@ -1567,6 +1642,16 @@
       const incomingCanvas = captureViewportSnapshot({
         skipActorsPredicate: (actor) => isPlayerActor(actor)
       }, now);
+      const incomingForegroundCanvas =
+        transition.player?.targetActor
+          ? captureForegroundOccluderSnapshot(
+              {
+                occludingActor: transition.player.targetActor,
+                skipActorsPredicate: (actor) => isPlayerActor(actor)
+              },
+              now
+            )
+          : null;
 
       viewCtx.clearRect(0, 0, viewportRect.width, viewportRect.height);
       viewCtx.fillStyle = "#d6bd94";
@@ -1625,6 +1710,32 @@
           oldY +
           (targetPosition.top + newY - (sourcePosition.top + oldY)) * eased;
         paintTransitionPlayer(overlayActor, overlayLeft, overlayTop);
+      }
+
+      if (transition.fromForeground?.canvas) {
+        drawViewportFromScene(
+          viewCtx,
+          transition.fromForeground.canvas,
+          transition.fromForeground.boardRect,
+          transition.fromForeground.viewportRect,
+          outgoingCameraX,
+          outgoingCameraY,
+          oldX,
+          oldY
+        );
+      }
+
+      if (incomingForegroundCanvas) {
+        drawViewportFromScene(
+          viewCtx,
+          incomingForegroundCanvas,
+          boardRect,
+          viewportRect,
+          app.cameraX,
+          app.cameraY,
+          newX,
+          newY
+        );
       }
 
       return {
@@ -1743,6 +1854,7 @@
       paintWeightlessGroup,
       actorDepthRow,
       paintDepthSortedScene,
+      buildDrawItems,
       paintActor,
       getEffectSettings,
       drawScene,
@@ -1750,6 +1862,7 @@
       captureViewportSnapshot,
       viewportPositionForActorAtCamera,
       viewportPositionForActor,
+      captureForegroundOccluderSnapshot,
       paintTransitionPlayer,
       drawViewportFromScene,
       startLevelTransitionLoop,
