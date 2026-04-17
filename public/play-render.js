@@ -233,8 +233,7 @@
       }
 
       const faceHeight = Math.round(TILE_SIZE * 0.26);
-      const hasFloorAbove = y > 0 && openTop;
-      const liftHeight = hasFloorAbove ? faceHeight : 0;
+      const liftHeight = openTop ? faceHeight : 0;
       const wallTop = top - liftHeight;
       const wallHeight = TILE_SIZE + liftHeight;
       const radius = TILE_SIZE * 0.18;
@@ -375,7 +374,7 @@
       const right = left + TILE_SIZE;
       const bottom = top + TILE_SIZE;
       const faceHeight = Math.round(TILE_SIZE * 0.26);
-      const liftHeight = y > 0 ? faceHeight : 0;
+      const liftHeight = faceHeight;
       const travel = liftHeight * lift;
       const platformTop = top - travel;
       const platformBottom = bottom - travel;
@@ -451,7 +450,7 @@
       const right = left + TILE_SIZE;
       const bottom = top + TILE_SIZE;
       const faceHeight = Math.round(TILE_SIZE * 0.26);
-      const liftHeight = y > 0 ? faceHeight : 0;
+      const liftHeight = faceHeight;
       const travel = liftHeight * lift;
       const platformTop = top - travel;
       const platformBottom = bottom - travel;
@@ -600,8 +599,7 @@
       const openBottom = !isWeightlessBoxAt(actor.groupId, actor.x, actor.y + 1);
       const openLeft = !isWeightlessBoxAt(actor.groupId, actor.x - 1, actor.y);
       const faceHeight = Math.round(TILE_SIZE * 0.26);
-      const hasFloorAbove = actor.y > 0 && openTop;
-      const liftHeight = hasFloorAbove ? faceHeight : 0;
+      const liftHeight = openTop ? faceHeight : 0;
       const wallTop = top - liftHeight;
       const wallHeight = TILE_SIZE + liftHeight;
       const radius = TILE_SIZE * 0.18;
@@ -741,7 +739,7 @@
       const top = actor.renderY * TILE_SIZE - surfaceLift;
       const bottom = top + TILE_SIZE;
       const faceHeight = Math.round(TILE_SIZE * 0.26);
-      const liftHeight = top > 0 ? faceHeight : 0;
+      const liftHeight = faceHeight;
       const blockTop = top - liftHeight;
       const blockHeight = TILE_SIZE + liftHeight;
       const radius = TILE_SIZE * 0.18;
