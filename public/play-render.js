@@ -1295,6 +1295,63 @@
       };
     }
 
+    function drawViewportFromScene(
+      context,
+      sourceCanvas,
+      sourceBoardRect,
+      sourceViewportRect,
+      cameraX,
+      cameraY,
+      offsetX = 0,
+      offsetY = 0
+    ) {
+      if (!context || !sourceCanvas || !sourceBoardRect || !sourceViewportRect) {
+        return;
+      }
+
+      const drawOffsetX = Math.round(offsetX);
+      const drawOffsetY = Math.round(offsetY);
+
+      if (
+        sourceViewportRect.width === sourceBoardRect.width &&
+        sourceViewportRect.height === sourceBoardRect.height
+      ) {
+        context.drawImage(sourceCanvas, drawOffsetX, drawOffsetY);
+        return;
+      }
+
+      const roundedCameraX = Math.round(cameraX);
+      const roundedCameraY = Math.round(cameraY);
+      const sourceX = Math.max(0, roundedCameraX);
+      const sourceY = Math.max(0, roundedCameraY);
+      const destX = drawOffsetX + Math.max(0, -roundedCameraX);
+      const destY = drawOffsetY + Math.max(0, -roundedCameraY);
+      const drawWidth = Math.max(
+        0,
+        Math.min(sourceBoardRect.width - sourceX, sourceViewportRect.width - Math.max(0, -roundedCameraX))
+      );
+      const drawHeight = Math.max(
+        0,
+        Math.min(sourceBoardRect.height - sourceY, sourceViewportRect.height - Math.max(0, -roundedCameraY))
+      );
+
+      if (drawWidth <= 0 || drawHeight <= 0) {
+        return;
+      }
+
+      context.drawImage(
+        sourceCanvas,
+        sourceX,
+        sourceY,
+        drawWidth,
+        drawHeight,
+        destX,
+        destY,
+        drawWidth,
+        drawHeight
+      );
+    }
+
     function composeViewportSource() {
       if (!viewCtx) {
         return sceneCanvas;
@@ -1303,35 +1360,14 @@
       viewCtx.clearRect(0, 0, viewportRect.width, viewportRect.height);
       viewCtx.fillStyle = "#d6bd94";
       viewCtx.fillRect(0, 0, viewportRect.width, viewportRect.height);
-
-      if (!usesScrollingViewport()) {
-        viewCtx.drawImage(sceneCanvas, 0, 0);
-        return viewCanvas;
-      }
-
-      const cameraX = Math.round(app.cameraX);
-      const cameraY = Math.round(app.cameraY);
-      const sourceX = Math.max(0, cameraX);
-      const sourceY = Math.max(0, cameraY);
-      const destX = Math.max(0, -cameraX);
-      const destY = Math.max(0, -cameraY);
-      const drawWidth = Math.max(0, Math.min(boardRect.width - sourceX, viewportRect.width - destX));
-      const drawHeight = Math.max(0, Math.min(boardRect.height - sourceY, viewportRect.height - destY));
-
-      if (drawWidth > 0 && drawHeight > 0) {
-        viewCtx.drawImage(
-          sceneCanvas,
-          sourceX,
-          sourceY,
-          drawWidth,
-          drawHeight,
-          destX,
-          destY,
-          drawWidth,
-          drawHeight
-        );
-      }
-
+      drawViewportFromScene(
+        viewCtx,
+        sceneCanvas,
+        boardRect,
+        viewportRect,
+        app.cameraX,
+        app.cameraY
+      );
       return viewCanvas;
     }
 
@@ -1356,19 +1392,32 @@
       return snapshot;
     }
 
-    function viewportPositionForActor(actor) {
+    function viewportPositionForActorAtCamera(
+      actor,
+      cameraX,
+      cameraY,
+      sourceViewportRect = viewportRect,
+      sourceBoardRect = boardRect
+    ) {
       const surfaceLift = Math.round(TILE_SIZE * 0.26 * actorRenderElevation(actor));
       const left = actor.renderX * TILE_SIZE;
       const top = actor.renderY * TILE_SIZE - surfaceLift;
 
-      if (!usesScrollingViewport()) {
+      if (
+        sourceViewportRect.width === sourceBoardRect.width &&
+        sourceViewportRect.height === sourceBoardRect.height
+      ) {
         return { left, top };
       }
 
       return {
-        left: left - Math.round(app.cameraX),
-        top: top - Math.round(app.cameraY)
+        left: left - Math.round(cameraX),
+        top: top - Math.round(cameraY)
       };
+    }
+
+    function viewportPositionForActor(actor) {
+      return viewportPositionForActorAtCamera(actor, app.cameraX, app.cameraY);
     }
 
     function paintTransitionPlayer(actor, left, top) {
@@ -1438,6 +1487,36 @@
       return snapshot;
     }
 
+    function captureSceneSnapshot(options = {}, now = performance.now()) {
+      const skipActorsPredicate =
+        typeof options.skipActorsPredicate === "function" ? options.skipActorsPredicate : null;
+      app.liveRaisedPlayerGates = app.gateRenderOverride || app.computeRaisedPlayerGateSet();
+      app.syncGateAnimationTargets(now);
+      app.syncPlayerLiftAnimationTargets(now);
+      const hiddenActors = [];
+
+      if (skipActorsPredicate) {
+        state.actors.forEach((actor) => {
+          if (!skipActorsPredicate(actor)) {
+            return;
+          }
+
+          hiddenActors.push({
+            actor,
+            removed: actor.removed
+          });
+          actor.removed = true;
+        });
+      }
+
+      drawScene(now);
+      const snapshot = cloneCanvas(sceneCanvas, boardRect.width, boardRect.height);
+      hiddenActors.forEach(({ actor, removed }) => {
+        actor.removed = removed;
+      });
+      return snapshot;
+    }
+
     function startLevelTransitionLoop() {
       if (app.levelTransitionFrameId !== null) {
         return;
@@ -1451,9 +1530,10 @@
       app.levelTransitionFrameId = window.requestAnimationFrame(step);
     }
 
-    function startLevelTransition(fromCanvas, toCanvas, dx, dy, player = null) {
+    function startLevelTransition(fromCanvas, toCanvas, dx, dy, player = null, fromScene = null) {
       app.levelTransition = {
         fromCanvas,
+        fromScene,
         toCanvas,
         dx,
         dy,
@@ -1482,24 +1562,69 @@
       const oldY = worldShiftY * eased * viewportRect.height;
       const newX = oldX - worldShiftX * (viewportRect.width - overlap);
       const newY = oldY - worldShiftY * (viewportRect.height - overlap);
+      let outgoingCameraX = transition.fromScene?.cameraX ?? 0;
+      let outgoingCameraY = transition.fromScene?.cameraY ?? 0;
+      const incomingCanvas = captureViewportSnapshot({
+        skipActorsPredicate: (actor) => isPlayerActor(actor)
+      }, now);
 
       viewCtx.clearRect(0, 0, viewportRect.width, viewportRect.height);
       viewCtx.fillStyle = "#d6bd94";
       viewCtx.fillRect(0, 0, viewportRect.width, viewportRect.height);
 
-      viewCtx.drawImage(transition.fromCanvas, Math.round(oldX), Math.round(oldY));
-      viewCtx.drawImage(transition.toCanvas, Math.round(newX), Math.round(newY));
+      if (transition.fromScene?.canvas) {
+        if (transition.dx !== 0) {
+          outgoingCameraY = app.cameraY;
+        }
+
+        if (transition.dy !== 0) {
+          outgoingCameraX = app.cameraX;
+        }
+
+        drawViewportFromScene(
+          viewCtx,
+          transition.fromScene.canvas,
+          transition.fromScene.boardRect,
+          transition.fromScene.viewportRect,
+          outgoingCameraX,
+          outgoingCameraY,
+          oldX,
+          oldY
+        );
+      } else {
+        viewCtx.drawImage(transition.fromCanvas, Math.round(oldX), Math.round(oldY));
+      }
+
+      viewCtx.drawImage(incomingCanvas || transition.toCanvas, Math.round(newX), Math.round(newY));
 
       if (transition.player) {
+        let sourcePosition = transition.player.from;
+
+        if (transition.player.sourceActor && transition.fromScene) {
+          sourcePosition = viewportPositionForActorAtCamera(
+            transition.player.sourceActor,
+            outgoingCameraX,
+            outgoingCameraY,
+            transition.fromScene.viewportRect,
+            transition.fromScene.boardRect
+          );
+        }
+
+        const targetActor =
+          transition.player.targetActor && !transition.player.targetActor.removed
+            ? transition.player.targetActor
+            : null;
+        const overlayActor = targetActor || transition.player.actor || transition.player.sourceActor;
+        const targetPosition = targetActor ? viewportPositionForActor(targetActor) : transition.player.to;
         const overlayLeft =
-          transition.player.from.left +
+          sourcePosition.left +
           oldX +
-          (transition.player.to.left + newX - (transition.player.from.left + oldX)) * eased;
+          (targetPosition.left + newX - (sourcePosition.left + oldX)) * eased;
         const overlayTop =
-          transition.player.from.top +
+          sourcePosition.top +
           oldY +
-          (transition.player.to.top + newY - (transition.player.from.top + oldY)) * eased;
-        paintTransitionPlayer(transition.player.actor, overlayLeft, overlayTop);
+          (targetPosition.top + newY - (sourcePosition.top + oldY)) * eased;
+        paintTransitionPlayer(overlayActor, overlayLeft, overlayTop);
       }
 
       return {
@@ -1555,6 +1680,8 @@
 
     function render() {
       const now = performance.now();
+      syncCameraTarget();
+      const isCameraActive = advanceCamera(now);
       const activeLevelTransition = composeLevelTransitionSource(now);
 
       if (activeLevelTransition) {
@@ -1579,12 +1706,8 @@
             app.runAction?.(nextAction);
           }, 0);
         }
-
-        return;
       }
 
-      syncCameraTarget();
-      const isCameraActive = advanceCamera(now);
       app.liveRaisedPlayerGates = app.gateRenderOverride || app.computeRaisedPlayerGateSet();
       app.syncGateAnimationTargets(now);
       app.syncPlayerLiftAnimationTargets(now);
@@ -1625,12 +1748,15 @@
       drawScene,
       cloneCanvas,
       captureViewportSnapshot,
+      viewportPositionForActorAtCamera,
       viewportPositionForActor,
       paintTransitionPlayer,
+      drawViewportFromScene,
       startLevelTransitionLoop,
       startLevelTransition,
       composeLevelTransitionSource,
       composeViewportSource,
+      captureSceneSnapshot,
       renderWithShader,
       renderFallback,
       render

@@ -49,6 +49,7 @@
       cloneLevelSnapshot,
       applyLevelState,
       loadLevelState,
+      captureSceneSnapshot,
       captureViewportSnapshot,
       viewportPositionForActor,
       startLevelTransition
@@ -160,7 +161,12 @@
       app.isTransitioningLevel = true;
       const previousLevelSnapshot = cloneLevelSnapshot();
       const previousEntrySnapshot = cloneStoredLevelSnapshot(app.levelEntrySnapshot || previousLevelSnapshot);
+      const outgoingCameraX = app.cameraX;
+      const outgoingCameraY = app.cameraY;
       const outgoingPlayerPosition = viewportPositionForActor(transition.player);
+      const outgoingSceneSnapshot = captureSceneSnapshot({
+        skipActorsPredicate: (actor) => isPlayerActor(actor)
+      });
       const outgoingSnapshot = captureViewportSnapshot({
         skipActorsPredicate: (actor) => isPlayerActor(actor)
       });
@@ -194,6 +200,15 @@
           immediateCamera: true,
           deferRender: true
         });
+
+        if (transition.dx !== 0) {
+          app.cameraY = outgoingCameraY;
+        }
+
+        if (transition.dy !== 0) {
+          app.cameraX = outgoingCameraX;
+        }
+
         const incomingPlayer = state.actors.find((actor) => isPlayerActor(actor) && !actor.removed) || null;
         const incomingPlayerPosition = incomingPlayer
           ? viewportPositionForActor(incomingPlayer)
@@ -204,7 +219,21 @@
         startLevelTransition(outgoingSnapshot, incomingSnapshot, transition.dx, transition.dy, {
           actor: incomingPlayer ? { ...incomingPlayer } : { ...transition.player },
           from: outgoingPlayerPosition,
-          to: incomingPlayerPosition
+          sourceActor: { ...transition.player },
+          to: incomingPlayerPosition,
+          targetActor: incomingPlayer
+        }, {
+          canvas: outgoingSceneSnapshot,
+          cameraX: outgoingCameraX,
+          cameraY: outgoingCameraY,
+          boardRect: {
+            width: previousLevelSnapshot.width * app.TILE_SIZE,
+            height: previousLevelSnapshot.height * app.TILE_SIZE
+          },
+          viewportRect: {
+            width: app.viewportRect.width,
+            height: app.viewportRect.height
+          }
         });
 
         return true;
