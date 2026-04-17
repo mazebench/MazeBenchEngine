@@ -43,6 +43,7 @@
       isCollectibleActor,
       isPlayerActor,
       actorRenderElevation,
+      easeInOutQuad,
       usesScrollingViewport,
       syncCameraTarget,
       advanceCamera
@@ -1334,6 +1335,129 @@
       return viewCanvas;
     }
 
+    function drawScene(now = performance.now()) {
+      sceneCtx.clearRect(0, 0, boardRect.width, boardRect.height);
+      paintGround(now);
+      paintDepthSortedScene(now);
+    }
+
+    function cloneCanvas(sourceCanvas, width = sourceCanvas.width, height = sourceCanvas.height) {
+      const snapshot = document.createElement("canvas");
+      snapshot.width = width;
+      snapshot.height = height;
+      const snapshotCtx = snapshot.getContext("2d");
+
+      if (!snapshotCtx) {
+        return snapshot;
+      }
+
+      snapshotCtx.imageSmoothingEnabled = false;
+      snapshotCtx.drawImage(sourceCanvas, 0, 0, width, height);
+      return snapshot;
+    }
+
+    function captureViewportSnapshot(now = performance.now()) {
+      app.liveRaisedPlayerGates = app.gateRenderOverride || app.computeRaisedPlayerGateSet();
+      app.syncGateAnimationTargets(now);
+      app.syncPlayerLiftAnimationTargets(now);
+      drawScene(now);
+      return cloneCanvas(composeViewportSource(), viewportRect.width, viewportRect.height);
+    }
+
+    function startLevelTransitionLoop() {
+      if (app.levelTransitionFrameId !== null) {
+        return;
+      }
+
+      function step() {
+        app.levelTransitionFrameId = null;
+        app.render();
+      }
+
+      app.levelTransitionFrameId = window.requestAnimationFrame(step);
+    }
+
+    function startLevelTransition(fromCanvas, toCanvas, dx, dy) {
+      app.levelTransition = {
+        fromCanvas,
+        toCanvas,
+        dx,
+        dy,
+        startMs: performance.now(),
+        durationMs: app.LEVEL_TRANSITION_DURATION_MS
+      };
+      app.isTransitioningLevel = true;
+      startLevelTransitionLoop();
+      app.render();
+    }
+
+    function composeLevelTransitionSource(now = performance.now()) {
+      const transition = app.levelTransition;
+
+      if (!transition) {
+        return null;
+      }
+
+      const progress = clamp((now - transition.startMs) / transition.durationMs, 0, 1);
+      const eased = easeInOutQuad(progress);
+      const worldShiftX = -transition.dx;
+      const worldShiftY = -transition.dy;
+      const oldX = worldShiftX * eased * viewportRect.width;
+      const oldY = worldShiftY * eased * viewportRect.height;
+      const newX = oldX - worldShiftX * viewportRect.width;
+      const newY = oldY - worldShiftY * viewportRect.height;
+
+      viewCtx.clearRect(0, 0, viewportRect.width, viewportRect.height);
+      viewCtx.fillStyle = "#d6bd94";
+      viewCtx.fillRect(0, 0, viewportRect.width, viewportRect.height);
+
+      viewCtx.save();
+      viewCtx.globalAlpha = 1 - progress * 0.16;
+      viewCtx.drawImage(transition.fromCanvas, Math.round(oldX), Math.round(oldY));
+      viewCtx.restore();
+
+      viewCtx.save();
+      viewCtx.globalAlpha = 0.84 + progress * 0.16;
+      viewCtx.drawImage(transition.toCanvas, Math.round(newX), Math.round(newY));
+      viewCtx.restore();
+
+      const seamWidth = 26;
+      const seamStrength = 0.28 * (1 - Math.abs(progress - 0.5) * 2);
+
+      if (worldShiftX !== 0) {
+        const seamX = Math.round(oldX + (worldShiftX < 0 ? viewportRect.width : 0));
+        const gradient = viewCtx.createLinearGradient(
+          seamX - seamWidth / 2,
+          0,
+          seamX + seamWidth / 2,
+          0
+        );
+        gradient.addColorStop(0, "rgba(0, 0, 0, 0)");
+        gradient.addColorStop(0.5, `rgba(0, 0, 0, ${seamStrength})`);
+        gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+        viewCtx.fillStyle = gradient;
+        viewCtx.fillRect(seamX - seamWidth / 2, 0, seamWidth, viewportRect.height);
+      } else if (worldShiftY !== 0) {
+        const seamY = Math.round(oldY + (worldShiftY < 0 ? viewportRect.height : 0));
+        const gradient = viewCtx.createLinearGradient(
+          0,
+          seamY - seamWidth / 2,
+          0,
+          seamY + seamWidth / 2
+        );
+        gradient.addColorStop(0, "rgba(0, 0, 0, 0)");
+        gradient.addColorStop(0.5, `rgba(0, 0, 0, ${seamStrength})`);
+        gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+        viewCtx.fillStyle = gradient;
+        viewCtx.fillRect(0, seamY - seamWidth / 2, viewportRect.width, seamWidth);
+      }
+
+      return {
+        sourceCanvas: viewCanvas,
+        active: progress < 1
+      };
+    }
+
     function renderWithShader(sourceCanvas, settings) {
       const renderer = app.renderer;
 
@@ -1381,15 +1505,40 @@
 
     function render() {
       const now = performance.now();
+      const activeLevelTransition = composeLevelTransitionSource(now);
+
+      if (activeLevelTransition) {
+        const settings = getEffectSettings();
+
+        if (!renderWithShader(activeLevelTransition.sourceCanvas, settings)) {
+          renderFallback(activeLevelTransition.sourceCanvas);
+        }
+
+        if (activeLevelTransition.active) {
+          startLevelTransitionLoop();
+          return;
+        }
+
+        app.levelTransition = null;
+        app.isTransitioningLevel = false;
+
+        if (app.queuedAction) {
+          const nextAction = app.queuedAction;
+          app.queuedAction = null;
+          window.setTimeout(() => {
+            app.runAction?.(nextAction);
+          }, 0);
+        }
+
+        return;
+      }
 
       syncCameraTarget();
       const isCameraActive = advanceCamera(now);
       app.liveRaisedPlayerGates = app.gateRenderOverride || app.computeRaisedPlayerGateSet();
       app.syncGateAnimationTargets(now);
       app.syncPlayerLiftAnimationTargets(now);
-      sceneCtx.clearRect(0, 0, boardRect.width, boardRect.height);
-      paintGround(now);
-      paintDepthSortedScene(now);
+      drawScene(now);
       const settings = getEffectSettings();
       const sourceCanvas = composeViewportSource();
 
@@ -1423,6 +1572,12 @@
       paintDepthSortedScene,
       paintActor,
       getEffectSettings,
+      drawScene,
+      cloneCanvas,
+      captureViewportSnapshot,
+      startLevelTransitionLoop,
+      startLevelTransition,
+      composeLevelTransitionSource,
       composeViewportSource,
       renderWithShader,
       renderFallback,

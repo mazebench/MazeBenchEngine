@@ -48,7 +48,9 @@
       syncFloatingFloorTicker,
       cloneLevelSnapshot,
       applyLevelState,
-      loadLevelState
+      loadLevelState,
+      captureViewportSnapshot,
+      startLevelTransition
     } = app;
 
     function cloneStoredLevelSnapshot(snapshot) {
@@ -142,6 +144,8 @@
       return {
         player,
         nextLevelId,
+        dx,
+        dy,
         targetX: dx < 0 ? state.width - 1 : dx > 0 ? 0 : player.x,
         targetY: dy < 0 ? state.height - 1 : dy > 0 ? 0 : player.y
       };
@@ -155,6 +159,7 @@
       app.isTransitioningLevel = true;
       const previousLevelSnapshot = cloneLevelSnapshot();
       const previousEntrySnapshot = cloneStoredLevelSnapshot(app.levelEntrySnapshot || previousLevelSnapshot);
+      const outgoingSnapshot = captureViewportSnapshot();
 
       try {
         const nextLevelState = await loadLevelState(transition.nextLevelId);
@@ -182,14 +187,11 @@
         applyLevelState(nextLevelState, {
           updateUrl: true,
           resetLevelEntry: true,
-          immediateCamera: true
+          immediateCamera: true,
+          deferRender: true
         });
-
-        if (app.queuedAction) {
-          const nextAction = app.queuedAction;
-          app.queuedAction = null;
-          runAction(nextAction);
-        }
+        const incomingSnapshot = captureViewportSnapshot();
+        startLevelTransition(outgoingSnapshot, incomingSnapshot, transition.dx, transition.dy);
 
         return true;
       } catch (error) {

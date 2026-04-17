@@ -55,6 +55,7 @@
       FLOATING_FLOOR_HOVER_FPS: 30,
       VIEWPORT_TILE_COUNT: 10,
       CAMERA_FOLLOW_SMOOTHING_MS: 210,
+      LEVEL_TRANSITION_DURATION_MS: 340,
       PLAYER_LIFT_ARROW_URL: `/assets/${encodeURIComponent(currentGameId)}/images/arrow.png`,
       state: {
         width: playData.width,
@@ -102,6 +103,8 @@
       playerLiftAnimationFrameId: null,
       playerLiftAnimationsInitialized: false,
       playerLiftAnimations: new Map(),
+      levelTransition: null,
+      levelTransitionFrameId: null,
       cameraFrameId: null,
       lastCameraTickMs: 0,
       cameraX: 0,
@@ -651,7 +654,8 @@
         updateUrl = false,
         resetHistory = false,
         resetLevelEntry = false,
-        immediateCamera = true
+        immediateCamera = true,
+        deferRender = false
       } = options;
 
       if (app.animationFrameId !== null) {
@@ -669,8 +673,14 @@
         app.playerLiftAnimationFrameId = null;
       }
 
+      if (app.levelTransitionFrameId !== null) {
+        window.cancelAnimationFrame(app.levelTransitionFrameId);
+        app.levelTransitionFrameId = null;
+      }
+
       app.isAnimating = false;
       app.isTransitioningLevel = false;
+      app.levelTransition = null;
       app.gateRenderOverride = null;
       app.currentLevelId = levelState.levelId || app.currentLevelId;
       app.currentLevelLabel = levelState.levelLabel || app.currentLevelLabel || app.currentLevelId;
@@ -706,7 +716,9 @@
         window.history.replaceState({ levelId: app.currentLevelId }, "", nextUrl);
       }
 
-      app.render();
+      if (!deferRender) {
+        app.render();
+      }
     }
 
     async function loadLevelState(levelId) {

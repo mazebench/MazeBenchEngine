@@ -50,6 +50,13 @@
         app.playerLiftAnimationFrameId = null;
       }
 
+      if (app.levelTransitionFrameId !== null) {
+        window.cancelAnimationFrame(app.levelTransitionFrameId);
+        app.levelTransitionFrameId = null;
+      }
+      app.levelTransition = null;
+      app.isTransitioningLevel = false;
+
       if (app.cameraFrameId !== null) {
         window.cancelAnimationFrame(app.cameraFrameId);
         app.cameraFrameId = null;
