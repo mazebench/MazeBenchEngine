@@ -159,6 +159,32 @@ function createRenderApp({ terrain, actors, playData = {} }) {
 
 {
   const app = createRenderApp({
+    terrain: buildTerrain(4, 4),
+    actors: [
+      { type: "weightless_box", groupId: "M0", x: 2, y: 0, removed: false, elevation: 0, imageUrl: null },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 1, removed: false, elevation: 0, imageUrl: null },
+      { type: "weightless_box", groupId: "M0", x: 2, y: 1, removed: false, elevation: 0, imageUrl: null }
+    ]
+  });
+
+  assert.equal(app.sideSilhouetteEndY(1, 0, 1, 100, 74), 74);
+}
+
+{
+  const app = createRenderApp({
+    terrain: buildTerrain(4, 4),
+    actors: [
+      { type: "weightless_box", groupId: "M0", x: 2, y: 0, removed: false, elevation: 0, imageUrl: null },
+      { type: "weightless_box", groupId: "M1", x: 1, y: 1, removed: false, elevation: 0, imageUrl: null },
+      { type: "weightless_box", groupId: "M1", x: 2, y: 1, removed: false, elevation: 0, imageUrl: null }
+    ]
+  });
+
+  assert.equal(app.sideSilhouetteEndY(1, 0, 1, 100, 74), 100);
+}
+
+{
+  const app = createRenderApp({
     terrain: buildTerrain(20, 20),
     actors: [],
     playData: {

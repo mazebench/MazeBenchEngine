@@ -1278,11 +1278,12 @@
           return;
         }
 
-        if (
-          actor.type === "player" ||
-          actor.type === "floating_floor" ||
-          actor.type === "weightless_box"
-        ) {
+        if (actor.type === "weightless_box") {
+          families.add(`actor:weightless_box:${actor.groupId ?? "__ungrouped__"}`);
+          return;
+        }
+
+        if (actor.type === "player" || actor.type === "floating_floor") {
           families.add(`actor:${actor.type}`);
         }
       });
