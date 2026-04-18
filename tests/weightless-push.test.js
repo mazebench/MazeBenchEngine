@@ -10,8 +10,10 @@ function posKey(x, y) {
   return `${x},${y}`;
 }
 
-function createGameplayApp(actors) {
+function createGameplayApp(actors, options = {}) {
   const app = {
+    worldColumns: options.worldColumns || Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+    worldRows: options.worldRows || Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
     state: {
       width: 8,
       height: 8,
@@ -174,6 +176,18 @@ function runAttempt(app, ignoredActors) {
 
   assert.equal(result, null);
   assert.equal(moves.length, 0);
+}
+
+{
+  const app = createGameplayApp([], {
+    worldColumns: Array.from("ABCDEFGHIJKLMNOP"),
+    worldRows: Array.from("ABCDEFGHIJKLMNOP")
+  });
+
+  assert.equal(app.adjacentWorldLevelId("level_AxA", -1, 0), "level_PxA");
+  assert.equal(app.adjacentWorldLevelId("level_AxA", 0, -1), "level_AxP");
+  assert.equal(app.adjacentWorldLevelId("level_PxP", 1, 0), "level_AxP");
+  assert.equal(app.adjacentWorldLevelId("level_PxP", 0, 1), "level_PxA");
 }
 
 console.log("weightless push regression tests passed");

@@ -1,0 +1,7 @@
+{
+  "rules": {
+    "world_size": [16, 16],
+    "level_size": [16, 16],
+    "camera_view": [16, 16]
+  }
+}

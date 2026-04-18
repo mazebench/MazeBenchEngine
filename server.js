@@ -6,13 +6,65 @@ const { URL } = require("url");
 const ROOT_DIR = __dirname;
 const GAMES_DIR = path.join(ROOT_DIR, "games");
 const PUBLIC_DIR = path.join(ROOT_DIR, "public");
+const MAZE_DIR = path.join(GAMES_DIR, "maze");
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
-const MAZE_LEVEL_GRID_SIZE = 26;
-const MAZE_WORLD_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const MAZE_LEVEL_ID_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const MAZE_WORLD_LEVEL_ID_PATTERN = /^level_([A-Z])x([A-Z])$/;
 const MAZE_DEFAULT_LEVEL_ID = "level_AxA";
-const MAZE_AUTHOR_DEFAULT_SIZE = 14;
+
+function clampMazeConfigDimension(value, fallback, max = MAZE_LEVEL_ID_LETTERS.length) {
+  const numericValue = Number(value);
+
+  if (!Number.isInteger(numericValue)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.min(max, numericValue));
+}
+
+function normalizeMazeConfigPair(value, fallback, max = MAZE_LEVEL_ID_LETTERS.length) {
+  const fallbackWidth = Array.isArray(fallback) ? fallback[0] : fallback;
+  const fallbackHeight = Array.isArray(fallback) ? fallback[1] : fallbackWidth;
+
+  if (!Array.isArray(value)) {
+    return {
+      width: clampMazeConfigDimension(fallbackWidth, 1, max),
+      height: clampMazeConfigDimension(fallbackHeight, 1, max)
+    };
+  }
+
+  return {
+    width: clampMazeConfigDimension(value[0], fallbackWidth, max),
+    height: clampMazeConfigDimension(value[1], fallbackHeight, max)
+  };
+}
+
+function buildMazeLetterAxis(length) {
+  return Array.from(MAZE_LEVEL_ID_LETTERS.slice(0, length));
+}
+
+function loadMazeWorldConfig() {
+  const worldParsing = loadJson(path.join(MAZE_DIR, "world_parsing.json"), {}) || {};
+  const rules = worldParsing.rules || {};
+  const worldSize = normalizeMazeConfigPair(rules.world_size, [26, 26]);
+  const levelSize = normalizeMazeConfigPair(rules.level_size, [26, 26]);
+  const cameraView = normalizeMazeConfigPair(rules.camera_view, [10, 10], 256);
+
+  return {
+    worldSize,
+    levelSize,
+    cameraView,
+    worldColumns: buildMazeLetterAxis(worldSize.width),
+    worldRows: buildMazeLetterAxis(worldSize.height)
+  };
+}
+
+const MAZE_WORLD_CONFIG = loadMazeWorldConfig();
+const MAZE_LEVEL_GRID_WIDTH = MAZE_WORLD_CONFIG.levelSize.width;
+const MAZE_LEVEL_GRID_HEIGHT = MAZE_WORLD_CONFIG.levelSize.height;
+const MAZE_AUTHOR_DEFAULT_WIDTH = MAZE_LEVEL_GRID_WIDTH;
+const MAZE_AUTHOR_DEFAULT_HEIGHT = MAZE_LEVEL_GRID_HEIGHT;
 
 function escapeHtml(value) {
   return String(value)
@@ -118,9 +170,18 @@ function parseMazeWorldLevelId(levelId) {
     return null;
   }
 
+  const columnIndex = MAZE_WORLD_CONFIG.worldColumns.indexOf(match[1]);
+  const rowIndex = MAZE_WORLD_CONFIG.worldRows.indexOf(match[2]);
+
+  if (columnIndex === -1 || rowIndex === -1) {
+    return null;
+  }
+
   return {
     column: match[1],
-    row: match[2]
+    row: match[2],
+    columnIndex,
+    rowIndex
   };
 }
 
@@ -160,14 +221,22 @@ function defaultLevelIdForGame(game) {
   return game?.levels?.[0]?.id || null;
 }
 
-function clampMazeLevelDimension(value, fallback = MAZE_AUTHOR_DEFAULT_SIZE) {
+function clampMazeLevelDimension(value, max, fallback) {
   const numericValue = Number(value);
 
   if (!Number.isInteger(numericValue)) {
     return fallback;
   }
 
-  return Math.max(1, Math.min(MAZE_LEVEL_GRID_SIZE, numericValue));
+  return Math.max(1, Math.min(max, numericValue));
+}
+
+function clampMazeLevelWidth(value, fallback = MAZE_AUTHOR_DEFAULT_WIDTH) {
+  return clampMazeLevelDimension(value, MAZE_LEVEL_GRID_WIDTH, fallback);
+}
+
+function clampMazeLevelHeight(value, fallback = MAZE_AUTHOR_DEFAULT_HEIGHT) {
+  return clampMazeLevelDimension(value, MAZE_LEVEL_GRID_HEIGHT, fallback);
 }
 
 function parseLevelCells(parser, row) {
@@ -307,16 +376,17 @@ function getLevelState(game, level) {
   const exitDefinition = definitions.byName.get("exit") || null;
   const terrain = [];
   const actors = [];
-  const boardSize = game.id === "maze" ? MAZE_LEVEL_GRID_SIZE : Math.max(
-    rawRows.length,
-    rawRows.reduce((maxColumns, row) => Math.max(maxColumns, row.length), 0)
-  );
+  const boardWidth =
+    game.id === "maze"
+      ? MAZE_LEVEL_GRID_WIDTH
+      : rawRows.reduce((maxColumns, row) => Math.max(maxColumns, row.length), 0);
+  const boardHeight = game.id === "maze" ? MAZE_LEVEL_GRID_HEIGHT : rawRows.length;
 
-  Array.from({ length: boardSize }, (_, y) => {
+  Array.from({ length: boardHeight }, (_, y) => {
     const row = rawRows[y] || [];
     const terrainRow = [];
 
-    Array.from({ length: boardSize }, (_, index) => {
+    Array.from({ length: boardWidth }, (_, index) => {
       const hasSourceCell = y < rawRows.length && index < row.length;
       const cell = hasSourceCell ? row[index] : "";
       const cellDefinitions = parseCellStack(game.parser, cell)
@@ -352,10 +422,19 @@ function getLevelState(game, level) {
     gameId: game.id,
     levelId: level.id,
     levelLabel: level.label,
-    width: boardSize,
-    height: boardSize,
+    width: boardWidth,
+    height: boardHeight,
     terrain,
-    actors
+    actors,
+    cameraView:
+      game.id === "maze"
+        ? {
+            width: MAZE_WORLD_CONFIG.cameraView.width,
+            height: MAZE_WORLD_CONFIG.cameraView.height
+          }
+        : null,
+    worldColumns: game.id === "maze" ? MAZE_WORLD_CONFIG.worldColumns : null,
+    worldRows: game.id === "maze" ? MAZE_WORLD_CONFIG.worldRows : null
   };
 }
 
@@ -410,14 +489,14 @@ function getLevelEditorState(game, level) {
   const rawRows = parseLevelRows(rawLevel).map((row) => parseLevelCells(game.parser, row));
   const exists = fs.existsSync(levelPath);
   const width = exists
-    ? clampMazeLevelDimension(
+    ? clampMazeLevelWidth(
         rawRows.reduce((maxColumns, row) => Math.max(maxColumns, row.length), 0),
-        MAZE_AUTHOR_DEFAULT_SIZE
+        MAZE_AUTHOR_DEFAULT_WIDTH
       )
-    : MAZE_AUTHOR_DEFAULT_SIZE;
+    : MAZE_AUTHOR_DEFAULT_WIDTH;
   const height = exists
-    ? clampMazeLevelDimension(rawRows.length, MAZE_AUTHOR_DEFAULT_SIZE)
-    : MAZE_AUTHOR_DEFAULT_SIZE;
+    ? clampMazeLevelHeight(rawRows.length, MAZE_AUTHOR_DEFAULT_HEIGHT)
+    : MAZE_AUTHOR_DEFAULT_HEIGHT;
   const cells =
     exists && rawRows.length > 0
       ? Array.from({ length: height }, (_, y) =>
@@ -447,8 +526,8 @@ function sanitizeEditorPayload(game, payload) {
 
   const definitions = getObjectDefinitions(game);
   const floorToken = definitions.byName.get("floor")?.tokens?.[0] || ".";
-  const width = clampMazeLevelDimension(payload?.width, MAZE_AUTHOR_DEFAULT_SIZE);
-  const height = clampMazeLevelDimension(payload?.height, MAZE_AUTHOR_DEFAULT_SIZE);
+  const width = clampMazeLevelWidth(payload?.width, MAZE_AUTHOR_DEFAULT_WIDTH);
+  const height = clampMazeLevelHeight(payload?.height, MAZE_AUTHOR_DEFAULT_HEIGHT);
   const cells = Array.from({ length: height }, (_, y) =>
     Array.from({ length: width }, (_, x) =>
       normalizeEditorCellValue(game, definitions, payload.cells?.[y]?.[x] ?? floorToken, floorToken)
@@ -501,7 +580,8 @@ function buildAuthorPageData(game, level) {
         : "+",
     defaultFloorToken: floorToken,
     defaultLevelId: MAZE_DEFAULT_LEVEL_ID,
-    defaultSize: MAZE_AUTHOR_DEFAULT_SIZE,
+    defaultHeight: MAZE_AUTHOR_DEFAULT_HEIGHT,
+    defaultWidth: MAZE_AUTHOR_DEFAULT_WIDTH,
     defaultWallToken: wallToken,
     existingLevels: game.levels
       .filter((candidate) => isMazeWorldLevelId(candidate.id))
@@ -516,8 +596,10 @@ function buildAuthorPageData(game, level) {
       name: game.name
     },
     initialLevel,
-    letters: Array.from(MAZE_WORLD_LETTERS),
-    maxBoardSize: MAZE_LEVEL_GRID_SIZE,
+    worldColumns: MAZE_WORLD_CONFIG.worldColumns,
+    worldRows: MAZE_WORLD_CONFIG.worldRows,
+    maxBoardHeight: MAZE_LEVEL_GRID_HEIGHT,
+    maxBoardWidth: MAZE_LEVEL_GRID_WIDTH,
     palette: buildAuthorPalette(game),
     separator:
       typeof game.parser?.rules?.separator === "string" && game.parser.rules.separator.length > 0
@@ -831,11 +913,11 @@ function renderAuthorPage(game, level) {
         <div class="author-toolbar__group">
           <label class="field">
             <span>Width</span>
-            <input id="board-width" type="number" min="1" max="${MAZE_LEVEL_GRID_SIZE}" inputmode="numeric">
+            <input id="board-width" type="number" min="1" max="${MAZE_LEVEL_GRID_WIDTH}" inputmode="numeric">
           </label>
           <label class="field">
             <span>Height</span>
-            <input id="board-height" type="number" min="1" max="${MAZE_LEVEL_GRID_SIZE}" inputmode="numeric">
+            <input id="board-height" type="number" min="1" max="${MAZE_LEVEL_GRID_HEIGHT}" inputmode="numeric">
           </label>
           <button id="resize-level" class="tool-button" type="button">Resize</button>
           <button id="clear-level" class="tool-button" type="button">Clear</button>
@@ -1064,6 +1146,11 @@ const server = http.createServer(async (request, response) => {
   if (segments.length === 4 && segments[0] === "api" && segments[1] === "play") {
     const game = getGame(segments[2]);
     if (!game) {
+      sendHtml(response, 404, renderNotFound());
+      return;
+    }
+
+    if (game.id === "maze" && !isMazeWorldLevelId(segments[3])) {
       sendHtml(response, 404, renderNotFound());
       return;
     }

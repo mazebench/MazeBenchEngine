@@ -19,11 +19,37 @@
       (typeof playData?.levelId === "string" && playData.levelId) ||
       (currentPathSegments[0] === "play" ? currentPathSegments[2] : "") ||
       "";
+    function normalizeAxisValues(values, fallback) {
+      if (!Array.isArray(values) || values.length === 0) {
+        return fallback.slice();
+      }
+
+      const normalized = values
+        .filter((value) => typeof value === "string" && /^[A-Z]$/.test(value))
+        .slice();
+
+      return normalized.length > 0 ? normalized : fallback.slice();
+    }
+
+    function normalizeViewportTiles(cameraView, fallbackWidth, fallbackHeight) {
+      const widthValue = Number(cameraView?.width);
+      const heightValue = Number(cameraView?.height);
+
+      return {
+        width: Number.isInteger(widthValue) && widthValue > 0 ? widthValue : fallbackWidth,
+        height: Number.isInteger(heightValue) && heightValue > 0 ? heightValue : fallbackHeight
+      };
+    }
+
+    const defaultWorldAxis = Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    const initialViewportTiles = normalizeViewportTiles(playData?.cameraView, 10, 10);
     const app = {
       playData,
       currentGameId,
       currentLevelId,
       currentLevelLabel: playData.levelLabel || currentLevelId,
+      worldColumns: normalizeAxisValues(playData?.worldColumns, defaultWorldAxis),
+      worldRows: normalizeAxisValues(playData?.worldRows, defaultWorldAxis),
       canvas,
       playShell,
       playHeader,
@@ -53,7 +79,8 @@
       FLOATING_FLOOR_SHADOW_HEIGHT: 64 * 0.12,
       FLOATING_FLOOR_HOVER_PERIOD_MS: 2400,
       FLOATING_FLOOR_HOVER_FPS: 30,
-      VIEWPORT_TILE_COUNT: 10,
+      VIEWPORT_TILE_WIDTH: initialViewportTiles.width,
+      VIEWPORT_TILE_HEIGHT: initialViewportTiles.height,
       CAMERA_FOLLOW_SMOOTHING_MS: 210,
       LEVEL_TRANSITION_DURATION_MS: 340,
       PLAYER_LIFT_ARROW_URL: `/assets/${encodeURIComponent(currentGameId)}/images/arrow.png`,
@@ -170,16 +197,10 @@
         width: width * app.TILE_SIZE,
         height: height * app.TILE_SIZE
       };
-      app.viewportRect =
-        width > app.VIEWPORT_TILE_COUNT || height > app.VIEWPORT_TILE_COUNT
-          ? {
-              width: app.VIEWPORT_TILE_COUNT * app.TILE_SIZE,
-              height: app.VIEWPORT_TILE_COUNT * app.TILE_SIZE
-            }
-          : {
-              width: app.boardRect.width,
-              height: app.boardRect.height
-            };
+      app.viewportRect = {
+        width: Math.min(width, app.VIEWPORT_TILE_WIDTH) * app.TILE_SIZE,
+        height: Math.min(height, app.VIEWPORT_TILE_HEIGHT) * app.TILE_SIZE
+      };
     }
 
     updateBoardMetrics();
@@ -684,6 +705,15 @@
       app.gateRenderOverride = null;
       app.currentLevelId = levelState.levelId || app.currentLevelId;
       app.currentLevelLabel = levelState.levelLabel || app.currentLevelLabel || app.currentLevelId;
+      app.worldColumns = normalizeAxisValues(levelState.worldColumns, app.worldColumns);
+      app.worldRows = normalizeAxisValues(levelState.worldRows, app.worldRows);
+      const viewportTiles = normalizeViewportTiles(
+        levelState.cameraView,
+        app.VIEWPORT_TILE_WIDTH,
+        app.VIEWPORT_TILE_HEIGHT
+      );
+      app.VIEWPORT_TILE_WIDTH = viewportTiles.width;
+      app.VIEWPORT_TILE_HEIGHT = viewportTiles.height;
       app.state.width = levelState.width;
       app.state.height = levelState.height;
       app.state.terrain = cloneTerrainState(levelState.terrain || []);

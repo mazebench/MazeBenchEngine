@@ -48,7 +48,16 @@
   };
 
   const toolByToken = new Map(authorData.palette.map((tool) => [tool.token, tool]));
-  const letterIndexByValue = new Map(authorData.letters.map((letter, index) => [letter, index]));
+  const worldColumns =
+    Array.isArray(authorData.worldColumns) && authorData.worldColumns.length > 0
+      ? authorData.worldColumns
+      : ["A"];
+  const worldRows =
+    Array.isArray(authorData.worldRows) && authorData.worldRows.length > 0
+      ? authorData.worldRows
+      : ["A"];
+  const columnIndexByValue = new Map(worldColumns.map((letter, index) => [letter, index]));
+  const rowIndexByValue = new Map(worldRows.map((letter, index) => [letter, index]));
   const state = {
     cells: cloneCells(authorData.initialLevel.cells),
     exists: authorData.initialLevel.exists,
@@ -94,23 +103,22 @@
 
   function adjacentLevelId(levelId, dx, dy) {
     const coordinates = parseLevelCoordinates(levelId);
-    const letterCount = authorData.letters.length;
 
-    if (!coordinates || letterCount === 0) {
+    if (!coordinates || worldColumns.length === 0 || worldRows.length === 0) {
       return levelId;
     }
 
-    const columnIndex = letterIndexByValue.get(coordinates.column);
-    const rowIndex = letterIndexByValue.get(coordinates.row);
+    const columnIndex = columnIndexByValue.get(coordinates.column);
+    const rowIndex = rowIndexByValue.get(coordinates.row);
 
     if (typeof columnIndex !== "number" || typeof rowIndex !== "number") {
       return levelId;
     }
 
-    const nextColumnIndex = (columnIndex + dx + letterCount) % letterCount;
-    const nextRowIndex = (rowIndex + dy + letterCount) % letterCount;
+    const nextColumnIndex = (columnIndex + dx + worldColumns.length) % worldColumns.length;
+    const nextRowIndex = (rowIndex + dy + worldRows.length) % worldRows.length;
 
-    return "level_" + authorData.letters[nextColumnIndex] + "x" + authorData.letters[nextRowIndex];
+    return "level_" + worldColumns[nextColumnIndex] + "x" + worldRows[nextRowIndex];
   }
 
   function normalizeCellValue(value) {
@@ -184,12 +192,13 @@
   }
 
   function renderLevelSelectors() {
-    const options = authorData.letters
+    const columnOptions = worldColumns
       .map((letter) => '<option value="' + letter + '">' + letter + "</option>")
       .join("");
+    const rowOptions = worldRows.map((letter) => '<option value="' + letter + '">' + letter + "</option>").join("");
 
-    elements.levelColumn.innerHTML = options;
-    elements.levelRow.innerHTML = options;
+    elements.levelColumn.innerHTML = columnOptions;
+    elements.levelRow.innerHTML = rowOptions;
     syncLevelSelectors();
   }
 
@@ -388,8 +397,8 @@
   function resizeLevel() {
     const requestedWidth = Number(elements.boardWidth.value);
     const requestedHeight = Number(elements.boardHeight.value);
-    const nextWidth = Math.max(1, Math.min(authorData.maxBoardSize, requestedWidth || state.width));
-    const nextHeight = Math.max(1, Math.min(authorData.maxBoardSize, requestedHeight || state.height));
+    const nextWidth = Math.max(1, Math.min(authorData.maxBoardWidth, requestedWidth || state.width));
+    const nextHeight = Math.max(1, Math.min(authorData.maxBoardHeight, requestedHeight || state.height));
     const nextCells = createBlankCells(nextWidth, nextHeight, authorData.defaultFloorToken);
 
     for (let y = 0; y < Math.min(state.height, nextHeight); y += 1) {
@@ -418,18 +427,49 @@
     renderAll();
   }
 
+  function centeredEdgeOpeningRange(length) {
+    const openingSize = Math.max(0, Math.min(4, length - 2));
+
+    if (openingSize === 0) {
+      return null;
+    }
+
+    const start = Math.floor((length - openingSize) / 2);
+
+    return {
+      start,
+      end: start + openingSize - 1
+    };
+  }
+
   function frameLevel() {
+    const horizontalOpening = centeredEdgeOpeningRange(state.width);
+    const verticalOpening = centeredEdgeOpeningRange(state.height);
+
     for (let y = 0; y < state.height; y += 1) {
       for (let x = 0; x < state.width; x += 1) {
         const isEdge = x === 0 || y === 0 || x === state.width - 1 || y === state.height - 1;
+        const isHorizontalOpening =
+          horizontalOpening !== null &&
+          (y === 0 || y === state.height - 1) &&
+          x >= horizontalOpening.start &&
+          x <= horizontalOpening.end;
+        const isVerticalOpening =
+          verticalOpening !== null &&
+          (x === 0 || x === state.width - 1) &&
+          y >= verticalOpening.start &&
+          y <= verticalOpening.end;
 
         if (isEdge) {
-          state.cells[y][x] = authorData.defaultWallToken;
+          state.cells[y][x] =
+            isHorizontalOpening || isVerticalOpening
+              ? authorData.defaultFloorToken
+              : authorData.defaultWallToken;
         }
       }
     }
 
-    setStatus("Wrapped the border in walls.", "warning");
+    setStatus("Wrapped the border and left 4-tile openings centered on each side.", "warning");
     state.isDirty = true;
     renderAll();
   }

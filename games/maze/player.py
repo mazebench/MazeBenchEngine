@@ -7,7 +7,41 @@ from typing import Any
 from games.shared import GridWorld, Sprite
 
 MAZE_DIR = Path(__file__).resolve().parent
-MAZE_LEVEL_GRID_SIZE = 26
+
+
+def clamp_maze_config_dimension(value: object, fallback: int, maximum: int = 26) -> int:
+    try:
+        numeric_value = int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+    return max(1, min(maximum, numeric_value))
+
+
+def load_maze_world_config() -> tuple[int, int]:
+    world_parsing_path = MAZE_DIR / "world_parsing.json"
+
+    if not world_parsing_path.exists():
+        return (26, 26)
+
+    try:
+        world_parsing = json.loads(world_parsing_path.read_text(encoding="utf8"))
+    except json.JSONDecodeError:
+        return (26, 26)
+
+    rules = world_parsing.get("rules", {})
+    level_size = rules.get("level_size")
+
+    if not isinstance(level_size, list):
+        return (26, 26)
+
+    return (
+        clamp_maze_config_dimension(level_size[0] if len(level_size) > 0 else None, 26),
+        clamp_maze_config_dimension(level_size[1] if len(level_size) > 1 else None, 26),
+    )
+
+
+MAZE_LEVEL_GRID_WIDTH, MAZE_LEVEL_GRID_HEIGHT = load_maze_world_config()
 
 
 def config_tokens(config: dict[str, Any]) -> list[str]:
@@ -211,14 +245,14 @@ class MazeWorld(GridWorld):
 
         source_rows = self.load_level(self.raw_level)
         normalized_rows: list[list[str]] = []
-        self.width = MAZE_LEVEL_GRID_SIZE
-        self.height = MAZE_LEVEL_GRID_SIZE
+        self.width = MAZE_LEVEL_GRID_WIDTH
+        self.height = MAZE_LEVEL_GRID_HEIGHT
 
-        for y in range(MAZE_LEVEL_GRID_SIZE):
+        for y in range(MAZE_LEVEL_GRID_HEIGHT):
             source_row = source_rows[y] if y < len(source_rows) else []
             normalized_row: list[str] = []
 
-            for x in range(MAZE_LEVEL_GRID_SIZE):
+            for x in range(MAZE_LEVEL_GRID_WIDTH):
                 has_source_cell = y < len(source_rows) and x < len(source_row)
                 cell = source_row[x] if has_source_cell else Floor.token
                 normalized_row.append(cell)

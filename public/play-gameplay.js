@@ -2,8 +2,15 @@
   const modules = window.PlayModules || (window.PlayModules = {});
 
   modules.registerGameplayFunctions = function registerGameplayFunctions(app) {
-    const WORLD_LEVEL_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const WORLD_LEVEL_PATTERN = /^level_([A-Z])x([A-Z])$/;
+    const worldColumns =
+      Array.isArray(app.worldColumns) && app.worldColumns.length > 0
+        ? app.worldColumns
+        : Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    const worldRows =
+      Array.isArray(app.worldRows) && app.worldRows.length > 0
+        ? app.worldRows
+        : Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
     const {
       state,
       moveHistory,
@@ -92,17 +99,23 @@
         return null;
       }
 
+      const columnIndex = worldColumns.indexOf(match[1]);
+      const rowIndex = worldRows.indexOf(match[2]);
+
+      if (columnIndex === -1 || rowIndex === -1) {
+        return null;
+      }
+
       return {
-        columnIndex: WORLD_LEVEL_LETTERS.indexOf(match[1]),
-        rowIndex: WORLD_LEVEL_LETTERS.indexOf(match[2])
+        columnIndex,
+        rowIndex
       };
     }
 
     function worldLevelId(columnIndex, rowIndex) {
-      const width = WORLD_LEVEL_LETTERS.length;
-      const normalizedColumn = ((columnIndex % width) + width) % width;
-      const normalizedRow = ((rowIndex % width) + width) % width;
-      return `level_${WORLD_LEVEL_LETTERS[normalizedColumn]}x${WORLD_LEVEL_LETTERS[normalizedRow]}`;
+      const normalizedColumn = ((columnIndex % worldColumns.length) + worldColumns.length) % worldColumns.length;
+      const normalizedRow = ((rowIndex % worldRows.length) + worldRows.length) % worldRows.length;
+      return `level_${worldColumns[normalizedColumn]}x${worldRows[normalizedRow]}`;
     }
 
     function adjacentWorldLevelId(levelId, dx, dy) {
@@ -1320,6 +1333,7 @@
       finishAnimation,
       animateMoves,
       sortActorsForMove,
+      adjacentWorldLevelId,
       buildMovesToPositions,
       movePlayers,
       undoMove,

@@ -62,7 +62,7 @@ function buildTerrain(width, height, wallPositions = []) {
   );
 }
 
-function createRenderApp({ terrain, actors }) {
+function createRenderApp({ terrain, actors, playData = {} }) {
   const context = createStubContext();
   global.performance = { now: () => 0 };
   global.document = {
@@ -115,7 +115,8 @@ function createRenderApp({ terrain, actors }) {
       width: terrain[0].length,
       height: terrain.length,
       terrain,
-      actors
+      actors,
+      ...playData
     },
     canvas,
     playShell: null,
@@ -154,6 +155,23 @@ function createRenderApp({ terrain, actors }) {
 
   assert.equal(app.sideSilhouetteEndY(1, 0, 1, 100, 74), 74);
   assert.equal(app.sideSilhouetteEndY(1, 0, -1, 100, 74), 100);
+}
+
+{
+  const app = createRenderApp({
+    terrain: buildTerrain(20, 20),
+    actors: [],
+    playData: {
+      cameraView: { width: 16, height: 16 },
+      worldColumns: Array.from("ABCDEFGHIJKLMNOP"),
+      worldRows: Array.from("ABCDEFGHIJKLMNOP")
+    }
+  });
+
+  assert.equal(app.VIEWPORT_TILE_WIDTH, 16);
+  assert.equal(app.VIEWPORT_TILE_HEIGHT, 16);
+  assert.equal(app.viewportRect.width, 16 * app.TILE_SIZE);
+  assert.equal(app.viewportRect.height, 16 * app.TILE_SIZE);
 }
 
 console.log("render silhouette regression tests passed");
