@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "test": "node tests/weightless-push.test.js",
+    "test": "node tests/weightless-push.test.js && node tests/render-silhouette.test.js",
     "start": "node server.js",
     "dev": "node server.js"
   }

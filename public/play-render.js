@@ -94,6 +94,17 @@
       context.restore();
     }
 
+    function sideSilhouetteEndY(
+      x,
+      y,
+      dx,
+      visibleEndY,
+      trimmedEndY,
+      gateState = app.liveRaisedPlayerGates
+    ) {
+      return shouldHideElevatedSideStroke(x, y, dx, gateState) ? trimmedEndY : visibleEndY;
+    }
+
     function paintFloorTile(x, y, cell) {
       const left = x * TILE_SIZE;
       const top = y * TILE_SIZE;
@@ -244,7 +255,7 @@
         br: 0,
         bl: 0
       };
-      const rightCornerWallTop =
+      const rightSideVisibleEnd =
         openRight &&
         !openBottom &&
         x < state.width - 1 &&
@@ -253,7 +264,7 @@
         !isTerrainWall(x + 1, y)
           ? bottom - faceHeight
           : bottom - radii.br;
-      const leftCornerWallTop =
+      const leftSideVisibleEnd =
         openLeft &&
         !openBottom &&
         x > 0 &&
@@ -262,10 +273,8 @@
         !isTerrainWall(x - 1, y)
           ? bottom - faceHeight
           : bottom - radii.bl;
-      const hideRightLiftStroke =
-        liftHeight > 0 && openBottom && shouldHideElevatedSideStroke(x, y, 1);
-      const hideLeftLiftStroke =
-        liftHeight > 0 && openBottom && shouldHideElevatedSideStroke(x, y, -1);
+      const rightSideEnd = sideSilhouetteEndY(x, y, 1, rightSideVisibleEnd, bottom - faceHeight);
+      const leftSideEnd = sideSilhouetteEndY(x, y, -1, leftSideVisibleEnd, bottom - faceHeight);
 
       if (x === 0 && y === 0) {
         radii.tl = 0;
@@ -322,7 +331,7 @@
 
       if (openRight) {
         sceneCtx.moveTo(right, wallTop + radii.tr);
-        sceneCtx.lineTo(right, hideRightLiftStroke ? bottom - faceHeight : rightCornerWallTop);
+        sceneCtx.lineTo(right, rightSideEnd);
       }
 
       if (openBottom) {
@@ -331,13 +340,8 @@
       }
 
       if (openLeft) {
-        if (hideLeftLiftStroke) {
-          sceneCtx.moveTo(left, wallTop + radii.tl);
-          sceneCtx.lineTo(left, bottom - faceHeight);
-        } else {
-          sceneCtx.moveTo(left, leftCornerWallTop);
-          sceneCtx.lineTo(left, wallTop + radii.tl);
-        }
+        sceneCtx.moveTo(left, leftSideEnd);
+        sceneCtx.lineTo(left, wallTop + radii.tl);
       }
 
       if (radii.tl > 0) {
@@ -388,8 +392,8 @@
         br: 0,
         bl: 0
       };
-      const hideRightLiftStroke = travel > 0.001 && shouldHideElevatedSideStroke(x, y, 1);
-      const hideLeftLiftStroke = travel > 0.001 && shouldHideElevatedSideStroke(x, y, -1);
+      const rightSideEnd = sideSilhouetteEndY(x, y, 1, bottom, platformBottom);
+      const leftSideEnd = sideSilhouetteEndY(x, y, -1, bottom, platformBottom);
 
       if (x === 0 && y === 0) {
         radii.tl = 0;
@@ -416,16 +420,11 @@
       sceneCtx.moveTo(left + radii.tl, platformTop);
       sceneCtx.lineTo(right - radii.tr, platformTop);
       sceneCtx.moveTo(right, platformTop + radii.tr);
-      sceneCtx.lineTo(right, hideRightLiftStroke ? platformBottom : bottom);
+      sceneCtx.lineTo(right, rightSideEnd);
       sceneCtx.moveTo(right, bottom);
       sceneCtx.lineTo(left, bottom);
-      if (hideLeftLiftStroke) {
-        sceneCtx.moveTo(left, platformTop + radii.tl);
-        sceneCtx.lineTo(left, platformBottom);
-      } else {
-        sceneCtx.moveTo(left, bottom);
-        sceneCtx.lineTo(left, platformTop + radii.tl);
-      }
+      sceneCtx.moveTo(left, leftSideEnd);
+      sceneCtx.lineTo(left, platformTop + radii.tl);
       sceneCtx.moveTo(left + radii.tl, platformTop);
       sceneCtx.quadraticCurveTo(left, platformTop, left, platformTop + radii.tl);
       sceneCtx.moveTo(right - radii.tr, platformTop);
@@ -464,8 +463,8 @@
         br: 0,
         bl: 0
       };
-      const hideRightLiftStroke = travel > 0.001 && shouldHideElevatedSideStroke(x, y, 1);
-      const hideLeftLiftStroke = travel > 0.001 && shouldHideElevatedSideStroke(x, y, -1);
+      const rightSideEnd = sideSilhouetteEndY(x, y, 1, bottom, platformBottom);
+      const leftSideEnd = sideSilhouetteEndY(x, y, -1, bottom, platformBottom);
 
       if (x === 0 && y === 0) {
         radii.tl = 0;
@@ -493,16 +492,11 @@
       sceneCtx.moveTo(left + radii.tl, platformTop);
       sceneCtx.lineTo(right - radii.tr, platformTop);
       sceneCtx.moveTo(right, platformTop + radii.tr);
-      sceneCtx.lineTo(right, hideRightLiftStroke ? platformBottom : bottom);
+      sceneCtx.lineTo(right, rightSideEnd);
       sceneCtx.moveTo(right, bottom);
       sceneCtx.lineTo(left, bottom);
-      if (hideLeftLiftStroke) {
-        sceneCtx.moveTo(left, platformTop + radii.tl);
-        sceneCtx.lineTo(left, platformBottom);
-      } else {
-        sceneCtx.moveTo(left, bottom);
-        sceneCtx.lineTo(left, platformTop + radii.tl);
-      }
+      sceneCtx.moveTo(left, leftSideEnd);
+      sceneCtx.lineTo(left, platformTop + radii.tl);
       sceneCtx.moveTo(left + radii.tl, platformTop);
       sceneCtx.quadraticCurveTo(left, platformTop, left, platformTop + radii.tl);
       sceneCtx.moveTo(right - radii.tr, platformTop);
@@ -610,28 +604,38 @@
         br: 0,
         bl: 0
       };
-      const rightCornerWallTop =
+      const rightSideVisibleEnd =
         openRight &&
-        !openBottom &&
         actor.x < state.width - 1 &&
         actor.y < state.height - 1 &&
+        !openBottom &&
         isWeightlessBoxAt(actor.groupId, actor.x + 1, actor.y + 1) &&
         !isWeightlessBoxAt(actor.groupId, actor.x + 1, actor.y)
           ? bottom - faceHeight
           : bottom - radii.br;
-      const leftCornerWallTop =
+      const leftSideVisibleEnd =
         openLeft &&
-        !openBottom &&
         actor.x > 0 &&
         actor.y < state.height - 1 &&
+        !openBottom &&
         isWeightlessBoxAt(actor.groupId, actor.x - 1, actor.y + 1) &&
         !isWeightlessBoxAt(actor.groupId, actor.x - 1, actor.y)
           ? bottom - faceHeight
           : bottom - radii.bl;
-      const hideRightLiftStroke =
-        liftHeight > 0 && openBottom && shouldHideElevatedSideStroke(actor.x, actor.y, 1);
-      const hideLeftLiftStroke =
-        liftHeight > 0 && openBottom && shouldHideElevatedSideStroke(actor.x, actor.y, -1);
+      const rightSideEnd = sideSilhouetteEndY(
+        actor.x,
+        actor.y,
+        1,
+        rightSideVisibleEnd,
+        bottom - faceHeight
+      );
+      const leftSideEnd = sideSilhouetteEndY(
+        actor.x,
+        actor.y,
+        -1,
+        leftSideVisibleEnd,
+        bottom - faceHeight
+      );
 
       roundRectPath(context, left, wallTop, TILE_SIZE, wallHeight, radii);
       context.save();
@@ -678,7 +682,7 @@
 
         if (openRight) {
           context.moveTo(right, wallTop + radii.tr);
-          context.lineTo(right, hideRightLiftStroke ? bottom - faceHeight : rightCornerWallTop);
+          context.lineTo(right, rightSideEnd);
         }
 
         if (openBottom) {
@@ -687,13 +691,8 @@
         }
 
         if (openLeft) {
-          if (hideLeftLiftStroke) {
-            context.moveTo(left, wallTop + radii.tl);
-            context.lineTo(left, bottom - faceHeight);
-          } else {
-            context.moveTo(left, leftCornerWallTop);
-            context.lineTo(left, wallTop + radii.tl);
-          }
+          context.moveTo(left, leftSideEnd);
+          context.lineTo(left, wallTop + radii.tl);
         }
 
         if (radii.tl > 0) {
@@ -750,10 +749,8 @@
         br: 0,
         bl: 0
       };
-      const hideRightLiftStroke =
-        liftHeight > 0 && shouldHideElevatedSideStroke(actor.x, actor.y, 1);
-      const hideLeftLiftStroke =
-        liftHeight > 0 && shouldHideElevatedSideStroke(actor.x, actor.y, -1);
+      const rightSideEnd = sideSilhouetteEndY(actor.x, actor.y, 1, bottom, bottom - faceHeight);
+      const leftSideEnd = sideSilhouetteEndY(actor.x, actor.y, -1, bottom, bottom - faceHeight);
 
       context.save();
       context.translate(left + TILE_SIZE / 2, bottom + sink);
@@ -783,16 +780,11 @@
         context.moveTo(left + radii.tl, blockTop);
         context.lineTo(left + TILE_SIZE - radii.tr, blockTop);
         context.moveTo(left + TILE_SIZE, blockTop + radii.tr);
-        context.lineTo(left + TILE_SIZE, hideRightLiftStroke ? bottom - faceHeight : bottom);
+        context.lineTo(left + TILE_SIZE, rightSideEnd);
         context.moveTo(left + TILE_SIZE, bottom);
         context.lineTo(left, bottom);
-        if (hideLeftLiftStroke) {
-          context.moveTo(left, blockTop + radii.tl);
-          context.lineTo(left, bottom - faceHeight);
-        } else {
-          context.moveTo(left, bottom);
-          context.lineTo(left, blockTop + radii.tl);
-        }
+        context.moveTo(left, leftSideEnd);
+        context.lineTo(left, blockTop + radii.tl);
         if (radii.tl > 0) {
           context.moveTo(left + radii.tl, blockTop);
           context.quadraticCurveTo(left, blockTop, left, blockTop + radii.tl);
@@ -835,10 +827,8 @@
       const platformTop = top - hover + sink;
       const platformBottom = bottom - hover + sink;
       const radius = Math.min(7, TILE_SIZE * 0.11);
-      const hideRightLiftStroke =
-        hover > 0.001 && shouldHideElevatedSideStroke(actor.x, actor.y, 1);
-      const hideLeftLiftStroke =
-        hover > 0.001 && shouldHideElevatedSideStroke(actor.x, actor.y, -1);
+      const rightSideEnd = sideSilhouetteEndY(actor.x, actor.y, 1, bottom + sink, platformBottom);
+      const leftSideEnd = sideSilhouetteEndY(actor.x, actor.y, -1, bottom + sink, platformBottom);
 
       context.save();
       context.translate(left + TILE_SIZE / 2, bottom + sink);
@@ -887,16 +877,11 @@
       context.moveTo(left + radius, platformTop);
       context.lineTo(right - radius, platformTop);
       context.moveTo(right, platformTop + radius);
-      context.lineTo(right, hideRightLiftStroke ? platformBottom : bottom + sink);
+      context.lineTo(right, rightSideEnd);
       context.moveTo(right, bottom + sink);
       context.lineTo(left, bottom + sink);
-      if (hideLeftLiftStroke) {
-        context.moveTo(left, platformTop + radius);
-        context.lineTo(left, platformBottom);
-      } else {
-        context.moveTo(left, bottom + sink);
-        context.lineTo(left, platformTop + radius);
-      }
+      context.moveTo(left, leftSideEnd);
+      context.lineTo(left, platformTop + radius);
       context.moveTo(left + radius, platformTop);
       context.quadraticCurveTo(left, platformTop, left, platformTop + radius);
       context.moveTo(right - radius, platformTop);
@@ -1864,6 +1849,7 @@
       viewportPositionForActor,
       captureForegroundOccluderSnapshot,
       paintTransitionPlayer,
+      sideSilhouetteEndY,
       drawViewportFromScene,
       startLevelTransitionLoop,
       startLevelTransition,
