@@ -428,6 +428,86 @@
       });
     }
 
+    function weightlessClusterMembers(groupIds) {
+      const groupIdSet = new Set(groupIds);
+
+      return app.state.actors.filter(
+        (actor) =>
+          !actor.removed &&
+          actor.type === "weightless_box" &&
+          groupIdSet.has(actor.groupId)
+      );
+    }
+
+    function collectWeightlessPushCluster(
+      groupId,
+      dx,
+      dy,
+      gateState = app.liveRaisedPlayerGates,
+      ignoredActors = new Set()
+    ) {
+      const clusterGroupIds = new Set([groupId]);
+      const blockers = [];
+      const blockerKeys = new Set();
+      let expanded = true;
+
+      while (expanded) {
+        expanded = false;
+
+        for (const currentGroupId of Array.from(clusterGroupIds)) {
+          const members = weightlessGroupMembers(currentGroupId);
+
+          for (const member of members) {
+            const targetX = member.x + dx;
+            const targetY = member.y + dy;
+
+            if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY, gateState)) {
+              return null;
+            }
+
+            const blocker = actorAt(
+              targetX,
+              targetY,
+              (candidate) =>
+                !ignoredActors.has(candidate) &&
+                candidate !== member &&
+                !isCollectibleActor(candidate) &&
+                !(candidate.type === "weightless_box" && clusterGroupIds.has(candidate.groupId))
+            );
+
+            if (!blocker) {
+              continue;
+            }
+
+            if (!isPushableActor(blocker)) {
+              return null;
+            }
+
+            if (blocker.type === "weightless_box") {
+              if (!clusterGroupIds.has(blocker.groupId)) {
+                clusterGroupIds.add(blocker.groupId);
+                expanded = true;
+              }
+
+              continue;
+            }
+
+            const blockerKey = pushEntityKey(blocker);
+
+            if (!blockerKeys.has(blockerKey)) {
+              blockers.push(blocker);
+              blockerKeys.add(blockerKey);
+            }
+          }
+        }
+      }
+
+      return {
+        blockers,
+        groupIds: Array.from(clusterGroupIds)
+      };
+    }
+
     function fadeAlphaForMoveProgress(progress, fadeStartProgress = 0, fadeEndProgress = 1) {
       if (progress <= fadeStartProgress) {
         return 1;
@@ -443,7 +523,11 @@
     }
 
     function moveWeightlessGroup(groupId, dx, dy, occupied, moves, gateState = app.liveRaisedPlayerGates) {
-      const members = weightlessGroupMembers(groupId);
+      return moveWeightlessCluster([groupId], dx, dy, occupied, moves, gateState);
+    }
+
+    function moveWeightlessCluster(groupIds, dx, dy, occupied, moves, gateState = app.liveRaisedPlayerGates) {
+      const members = weightlessClusterMembers(groupIds);
 
       if (members.length === 0) {
         return false;
@@ -526,41 +610,54 @@
       }
 
       let remainingBudget = budget - cost;
-      const members = pushActorMembers(actor);
-      const memberSet = new Set(members);
+      const weightlessCluster =
+        actor.type === "weightless_box"
+          ? collectWeightlessPushCluster(actor.groupId, dx, dy, gateState, ignoredActors)
+          : null;
+      const members = actor.type === "weightless_box" ? null : pushActorMembers(actor);
+      const memberSet = members ? new Set(members) : null;
       const blockers = [];
-      const blockerKeys = new Set();
 
-      for (const member of members) {
-        const targetX = member.x + dx;
-        const targetY = member.y + dy;
-
-        if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY, gateState)) {
+      if (actor.type === "weightless_box") {
+        if (!weightlessCluster) {
           return null;
         }
 
-        const blocker = actorAt(
-          targetX,
-          targetY,
-          (candidate) =>
-            !ignoredActors.has(candidate) &&
-            !memberSet.has(candidate) &&
-            !isCollectibleActor(candidate)
-        );
+        blockers.push(...weightlessCluster.blockers);
+      } else {
+        const blockerKeys = new Set();
 
-        if (!blocker) {
-          continue;
-        }
+        for (const member of members) {
+          const targetX = member.x + dx;
+          const targetY = member.y + dy;
 
-        if (!isPushableActor(blocker)) {
-          return null;
-        }
+          if (!isInsideBoard(targetX, targetY) || isWall(targetX, targetY, gateState)) {
+            return null;
+          }
 
-        const blockerKey = pushEntityKey(blocker);
+          const blocker = actorAt(
+            targetX,
+            targetY,
+            (candidate) =>
+              !ignoredActors.has(candidate) &&
+              !memberSet.has(candidate) &&
+              !isCollectibleActor(candidate)
+          );
 
-        if (!blockerKeys.has(blockerKey)) {
-          blockers.push(blocker);
-          blockerKeys.add(blockerKey);
+          if (!blocker) {
+            continue;
+          }
+
+          if (!isPushableActor(blocker)) {
+            return null;
+          }
+
+          const blockerKey = pushEntityKey(blocker);
+
+          if (!blockerKeys.has(blockerKey)) {
+            blockers.push(blocker);
+            blockerKeys.add(blockerKey);
+          }
         }
       }
 
@@ -586,14 +683,20 @@
 
       const moved =
         actor.type === "weightless_box"
-          ? moveWeightlessGroup(actor.groupId, dx, dy, occupied, moves, gateState)
+          ? moveWeightlessCluster(weightlessCluster.groupIds, dx, dy, occupied, moves, gateState)
           : moveBox(actor, dx, dy, occupied, moves, gateState);
 
       if (!moved) {
         return null;
       }
 
-      handled.add(entityKey);
+      if (actor.type === "weightless_box") {
+        weightlessCluster.groupIds.forEach((clusterGroupId) => {
+          handled.add(`weightless:${clusterGroupId}`);
+        });
+      } else {
+        handled.add(entityKey);
+      }
       return remainingBudget;
     }
 
@@ -1325,7 +1428,9 @@
       collectGemsAt,
       collectGemsAlongPath,
       canMoveWeightlessGroup,
+      collectWeightlessPushCluster,
       moveWeightlessGroup,
+      moveWeightlessCluster,
       attemptPushActor,
       applyHoleFalls,
       buildFloorTerrainCell,

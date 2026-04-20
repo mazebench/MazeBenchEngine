@@ -144,6 +144,18 @@ function runAttempt(app, ignoredActors) {
   return { result, moves };
 }
 
+function runAttemptFromActor(app, actor, dx, dy, ignoredActors) {
+  const occupied = new Set(
+    app.state.actors
+      .filter((candidate) => candidate.type !== "player" && !candidate.removed)
+      .map((candidate) => posKey(candidate.x, candidate.y))
+  );
+  const moves = [];
+  const result = app.attemptPushActor(actor, dx, dy, occupied, moves, 1, new Set(), new Set(), ignoredActors);
+
+  return { result, moves };
+}
+
 {
   const app = createGameplayApp(createUShapeActors());
   const player = app.state.actors[0];
@@ -176,6 +188,35 @@ function runAttempt(app, ignoredActors) {
 
   assert.equal(result, null);
   assert.equal(moves.length, 0);
+}
+
+{
+  const actors = [
+    { type: "player", x: 4, y: 0, elevation: 0, removed: false },
+    { type: "weightless_box", groupId: "M0", x: 3, y: 0, removed: false },
+    { type: "weightless_box", groupId: "M0", x: 3, y: 1, removed: false },
+    { type: "weightless_box", groupId: "M1", x: 2, y: 0, removed: false },
+    { type: "weightless_box", groupId: "M1", x: 4, y: 1, removed: false }
+  ];
+  const app = createGameplayApp(actors);
+  const player = actors[0];
+  const leadGroup = actors[1];
+  const { result, moves } = runAttemptFromActor(app, leadGroup, -1, 0, new Set([player]));
+
+  assert.notEqual(result, null);
+  assert.equal(moves.length, 4);
+  assert.deepEqual(
+    actors
+      .filter((actor) => actor.type === "weightless_box")
+      .map((actor) => [actor.groupId, actor.x, actor.y])
+      .sort((left, right) => left[0].localeCompare(right[0]) || left[1] - right[1] || left[2] - right[2]),
+    [
+      ["M0", 2, 0],
+      ["M0", 2, 1],
+      ["M1", 1, 0],
+      ["M1", 3, 1]
+    ]
+  );
 }
 
 {

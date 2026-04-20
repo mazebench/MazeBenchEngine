@@ -4,9 +4,9 @@
 # G . M4 M4 M3 M3 . . . . . . . . #
 # . . M4 M3 M3 . . . . . h h h . #
 # . . M3 M3 . . . . . . . h . . #
-# # # # # # h h h h h h h . h #
-# h h h h h h h h h h h h . h #
-# h h h h h h h h+M2 h+M2 h+M2 h h . h #
+# # # # # # h h h h h h h . # #
+# h h h h h h h h h h h h . # #
+# h h h h h h h h+M2 h+M2 h+M2 h h . . #
 # M0 M0 M0 M0 . . . . M2 . . . . . #
 # M0 M0 M0 M0 # h h h h+M2 h h . . . #
 # . . . . # h h h h h h . . . #
