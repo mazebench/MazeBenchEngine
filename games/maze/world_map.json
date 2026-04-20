@@ -1,14 +1,44 @@
 {
   "levels": {
-    "level_FxE.txt": ["F", "E"],
-    "level_GxE.txt": ["G", "E"],
-    "level_HxE.txt": ["H", "E"],
-    "level_FxF.txt": ["F", "F"],
-    "level_GxF.txt": ["G", "F"],
-    "level_HxF.txt": ["H", "F"],
-    "level_FxG.txt": ["F", "G"],
-    "level_GxG.txt": ["G", "G"],
-    "level_HxG.txt": ["H", "G"],
-    "level_GxH.txt": ["G", "H"]
+    "level_FxE.txt": [
+      "F",
+      "D"
+    ],
+    "level_GxE.txt": [
+      "G",
+      "D"
+    ],
+    "level_HxE.txt": [
+      "H",
+      "D"
+    ],
+    "level_FxF.txt": [
+      "F",
+      "E"
+    ],
+    "level_10.txt": [
+      "G",
+      "E"
+    ],
+    "level_HxF.txt": [
+      "H",
+      "E"
+    ],
+    "level_FxG.txt": [
+      "F",
+      "F"
+    ],
+    "level_GxF.txt": [
+      "G",
+      "F"
+    ],
+    "level_HxG.txt": [
+      "H",
+      "F"
+    ],
+    "level_GxG.txt": [
+      "G",
+      "G"
+    ]
   }
 }

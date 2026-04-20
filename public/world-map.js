@@ -214,7 +214,11 @@
         const previewMarkup = previewUrl
           ? '<img class="world-map-grid__preview" src="' + previewUrl + '" alt="">'
           : '<span class="world-map-grid__placeholder">No preview</span>';
+        const selectionMarkup = isSelected
+          ? '<span class="world-map-grid__selection-frame" aria-hidden="true"></span>'
+          : "";
         button.innerHTML =
+          selectionMarkup +
           '<span class="world-map-grid__slot">' +
           formatPosition(entry.position) +
           "</span>" +
