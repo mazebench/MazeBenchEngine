@@ -14,6 +14,8 @@
     clearLevel: document.getElementById("clear-level"),
     currentFileName: document.getElementById("current-file-name"),
     existingLevels: document.getElementById("existing-levels"),
+    flipHorizontal: document.getElementById("flip-horizontal"),
+    flipVertical: document.getElementById("flip-vertical"),
     frameLevel: document.getElementById("frame-level"),
     grid: document.getElementById("author-grid"),
     levelNeighbors: document.getElementById("level-neighbors"),
@@ -24,6 +26,8 @@
     playLink: document.getElementById("author-play-link"),
     rawOutput: document.getElementById("raw-output"),
     resizeLevel: document.getElementById("resize-level"),
+    rotateLeft: document.getElementById("rotate-left"),
+    rotateRight: document.getElementById("rotate-right"),
     saveLevel: document.getElementById("save-level"),
     selectedCellLabel: document.getElementById("selected-cell-label"),
     solveLevel: document.getElementById("solve-level"),
@@ -1082,6 +1086,72 @@
     renderAll();
   }
 
+  function transformLevel(transformType) {
+    const oldCells = state.cells;
+    const oldWidth = state.width;
+    const oldHeight = state.height;
+    const oldSelectedCell = state.selectedCell;
+    let nextCells;
+    let nextWidth = oldWidth;
+    let nextHeight = oldHeight;
+    let nextSelectedCell = oldSelectedCell;
+    let message = "Transformed the board.";
+
+    if (transformType === "rotate-left" || transformType === "rotate-right") {
+      nextWidth = oldHeight;
+      nextHeight = oldWidth;
+
+      if (nextWidth > authorData.maxBoardWidth || nextHeight > authorData.maxBoardHeight) {
+        setStatus("That rotation would exceed the editor board limits.", "error");
+        return;
+      }
+    }
+
+    if (transformType === "rotate-left") {
+      nextCells = Array.from({ length: nextHeight }, (_, y) =>
+        Array.from({ length: nextWidth }, (_, x) => oldCells[x][oldWidth - 1 - y])
+      );
+      nextSelectedCell = {
+        x: oldSelectedCell.y,
+        y: oldWidth - 1 - oldSelectedCell.x
+      };
+      message = "Rotated the board left.";
+    } else if (transformType === "rotate-right") {
+      nextCells = Array.from({ length: nextHeight }, (_, y) =>
+        Array.from({ length: nextWidth }, (_, x) => oldCells[oldHeight - 1 - x][y])
+      );
+      nextSelectedCell = {
+        x: oldHeight - 1 - oldSelectedCell.y,
+        y: oldSelectedCell.x
+      };
+      message = "Rotated the board right.";
+    } else if (transformType === "flip-horizontal") {
+      nextCells = oldCells.map((row) => row.slice().reverse());
+      nextSelectedCell = {
+        x: oldWidth - 1 - oldSelectedCell.x,
+        y: oldSelectedCell.y
+      };
+      message = "Flipped the board horizontally.";
+    } else if (transformType === "flip-vertical") {
+      nextCells = oldCells.slice().reverse().map((row) => row.slice());
+      nextSelectedCell = {
+        x: oldSelectedCell.x,
+        y: oldHeight - 1 - oldSelectedCell.y
+      };
+      message = "Flipped the board vertically.";
+    } else {
+      return;
+    }
+
+    state.width = nextWidth;
+    state.height = nextHeight;
+    state.cells = nextCells;
+    state.selectedCell = nextSelectedCell;
+    setStatus(message, "warning");
+    state.isDirty = true;
+    renderAll();
+  }
+
   function applySelectedCellValue() {
     try {
       paintCell(state.selectedCell.x, state.selectedCell.y, elements.cellValue.value);
@@ -1443,6 +1513,18 @@
   elements.resizeLevel.addEventListener("click", resizeLevel);
   elements.clearLevel.addEventListener("click", clearLevel);
   elements.frameLevel.addEventListener("click", frameLevel);
+  elements.rotateLeft.addEventListener("click", function () {
+    transformLevel("rotate-left");
+  });
+  elements.rotateRight.addEventListener("click", function () {
+    transformLevel("rotate-right");
+  });
+  elements.flipHorizontal.addEventListener("click", function () {
+    transformLevel("flip-horizontal");
+  });
+  elements.flipVertical.addEventListener("click", function () {
+    transformLevel("flip-vertical");
+  });
   elements.placeGem.addEventListener("click", placeGem);
   elements.applyCellValue.addEventListener("click", applySelectedCellValue);
   elements.cellValue.addEventListener("keydown", function (event) {

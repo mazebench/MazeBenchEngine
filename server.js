@@ -1439,6 +1439,10 @@ function renderAuthorPage(game, level) {
           <button id="resize-level" class="tool-button" type="button">Resize</button>
           <button id="clear-level" class="tool-button" type="button">Clear</button>
           <button id="frame-level" class="tool-button" type="button">Frame Walls</button>
+          <button id="rotate-left" class="tool-button" type="button" title="Rotate level left">Rotate Left</button>
+          <button id="rotate-right" class="tool-button" type="button" title="Rotate level right">Rotate Right</button>
+          <button id="flip-horizontal" class="tool-button" type="button" title="Mirror level left to right">Flip Horizontal</button>
+          <button id="flip-vertical" class="tool-button" type="button" title="Mirror level top to bottom">Flip Vertical</button>
           <button id="place-gem" class="tool-button" type="button">Place Gem</button>
           <button id="solve-level" class="tool-button" type="button">Solver</button>
           <button id="save-level" class="tool-button tool-button--primary" type="button">Save</button>
