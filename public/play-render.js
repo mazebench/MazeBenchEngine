@@ -1837,7 +1837,8 @@
       dy,
       player = null,
       fromScene = null,
-      fromForeground = null
+      fromForeground = null,
+      options = {}
     ) {
       app.levelTransition = {
         fromCanvas,
@@ -1848,7 +1849,8 @@
         dy,
         player,
         startMs: performance.now(),
-        durationMs: app.LEVEL_TRANSITION_DURATION_MS
+        durationMs: app.LEVEL_TRANSITION_DURATION_MS,
+        onComplete: typeof options.onComplete === "function" ? options.onComplete : null
       };
       app.isTransitioningLevel = true;
       startLevelTransitionLoop();
@@ -2041,8 +2043,13 @@
           return;
         }
 
+        const onComplete = app.levelTransition?.onComplete;
         app.levelTransition = null;
         app.isTransitioningLevel = false;
+
+        if (onComplete && onComplete() === false) {
+          return;
+        }
 
         if (app.queuedAction) {
           const nextAction = app.queuedAction;

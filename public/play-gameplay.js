@@ -22,6 +22,7 @@
       PLAYER_LIFT_RISE_DURATION_MS,
       PLAYER_LIFT_FALL_DURATION_MS,
       HOLE_FALL_DURATION_MS,
+      PLAYER_REVIVE_BLINK_DURATION_MS,
       HOLE_SINK_DISTANCE
     } = app;
     const {
@@ -93,6 +94,115 @@
         removed: Boolean(actor.removed),
         elevation: actor.elevation ?? 0
       }));
+    }
+
+    function terrainCellInLevelState(levelState, x, y) {
+      if (!Array.isArray(levelState?.terrain) || !Number.isInteger(x) || !Number.isInteger(y)) {
+        return null;
+      }
+
+      return levelState.terrain[y]?.[x] || null;
+    }
+
+    function playerStartForLevelState(levelState, preferredType = null) {
+      const players = (levelState?.actors || []).filter((actor) => isPlayerActor(actor));
+
+      if (players.length === 0) {
+        return null;
+      }
+
+      return players.find((actor) => actor.type === preferredType) || players[0];
+    }
+
+    function rememberCurrentLevelEntryState() {
+      app.initialPositions = cloneActorPositions();
+      app.initialTerrain = cloneTerrainState(state.terrain);
+      app.levelEntrySnapshot = cloneLevelSnapshot();
+    }
+
+    function revivePlayerAtLevelStart(player, startPlayer) {
+      const gateState = computeRaisedPlayerGateSet();
+      const elevation = playerSurfaceHeightAt(startPlayer.x, startPlayer.y, gateState) === 1 ? 1 : 0;
+
+      player.x = startPlayer.x;
+      player.y = startPlayer.y;
+      player.elevation = elevation;
+      player.removed = false;
+      player.renderX = startPlayer.x;
+      player.renderY = startPlayer.y;
+      player.renderElevation = elevation;
+      player.renderScale = 1;
+      player.renderSink = 0;
+      player.renderInHole = false;
+      player.renderAlpha = 0;
+      rememberCurrentLevelEntryState();
+    }
+
+    function blinkRevivedPlayer(player) {
+      const durationMs = (PLAYER_REVIVE_BLINK_DURATION_MS || 620) / 1.5;
+      const blinkCount = 3;
+      const startMs = performance.now();
+
+      app.isAnimating = true;
+
+      function finishBlink() {
+        player.renderAlpha = 1;
+        player.renderScale = 1;
+        player.renderSink = 0;
+        player.renderInHole = false;
+        app.isAnimating = false;
+        app.animationFrameId = null;
+        syncFloatingFloorTicker();
+        app.render();
+        runQueuedAction();
+      }
+
+      function step(now) {
+        const progress = Math.min(1, (now - startMs) / durationMs);
+
+        if (progress >= 1) {
+          finishBlink();
+          return;
+        }
+
+        const phase = Math.floor(progress * blinkCount * 2);
+        player.renderAlpha = phase % 2 === 0 ? 0 : 1;
+        app.render();
+        app.animationFrameId = window.requestAnimationFrame(step);
+      }
+
+      app.animationFrameId = window.requestAnimationFrame(step);
+    }
+
+    function playEntryHoleFallAndRespawn(player, startPlayer) {
+      if (!player || !startPlayer) {
+        return true;
+      }
+
+      animateMoves(
+        [
+          {
+            actor: player,
+            fromX: player.x,
+            fromY: player.y,
+            toX: player.x,
+            toY: player.y,
+            fromElevation: actorElevation(player),
+            toElevation: 0,
+            fromRemoved: false,
+            toRemoved: true
+          }
+        ],
+        0,
+        {
+          onFinish: () => {
+            revivePlayerAtLevelStart(player, startPlayer);
+            blinkRevivedPlayer(player);
+          }
+        }
+      );
+
+      return false;
     }
 
     function parseWorldLevelId(levelId) {
@@ -194,6 +304,13 @@
 
       try {
         const nextLevelState = await loadLevelState(transition.nextLevelId);
+        const levelStartPlayer = playerStartForLevelState(nextLevelState, transition.player.type);
+        const reviveStartPlayer = levelStartPlayer ? { ...levelStartPlayer } : null;
+        const entersHole = terrainCellInLevelState(
+          nextLevelState,
+          transition.targetX,
+          transition.targetY
+        )?.type === "hole";
         const transferredPlayer = {
           type: transition.player.type,
           groupId: transition.player.groupId ?? null,
@@ -265,6 +382,11 @@
             width: app.viewportRect.width,
             height: app.viewportRect.height
           }
+        }, {
+          onComplete:
+            entersHole && reviveStartPlayer
+              ? () => playEntryHoleFallAndRespawn(incomingPlayer, reviveStartPlayer)
+              : null
         });
 
         return true;
@@ -974,7 +1096,18 @@
       });
     }
 
-    function finishAnimation(moves) {
+    function runQueuedAction() {
+      if (!app.queuedAction) {
+        return;
+      }
+
+      const nextAction = app.queuedAction;
+      app.queuedAction = null;
+      runAction(nextAction);
+    }
+
+    function finishAnimation(moves, options = {}) {
+      const onFinish = typeof options.onFinish === "function" ? options.onFinish : null;
       applyMoveFinalState(moves);
       app.gateRenderOverride = null;
       app.isAnimating = false;
@@ -982,11 +1115,12 @@
       syncFloatingFloorTicker();
       app.render();
 
-      if (app.queuedAction) {
-        const nextAction = app.queuedAction;
-        app.queuedAction = null;
-        runAction(nextAction);
+      if (onFinish) {
+        onFinish();
+        return;
       }
+
+      runQueuedAction();
     }
 
     function animateMoves(moves, durationMs = null, options = {}) {
@@ -1166,7 +1300,7 @@
 
       function startFallPhase() {
         if (holeStateMoves.length === 0) {
-          finishAnimation(moves);
+          finishAnimation(moves, options);
           return;
         }
 
@@ -1223,7 +1357,7 @@
             return;
           }
 
-          finishAnimation(moves);
+          finishAnimation(moves, options);
         }
 
         app.animationFrameId = window.requestAnimationFrame(stepFall);
@@ -1667,6 +1801,8 @@
       animateMoves,
       sortActorsForMove,
       adjacentWorldLevelId,
+      edgeTransitionForMove,
+      transitionToAdjacentLevel,
       buildMovesToPositions,
       performPlayerMove,
       tryMovePlayersInstant,

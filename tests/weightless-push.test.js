@@ -14,18 +14,26 @@ global.window = {
 eval(fs.readFileSync("public/play-gameplay.js", "utf8"));
 
 const { registerGameplayFunctions } = window.PlayModules;
+const asyncTests = [];
 
 function posKey(x, y) {
   return `${x},${y}`;
 }
 
 function createGameplayApp(actors, options = {}) {
+  const defaultTerrain = Array.from({ length: options.height || 8 }, () =>
+    Array.from({ length: options.width || 8 }, () => ({ type: "floor" }))
+  );
   const app = {
+    currentGameId: "maze",
+    currentLevelId: options.currentLevelId || "level_AxA",
+    currentLevelLabel: options.currentLevelLabel || "level_AxA",
     worldColumns: options.worldColumns || Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
     worldRows: options.worldRows || Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
     state: {
-      width: 8,
-      height: 8,
+      width: options.width || 8,
+      height: options.height || 8,
+      terrain: options.terrain || defaultTerrain,
       actors
     },
     moveHistory: [],
@@ -33,16 +41,57 @@ function createGameplayApp(actors, options = {}) {
     PLAYER_LIFT_RISE_DURATION_MS: 0,
     PLAYER_LIFT_FALL_DURATION_MS: 0,
     HOLE_FALL_DURATION_MS: 0,
+    PLAYER_REVIVE_BLINK_DURATION_MS: 0,
     HOLE_SINK_DISTANCE: 0,
+    cameraX: 0,
+    cameraY: 0,
+    TILE_SIZE: 64,
+    viewportRect: { width: 512, height: 512 },
+    isAnimating: false,
+    isTransitioningLevel: false,
+    queuedAction: null,
+    animationFrameId: null,
     liveRaisedPlayerGates: new Set(),
     posKey,
-    cloneActorPositions: () => [],
-    cloneTerrainState: () => [],
-    restoreTerrainState: () => {},
-    restoreActorPositions: () => {},
-    buildOccupiedSet: () => new Set(),
+    cloneActorPositions() {
+      return app.state.actors.map((actor) => ({
+        x: actor.x,
+        y: actor.y,
+        removed: Boolean(actor.removed),
+        elevation: actor.elevation ?? 0
+      }));
+    },
+    cloneTerrainState(terrain = app.state.terrain) {
+      return terrain.map((row) => row.map((cell) => ({ ...cell })));
+    },
+    restoreTerrainState(terrain) {
+      app.state.terrain = app.cloneTerrainState(terrain);
+    },
+    restoreActorPositions(positions) {
+      app.state.actors.forEach((actor, index) => {
+        const position = positions[index];
+
+        if (!position) {
+          return;
+        }
+
+        actor.x = position.x;
+        actor.y = position.y;
+        actor.removed = Boolean(position.removed);
+        actor.elevation = position.elevation ?? 0;
+      });
+    },
+    buildOccupiedSet(excludedActor = null) {
+      const occupied = new Set(
+        app.state.actors
+          .filter((actor) => actor !== excludedActor && !actor.removed && !app.isCollectibleActor(actor))
+          .map((actor) => posKey(actor.x, actor.y))
+      );
+
+      return occupied;
+    },
     actorsAt(x, y, predicate = null) {
-      return actors.filter(
+      return app.state.actors.filter(
         (actor) =>
           !actor.removed &&
           actor.x === x &&
@@ -52,7 +101,7 @@ function createGameplayApp(actors, options = {}) {
     },
     actorAt(x, y, predicate = null) {
       return (
-        actors.find(
+        app.state.actors.find(
           (actor) =>
             !actor.removed &&
             actor.x === x &&
@@ -81,20 +130,22 @@ function createGameplayApp(actors, options = {}) {
     },
     pushActorMembers(actor) {
       return actor.type === "weightless_box"
-        ? actors.filter(
+        ? app.state.actors.filter(
             (member) => member.type === "weightless_box" && member.groupId === actor.groupId && !member.removed
           )
         : [actor];
     },
     weightlessGroupMembers(groupId) {
-      return actors.filter(
+      return app.state.actors.filter(
         (actor) => actor.type === "weightless_box" && actor.groupId === groupId && !actor.removed
       );
     },
     isInsideBoard(x, y) {
-      return x >= 0 && x < 8 && y >= 0 && y < 8;
+      return x >= 0 && x < app.state.width && y >= 0 && y < app.state.height;
     },
-    terrainAt: () => ({ type: "floor" }),
+    terrainAt(x, y) {
+      return app.state.terrain[y]?.[x] || { type: "empty" };
+    },
     isWall: () => false,
     terrainSurfaceHeightAt: () => 0,
     playerSurfaceHeightAt: () => 0,
@@ -108,14 +159,52 @@ function createGameplayApp(actors, options = {}) {
     easeOutBack: (value) => value,
     easeInOutQuad: (value) => value,
     syncFloatingFloorTicker: () => {},
-    cloneLevelSnapshot: () => ({}),
-    applyLevelState: () => {},
-    loadLevelState: async () => ({}),
+    cloneLevelSnapshot() {
+      return {
+        gameId: app.currentGameId,
+        levelId: app.currentLevelId,
+        levelLabel: app.currentLevelLabel,
+        width: app.state.width,
+        height: app.state.height,
+        terrain: app.cloneTerrainState(),
+        actors: app.state.actors.map((actor) => ({ ...actor }))
+      };
+    },
+    applyLevelState(levelState, applyOptions = {}) {
+      app.currentLevelId = levelState.levelId || app.currentLevelId;
+      app.currentLevelLabel = levelState.levelLabel || app.currentLevelId;
+      app.state.width = levelState.width;
+      app.state.height = levelState.height;
+      app.state.terrain = app.cloneTerrainState(levelState.terrain || []);
+      app.state.actors = (levelState.actors || []).map((actor) => ({
+        ...actor,
+        renderX: actor.x,
+        renderY: actor.y,
+        renderElevation: actor.elevation ?? 0,
+        renderScale: actor.removed ? 0 : 1,
+        renderAlpha: actor.removed ? 0 : 1,
+        renderSink: actor.removed ? app.HOLE_SINK_DISTANCE : 0,
+        renderInHole: false
+      }));
+
+      if (applyOptions.resetLevelEntry) {
+        app.initialPositions = app.cloneActorPositions();
+        app.initialTerrain = app.cloneTerrainState();
+        app.levelEntrySnapshot = app.cloneLevelSnapshot();
+      }
+    },
+    loadLevelState: options.loadLevelState || (async () => ({})),
     captureSceneSnapshot: () => null,
     captureForegroundOccluderSnapshot: () => null,
     captureViewportSnapshot: () => null,
-    viewportPositionForActor: () => ({ x: 0, y: 0 }),
-    startLevelTransition: () => {},
+    viewportPositionForActor: (actor) => ({ left: actor.x * 64, top: actor.y * 64 }),
+    startLevelTransition(...args) {
+      const transitionOptions = args[7] || {};
+      app.isTransitioningLevel = false;
+      if (typeof transitionOptions.onComplete === "function") {
+        transitionOptions.onComplete();
+      }
+    },
     render: () => {}
   };
 
@@ -212,6 +301,48 @@ function runAttemptFromActor(app, actor, dx, dy, ignoredActors) {
   assert.equal(gem.removed, false);
 }
 
+asyncTests.push(
+  (async () => {
+    const entryPlayer = { type: "player", x: 7, y: 2, elevation: 0, removed: false };
+    const nextTerrain = Array.from({ length: 8 }, () =>
+      Array.from({ length: 8 }, () => ({ type: "floor" }))
+    );
+    nextTerrain[2][0] = { type: "hole" };
+
+    const app = createGameplayApp([entryPlayer], {
+      currentLevelId: "level_AxA",
+      loadLevelState: async (levelId) => ({
+        levelId,
+        levelLabel: levelId,
+        width: 8,
+        height: 8,
+        terrain: nextTerrain,
+        actors: [{ type: "player", x: 4, y: 4, elevation: 0, removed: false }]
+      })
+    });
+
+    const didTransition = await app.transitionToAdjacentLevel({
+      player: entryPlayer,
+      nextLevelId: "level_BxA",
+      dx: 1,
+      dy: 0,
+      targetX: 0,
+      targetY: 2
+    });
+
+    const revivedPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.equal(didTransition, true);
+    assert.deepEqual([revivedPlayer.x, revivedPlayer.y], [4, 4]);
+    assert.equal(revivedPlayer.removed, false);
+    assert.equal(revivedPlayer.renderAlpha, 1);
+    assert.deepEqual(
+      app.initialPositions.map(({ x, y, removed }) => ({ x, y, removed })),
+      [{ x: 4, y: 4, removed: false }]
+    );
+  })()
+);
+
 {
   const app = createGameplayApp(createUShapeActors());
   const player = app.state.actors[0];
@@ -287,4 +418,11 @@ function runAttemptFromActor(app, actor, dx, dy, ignoredActors) {
   assert.equal(app.adjacentWorldLevelId("level_PxP", 0, 1), "level_PxA");
 }
 
-console.log("weightless push regression tests passed");
+Promise.all(asyncTests)
+  .then(() => {
+    console.log("weightless push regression tests passed");
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
