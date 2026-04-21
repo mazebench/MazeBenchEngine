@@ -12,8 +12,9 @@
         ? app.worldRows
         : Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
     // Ice ramps smoothly to capped speed across this many tiles.
-    const ICE_SLIDE_TOP_SPEED_MULTIPLIER = 4;
+    const ICE_SLIDE_TOP_SPEED_MULTIPLIER = 2.67;
     const ICE_SLIDE_ACCELERATION_DISTANCE = 5;
+    const ICE_SLIDE_STOP_DISTANCE = 1;
     const {
       state,
       moveHistory,
@@ -535,37 +536,41 @@
         return 0;
       }
 
-      const accelerationDurationMs = iceSlideAccelerationDuration();
-
-      if (distance <= ICE_SLIDE_ACCELERATION_DISTANCE) {
-        const targetProgress = distance / ICE_SLIDE_ACCELERATION_DISTANCE;
-        let low = 0;
-        let high = 1;
-
-        for (let index = 0; index < 16; index += 1) {
-          const middle = (low + high) / 2;
-          const eased = iceSlideAccelerationEase(middle);
-
-          if (eased < targetProgress) {
-            low = middle;
-          } else {
-            high = middle;
-          }
-        }
-
-        return accelerationDurationMs * high;
+      if (isShortIceSlide(distance)) {
+        return shortIceSlideDuration(distance);
       }
 
-      return (
-        accelerationDurationMs +
-        ((distance - ICE_SLIDE_ACCELERATION_DISTANCE) * MOVE_DURATION_MS) /
-          ICE_SLIDE_TOP_SPEED_MULTIPLIER
+      const accelerationDurationMs = iceSlideAccelerationDuration();
+      const stopDurationMs = iceSlideStopDuration();
+      const cruiseDistance =
+        distance - ICE_SLIDE_ACCELERATION_DISTANCE - ICE_SLIDE_STOP_DISTANCE;
+      const cruiseDurationMs =
+        (cruiseDistance * MOVE_DURATION_MS) / ICE_SLIDE_TOP_SPEED_MULTIPLIER;
+
+      return accelerationDurationMs + cruiseDurationMs + stopDurationMs;
+    }
+
+    function isShortIceSlide(distance) {
+      return distance < ICE_SLIDE_ACCELERATION_DISTANCE + ICE_SLIDE_STOP_DISTANCE;
+    }
+
+    function shortIceSlideDuration(distance) {
+      return Math.max(
+        MOVE_DURATION_MS,
+        (distance * 1.5 * MOVE_DURATION_MS) / ICE_SLIDE_TOP_SPEED_MULTIPLIER
       );
     }
 
     function iceSlideAccelerationDuration() {
       return (
-        ((ICE_SLIDE_ACCELERATION_DISTANCE * 3) / (ICE_SLIDE_TOP_SPEED_MULTIPLIER * 2)) *
+        ((ICE_SLIDE_ACCELERATION_DISTANCE * 1.5) / ICE_SLIDE_TOP_SPEED_MULTIPLIER) *
+        MOVE_DURATION_MS
+      );
+    }
+
+    function iceSlideStopDuration() {
+      return (
+        ((ICE_SLIDE_STOP_DISTANCE * 3) / ICE_SLIDE_TOP_SPEED_MULTIPLIER) *
         MOVE_DURATION_MS
       );
     }
@@ -574,22 +579,51 @@
       return 1.5 * progress * progress - 0.5 * progress * progress * progress;
     }
 
+    function iceSlideShortEase(progress) {
+      return progress * progress * (3 - 2 * progress);
+    }
+
+    function iceSlideStopEase(progress) {
+      return 1 - Math.pow(1 - progress, 3);
+    }
+
     function forwardIceSlideProgress(elapsedMs, distance) {
       if (distance <= 0 || MOVE_DURATION_MS <= 0) {
         return 1;
       }
 
+      const durationMs = iceSlideDuration(distance);
+      const timeProgress = Math.min(1, Math.max(0, elapsedMs / durationMs));
+
+      if (isShortIceSlide(distance)) {
+        return iceSlideShortEase(timeProgress);
+      }
+
       let traveledDistance = 0;
       const accelerationDurationMs = iceSlideAccelerationDuration();
+      const stopDurationMs = iceSlideStopDuration();
+      const cruiseDistance =
+        distance - ICE_SLIDE_ACCELERATION_DISTANCE - ICE_SLIDE_STOP_DISTANCE;
+      const cruiseDurationMs =
+        (cruiseDistance * MOVE_DURATION_MS) / ICE_SLIDE_TOP_SPEED_MULTIPLIER;
 
       if (elapsedMs < accelerationDurationMs) {
         const progress = Math.max(0, elapsedMs / accelerationDurationMs);
         traveledDistance = ICE_SLIDE_ACCELERATION_DISTANCE * iceSlideAccelerationEase(progress);
-      } else {
+      } else if (elapsedMs < accelerationDurationMs + cruiseDurationMs) {
         traveledDistance =
           ICE_SLIDE_ACCELERATION_DISTANCE +
           ((elapsedMs - accelerationDurationMs) * ICE_SLIDE_TOP_SPEED_MULTIPLIER) /
             MOVE_DURATION_MS;
+      } else {
+        const stopProgress = Math.min(
+          1,
+          Math.max(0, (elapsedMs - accelerationDurationMs - cruiseDurationMs) / stopDurationMs)
+        );
+        traveledDistance =
+          ICE_SLIDE_ACCELERATION_DISTANCE +
+          cruiseDistance +
+          ICE_SLIDE_STOP_DISTANCE * iceSlideStopEase(stopProgress);
       }
 
       return Math.min(1, traveledDistance / distance);
