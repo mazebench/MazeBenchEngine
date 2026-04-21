@@ -1442,7 +1442,10 @@
             iceSlide: travelDistance > 1
           });
 
-          if (toElevation === 0 || (fromElevation === 0 && isPlayerLift(nextX, nextY))) {
+          if (
+            !isHole(nextX, nextY) &&
+            (toElevation === 0 || (fromElevation === 0 && isPlayerLift(nextX, nextY)))
+          ) {
             collectGemsAtEndpoint(fromX, fromY, nextX, nextY, moves, collectedGems);
           }
         }

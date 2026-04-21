@@ -103,7 +103,7 @@ function createGameplayApp(actors, options = {}) {
     setPlayerLiftRaised: () => {},
     computeRaisedPlayerGateSet: () => new Set(),
     isIce: options.isIce || (() => false),
-    isHole: () => false,
+    isHole: options.isHole || (() => false),
     isIceOrHole: () => false,
     easeOutBack: (value) => value,
     easeInOutQuad: (value) => value,
@@ -196,6 +196,20 @@ function runAttemptFromActor(app, actor, dx, dy, ignoredActors) {
   assert.equal(app.moveHistory.length, 0);
   assert.deepEqual([actors[0].x, actors[0].y], [1, 0]);
   assert.equal(landingGem.removed, true);
+}
+
+{
+  const gem = { type: "gem", x: 1, y: 0, removed: false };
+  const player = { type: "player", x: 0, y: 0, elevation: 0, removed: false };
+  const app = createGameplayApp([player, gem], {
+    isHole: (x, y) => x === 1 && y === 0
+  });
+
+  app.movePlayers(1, 0);
+
+  assert.deepEqual([player.x, player.y], [1, 0]);
+  assert.equal(player.removed, true);
+  assert.equal(gem.removed, false);
 }
 
 {
