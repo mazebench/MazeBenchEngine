@@ -700,9 +700,6 @@ class MazeWorld(GridWorld):
             self.remove_sprite(sprite)
             return
 
-        if isinstance(sprite, Player) and sprite.elevation == 0:
-            self.collect_gems_at(sprite.x, sprite.y)
-
         dx = sprite.x - old_position[0]
         dy = sprite.y - old_position[1]
 
@@ -720,7 +717,11 @@ class MazeWorld(GridWorld):
             and sprite.elevation == 0
             and self.tile_has_name(sprite.x, sprite.y, "ice")
         ):
-            sprite.try_move(dx, dy, allow_push=False)
+            if sprite.try_move(dx, dy, allow_push=False):
+                return
+
+        if isinstance(sprite, Player) and sprite.elevation == 0:
+            self.collect_gems_at(sprite.x, sprite.y)
 
     def can_move_to(self, x: int, y: int, sprite: Sprite | None = None) -> bool:
         if not self.in_bounds(x, y):

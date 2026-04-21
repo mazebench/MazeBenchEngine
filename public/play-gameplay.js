@@ -420,6 +420,14 @@
       }
     }
 
+    function collectGemsAtEndpoint(fromX, fromY, toX, toY, moves, collectedGems) {
+      const travelDistance = Math.abs(toX - fromX) + Math.abs(toY - fromY);
+      collectGemsAt(toX, toY, moves, collectedGems, {
+        fadeStartProgress: travelDistance > 1 ? (travelDistance - 1) / travelDistance : 0,
+        fadeEndProgress: 1
+      });
+    }
+
     function canMoveWeightlessGroup(members, dx, dy, occupied, gateState = app.liveRaisedPlayerGates) {
       return members.every((member) => {
         const targetX = member.x + dx;
@@ -1441,10 +1449,8 @@
             iceSlide: travelDistance > 1
           });
 
-          if (fromElevation === 0 && (toElevation === 0 || isPlayerLift(nextX, nextY))) {
-            collectGemsAlongPath(fromX, fromY, nextX, nextY, moves, collectedGems);
-          } else if (toElevation === 0) {
-            collectGemsAt(nextX, nextY, moves, collectedGems);
+          if (toElevation === 0 || (fromElevation === 0 && isPlayerLift(nextX, nextY))) {
+            collectGemsAtEndpoint(fromX, fromY, nextX, nextY, moves, collectedGems);
           }
         }
 

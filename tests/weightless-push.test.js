@@ -1,7 +1,16 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const { performance } = require("node:perf_hooks");
 
-global.window = { PlayModules: {} };
+global.performance = performance;
+global.window = {
+  PlayModules: {},
+  requestAnimationFrame(callback) {
+    callback(performance.now() + 1000);
+    return 1;
+  },
+  cancelAnimationFrame: () => {}
+};
 eval(fs.readFileSync("public/play-gameplay.js", "utf8"));
 
 const { registerGameplayFunctions } = window.PlayModules;
@@ -93,7 +102,7 @@ function createGameplayApp(actors, options = {}) {
     isRaisedPlayerLift: () => false,
     setPlayerLiftRaised: () => {},
     computeRaisedPlayerGateSet: () => new Set(),
-    isIce: () => false,
+    isIce: options.isIce || (() => false),
     isHole: () => false,
     isIceOrHole: () => false,
     easeOutBack: (value) => value,
@@ -153,6 +162,25 @@ function runAttemptFromActor(app, actor, dx, dy, ignoredActors) {
   const result = app.attemptPushActor(actor, dx, dy, occupied, moves, 1, new Set(), new Set(), ignoredActors);
 
   return { result, moves };
+}
+
+{
+  const passThroughGem = { type: "gem", x: 2, y: 0, removed: false };
+  const landingGem = { type: "gem", x: 3, y: 0, removed: false };
+  const actors = [
+    { type: "player", x: 0, y: 0, elevation: 0, removed: false },
+    passThroughGem,
+    landingGem
+  ];
+  const app = createGameplayApp(actors, {
+    isIce: (x, y) => y === 0 && (x === 1 || x === 2)
+  });
+
+  app.movePlayers(1, 0);
+
+  assert.deepEqual([actors[0].x, actors[0].y], [3, 0]);
+  assert.equal(passThroughGem.removed, false);
+  assert.equal(landingGem.removed, true);
 }
 
 {
