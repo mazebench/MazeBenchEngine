@@ -11,13 +11,15 @@
       Array.isArray(app.worldRows) && app.worldRows.length > 0
         ? app.worldRows
         : Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    // Ice ramps smoothly to capped speed across this many tiles.
+    const ICE_SLIDE_TOP_SPEED_MULTIPLIER = 4;
+    const ICE_SLIDE_ACCELERATION_DISTANCE = 5;
     const {
       state,
       moveHistory,
       MOVE_DURATION_MS,
       PLAYER_LIFT_RISE_DURATION_MS,
       PLAYER_LIFT_FALL_DURATION_MS,
-      ICE_SLIDE_DURATION_MULTIPLIER,
       HOLE_FALL_DURATION_MS,
       HOLE_SINK_DISTANCE
     } = app;
@@ -314,12 +316,14 @@
 
       box.x = target.x;
       box.y = target.y;
+      const distance = Math.abs(target.x - fromX) + Math.abs(target.y - fromY);
       moves.push({
         actor: box,
         fromX,
         fromY,
         toX: target.x,
-        toY: target.y
+        toY: target.y,
+        iceSlide: distance > 1
       });
       occupied.add(posKey(box.x, box.y));
       return true;
@@ -522,6 +526,138 @@
       return 1 - easeInOutQuad(localProgress);
     }
 
+    function moveDistance({ fromX, fromY, toX, toY }) {
+      return Math.abs(toX - fromX) + Math.abs(toY - fromY);
+    }
+
+    function iceSlideDuration(distance) {
+      if (distance <= 0 || MOVE_DURATION_MS <= 0) {
+        return 0;
+      }
+
+      const accelerationDurationMs = iceSlideAccelerationDuration();
+
+      if (distance <= ICE_SLIDE_ACCELERATION_DISTANCE) {
+        const targetProgress = distance / ICE_SLIDE_ACCELERATION_DISTANCE;
+        let low = 0;
+        let high = 1;
+
+        for (let index = 0; index < 16; index += 1) {
+          const middle = (low + high) / 2;
+          const eased = iceSlideAccelerationEase(middle);
+
+          if (eased < targetProgress) {
+            low = middle;
+          } else {
+            high = middle;
+          }
+        }
+
+        return accelerationDurationMs * high;
+      }
+
+      return (
+        accelerationDurationMs +
+        ((distance - ICE_SLIDE_ACCELERATION_DISTANCE) * MOVE_DURATION_MS) /
+          ICE_SLIDE_TOP_SPEED_MULTIPLIER
+      );
+    }
+
+    function iceSlideAccelerationDuration() {
+      return (
+        ((ICE_SLIDE_ACCELERATION_DISTANCE * 3) / (ICE_SLIDE_TOP_SPEED_MULTIPLIER * 2)) *
+        MOVE_DURATION_MS
+      );
+    }
+
+    function iceSlideAccelerationEase(progress) {
+      return 1.5 * progress * progress - 0.5 * progress * progress * progress;
+    }
+
+    function forwardIceSlideProgress(elapsedMs, distance) {
+      if (distance <= 0 || MOVE_DURATION_MS <= 0) {
+        return 1;
+      }
+
+      let traveledDistance = 0;
+      const accelerationDurationMs = iceSlideAccelerationDuration();
+
+      if (elapsedMs < accelerationDurationMs) {
+        const progress = Math.max(0, elapsedMs / accelerationDurationMs);
+        traveledDistance = ICE_SLIDE_ACCELERATION_DISTANCE * iceSlideAccelerationEase(progress);
+      } else {
+        traveledDistance =
+          ICE_SLIDE_ACCELERATION_DISTANCE +
+          ((elapsedMs - accelerationDurationMs) * ICE_SLIDE_TOP_SPEED_MULTIPLIER) /
+            MOVE_DURATION_MS;
+      }
+
+      return Math.min(1, traveledDistance / distance);
+    }
+
+    function iceSlideProgress(elapsedMs, distance, reverse = false) {
+      if (!reverse) {
+        return forwardIceSlideProgress(elapsedMs, distance);
+      }
+
+      const duration = iceSlideDuration(distance);
+      return 1 - forwardIceSlideProgress(Math.max(0, duration - elapsedMs), distance);
+    }
+
+    function moveDurationFor(move) {
+      const distance = moveDistance(move);
+
+      if (move.iceSlide) {
+        return iceSlideDuration(distance);
+      }
+
+      return MOVE_DURATION_MS * distance;
+    }
+
+    function iceSlideMoveMetadata(moves) {
+      return moves
+        .filter(({ iceSlide = false }) => iceSlide)
+        .map(({ actor, fromX, fromY, toX, toY }) => ({
+          actorIndex: state.actors.indexOf(actor),
+          fromX,
+          fromY,
+          toX,
+          toY
+        }))
+        .filter(({ actorIndex }) => actorIndex !== -1);
+    }
+
+    function applyUndoIceSlideMetadata(moves, previousState) {
+      if (!Array.isArray(previousState.iceSlideMoves) || previousState.iceSlideMoves.length === 0) {
+        return;
+      }
+
+      const iceSlideMoveByActorIndex = new Map(
+        previousState.iceSlideMoves.map((move) => [move.actorIndex, move])
+      );
+
+      moves.forEach((move) => {
+        const originalMove = iceSlideMoveByActorIndex.get(move.actorIndex);
+
+        if (!originalMove) {
+          return;
+        }
+
+        const isReverseMove =
+          move.fromX === originalMove.toX &&
+          move.fromY === originalMove.toY &&
+          move.toX === originalMove.fromX &&
+          move.toY === originalMove.fromY;
+
+        if (!isReverseMove) {
+          return;
+        }
+
+        move.iceSlide = true;
+        move.reverseIceSlide = true;
+      });
+    }
+
     function moveWeightlessGroup(groupId, dx, dy, occupied, moves, gateState = app.liveRaisedPlayerGates) {
       return moveWeightlessCluster([groupId], dx, dy, occupied, moves, gateState);
     }
@@ -570,12 +706,14 @@
       }
 
       startPositions.forEach(({ actor, fromX, fromY }) => {
+        const distance = Math.abs(actor.x - fromX) + Math.abs(actor.y - fromY);
         moves.push({
           actor,
           fromX,
           fromY,
           toX: actor.x,
-          toY: actor.y
+          toY: actor.y,
+          iceSlide: distance > 1
         });
       });
 
@@ -829,16 +967,8 @@
       const moveDuration =
         typeof durationMs === "number"
           ? durationMs
-          : MOVE_DURATION_MS *
-            Math.max(
-              1,
-              ...moves.map(
-                ({ fromX, fromY, toX, toY, timingDistance = null }) =>
-                  typeof timingDistance === "number"
-                    ? timingDistance
-                    : Math.abs(toX - fromX) + Math.abs(toY - fromY)
-              )
-            );
+          : Math.max(MOVE_DURATION_MS, ...moves.map(moveDurationFor));
+      const useIceSlideTiming = typeof durationMs !== "number";
 
       function startLiftPhase(nextPhase) {
         if (startLiftPhaseCallback) {
@@ -922,7 +1052,8 @@
         const moveStartTime = performance.now();
 
         function step(now) {
-          const progress = Math.min(1, (now - moveStartTime) / moveDuration);
+          const elapsedMs = now - moveStartTime;
+          const progress = moveDuration <= 0 ? 1 : Math.min(1, elapsedMs / moveDuration);
           const eased = easeInOutQuad(progress);
 
           moves.forEach(
@@ -939,10 +1070,19 @@
               fadeOut = false,
               toRemoved = false,
               fadeStartProgress = 0,
-              fadeEndProgress = 1
+              fadeEndProgress = 1,
+              iceSlide = false,
+              reverseIceSlide = false
             }) => {
-              actor.renderX = fromX + (toX - fromX) * eased;
-              actor.renderY = fromY + (toY - fromY) * eased;
+              const positionProgress = useIceSlideTiming && iceSlide
+                ? iceSlideProgress(
+                    elapsedMs,
+                    moveDistance({ fromX, fromY, toX, toY }),
+                    reverseIceSlide
+                  )
+                : eased;
+              actor.renderX = fromX + (toX - fromX) * positionProgress;
+              actor.renderY = fromY + (toY - fromY) * positionProgress;
               actor.renderElevation = useToElevation ? toElevation : fromElevation;
               actor.renderInHole = false;
               actor.renderAlpha =
@@ -1123,6 +1263,7 @@
         actor.renderInHole = false;
         moves.push({
           actor,
+          actorIndex: index,
           fromX,
           fromY,
           toX: target.x,
@@ -1263,10 +1404,7 @@
             toY: nextY,
             fromElevation,
             toElevation,
-            timingDistance:
-              travelDistance > 1
-                ? 1 + (travelDistance - 1) * ICE_SLIDE_DURATION_MULTIPLIER
-                : travelDistance
+            iceSlide: travelDistance > 1
           });
 
           if (fromElevation === 0 && (toElevation === 0 || isPlayerLift(nextX, nextY))) {
@@ -1281,6 +1419,7 @@
 
       if (moves.length > 0) {
         applyHoleFalls(moves);
+        previousState.iceSlideMoves = iceSlideMoveMetadata(moves);
         app.gateRenderOverride = raisedPlayerGates;
         moveHistory.push(previousState);
         animateMoves(moves, null, {
@@ -1318,6 +1457,7 @@
 
       const raisedPlayerGates = computeRaisedPlayerGateSet();
       const moves = buildMovesToPositions(previousState.actors);
+      applyUndoIceSlideMetadata(moves, previousState);
       const hasLiftReversal = moves.some(
         ({ fromElevation = 0, toElevation = fromElevation }) => fromElevation !== toElevation
       );

@@ -23,7 +23,6 @@ function createGameplayApp(actors, options = {}) {
     MOVE_DURATION_MS: 0,
     PLAYER_LIFT_RISE_DURATION_MS: 0,
     PLAYER_LIFT_FALL_DURATION_MS: 0,
-    ICE_SLIDE_DURATION_MULTIPLIER: 1,
     HOLE_FALL_DURATION_MS: 0,
     HOLE_SINK_DISTANCE: 0,
     liveRaisedPlayerGates: new Set(),
