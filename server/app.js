@@ -33,6 +33,7 @@ const PUBLIC_FILE_ROUTES = new Map(
     "/play-world-transitions.js",
     "/play-gameplay.js",
     "/maze-engine.js",
+    "/maze-solver.js",
     "/author-play-data.js",
     "/author.js",
     "/world-map.js",

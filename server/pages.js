@@ -313,6 +313,7 @@ function createPageRenderer({
         <script src="/play-gameplay.js" defer></script>
         <script src="/level-preview.js" defer></script>
         <script src="/author-play-data.js" defer></script>
+        <script src="/maze-solver.js" defer></script>
         <script src="/author.js" defer></script>
       </main>`
     });
