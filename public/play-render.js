@@ -27,12 +27,13 @@
     modules.registerRenderCompositorFunctions(app);
 
     const { syncCameraTarget, advanceCamera } = app;
+    const { renderCompositor } = app;
 
     function render() {
       const now = performance.now();
       syncCameraTarget();
       const isCameraActive = advanceCamera(now);
-      const activeLevelTransition = app.composeLevelTransitionSource(now);
+      const activeLevelTransition = renderCompositor.composeLevelTransitionSource(now);
 
       if (activeLevelTransition) {
         const settings = app.getEffectSettings();
@@ -42,7 +43,7 @@
         }
 
         if (activeLevelTransition.active) {
-          app.startLevelTransitionLoop();
+          renderCompositor.startLevelTransitionLoop();
           return;
         }
 
@@ -66,9 +67,9 @@
       app.liveRaisedPlayerGates = app.gateRenderOverride || app.computeRaisedPlayerGateSet();
       app.syncGateAnimationTargets(now);
       app.syncPlayerLiftAnimationTargets(now);
-      app.drawScene(now);
+      renderCompositor.drawScene(now);
       const settings = app.getEffectSettings();
-      const sourceCanvas = app.composeViewportSource();
+      const sourceCanvas = renderCompositor.composeViewportSource();
 
       if (!app.renderWithShader(sourceCanvas, settings)) {
         app.renderFallback(sourceCanvas);

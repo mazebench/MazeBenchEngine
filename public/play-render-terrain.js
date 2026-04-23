@@ -819,7 +819,7 @@
       }
     }
 
-    Object.assign(app, {
+    app.renderTerrain = {
       roundRectPath,
       paintPlayerLiftArrow,
       elevatedBleedCoverColor,
@@ -834,6 +834,6 @@
       paintExit,
       paintGround,
       paintWalls
-    });
+    };
   };
 })();

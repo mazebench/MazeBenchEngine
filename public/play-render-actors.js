@@ -25,13 +25,15 @@
       floatingFloorHoverOffset,
       isCollectibleActor,
       isPlayerActor,
-      actorRenderElevation,
+      actorRenderElevation
+    } = app;
+    const {
       roundRectPath,
       paintWallTile,
       paintRaisedPlayerGateTile,
       paintRaisedPlayerLiftTile,
       queueElevatedSideBleedCoverItems
-    } = app;
+    } = app.renderTerrain;
 
     function paintWeightlessBoxTile(actor, offsetX = 0, offsetY = 0, context = sceneCtx) {
       const left = actor.x * TILE_SIZE + offsetX;
@@ -717,7 +719,7 @@
       }
     }
 
-    Object.assign(app, {
+    app.renderActors = {
       paintWeightlessBoxTile,
       paintRaisedPlayer,
       paintFloatingFloor,
@@ -727,6 +729,6 @@
       paintDepthSortedScene,
       buildDrawItems,
       paintActor
-    });
+    };
   };
 })();

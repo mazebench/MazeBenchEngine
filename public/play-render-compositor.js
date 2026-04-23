@@ -17,12 +17,14 @@
       isCollectibleActor,
       isPlayerActor,
       actorRenderElevation,
-      easeInOutQuad,
-      paintGround,
+      easeInOutQuad
+    } = app;
+    const { paintGround } = app.renderTerrain;
+    const {
       paintDepthSortedScene,
       actorDepthRow,
       paintRaisedPlayer
-    } = app;
+    } = app.renderActors;
 
     function drawViewportFromScene(
       context,
@@ -461,7 +463,7 @@
       };
     }
 
-    Object.assign(app, {
+    app.renderCompositor = {
       drawViewportFromScene,
       composeViewportSource,
       drawScene,
@@ -475,6 +477,6 @@
       startLevelTransitionLoop,
       startLevelTransition,
       composeLevelTransitionSource
-    });
+    };
   };
 })();

@@ -15,6 +15,7 @@
       PLAYER_REVIVE_BLINK_DURATION_MS,
       HOLE_SINK_DISTANCE
     } = app;
+    const renderCompositor = app.renderCompositor || app;
     const {
       cloneActorPositions,
       cloneTerrainState,
@@ -26,13 +27,15 @@
       cloneLevelSnapshot,
       applyLevelState,
       loadLevelState,
+      syncFloatingFloorTicker
+    } = app;
+    const {
       captureSceneSnapshot,
       captureForegroundOccluderSnapshot,
       captureViewportSnapshot,
       viewportPositionForActor,
-      startLevelTransition,
-      syncFloatingFloorTicker
-    } = app;
+      startLevelTransition
+    } = renderCompositor;
 
     function cloneStoredLevelSnapshot(snapshot) {
       if (!snapshot) {
