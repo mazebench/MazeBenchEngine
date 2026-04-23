@@ -304,62 +304,31 @@ function createPageRenderer({
 
   function renderWorldMapEditorPage(game) {
     const worldMapData = buildMazeWorldMapEditorData(game);
-    const startLevelId = defaultLevelIdForGame(game);
-    const playLink = startLevelId
-      ? `<a class="back-link" href="/play/${encodeURIComponent(game.id)}/${encodeURIComponent(startLevelId)}">Play</a>`
-      : "";
-    const authorLink = startLevelId
-      ? `<a class="back-link" href="/author/${encodeURIComponent(game.id)}/${encodeURIComponent(startLevelId)}">Author</a>`
-      : "";
 
     return renderPage({
-      title: `${game.name} World Map`,
+      title: `${game.name} World Editor`,
+      bodyClass: "author-body",
       body: `<main class="shell world-map-shell">
-        <nav class="page-nav">
-          <a class="back-link" href="/games/${encodeURIComponent(game.id)}">Back</a>
-          ${playLink}
-          ${authorLink}
-        </nav>
         <header class="author-header">
-          <h1>${escapeHtml(game.name)} World Map</h1>
-          <p class="author-subtitle">Move level files around the world without renaming them. The saved layout lives in <code>world_map.json</code>.</p>
-        </header>
-        <section class="author-toolbar world-map-toolbar">
-          <div class="author-toolbar__group">
-            <div class="author-meta">
-              <span class="author-meta__label">World Size</span>
-              <span class="author-meta__value">${mazeWorldConfig.worldColumns.length} x ${mazeWorldConfig.worldRows.length}</span>
-            </div>
-            <div class="author-meta">
-              <span class="author-meta__label">Placed Files</span>
-              <span id="world-map-count" class="author-meta__value"></span>
-            </div>
-          </div>
-          <div class="author-toolbar__group">
-            <button id="world-map-unmap" class="tool-button" type="button">Unmap Selected</button>
-            <button id="world-map-reset" class="tool-button" type="button">Reset</button>
+          <div class="author-topbar world-map-topbar">
+            <h1>World Editor</h1>
+            <a id="world-map-play-link" class="back-link world-map-slot-link is-disabled" href="#" aria-disabled="true">Play Slot</a>
+            <a id="world-map-author-link" class="back-link world-map-slot-link is-disabled" href="#" aria-disabled="true">Edit Slot</a>
             <button id="world-map-save" class="tool-button tool-button--primary" type="button">Save</button>
+            <button id="world-map-deselect" class="tool-button" type="button">Deselect</button>
+            <p id="world-map-status" class="sr-only" role="status" aria-live="polite"></p>
           </div>
-        </section>
-        <p id="world-map-status" class="author-status" role="status" aria-live="polite"></p>
+        </header>
         <div class="world-map-layout">
-          <aside class="world-map-sidebar">
-            <section class="author-panel">
-              <h2>Selected Slot</h2>
-              <p id="world-map-selection" class="author-panel__copy"></p>
-              <div class="world-map-selection__links">
-                <a id="world-map-play-link" class="author-level-pill" href="#">Play Slot</a>
-                <a id="world-map-author-link" class="author-level-pill" href="#">Author Slot</a>
+          <aside class="author-sidebar world-map-sidebar">
+            <details class="author-panel author-disclosure world-map-unmapped-panel">
+              <summary class="author-disclosure__summary">
+                <span>Unmapped Tiles</span>
+              </summary>
+              <div class="author-disclosure__body">
+                <div id="world-map-unplaced" class="world-map-list"></div>
               </div>
-            </section>
-            <section class="author-panel">
-              <h2>Placed Tiles</h2>
-              <div id="world-map-placed" class="world-map-list"></div>
-            </section>
-            <section class="author-panel">
-              <h2>Unplaced Files</h2>
-              <div id="world-map-unplaced" class="world-map-list"></div>
-            </section>
+            </details>
           </aside>
           <section class="world-map-workspace">
             <section class="author-grid-shell world-map-grid-shell">

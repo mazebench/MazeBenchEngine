@@ -989,11 +989,7 @@ function buildMazeWorldMapEditorData(game, options = {}) {
       playUrl: level.playUrl,
       position: [level.column, level.row]
     })),
-    message:
-      options.message ||
-      (game.worldMap?.levels?.length
-        ? "Select a level tile, then click a world slot to move it."
-        : "Pick a level file from the unplaced list, then click a world slot."),
+    message: options.message || "World map ready.",
     playBaseUrl: `/play/${encodeURIComponent(game.id)}`,
     worldColumns: MAZE_WORLD_CONFIG.worldColumns,
     worldRows: MAZE_WORLD_CONFIG.worldRows
