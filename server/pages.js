@@ -157,63 +157,104 @@ function createPageRenderer({
 
     return renderPage({
       title: `${game.name} Author`,
+      bodyClass: "author-body",
       body: `<main class="shell author-shell">
-        <nav class="page-nav">
-          <a class="back-link" href="/games/${encodeURIComponent(game.id)}">Back</a>
-          <a class="back-link" id="author-play-link" href="/play/${encodeURIComponent(game.id)}/${encodeURIComponent(level.id)}">Play</a>
-          <a class="back-link" href="/world-map/${encodeURIComponent(game.id)}">World Map</a>
-        </nav>
         <header class="author-header">
-          <h1>${escapeHtml(game.name)} Author</h1>
-          <p class="author-subtitle">Paint a maze level, tune the grid, and save the file that backs this world slot.</p>
+          <nav class="page-nav author-nav" aria-label="Author navigation">
+            <a class="back-link" href="/games/${encodeURIComponent(game.id)}">Back</a>
+            <a class="back-link" id="author-play-link" href="/play/${encodeURIComponent(game.id)}/${encodeURIComponent(level.id)}">Play</a>
+            <a class="back-link" href="/world-map/${encodeURIComponent(game.id)}">World Map</a>
+          </nav>
+          <div class="author-hero">
+            <div class="author-title-block">
+              <span class="author-kicker">${escapeHtml(game.name)} editor</span>
+              <h1>${escapeHtml(game.name)} Author</h1>
+            </div>
+            <p id="author-status" class="author-status" role="status" aria-live="polite"></p>
+          </div>
         </header>
-        <section class="author-toolbar">
-          <div class="author-toolbar__group">
-            <label class="field">
-              <span>Column</span>
-              <select id="level-column" aria-label="Level column"></select>
-            </label>
-            <label class="field">
-              <span>Row</span>
-              <select id="level-row" aria-label="Level row"></select>
-            </label>
-            <div id="level-neighbors" class="author-neighbors" aria-label="Neighbor levels">
-              <button class="tool-button author-neighbors__button author-neighbors__button--up" type="button" data-dx="0" data-dy="-1">Up</button>
-              <button class="tool-button author-neighbors__button author-neighbors__button--left" type="button" data-dx="-1" data-dy="0">Left</button>
-              <button class="tool-button author-neighbors__button author-neighbors__button--right" type="button" data-dx="1" data-dy="0">Right</button>
-              <button class="tool-button author-neighbors__button author-neighbors__button--down" type="button" data-dx="0" data-dy="1">Down</button>
+        <section class="author-command-bar" aria-label="Editor controls">
+          <div class="author-control-group">
+            <h2>World Slot</h2>
+            <div class="author-control-row">
+              <label class="field field--compact">
+                <span>Column</span>
+                <select id="level-column" aria-label="Level column"></select>
+              </label>
+              <label class="field field--compact">
+                <span>Row</span>
+                <select id="level-row" aria-label="Level row"></select>
+              </label>
+              <div id="level-neighbors" class="author-neighbors" aria-label="Neighbor levels">
+                <button class="tool-button author-neighbors__button author-neighbors__button--up" type="button" data-dx="0" data-dy="-1"><span aria-hidden="true">&#8593;</span></button>
+                <button class="tool-button author-neighbors__button author-neighbors__button--left" type="button" data-dx="-1" data-dy="0"><span aria-hidden="true">&#8592;</span></button>
+                <button class="tool-button author-neighbors__button author-neighbors__button--right" type="button" data-dx="1" data-dy="0"><span aria-hidden="true">&#8594;</span></button>
+                <button class="tool-button author-neighbors__button author-neighbors__button--down" type="button" data-dx="0" data-dy="1"><span aria-hidden="true">&#8595;</span></button>
+              </div>
             </div>
             <div class="author-meta">
               <span class="author-meta__label">File</span>
               <span id="current-file-name" class="author-meta__value"></span>
             </div>
           </div>
-          <div class="author-toolbar__group">
-            <label class="field">
-              <span>Width</span>
-              <input id="board-width" type="number" min="1" max="${mazeLevelGridWidth}" inputmode="numeric">
-            </label>
-            <label class="field">
-              <span>Height</span>
-              <input id="board-height" type="number" min="1" max="${mazeLevelGridHeight}" inputmode="numeric">
-            </label>
-            <button id="resize-level" class="tool-button" type="button">Resize</button>
-            <button id="clear-level" class="tool-button" type="button">Clear</button>
-            <button id="frame-level" class="tool-button" type="button">Frame Walls</button>
-            <button id="rotate-left" class="tool-button" type="button" title="Rotate level left">Rotate Left</button>
-            <button id="rotate-right" class="tool-button" type="button" title="Rotate level right">Rotate Right</button>
-            <button id="flip-horizontal" class="tool-button" type="button" title="Mirror level left to right">Flip Horizontal</button>
-            <button id="flip-vertical" class="tool-button" type="button" title="Mirror level top to bottom">Flip Vertical</button>
-            <button id="place-gem" class="tool-button" type="button">Place Gem</button>
-            <button id="solve-level" class="tool-button" type="button">Solver</button>
-            <button id="save-level" class="tool-button tool-button--primary" type="button">Save</button>
+          <div class="author-control-group">
+            <h2>Board</h2>
+            <div class="author-control-row">
+              <label class="field field--compact">
+                <span>Width</span>
+                <input id="board-width" type="number" min="1" max="${mazeLevelGridWidth}" inputmode="numeric">
+              </label>
+              <label class="field field--compact">
+                <span>Height</span>
+                <input id="board-height" type="number" min="1" max="${mazeLevelGridHeight}" inputmode="numeric">
+              </label>
+              <button id="resize-level" class="tool-button" type="button">Resize</button>
+            </div>
+            <div class="author-control-row">
+              <button id="clear-level" class="tool-button tool-button--danger" type="button">
+                <span class="tool-button__icon" aria-hidden="true">&#10005;</span>
+                <span>Clear</span>
+              </button>
+              <button id="frame-level" class="tool-button" type="button">
+                <span class="tool-button__icon" aria-hidden="true">&#9633;</span>
+                <span>Frame</span>
+              </button>
+            </div>
+          </div>
+          <div class="author-control-group author-control-group--actions">
+            <h2>Transform & Check</h2>
+            <div class="author-control-row">
+              <button id="rotate-left" class="tool-button" type="button" title="Rotate level left">
+                <span class="tool-button__icon" aria-hidden="true">&#8634;</span>
+                <span>Rotate Left</span>
+              </button>
+              <button id="rotate-right" class="tool-button" type="button" title="Rotate level right">
+                <span class="tool-button__icon" aria-hidden="true">&#8635;</span>
+                <span>Rotate Right</span>
+              </button>
+              <button id="flip-horizontal" class="tool-button" type="button" title="Mirror level left to right">
+                <span class="tool-button__icon" aria-hidden="true">&#8596;</span>
+                <span>Flip H</span>
+              </button>
+              <button id="flip-vertical" class="tool-button" type="button" title="Mirror level top to bottom">
+                <span class="tool-button__icon" aria-hidden="true">&#8597;</span>
+                <span>Flip V</span>
+              </button>
+            </div>
+            <div class="author-control-row">
+              <button id="place-gem" class="tool-button" type="button">Place Gem</button>
+              <button id="solve-level" class="tool-button" type="button">Solver</button>
+              <button id="save-level" class="tool-button tool-button--primary" type="button">Save</button>
+            </div>
           </div>
         </section>
-        <p id="author-status" class="author-status" role="status" aria-live="polite"></p>
         <div class="author-layout">
           <aside class="author-sidebar">
-            <section class="author-panel">
-              <h2>Paint</h2>
+            <section class="author-panel author-panel--palette">
+              <div class="author-panel__header">
+                <h2>Paint</h2>
+                <span id="selected-tool-label" class="author-panel__badge"></span>
+              </div>
               <div id="palette" class="palette"></div>
             </section>
             <section class="author-panel">
@@ -225,19 +266,31 @@ function createPageRenderer({
               </label>
               <button id="apply-cell-value" class="tool-button" type="button">Apply Cell</button>
             </section>
-            <section class="author-panel">
-              <h2>Existing World Levels</h2>
+            <section class="author-panel author-panel--levels">
+              <h2>Existing Levels</h2>
               <div id="existing-levels" class="author-level-pills"></div>
             </section>
           </aside>
           <section class="author-workspace">
-            <section class="author-grid-shell">
-              <div id="author-grid" class="author-grid" aria-label="Maze author grid">
-                <canvas id="author-canvas" class="author-grid__canvas"></canvas>
-                <div id="author-hit-grid" class="author-grid__hit-grid"></div>
+            <section class="author-stage" aria-label="Level canvas">
+              <div class="author-stage__bar">
+                <div class="author-stage__metric">
+                  <span>Slot</span>
+                  <strong id="current-level-name"></strong>
+                </div>
+                <div class="author-stage__metric">
+                  <span>Size</span>
+                  <strong id="board-size-label"></strong>
+                </div>
               </div>
+              <section class="author-grid-shell">
+                <div id="author-grid" class="author-grid" aria-label="Maze author grid">
+                  <canvas id="author-canvas" class="author-grid__canvas"></canvas>
+                  <div id="author-hit-grid" class="author-grid__hit-grid"></div>
+                </div>
+              </section>
             </section>
-            <section class="author-panel">
+            <section class="author-panel author-output-panel">
               <h2>Text Output</h2>
               <textarea id="raw-output" class="raw-output" readonly spellcheck="false"></textarea>
             </section>

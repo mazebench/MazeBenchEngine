@@ -10,11 +10,13 @@
   const elements = {
     applyCellValue: document.getElementById("apply-cell-value"),
     boardHeight: document.getElementById("board-height"),
+    boardSizeLabel: document.getElementById("board-size-label"),
     boardWidth: document.getElementById("board-width"),
     canvas: document.getElementById("author-canvas"),
     cellValue: document.getElementById("cell-value"),
     clearLevel: document.getElementById("clear-level"),
     currentFileName: document.getElementById("current-file-name"),
+    currentLevelName: document.getElementById("current-level-name"),
     existingLevels: document.getElementById("existing-levels"),
     flipHorizontal: document.getElementById("flip-horizontal"),
     flipVertical: document.getElementById("flip-vertical"),
@@ -33,6 +35,7 @@
     rotateRight: document.getElementById("rotate-right"),
     saveLevel: document.getElementById("save-level"),
     selectedCellLabel: document.getElementById("selected-cell-label"),
+    selectedToolLabel: document.getElementById("selected-tool-label"),
     solveLevel: document.getElementById("solve-level"),
     status: document.getElementById("author-status")
   };
@@ -773,6 +776,8 @@
           (tool.token === state.selectedToken ? " is-active" : "") +
           '" type="button" data-token="' +
           escapeHtml(tool.token) +
+          '" title="' +
+          escapeHtml(tool.label + " (" + tool.token + ")") +
           '">' +
           '<span class="palette__swatch">' +
           swatchContents +
@@ -789,6 +794,13 @@
         );
       })
       .join("");
+  }
+
+  function renderSelectedTool() {
+    const tool = toolByToken.get(state.selectedToken);
+    const label = tool ? tool.label + " (" + tool.token + ")" : state.selectedToken;
+
+    elements.selectedToolLabel.textContent = label;
   }
 
   function renderNeighborButtons() {
@@ -883,7 +895,9 @@
   function renderMeta() {
     elements.boardWidth.value = String(state.width);
     elements.boardHeight.value = String(state.height);
+    elements.boardSizeLabel.textContent = state.width + " x " + state.height;
     elements.currentFileName.textContent = state.filePath;
+    elements.currentLevelName.textContent = state.levelId.replace("level_", "");
     elements.playLink.href = "/play/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId);
     elements.playLink.setAttribute("aria-label", "Play " + state.levelId);
     syncSolverButtonState();
@@ -923,6 +937,7 @@
     renderStatus();
     renderMeta();
     renderNeighborButtons();
+    renderSelectedTool();
     renderGrid();
     renderSelectedCell();
     renderRawOutput();
@@ -936,6 +951,7 @@
 
     state.selectedToken = token;
     renderPalette();
+    renderSelectedTool();
   }
 
   function selectCell(x, y) {
