@@ -124,6 +124,7 @@ function createPageRenderer({
           <script src="/play-core.js" defer></script>
           <script src="/play-render-effects.js" defer></script>
           <script src="/play-render-terrain.js" defer></script>
+          <script src="/play-render-actors.js" defer></script>
           <script src="/play-render-compositor.js" defer></script>
           <script src="/play-render.js" defer></script>
           <script src="/play-movement.js" defer></script>
@@ -244,6 +245,7 @@ function createPageRenderer({
         <script src="/play-core.js" defer></script>
         <script src="/play-render-effects.js" defer></script>
         <script src="/play-render-terrain.js" defer></script>
+        <script src="/play-render-actors.js" defer></script>
         <script src="/play-render-compositor.js" defer></script>
         <script src="/play-render.js" defer></script>
         <script src="/play-movement.js" defer></script>
