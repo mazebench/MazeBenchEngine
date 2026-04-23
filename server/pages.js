@@ -161,9 +161,8 @@ function createPageRenderer({
       body: `<main class="shell author-shell">
         <header class="author-header">
           <div class="author-topbar">
-            <h1>${escapeHtml(game.name)} Author</h1>
+            <h1>Editor</h1>
             <nav class="page-nav author-nav" aria-label="Author navigation">
-              <a class="back-link" href="/games/${encodeURIComponent(game.id)}">Back</a>
               <a class="back-link" id="author-play-link" href="/play/${encodeURIComponent(game.id)}/${encodeURIComponent(level.id)}">Play</a>
               <a class="back-link" href="/world-map/${encodeURIComponent(game.id)}">World Map</a>
             </nav>
