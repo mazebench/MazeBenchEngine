@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
+const { loadBrowserScript } = require("./helpers/browser-module-loader");
 
 function createStubContext() {
   const noop = () => {};
@@ -100,8 +100,8 @@ function createRenderApp({ terrain, actors, playData = {} }) {
     PlayModules: {}
   };
 
-  eval(fs.readFileSync("public/play-core.js", "utf8"));
-  eval(fs.readFileSync("public/play-render.js", "utf8"));
+  loadBrowserScript("public/play-core.js");
+  loadBrowserScript("public/play-render.js");
 
   const canvas = {
     width: 0,

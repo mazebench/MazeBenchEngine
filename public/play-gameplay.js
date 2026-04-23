@@ -120,36 +120,43 @@
       app.levelEntrySnapshot = cloneLevelSnapshot();
     }
 
-    function revivePlayerAtLevelStart(player, startPlayer) {
-      const gateState = computeRaisedPlayerGateSet();
-      const elevation = playerSurfaceHeightAt(startPlayer.x, startPlayer.y, gateState) === 1 ? 1 : 0;
-
-      player.x = startPlayer.x;
-      player.y = startPlayer.y;
+    function revivePlayerAtPosition(player, x, y, elevation) {
+      player.x = x;
+      player.y = y;
       player.elevation = elevation;
       player.removed = false;
-      player.renderX = startPlayer.x;
-      player.renderY = startPlayer.y;
+      player.renderX = x;
+      player.renderY = y;
       player.renderElevation = elevation;
       player.renderScale = 1;
       player.renderSink = 0;
       player.renderInHole = false;
       player.renderAlpha = 0;
+    }
+
+    function revivePlayerAtLevelStart(player, startPlayer) {
+      const gateState = computeRaisedPlayerGateSet();
+      const elevation = playerSurfaceHeightAt(startPlayer.x, startPlayer.y, gateState) === 1 ? 1 : 0;
+
+      revivePlayerAtPosition(player, startPlayer.x, startPlayer.y, elevation);
       rememberCurrentLevelEntryState();
     }
 
-    function blinkRevivedPlayer(player) {
-      const durationMs = (PLAYER_REVIVE_BLINK_DURATION_MS || 620) / 1.5;
-      const blinkCount = 3;
+    function blinkRevivedPlayer(playerOrPlayers) {
+      const players = Array.isArray(playerOrPlayers) ? playerOrPlayers : [playerOrPlayers];
+      const durationMs = (PLAYER_REVIVE_BLINK_DURATION_MS || 620) / 2.25;
+      const blinkCount = 2;
       const startMs = performance.now();
 
       app.isAnimating = true;
 
       function finishBlink() {
-        player.renderAlpha = 1;
-        player.renderScale = 1;
-        player.renderSink = 0;
-        player.renderInHole = false;
+        players.forEach((player) => {
+          player.renderAlpha = 1;
+          player.renderScale = 1;
+          player.renderSink = 0;
+          player.renderInHole = false;
+        });
         app.isAnimating = false;
         app.animationFrameId = null;
         syncFloatingFloorTicker();
@@ -166,7 +173,9 @@
         }
 
         const phase = Math.floor(progress * blinkCount * 2);
-        player.renderAlpha = phase % 2 === 0 ? 0 : 1;
+        players.forEach((player) => {
+          player.renderAlpha = phase % 2 === 0 ? 0 : 1;
+        });
         app.render();
         app.animationFrameId = window.requestAnimationFrame(step);
       }

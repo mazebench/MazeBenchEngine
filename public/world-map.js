@@ -45,6 +45,15 @@
     selectedPosition: null
   };
 
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
   function cloneEntries(entries) {
     return entries.map((entry) => ({
       authorUrl: entry.authorUrl || "",
@@ -184,10 +193,10 @@
     elements.columns.style.gridTemplateColumns =
       "repeat(" + worldColumns.length + ", var(--world-map-cell-size, 56px))";
     elements.columns.innerHTML = worldColumns
-      .map((value) => '<span class="world-map-axis__label">' + value + "</span>")
+      .map((value) => '<span class="world-map-axis__label">' + escapeHtml(value) + "</span>")
       .join("");
     elements.rows.innerHTML = worldRows
-      .map((value) => '<span class="world-map-row-label">' + value + "</span>")
+      .map((value) => '<span class="world-map-row-label">' + escapeHtml(value) + "</span>")
       .join("");
   }
 
@@ -229,7 +238,7 @@
       if (entry) {
         const previewUrl = getPreviewUrlForFile(entry.fileName);
         const previewMarkup = previewUrl
-          ? '<img class="world-map-grid__preview" src="' + previewUrl + '" alt="">'
+          ? '<img class="world-map-grid__preview" src="' + escapeHtml(previewUrl) + '" alt="">'
           : '<span class="world-map-grid__placeholder">No preview</span>';
         const selectionMarkup = isSelected
           ? '<span class="world-map-grid__selection-frame" aria-hidden="true"></span>'
@@ -237,7 +246,7 @@
         button.innerHTML =
           selectionMarkup +
           '<span class="world-map-grid__slot">' +
-          formatPosition(entry.position) +
+          escapeHtml(formatPosition(entry.position)) +
           "</span>" +
           '<span class="world-map-grid__preview-shell">' +
           previewMarkup +
@@ -313,23 +322,23 @@
           .map((entry) => {
             const previewUrl = getPreviewUrlForFile(entry.fileName);
             const previewMarkup = previewUrl
-              ? '<img class="world-map-list__preview" src="' + previewUrl + '" alt="">'
+              ? '<img class="world-map-list__preview" src="' + escapeHtml(previewUrl) + '" alt="">'
               : '<span class="world-map-list__preview-placeholder">No preview</span>';
             return (
               '<button class="tool-button world-map-list__item' +
               (entry.fileName === state.selectedFileName ? " is-active" : "") +
               '" type="button" data-file-name="' +
-              entry.fileName +
+              escapeHtml(entry.fileName) +
               '">' +
               '<span class="world-map-list__preview-shell">' +
               previewMarkup +
               "</span>" +
               '<span class="world-map-list__body">' +
               '<span class="world-map-list__title">' +
-              entry.fileName +
+              escapeHtml(entry.fileName) +
               "</span>" +
               '<span class="world-map-list__meta">' +
-              formatPosition(entry.position) +
+              escapeHtml(formatPosition(entry.position)) +
               "</span>" +
               "</span>" +
               "</button>"
@@ -342,20 +351,20 @@
       ? unplacedFiles
           .map((file) => {
             const previewMarkup = file.previewUrl
-              ? '<img class="world-map-list__preview" src="' + file.previewUrl + '" alt="">'
+              ? '<img class="world-map-list__preview" src="' + escapeHtml(file.previewUrl) + '" alt="">'
               : '<span class="world-map-list__preview-placeholder">No preview</span>';
             return (
               '<button class="tool-button world-map-list__item' +
               (file.fileName === state.selectedFileName ? " is-active" : "") +
               '" type="button" data-file-name="' +
-              file.fileName +
+              escapeHtml(file.fileName) +
               '">' +
               '<span class="world-map-list__preview-shell">' +
               previewMarkup +
               "</span>" +
               '<span class="world-map-list__body">' +
               '<span class="world-map-list__title">' +
-              file.fileName +
+              escapeHtml(file.fileName) +
               "</span>" +
               '<span class="world-map-list__meta">Unplaced</span>' +
               "</span>" +

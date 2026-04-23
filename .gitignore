@@ -1,0 +1,8 @@
+.DS_Store
+node_modules/
+npm-debug.log*
+coverage/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env

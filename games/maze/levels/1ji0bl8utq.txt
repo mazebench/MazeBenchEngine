@@ -12,5 +12,5 @@ h h i h h h . i i . f . . . h h
 h h i h h h . h h h h i h i h h
 h h i i i h . i i i i i h i h h
 h h h h h h h h h h h h h h h h
-h h h h h h h h h h h h h G h h
+h h h h h h h h h h h h h . . .
 h h h h h h h h h h h h h h h h

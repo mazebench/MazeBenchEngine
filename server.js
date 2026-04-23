@@ -10,6 +10,18 @@ const PUBLIC_DIR = path.join(ROOT_DIR, "public");
 const MAZE_DIR = path.join(GAMES_DIR, "maze");
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
+const PUBLIC_FILE_ROUTES = new Map(
+  [
+    "/styles.css",
+    "/play.js",
+    "/play-core.js",
+    "/play-render.js",
+    "/play-gameplay.js",
+    "/author.js",
+    "/world-map.js",
+    "/level-preview.js"
+  ].map((routePath) => [routePath, path.join(PUBLIC_DIR, routePath.slice(1))])
+);
 const MAZE_LEVEL_ID_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const MAZE_WORLD_LEVEL_ID_PATTERN = /^level_([A-Z])x([A-Z])$/;
 const MAZE_DEFAULT_LEVEL_ID = "level_AxA";
@@ -1574,68 +1586,13 @@ function renderNotFound() {
   });
 }
 
-const server = http.createServer(async (request, response) => {
-  try {
+async function handleRequest(request, response) {
   const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
   const segments = url.pathname.split("/").filter(Boolean);
+  const publicFilePath = PUBLIC_FILE_ROUTES.get(url.pathname);
 
-  if (url.pathname === "/styles.css") {
-    sendFile(response, path.join(PUBLIC_DIR, "styles.css"), "text/css; charset=utf-8");
-    return;
-  }
-
-  if (url.pathname === "/play.js") {
-    sendFile(response, path.join(PUBLIC_DIR, "play.js"), "application/javascript; charset=utf-8");
-    return;
-  }
-
-  if (url.pathname === "/play-core.js") {
-    sendFile(
-      response,
-      path.join(PUBLIC_DIR, "play-core.js"),
-      "application/javascript; charset=utf-8"
-    );
-    return;
-  }
-
-  if (url.pathname === "/play-render.js") {
-    sendFile(
-      response,
-      path.join(PUBLIC_DIR, "play-render.js"),
-      "application/javascript; charset=utf-8"
-    );
-    return;
-  }
-
-  if (url.pathname === "/play-gameplay.js") {
-    sendFile(
-      response,
-      path.join(PUBLIC_DIR, "play-gameplay.js"),
-      "application/javascript; charset=utf-8"
-    );
-    return;
-  }
-
-  if (url.pathname === "/author.js") {
-    sendFile(response, path.join(PUBLIC_DIR, "author.js"), "application/javascript; charset=utf-8");
-    return;
-  }
-
-  if (url.pathname === "/world-map.js") {
-    sendFile(
-      response,
-      path.join(PUBLIC_DIR, "world-map.js"),
-      "application/javascript; charset=utf-8"
-    );
-    return;
-  }
-
-  if (url.pathname === "/level-preview.js") {
-    sendFile(
-      response,
-      path.join(PUBLIC_DIR, "level-preview.js"),
-      "application/javascript; charset=utf-8"
-    );
+  if (publicFilePath) {
+    sendFile(response, publicFilePath, getContentType(publicFilePath));
     return;
   }
 
@@ -1911,6 +1868,11 @@ const server = http.createServer(async (request, response) => {
   }
 
   sendHtml(response, 404, renderNotFound());
+}
+
+const server = http.createServer(async (request, response) => {
+  try {
+    await handleRequest(request, response);
   } catch (error) {
     const statusCode = error?.message === "Request body is too large." ? 413 : 400;
     sendJson(response, statusCode, {

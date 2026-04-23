@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
 const { performance } = require("node:perf_hooks");
+const { loadBrowserScript } = require("./helpers/browser-module-loader");
 
 global.performance = performance;
 global.window = {
@@ -11,7 +11,7 @@ global.window = {
   },
   cancelAnimationFrame: () => {}
 };
-eval(fs.readFileSync("public/play-gameplay.js", "utf8"));
+loadBrowserScript("public/play-gameplay.js");
 
 const { registerGameplayFunctions } = window.PlayModules;
 const asyncTests = [];
@@ -299,6 +299,19 @@ function runAttemptFromActor(app, actor, dx, dy, ignoredActors) {
   assert.deepEqual([player.x, player.y], [1, 0]);
   assert.equal(player.removed, true);
   assert.equal(gem.removed, false);
+}
+
+{
+  const player = { type: "player", x: 0, y: 0, elevation: 0, removed: false };
+  const app = createGameplayApp([player], {
+    isIce: (x, y) => y === 0 && (x === 1 || x === 2),
+    isHole: (x, y) => x === 3 && y === 0
+  });
+
+  app.movePlayers(1, 0);
+
+  assert.deepEqual([player.x, player.y], [3, 0]);
+  assert.equal(player.removed, true);
 }
 
 asyncTests.push(

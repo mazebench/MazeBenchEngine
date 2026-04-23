@@ -100,6 +100,15 @@
     width: authorData.initialLevel.width
   };
 
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
   function cloneCells(cells) {
     return cells.map((row) => row.slice());
   }
@@ -803,9 +812,11 @@
 
   function renderLevelSelectors() {
     const columnOptions = worldColumns
-      .map((letter) => '<option value="' + letter + '">' + letter + "</option>")
+      .map((letter) => '<option value="' + escapeHtml(letter) + '">' + escapeHtml(letter) + "</option>")
       .join("");
-    const rowOptions = worldRows.map((letter) => '<option value="' + letter + '">' + letter + "</option>").join("");
+    const rowOptions = worldRows
+      .map((letter) => '<option value="' + escapeHtml(letter) + '">' + escapeHtml(letter) + "</option>")
+      .join("");
 
     elements.levelColumn.innerHTML = columnOptions;
     elements.levelRow.innerHTML = rowOptions;
@@ -816,24 +827,24 @@
     elements.palette.innerHTML = authorData.palette
       .map((tool) => {
         const swatchContents = tool.imageUrl
-          ? '<img src="' + tool.imageUrl + '" alt="">'
-          : '<span>' + tool.token + "</span>";
+          ? '<img src="' + escapeHtml(tool.imageUrl) + '" alt="">'
+          : '<span>' + escapeHtml(tool.token) + "</span>";
 
         return (
           '<button class="tool-button palette__button' +
           (tool.token === state.selectedToken ? " is-active" : "") +
           '" type="button" data-token="' +
-          tool.token +
+          escapeHtml(tool.token) +
           '">' +
           '<span class="palette__swatch">' +
           swatchContents +
           "</span>" +
           '<span class="palette__meta">' +
           '<span class="palette__label">' +
-          tool.label +
+          escapeHtml(tool.label) +
           "</span>" +
           '<span class="palette__token">' +
-          tool.token +
+          escapeHtml(tool.token) +
           "</span>" +
           "</span>" +
           "</button>"
@@ -947,11 +958,11 @@
           '<a class="author-level-pill' +
           (level.id === state.levelId ? " is-active" : "") +
           '" href="' +
-          level.authorUrl +
+          escapeHtml(level.authorUrl) +
           '" data-level-id="' +
-          level.id +
+          escapeHtml(level.id) +
           '">' +
-          level.id.replace("level_", "") +
+          escapeHtml(level.id.replace("level_", "")) +
           "</a>"
         );
       })
