@@ -37,6 +37,7 @@
     saveLevel: document.getElementById("save-level"),
     selectedCellLabel: document.getElementById("selected-cell-label"),
     selectedToolLabel: document.getElementById("selected-tool-label"),
+    sidebar: document.querySelector(".author-sidebar"),
     solveLevel: document.getElementById("solve-level"),
     status: document.getElementById("author-status")
   };
@@ -1025,6 +1026,11 @@
       "repeat(" + state.width + ", " + displayTileSize + "px)";
     elements.hitGrid.style.gridTemplateRows =
       "repeat(" + state.height + ", " + displayTileSize + "px)";
+
+    const gridShellHeight = Math.ceil(elements.gridShell.getBoundingClientRect().height);
+    if (Number.isFinite(gridShellHeight) && gridShellHeight > 0) {
+      elements.sidebar.style.setProperty("--author-level-tray-height", gridShellHeight + "px");
+    }
   }
 
   function scheduleEditorGridLayout() {
