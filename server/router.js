@@ -2,6 +2,8 @@ const fs = require("fs");
 const path = require("path");
 const { URL } = require("url");
 
+const PREVIEW_REQUEST_BODY_MAX_BYTES = 20 * 1024 * 1024;
+
 function createRequestRouter({
   buildMazePreviewData,
   buildMazeWorldMapEditorData,
@@ -228,7 +230,7 @@ function createRequestRouter({
         return;
       }
 
-      const payload = await readJsonBody(request);
+      const payload = await readJsonBody(request, { maxBytes: PREVIEW_REQUEST_BODY_MAX_BYTES });
       writeMazePreviewImageData(level, payload?.imageDataUrl);
       sendJson(response, 200, {
         fileName: level.fileName,

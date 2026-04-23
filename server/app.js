@@ -1029,26 +1029,47 @@ function ensureMazeWorldLevelMapped(level) {
   );
 }
 
-function readRequestBody(request) {
+const DEFAULT_REQUEST_BODY_MAX_BYTES = 5 * 1024 * 1024;
+
+function readRequestBody(request, options = {}) {
   return new Promise((resolve, reject) => {
+    const maxBytes = Number.isFinite(options.maxBytes)
+      ? options.maxBytes
+      : DEFAULT_REQUEST_BODY_MAX_BYTES;
     let body = "";
+    let rejected = false;
 
     request.setEncoding("utf8");
     request.on("data", (chunk) => {
+      if (rejected) {
+        return;
+      }
+
       body += chunk;
 
-      if (body.length > 5 * 1024 * 1024) {
+      if (body.length > maxBytes) {
+        rejected = true;
+        body = "";
         reject(new Error("Request body is too large."));
-        request.destroy();
+        request.resume();
       }
     });
-    request.on("end", () => resolve(body));
-    request.on("error", reject);
+    request.on("end", () => {
+      if (!rejected) {
+        resolve(body);
+      }
+    });
+    request.on("error", (error) => {
+      if (!rejected) {
+        rejected = true;
+        reject(error);
+      }
+    });
   });
 }
 
-async function readJsonBody(request) {
-  const body = await readRequestBody(request);
+async function readJsonBody(request, options = {}) {
+  const body = await readRequestBody(request, options);
 
   if (!body.trim()) {
     return {};
