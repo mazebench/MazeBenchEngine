@@ -101,6 +101,7 @@
     { label: "R", dx: 1, dy: 0 }
   ];
   const solverMaxExpandedStates = 1000000;
+  const solverNonPlayerMoveRewardCap = 3;
   const solverProgressYieldStateInterval = 4096;
   const solverProgressRenderIntervalMs = 80;
   const worldColumns =
@@ -512,6 +513,28 @@
     }
   }
 
+  function solverNonPlayerMoveReward(engine, moveResult) {
+    const movedActorIndexes = new Set();
+
+    if (!Array.isArray(moveResult?.moves)) {
+      return 0;
+    }
+
+    moveResult.moves.forEach((move) => {
+      if (engine.isPlayerMove(move) || move.actorType === "gem") {
+        return;
+      }
+
+      if (move.fromX === move.toX && move.fromY === move.toY) {
+        return;
+      }
+
+      movedActorIndexes.add(move.actorIndex);
+    });
+
+    return Math.min(solverNonPlayerMoveRewardCap, movedActorIndexes.size);
+  }
+
   async function solveWithAStar(engine, options = {}) {
     const open = new SolverHeap();
     const bestCostByKey = new Map();
@@ -527,6 +550,7 @@
       state: initialState,
       key: initialKey,
       cost: 0,
+      searchReward: 0,
       path: "",
       priority: engine.heuristic(initialState),
       order: order
@@ -609,6 +633,8 @@
         }
 
         const nextCost = current.cost + 1;
+        const nextSearchReward =
+          current.searchReward + solverNonPlayerMoveReward(engine, moveResult);
         const nextKey = engine.stateKey(nextState);
         const bestKnownCost = bestCostByKey.get(nextKey);
 
@@ -621,8 +647,9 @@
           state: nextState,
           key: nextKey,
           cost: nextCost,
+          searchReward: nextSearchReward,
           path: current.path + direction.label,
-          priority: nextCost + engine.heuristic(nextState),
+          priority: nextCost + engine.heuristic(nextState) - nextSearchReward,
           order
         });
         order += 1;
