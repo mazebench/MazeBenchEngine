@@ -584,21 +584,38 @@ pre {
 }
 
 .author-grid {
-  --author-cell-size: 32px;
+  position: relative;
+  display: block;
+  background: #d6bd94;
+  outline: 4px solid #000000;
+  isolation: isolate;
+}
+
+.author-grid__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #d6bd94;
+  image-rendering: auto;
+}
+
+.author-grid__hit-grid {
+  position: absolute;
+  inset: 0;
   display: grid;
-  gap: 4px;
-  justify-content: start;
+  z-index: 2;
 }
 
 .author-grid__cell {
-  width: 32px;
-  height: 32px;
+  width: 64px;
+  height: 64px;
   padding: 0;
-  border: 2px solid #000000;
-  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 0;
+  background: transparent;
   box-sizing: border-box;
   font: inherit;
-  font-size: 0.68rem;
+  font-size: 0;
   font-weight: 900;
   line-height: 1;
   cursor: pointer;
@@ -606,9 +623,13 @@ pre {
   user-select: none;
 }
 
+.author-grid__cell:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
 .author-grid__cell.is-selected {
-  outline: 3px solid #ff7b72;
-  outline-offset: 1px;
+  border: 3px solid #ff3b30;
+  box-shadow: inset 0 0 0 2px #ffffff;
 }
 
 .world-map-shell {
@@ -932,16 +953,6 @@ pre {
       "up down"
       "left right";
     width: 100%;
-  }
-
-  .author-grid {
-    --author-cell-size: 28px;
-  }
-
-  .author-grid__cell {
-    width: 28px;
-    height: 28px;
-    font-size: 0.6rem;
   }
 
   .author-toolbar__group {

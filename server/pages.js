@@ -232,7 +232,10 @@ function createPageRenderer({
           </aside>
           <section class="author-workspace">
             <section class="author-grid-shell">
-              <div id="author-grid" class="author-grid" aria-label="Maze author grid"></div>
+              <div id="author-grid" class="author-grid" aria-label="Maze author grid">
+                <canvas id="author-canvas" class="author-grid__canvas"></canvas>
+                <div id="author-hit-grid" class="author-grid__hit-grid"></div>
+              </div>
             </section>
             <section class="author-panel">
               <h2>Text Output</h2>
@@ -252,6 +255,7 @@ function createPageRenderer({
         <script src="/play-world-transitions.js" defer></script>
         <script src="/play-gameplay.js" defer></script>
         <script src="/level-preview.js" defer></script>
+        <script src="/author-play-data.js" defer></script>
         <script src="/author.js" defer></script>
       </main>`
     });

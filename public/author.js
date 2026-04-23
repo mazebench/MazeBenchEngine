@@ -1,5 +1,6 @@
 (function () {
   const authorData = window.__AUTHOR_DATA__;
+  const authorPlayData = window.AuthorPlayData;
   const levelPreviewRenderer = window.LevelPreviewRenderer;
 
   if (!authorData) {
@@ -10,6 +11,7 @@
     applyCellValue: document.getElementById("apply-cell-value"),
     boardHeight: document.getElementById("board-height"),
     boardWidth: document.getElementById("board-width"),
+    canvas: document.getElementById("author-canvas"),
     cellValue: document.getElementById("cell-value"),
     clearLevel: document.getElementById("clear-level"),
     currentFileName: document.getElementById("current-file-name"),
@@ -18,6 +20,7 @@
     flipVertical: document.getElementById("flip-vertical"),
     frameLevel: document.getElementById("frame-level"),
     grid: document.getElementById("author-grid"),
+    hitGrid: document.getElementById("author-hit-grid"),
     levelNeighbors: document.getElementById("level-neighbors"),
     levelColumn: document.getElementById("level-column"),
     levelRow: document.getElementById("level-row"),
@@ -38,32 +41,26 @@
     return;
   }
 
-  const toneByName = {
-    box: { background: "#d6bd94", color: "#111111" },
-    circle_player: { background: "#8dc7ff", color: "#111111" },
-    exit: { background: "#ff7b72", color: "#111111" },
-    floating_floor: { background: "#7ee0a1", color: "#111111" },
-    floor: { background: "#ffffff", color: "#111111" },
-    gem: { background: "#7ee0a1", color: "#111111" },
-    hole: { background: "#3a5876", color: "#ffffff" },
-    ice: { background: "#c6ecff", color: "#111111" },
-    player: { background: "#8dc7ff", color: "#111111" },
-    player_gate: { background: "#ffd84d", color: "#111111" },
-    player_lift: { background: "#ffb36c", color: "#111111" },
-    wall: { background: "#242424", color: "#ffffff" },
-    weightless_box: { background: "#ffb36c", color: "#111111" }
-  };
+  if (!authorPlayData || typeof authorPlayData.createAdapter !== "function") {
+    return;
+  }
 
-  const toolByToken = new Map(authorData.palette.map((tool) => [tool.token, tool]));
-  const toolByName = new Map(authorData.palette.map((tool) => [tool.name, tool]));
-  const solverActorNames = new Set([
-    "player",
-    "circle_player",
-    "box",
-    "gem",
-    "floating_floor",
-    "weightless_box"
-  ]);
+  const playDataAdapter = authorPlayData.createAdapter(authorData);
+  const {
+    buildPlayData,
+    getCellDescriptor,
+    getCellTokens,
+    getCellTools,
+    isActorTool,
+    normalizeCellValue,
+    toolByName,
+    toolByToken
+  } = playDataAdapter;
+  const editorTileSize = 64;
+  const editorRenderer = {
+    app: null,
+    preloadVersion: 0
+  };
   const solverDirections = [
     { label: "U", dx: 0, dy: -1 },
     { label: "D", dx: 0, dy: 1 },
@@ -154,72 +151,12 @@
     return "level_" + worldColumns[nextColumnIndex] + "x" + worldRows[nextRowIndex];
   }
 
-  function normalizeCellValue(value) {
-    const trimmedValue = String(value ?? "").trim();
-
-    if (!trimmedValue) {
-      return authorData.defaultFloorToken;
-    }
-
-    const tokens = trimmedValue
-      .split(authorData.blockAdder)
-      .map((token) => token.trim())
-      .filter(Boolean);
-
-    if (tokens.length === 0) {
-      return authorData.defaultFloorToken;
-    }
-
-    const invalidToken = tokens.find((token) => !toolByToken.has(token));
-
-    if (invalidToken) {
-      throw new Error('Unknown token "' + invalidToken + '".');
-    }
-
-    return tokens.join(authorData.blockAdder);
-  }
-
-  function getCellTokens(value) {
-    return String(value || "")
-      .split(authorData.blockAdder)
-      .map((token) => token.trim())
-      .filter(Boolean);
-  }
-
-  function getCellTools(value) {
-    return getCellTokens(value)
-      .map((token) => toolByToken.get(token))
-      .filter(Boolean);
-  }
-
   function serializeCells() {
     return state.cells.map((row) => row.join(authorData.separator)).join("\n");
   }
 
-  function getCellDescriptor(value) {
-    const tokens = getCellTokens(value);
-    const topToken = tokens[tokens.length - 1] || authorData.defaultFloorToken;
-    const tool = toolByToken.get(topToken) || toolByToken.get(tokens[0]) || null;
-    const tone = toneByName[tool?.name] || { background: "#ffffff", color: "#111111" };
-
-    return {
-      label: tool ? tool.label : topToken,
-      tone,
-      tool,
-      topToken,
-      tokens
-    };
-  }
-
-  function titleCaseName(name) {
-    return String(name || "")
-      .split("_")
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" ");
-  }
-
   function isSolverActorTool(tool) {
-    return solverActorNames.has(tool?.name);
+    return isActorTool(tool);
   }
 
   function levelHasGem() {
@@ -264,97 +201,20 @@
     return tokens.length > 0 ? tokens.join(authorData.blockAdder) : authorData.defaultFloorToken;
   }
 
-  function buildSolverTerrainCell(type, tool = null, options = {}) {
-    return {
-      type,
-      label: tool?.label || titleCaseName(type),
-      imageUrl: tool?.imageUrl || null,
-      underlay: options.underlay || null,
-      raised: options.raised === true
-    };
-  }
-
-  function buildSolverCellState(tools) {
-    const floorTool = toolByName.get("floor") || null;
-    const exitTool = toolByName.get("exit") || null;
-    const terrainTools = tools.filter((tool) => !isSolverActorTool(tool));
-    const wallTool = terrainTools.find((tool) => tool.name === "wall") || null;
-    const exitCellTool = terrainTools.find((tool) => tool.name === "exit") || null;
-    const terrainTool = wallTool || exitCellTool || terrainTools[0] || null;
-
-    if (wallTool) {
-      const underlayTool = terrainTools.find((tool) => tool.name !== "wall") || floorTool;
-
-      return buildSolverTerrainCell("wall", wallTool, {
-        underlay: buildSolverTerrainCell(underlayTool?.name || "floor", underlayTool)
-      });
-    }
-
-    if (terrainTool?.name === "exit") {
-      return buildSolverTerrainCell("exit", exitTool || terrainTool);
-    }
-
-    if (terrainTool) {
-      return buildSolverTerrainCell(terrainTool.name, terrainTool, {
-        raised: terrainTool.name === "player_lift" ? false : undefined
-      });
-    }
-
-    if (tools.some((tool) => isSolverActorTool(tool))) {
-      return buildSolverTerrainCell("floor", floorTool);
-    }
-
-    return buildSolverTerrainCell("empty");
-  }
-
-  function buildSolverPlayData(options = {}) {
-    const includeGems = options.includeGems !== false;
-    const terrain = [];
-    const actors = [];
-
-    for (let y = 0; y < state.height; y += 1) {
-      const terrainRow = [];
-
-      for (let x = 0; x < state.width; x += 1) {
-        const tools = getCellTools(state.cells[y][x]);
-
-        terrainRow.push(buildSolverCellState(tools));
-        tools.forEach((tool) => {
-          if (!isSolverActorTool(tool)) {
-            return;
-          }
-
-          if (!includeGems && tool.name === "gem") {
-            return;
-          }
-
-          actors.push({
-            type: tool.name,
-            groupId: tool.name === "weightless_box" ? tool.token : null,
-            label: tool.label,
-            imageUrl: tool.imageUrl || null,
-            x,
-            y
-          });
-        });
-      }
-
-      terrain.push(terrainRow);
-    }
-
-    return {
+  function buildEditorPlayData(options = {}) {
+    return buildPlayData({
+      cameraView: options.cameraView || null,
+      cells: state.cells,
       gameId: authorData.game.id,
-      levelId: "__editor_solver__",
-      levelLabel: state.levelId,
+      height: state.height,
+      includeGems: options.includeGems,
+      levelId: options.levelId || "__editor_solver__",
+      levelLabel: options.levelLabel || state.levelId,
       sourceFileName: state.fileName,
       width: state.width,
-      height: state.height,
-      terrain,
-      actors,
-      cameraView: null,
-      worldColumns: null,
-      worldRows: null
-    };
+      worldColumns: options.worldColumns || null,
+      worldRows: options.worldRows || null
+    });
   }
 
   function isSolverPlayerActor(actor) {
@@ -478,6 +338,84 @@
     }
 
     return app;
+  }
+
+  function buildEditorRenderPlayData() {
+    return buildEditorPlayData({
+      cameraView: {
+        width: state.width,
+        height: state.height
+      },
+      levelId: "__editor_render__",
+      levelLabel: state.levelId
+    });
+  }
+
+  function ensureEditorRenderApp(playData) {
+    const modules = window.PlayModules || {};
+
+    if (
+      typeof modules.createPlayCore !== "function" ||
+      typeof modules.registerRenderFunctions !== "function"
+    ) {
+      return null;
+    }
+
+    if (editorRenderer.app) {
+      return editorRenderer.app;
+    }
+
+    const app = modules.createPlayCore({
+      playData,
+      canvas: elements.canvas,
+      playShell: null,
+      playHeader: null,
+      playStage: null,
+      mazeFrame: null,
+      fuzzyToggle: null
+    });
+
+    if (!app) {
+      return null;
+    }
+
+    modules.registerRenderFunctions(app);
+    editorRenderer.app = app;
+    return app;
+  }
+
+  function renderEditorScene() {
+    const playData = buildEditorRenderPlayData();
+    const shouldStartNoiseTicker = !editorRenderer.app;
+    const app = ensureEditorRenderApp(playData);
+
+    if (!app || typeof app.applyLevelState !== "function") {
+      return;
+    }
+
+    app.applyLevelState(playData, {
+      deferRender: true,
+      immediateCamera: true,
+      resetHistory: true,
+      resetLevelEntry: true
+    });
+
+    if (shouldStartNoiseTicker) {
+      app.syncNoiseTicker();
+    }
+
+    app.render();
+
+    const preloadVersion = editorRenderer.preloadVersion + 1;
+    editorRenderer.preloadVersion = preloadVersion;
+
+    app.preloadImagesForLevelState(playData)
+      .then(() => {
+        if (editorRenderer.app === app && editorRenderer.preloadVersion === preloadVersion) {
+          app.render();
+        }
+      })
+      .catch(() => {});
   }
 
   function compareSolverNodes(left, right) {
@@ -870,9 +808,7 @@
     const isSelected = state.selectedCell.x === x && state.selectedCell.y === y;
 
     button.className = "author-grid__cell" + (isSelected ? " is-selected" : "");
-    button.textContent = value;
-    button.style.background = descriptor.tone.background;
-    button.style.color = descriptor.tone.color;
+    button.textContent = "";
     button.setAttribute(
       "aria-label",
       "Cell " + (x + 1) + ", " + (y + 1) + ": " + value + " (" + descriptor.label + ")"
@@ -880,14 +816,24 @@
     button.title = "Cell " + (x + 1) + ", " + (y + 1) + ": " + value;
   }
 
-  function renderGrid() {
+  function renderGrid(options = {}) {
     const cellCount = state.width * state.height;
 
-    elements.grid.style.gridTemplateColumns =
-      "repeat(" + state.width + ", var(--author-cell-size, 32px))";
+    elements.grid.style.width = state.width * editorTileSize + "px";
+    elements.grid.style.height = state.height * editorTileSize + "px";
+    elements.hitGrid.style.gridTemplateColumns =
+      "repeat(" + state.width + ", " + editorTileSize + "px)";
+    elements.hitGrid.style.gridTemplateRows =
+      "repeat(" + state.height + ", " + editorTileSize + "px)";
 
-    if (elements.grid.children.length !== cellCount) {
-      elements.grid.innerHTML = "";
+    if (
+      elements.hitGrid.children.length !== cellCount ||
+      elements.hitGrid.dataset.width !== String(state.width) ||
+      elements.hitGrid.dataset.height !== String(state.height)
+    ) {
+      elements.hitGrid.innerHTML = "";
+      elements.hitGrid.dataset.width = String(state.width);
+      elements.hitGrid.dataset.height = String(state.height);
 
       for (let y = 0; y < state.height; y += 1) {
         for (let x = 0; x < state.width; x += 1) {
@@ -895,16 +841,20 @@
           button.type = "button";
           button.dataset.x = String(x);
           button.dataset.y = String(y);
-          elements.grid.appendChild(button);
+          elements.hitGrid.appendChild(button);
         }
       }
     }
 
-    Array.from(elements.grid.children).forEach((button) => {
+    Array.from(elements.hitGrid.children).forEach((button) => {
       const x = Number(button.dataset.x);
       const y = Number(button.dataset.y);
       updateCellButton(button, x, y);
     });
+
+    if (options.renderScene !== false) {
+      renderEditorScene();
+    }
   }
 
   function renderSelectedCell() {
@@ -993,7 +943,7 @@
       x: Math.max(0, Math.min(state.width - 1, x)),
       y: Math.max(0, Math.min(state.height - 1, y))
     };
-    renderGrid();
+    renderGrid({ renderScene: false });
     renderSelectedCell();
   }
 
@@ -1013,7 +963,12 @@
     }
 
     state.cells[y][x] = normalizedValue;
-    selectCell(x, y);
+    state.selectedCell = {
+      x: Math.max(0, Math.min(state.width - 1, x)),
+      y: Math.max(0, Math.min(state.height - 1, y))
+    };
+    renderGrid();
+    renderSelectedCell();
     markDirty();
   }
 
@@ -1328,7 +1283,7 @@
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     try {
-      const app = createSolverApp(buildSolverPlayData({ includeGems: false }));
+      const app = createSolverApp(buildEditorPlayData({ includeGems: false }));
       const result = findHardestGemPlacement(app, captureSolverSnapshot(app));
 
       if (result.candidate) {
@@ -1385,7 +1340,7 @@
       return;
     }
 
-    const playData = buildSolverPlayData();
+    const playData = buildEditorPlayData();
 
     if (!playData.actors.some((actor) => isSolverPlayerActor(actor))) {
       setStatus("Solver needs a player first.", "error");
