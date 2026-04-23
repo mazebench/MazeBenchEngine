@@ -41,7 +41,9 @@
   };
 
   const optionalElementKeys = new Set([
+    "boardSizeLabel",
     "currentFileName",
+    "currentLevelName",
     "existingLevels",
     "levelColumn",
     "levelRow"
@@ -1040,11 +1042,15 @@
   function renderMeta() {
     elements.boardWidth.value = String(state.width);
     elements.boardHeight.value = String(state.height);
-    elements.boardSizeLabel.textContent = state.width + " x " + state.height;
+    if (elements.boardSizeLabel) {
+      elements.boardSizeLabel.textContent = state.width + " x " + state.height;
+    }
     if (elements.currentFileName) {
       elements.currentFileName.textContent = state.filePath;
     }
-    elements.currentLevelName.textContent = state.levelId.replace("level_", "");
+    if (elements.currentLevelName) {
+      elements.currentLevelName.textContent = state.levelId.replace("level_", "");
+    }
     elements.playLink.href = "/play/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId);
     elements.playLink.setAttribute("aria-label", "Play " + state.levelId);
     syncSolverButtonState();

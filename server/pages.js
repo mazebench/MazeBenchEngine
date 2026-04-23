@@ -160,16 +160,14 @@ function createPageRenderer({
       bodyClass: "author-body",
       body: `<main class="shell author-shell">
         <header class="author-header">
-          <nav class="page-nav author-nav" aria-label="Author navigation">
-            <a class="back-link" href="/games/${encodeURIComponent(game.id)}">Back</a>
-            <a class="back-link" id="author-play-link" href="/play/${encodeURIComponent(game.id)}/${encodeURIComponent(level.id)}">Play</a>
-            <a class="back-link" href="/world-map/${encodeURIComponent(game.id)}">World Map</a>
-          </nav>
-          <div class="author-hero">
-            <div class="author-title-block">
-              <span class="author-kicker">${escapeHtml(game.name)} editor</span>
-              <h1>${escapeHtml(game.name)} Author</h1>
-            </div>
+          <div class="author-topbar">
+            <h1>${escapeHtml(game.name)} Author</h1>
+            <nav class="page-nav author-nav" aria-label="Author navigation">
+              <a class="back-link" href="/games/${encodeURIComponent(game.id)}">Back</a>
+              <a class="back-link" id="author-play-link" href="/play/${encodeURIComponent(game.id)}/${encodeURIComponent(level.id)}">Play</a>
+              <a class="back-link" href="/world-map/${encodeURIComponent(game.id)}">World Map</a>
+            </nav>
+            <button id="save-level" class="tool-button tool-button--primary author-save-button" type="button">Save</button>
             <p id="author-status" class="author-status" role="status" aria-live="polite"></p>
           </div>
         </header>
@@ -251,7 +249,6 @@ function createPageRenderer({
                 <div class="author-control-row">
                   <button id="place-gem" class="tool-button" type="button">Place Gem</button>
                   <button id="solve-level" class="tool-button" type="button">Solver</button>
-                  <button id="save-level" class="tool-button tool-button--primary" type="button">Save</button>
                 </div>
               </div>
             </details>
@@ -279,16 +276,6 @@ function createPageRenderer({
           </aside>
           <section class="author-workspace">
             <section class="author-stage" aria-label="Level canvas">
-              <div class="author-stage__bar">
-                <div class="author-stage__metric">
-                  <span>Slot</span>
-                  <strong id="current-level-name"></strong>
-                </div>
-                <div class="author-stage__metric">
-                  <span>Size</span>
-                  <strong id="board-size-label"></strong>
-                </div>
-              </div>
               <section class="author-grid-shell">
                 <div id="author-grid" class="author-grid" aria-label="Maze author grid">
                   <canvas id="author-canvas" class="author-grid__canvas"></canvas>

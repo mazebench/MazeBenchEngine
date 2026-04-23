@@ -354,15 +354,21 @@ pre {
 }
 
 .author-header {
-  display: grid;
-  gap: 14px;
   margin-bottom: 16px;
+}
+
+.author-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
 }
 
 .author-nav {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  align-items: center;
   margin-bottom: 0;
 }
 
@@ -370,35 +376,20 @@ pre {
   margin: 0;
 }
 
-.author-hero {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: stretch;
-}
-
-.author-title-block {
-  min-width: min(100%, 360px);
-  flex: 1 1 460px;
-}
-
-.author-kicker {
-  display: inline-flex;
-  margin-bottom: 8px;
-  padding: 7px 10px;
-  border: 3px solid #000000;
-  border-radius: 6px;
-  background: #8dc7ff;
-  box-shadow: var(--shadow-xs) var(--shadow-xs) 0 #000000;
-  font-size: 0.82rem;
-  font-weight: 900;
-  line-height: 1;
-  text-transform: uppercase;
-}
-
 .author-header h1 {
+  flex: 0 0 auto;
   margin: 0;
-  font-size: 3.25rem;
+  margin-right: 0;
+  margin-bottom: 0;
+  padding: 10px 13px;
+  box-shadow: var(--shadow-sm) var(--shadow-sm) 0 #000000;
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.author-save-button {
+  flex: 0 0 auto;
+  margin: 0;
 }
 
 .author-subtitle {
@@ -576,6 +567,13 @@ pre {
   line-height: 1.4;
   overflow-wrap: anywhere;
   box-sizing: border-box;
+}
+
+.author-topbar .author-status {
+  flex: 1 1 240px;
+  min-height: 46px;
+  padding: 9px 12px;
+  box-shadow: var(--shadow-xs) var(--shadow-xs) 0 #000000;
 }
 
 .author-status.is-success {
@@ -856,40 +854,6 @@ pre {
   box-shadow: var(--shadow-lg) var(--shadow-lg) 0 #000000;
   margin-right: var(--shadow-lg);
   margin-bottom: var(--shadow-lg);
-}
-
-.author-stage__bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  margin: 0 var(--shadow-lg) 12px 0;
-}
-
-.author-stage__metric {
-  display: flex;
-  min-width: 132px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 9px 11px;
-  border: 3px solid #000000;
-  border-radius: 6px;
-  background: #ffffff;
-  box-shadow: var(--shadow-xs) var(--shadow-xs) 0 #000000;
-  box-sizing: border-box;
-}
-
-.author-stage__metric span {
-  font-size: 0.75rem;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.author-stage__metric strong {
-  font-size: 1rem;
-  font-weight: 900;
-  overflow-wrap: anywhere;
 }
 
 .author-grid {
@@ -1275,7 +1239,7 @@ pre {
   }
 
   .author-header h1 {
-    font-size: 2.35rem;
+    font-size: 1.3rem;
   }
 
   .author-command-bar {
@@ -1315,10 +1279,6 @@ pre {
     max-height: 68dvh;
     margin-right: var(--shadow-md);
     margin-bottom: var(--shadow-md);
-  }
-
-  .author-stage__bar {
-    margin-right: var(--shadow-md);
   }
 
   .world-map-axis--columns,
