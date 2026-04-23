@@ -174,27 +174,15 @@ function createPageRenderer({
           </div>
         </header>
         <section class="author-command-bar" aria-label="Editor controls">
-          <div class="author-control-group">
+          <div class="author-control-group author-control-group--world">
             <h2>World Slot</h2>
             <div class="author-control-row">
-              <label class="field field--compact">
-                <span>Column</span>
-                <select id="level-column" aria-label="Level column"></select>
-              </label>
-              <label class="field field--compact">
-                <span>Row</span>
-                <select id="level-row" aria-label="Level row"></select>
-              </label>
               <div id="level-neighbors" class="author-neighbors" aria-label="Neighbor levels">
                 <button class="tool-button author-neighbors__button author-neighbors__button--up" type="button" data-dx="0" data-dy="-1"><span aria-hidden="true">&#8593;</span></button>
                 <button class="tool-button author-neighbors__button author-neighbors__button--left" type="button" data-dx="-1" data-dy="0"><span aria-hidden="true">&#8592;</span></button>
                 <button class="tool-button author-neighbors__button author-neighbors__button--right" type="button" data-dx="1" data-dy="0"><span aria-hidden="true">&#8594;</span></button>
                 <button class="tool-button author-neighbors__button author-neighbors__button--down" type="button" data-dx="0" data-dy="1"><span aria-hidden="true">&#8595;</span></button>
               </div>
-            </div>
-            <div class="author-meta">
-              <span class="author-meta__label">File</span>
-              <span id="current-file-name" class="author-meta__value"></span>
             </div>
           </div>
           <div class="author-control-group">
@@ -265,10 +253,6 @@ function createPageRenderer({
                 <input id="cell-value" type="text" spellcheck="false" aria-label="Selected cell raw value">
               </label>
               <button id="apply-cell-value" class="tool-button" type="button">Apply Cell</button>
-            </section>
-            <section class="author-panel author-panel--levels">
-              <h2>Existing Levels</h2>
-              <div id="existing-levels" class="author-level-pills"></div>
             </section>
           </aside>
           <section class="author-workspace">

@@ -472,6 +472,15 @@ pre {
   flex: 1 1 112px;
 }
 
+.author-control-group--world {
+  align-items: center;
+}
+
+.author-control-group--world .author-control-row {
+  justify-content: center;
+  width: 100%;
+}
+
 .author-toolbar {
   display: flex;
   flex-wrap: wrap;

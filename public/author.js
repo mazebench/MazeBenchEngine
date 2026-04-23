@@ -40,7 +40,18 @@
     status: document.getElementById("author-status")
   };
 
-  if (Object.values(elements).some((element) => !element)) {
+  const optionalElementKeys = new Set([
+    "currentFileName",
+    "existingLevels",
+    "levelColumn",
+    "levelRow"
+  ]);
+
+  if (
+    Object.entries(elements).some(
+      ([key, element]) => !element && !optionalElementKeys.has(key)
+    )
+  ) {
     return;
   }
 
@@ -745,6 +756,10 @@
   }
 
   function syncLevelSelectors() {
+    if (!elements.levelColumn || !elements.levelRow) {
+      return;
+    }
+
     const coordinates = parseLevelCoordinates(state.levelId);
 
     if (!coordinates) {
@@ -756,6 +771,10 @@
   }
 
   function renderLevelSelectors() {
+    if (!elements.levelColumn || !elements.levelRow) {
+      return;
+    }
+
     const columnOptions = worldColumns
       .map((letter) => '<option value="' + escapeHtml(letter) + '">' + escapeHtml(letter) + "</option>")
       .join("");
@@ -1022,7 +1041,9 @@
     elements.boardWidth.value = String(state.width);
     elements.boardHeight.value = String(state.height);
     elements.boardSizeLabel.textContent = state.width + " x " + state.height;
-    elements.currentFileName.textContent = state.filePath;
+    if (elements.currentFileName) {
+      elements.currentFileName.textContent = state.filePath;
+    }
     elements.currentLevelName.textContent = state.levelId.replace("level_", "");
     elements.playLink.href = "/play/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId);
     elements.playLink.setAttribute("aria-label", "Play " + state.levelId);
@@ -1030,6 +1051,10 @@
   }
 
   function renderExistingLevels() {
+    if (!elements.existingLevels) {
+      return;
+    }
+
     const levelIds = new Set(authorData.existingLevels.map((level) => level.id));
 
     if (state.exists && !levelIds.has(state.levelId)) {
@@ -1603,21 +1628,23 @@
     selectToken(descriptor.topToken);
   });
 
-  elements.levelColumn.addEventListener("change", function () {
-    const nextLevelId = levelIdFromSelectors();
+  if (elements.levelColumn && elements.levelRow) {
+    elements.levelColumn.addEventListener("change", function () {
+      const nextLevelId = levelIdFromSelectors();
 
-    if (nextLevelId !== state.levelId) {
-      loadLevel(nextLevelId);
-    }
-  });
+      if (nextLevelId !== state.levelId) {
+        loadLevel(nextLevelId);
+      }
+    });
 
-  elements.levelRow.addEventListener("change", function () {
-    const nextLevelId = levelIdFromSelectors();
+    elements.levelRow.addEventListener("change", function () {
+      const nextLevelId = levelIdFromSelectors();
 
-    if (nextLevelId !== state.levelId) {
-      loadLevel(nextLevelId);
-    }
-  });
+      if (nextLevelId !== state.levelId) {
+        loadLevel(nextLevelId);
+      }
+    });
+  }
 
   elements.resizeLevel.addEventListener("click", resizeLevel);
   elements.clearLevel.addEventListener("click", clearLevel);
@@ -1659,22 +1686,30 @@
     }
   });
 
-  elements.existingLevels.addEventListener("click", function (event) {
-    const link = event.target.closest("[data-level-id]");
+  if (elements.existingLevels) {
+    elements.existingLevels.addEventListener("click", function (event) {
+      const link = event.target.closest("[data-level-id]");
 
-    if (!link) {
-      return;
-    }
+      if (!link) {
+        return;
+      }
 
-    event.preventDefault();
-    const nextLevelId = link.dataset.levelId;
+      event.preventDefault();
+      const nextLevelId = link.dataset.levelId;
 
-    if (nextLevelId !== state.levelId) {
-      elements.levelColumn.value = parseLevelCoordinates(nextLevelId).column;
-      elements.levelRow.value = parseLevelCoordinates(nextLevelId).row;
-      loadLevel(nextLevelId);
-    }
-  });
+      if (nextLevelId !== state.levelId) {
+        if (elements.levelColumn && elements.levelRow) {
+          const coordinates = parseLevelCoordinates(nextLevelId);
+
+          if (coordinates) {
+            elements.levelColumn.value = coordinates.column;
+            elements.levelRow.value = coordinates.row;
+          }
+        }
+        loadLevel(nextLevelId);
+      }
+    });
+  }
 
   window.addEventListener("beforeunload", function (event) {
     if (!state.isDirty) {
