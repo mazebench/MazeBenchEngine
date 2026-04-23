@@ -44,8 +44,8 @@
     return terrainTypes[type] ?? terrainTypes.empty;
   }
 
-  function encodeByte(value) {
-    return String.fromCharCode(Math.max(0, Math.min(255, value | 0)));
+  function encodeKeyValue(value) {
+    return String.fromCharCode(Math.max(0, Math.min(65534, value | 0)));
   }
 
   function createEngine(playData) {
@@ -56,10 +56,13 @@
     const baseTerrain = new Uint8Array(cellCount);
     const baseLiftRaised = new Uint8Array(cellCount);
     const playerGateCells = [];
+    const playerLiftCells = [];
     const actorSource = Array.isArray(playData?.actors) ? playData.actors : [];
     const actorTypes = actorSource.map((actor) => actorType(actor));
     const actorGroupIds = actorSource.map((actor) => actor?.groupId ?? "");
     const actorCount = actorSource.length;
+    const searchSeenActors = new Uint32Array(actorCount);
+    let searchSeenStamp = 0;
 
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
@@ -71,6 +74,10 @@
 
         if (terrainType === terrainTypes.player_lift && cell.raised === true) {
           baseLiftRaised[index] = 1;
+        }
+
+        if (terrainType === terrainTypes.player_lift) {
+          playerLiftCells.push(index);
         }
 
         if (terrainType === terrainTypes.player_gate) {
@@ -96,14 +103,10 @@
     }
 
     function createInitialState() {
-      const state = {
-        actorElevation: new Int8Array(actorCount),
-        actorRemoved: new Uint8Array(actorCount),
-        actorX: new Int16Array(actorCount),
-        actorY: new Int16Array(actorCount),
-        liftRaised: new Uint8Array(baseLiftRaised),
-        terrain: new Uint8Array(baseTerrain)
-      };
+      const state = createStateBuffer();
+
+      state.liftRaised.set(baseLiftRaised);
+      state.terrain.set(baseTerrain);
 
       actorSource.forEach((actor, index) => {
         state.actorX[index] = Number.isInteger(actor?.x) ? actor.x : 0;
@@ -129,6 +132,17 @@
       return state;
     }
 
+    function createStateBuffer() {
+      return {
+        actorElevation: new Int8Array(actorCount),
+        actorRemoved: new Uint8Array(actorCount),
+        actorX: new Int16Array(actorCount),
+        actorY: new Int16Array(actorCount),
+        liftRaised: new Uint8Array(cellCount),
+        terrain: new Uint8Array(cellCount)
+      };
+    }
+
     function cloneState(state) {
       return {
         actorElevation: new Int8Array(state.actorElevation),
@@ -149,27 +163,36 @@
       target.terrain.set(source.terrain);
     }
 
+    const searchAttemptSnapshot = createStateBuffer();
+    const searchOccupiedSnapshot = new Uint8Array(cellCount);
+
     function stateKey(state) {
       let key = "";
 
-      for (let index = 0; index < cellCount; index += 1) {
-        key += encodeByte(state.terrain[index]);
-      }
-
-      key += "|";
-
-      for (let index = 0; index < cellCount; index += 1) {
-        key += encodeByte(state.liftRaised[index]);
-      }
-
-      key += "|";
-
       for (let index = 0; index < actorCount; index += 1) {
         key +=
-          encodeByte(state.actorX[index] + 1) +
-          encodeByte(state.actorY[index] + 1) +
-          encodeByte(state.actorElevation[index]) +
-          encodeByte(state.actorRemoved[index]);
+          encodeKeyValue(state.actorX[index] + 1) +
+          encodeKeyValue(state.actorY[index] + 1) +
+          encodeKeyValue(state.actorElevation[index] + 2) +
+          encodeKeyValue(state.actorRemoved[index]);
+      }
+
+      key += "\uffff";
+
+      for (let index = 0; index < cellCount; index += 1) {
+        if (state.terrain[index] !== baseTerrain[index]) {
+          key += encodeKeyValue(index) + encodeKeyValue(state.terrain[index]);
+        }
+      }
+
+      key += "\uffff";
+
+      for (let index = 0; index < playerLiftCells.length; index += 1) {
+        const cell = playerLiftCells[index];
+
+        if (state.liftRaised[cell] !== baseLiftRaised[cell]) {
+          key += encodeKeyValue(cell) + encodeKeyValue(state.liftRaised[cell]);
+        }
       }
 
       return key;
@@ -470,7 +493,7 @@
       return { x: nextX, y: nextY };
     }
 
-    function moveBox(state, actorIndex, dx, dy, occupied, moves, gateState) {
+    function moveBox(state, actorIndex, dx, dy, occupied, moves, gateState, searchMode) {
       const fromX = state.actorX[actorIndex];
       const fromY = state.actorY[actorIndex];
       occupied[cellIndex(fromX, fromY)] = 0;
@@ -485,15 +508,20 @@
       state.actorX[actorIndex] = target.x;
       state.actorY[actorIndex] = target.y;
 
-      moves.push({
+      const moveRecord = {
         actorIndex,
         actorType: actorTypes[actorIndex],
         fromX,
         fromY,
         toX: target.x,
-        toY: target.y,
-        iceSlide: Math.abs(target.x - fromX) + Math.abs(target.y - fromY) > 1
-      });
+        toY: target.y
+      };
+
+      if (!searchMode) {
+        moveRecord.iceSlide = Math.abs(target.x - fromX) + Math.abs(target.y - fromY) > 1;
+      }
+
+      moves.push(moveRecord);
       occupied[cellIndex(target.x, target.y)] = 1;
       return true;
     }
@@ -536,7 +564,16 @@
       );
     }
 
-    function collectGemsAt(state, x, y, moves, collectedGems, fadeStartProgress, fadeEndProgress) {
+    function collectGemsAt(
+      state,
+      x,
+      y,
+      moves,
+      collectedGems,
+      fadeStartProgress,
+      fadeEndProgress,
+      searchMode
+    ) {
       actorsAt(
         state,
         x,
@@ -544,7 +581,7 @@
         (actor) => isCollectibleActor(actor) && !collectedGems.has(actor)
       ).forEach((gem) => {
         collectedGems.add(gem);
-        moves.push({
+        const moveRecord = {
           actorIndex: gem,
           actorType: actorTypes[gem],
           fromX: state.actorX[gem],
@@ -552,17 +589,31 @@
           toX: state.actorX[gem],
           toY: state.actorY[gem],
           fromRemoved: false,
-          toRemoved: true,
-          fadeOut: true,
-          fadeStartProgress,
-          fadeEndProgress,
-          skipHoleFall: true,
-          visibleDuringMove: true
-        });
+          toRemoved: true
+        };
+
+        if (!searchMode) {
+          moveRecord.fadeOut = true;
+          moveRecord.fadeStartProgress = fadeStartProgress;
+          moveRecord.fadeEndProgress = fadeEndProgress;
+          moveRecord.skipHoleFall = true;
+          moveRecord.visibleDuringMove = true;
+        }
+
+        moves.push(moveRecord);
       });
     }
 
-    function collectGemsAtEndpoint(state, fromX, fromY, toX, toY, moves, collectedGems) {
+    function collectGemsAtEndpoint(
+      state,
+      fromX,
+      fromY,
+      toX,
+      toY,
+      moves,
+      collectedGems,
+      searchMode
+    ) {
       const travelDistance = Math.abs(toX - fromX) + Math.abs(toY - fromY);
       collectGemsAt(
         state,
@@ -571,7 +622,8 @@
         moves,
         collectedGems,
         travelDistance > 1 ? (travelDistance - 1) / travelDistance : 0,
-        1
+        1,
+        searchMode
       );
     }
 
@@ -658,7 +710,7 @@
       };
     }
 
-    function moveWeightlessCluster(state, groupIds, dx, dy, occupied, moves, gateState) {
+    function moveWeightlessCluster(state, groupIds, dx, dy, occupied, moves, gateState, searchMode) {
       const members = weightlessClusterMembers(state, groupIds);
 
       if (members.length === 0) {
@@ -702,15 +754,23 @@
       }
 
       startPositions.forEach(({ actorIndex, fromX, fromY }) => {
-        moves.push({
+        const moveRecord = {
           actorIndex,
           actorType: actorTypes[actorIndex],
           fromX,
           fromY,
           toX: state.actorX[actorIndex],
-          toY: state.actorY[actorIndex],
-          iceSlide: Math.abs(state.actorX[actorIndex] - fromX) + Math.abs(state.actorY[actorIndex] - fromY) > 1
-        });
+          toY: state.actorY[actorIndex]
+        };
+
+        if (!searchMode) {
+          moveRecord.iceSlide =
+            Math.abs(state.actorX[actorIndex] - fromX) +
+              Math.abs(state.actorY[actorIndex] - fromY) >
+            1;
+        }
+
+        moves.push(moveRecord);
       });
 
       members.forEach((member) => {
@@ -730,7 +790,8 @@
       budget,
       handled = new Set(),
       gateState,
-      ignoredActors = new Set()
+      ignoredActors = new Set(),
+      searchMode = false
     ) {
       const entityKey = pushEntityKey(actorIndex);
 
@@ -815,7 +876,8 @@
           remainingBudget,
           handled,
           gateState,
-          ignoredActors
+          ignoredActors,
+          searchMode
         );
 
         if (result === null) {
@@ -827,8 +889,17 @@
 
       const moved =
         actorTypes[actorIndex] === "weightless_box"
-          ? moveWeightlessCluster(state, weightlessCluster.groupIds, dx, dy, occupied, moves, gateState)
-          : moveBox(state, actorIndex, dx, dy, occupied, moves, gateState);
+          ? moveWeightlessCluster(
+              state,
+              weightlessCluster.groupIds,
+              dx,
+              dy,
+              occupied,
+              moves,
+              gateState,
+              searchMode
+            )
+          : moveBox(state, actorIndex, dx, dy, occupied, moves, gateState, searchMode);
 
       if (!moved) {
         return null;
@@ -932,7 +1003,10 @@
       });
     }
 
-    function move(state, dx, dy) {
+    function move(state, dx, dy, options = {}) {
+      const searchMode = options.search === true;
+      const attemptSnapshotBuffer = options.attemptSnapshot || null;
+      const occupiedSnapshotBuffer = options.occupiedSnapshot || null;
       const occupied = buildOccupiedMap(state);
       const raisedPlayerGates = computeRaisedPlayerGateSet(state);
       const orderedPlayers = sortPlayersForMove(state, dx, dy);
@@ -978,10 +1052,20 @@
             let didMoveBlockingActor = false;
 
             if (fromElevation === 0 && isInitialStep && isPushableActor(blockingActor)) {
-              const attemptSnapshot = cloneState(state);
-              const occupiedSnapshot = new Uint8Array(occupied);
+              const attemptSnapshot = attemptSnapshotBuffer || cloneState(state);
+              const occupiedSnapshot =
+                occupiedSnapshotBuffer || new Uint8Array(occupied);
               const moveCount = moves.length;
               const pushBudget = countSupportingPlayers(state, player, dx, dy);
+
+              if (attemptSnapshotBuffer) {
+                copyStateInto(attemptSnapshotBuffer, state);
+              }
+
+              if (occupiedSnapshotBuffer) {
+                occupiedSnapshotBuffer.set(occupied);
+              }
+
               const result = attemptPushActor(
                 state,
                 blockingActor,
@@ -992,7 +1076,8 @@
                 pushBudget,
                 new Set(),
                 raisedPlayerGates,
-                new Set([player])
+                new Set([player]),
+                searchMode
               );
 
               if (result !== null) {
@@ -1036,7 +1121,7 @@
           }
 
           const travelDistance = Math.abs(nextX - fromX) + Math.abs(nextY - fromY);
-          moves.push({
+          const moveRecord = {
             actorIndex: player,
             actorType: actorTypes[player],
             fromX,
@@ -1044,15 +1129,29 @@
             toX: nextX,
             toY: nextY,
             fromElevation,
-            toElevation,
-            iceSlide: travelDistance > 1
-          });
+            toElevation
+          };
+
+          if (!searchMode) {
+            moveRecord.iceSlide = travelDistance > 1;
+          }
+
+          moves.push(moveRecord);
 
           if (
             !isHole(state, nextX, nextY) &&
             (toElevation === 0 || (fromElevation === 0 && isPlayerLift(nextX, nextY)))
           ) {
-            collectGemsAtEndpoint(state, fromX, fromY, nextX, nextY, moves, collectedGems);
+            collectGemsAtEndpoint(
+              state,
+              fromX,
+              fromY,
+              nextX,
+              nextY,
+              moves,
+              collectedGems,
+              searchMode
+            );
           }
         }
 
@@ -1073,6 +1172,77 @@
         moved: moves.length > 0,
         moves
       };
+    }
+
+    function countNonPlayerMoves(moves) {
+      let count = 0;
+
+      searchSeenStamp += 1;
+
+      if (searchSeenStamp >= 4294967295) {
+        searchSeenActors.fill(0);
+        searchSeenStamp = 1;
+      }
+
+      moves.forEach((moveRecord) => {
+        if (
+          isPlayerType(moveRecord.actorType) ||
+          isCollectibleType(moveRecord.actorType) ||
+          (moveRecord.fromX === moveRecord.toX && moveRecord.fromY === moveRecord.toY)
+        ) {
+          return;
+        }
+
+        if (searchSeenActors[moveRecord.actorIndex] === searchSeenStamp) {
+          return;
+        }
+
+        searchSeenActors[moveRecord.actorIndex] = searchSeenStamp;
+        count += 1;
+      });
+
+      return count;
+    }
+
+    function moveForSearch(state, dx, dy) {
+      const result = move(state, dx, dy, {
+        attemptSnapshot: searchAttemptSnapshot,
+        occupiedSnapshot: searchOccupiedSnapshot,
+        search: true
+      });
+      result.nonPlayerMoveCount = result.moved ? countNonPlayerMoves(result.moves) : 0;
+      return result;
+    }
+
+    function undoMove(state, moveResult) {
+      if (!moveResult?.moved || !Array.isArray(moveResult.moves)) {
+        return;
+      }
+
+      for (let index = moveResult.moves.length - 1; index >= 0; index -= 1) {
+        const moveRecord = moveResult.moves[index];
+        const actorIndex = moveRecord.actorIndex;
+
+        state.actorX[actorIndex] = moveRecord.fromX;
+        state.actorY[actorIndex] = moveRecord.fromY;
+        state.actorElevation[actorIndex] = moveRecord.fromElevation ?? 0;
+        state.actorRemoved[actorIndex] = moveRecord.fromRemoved ? 1 : 0;
+
+        if (
+          moveRecord.fillsHole &&
+          typeof moveRecord.fillHoleX === "number" &&
+          typeof moveRecord.fillHoleY === "number"
+        ) {
+          state.terrain[cellIndex(moveRecord.fillHoleX, moveRecord.fillHoleY)] =
+            terrainTypes.hole;
+        }
+      }
+
+      if (Array.isArray(moveResult.liftToggles)) {
+        moveResult.liftToggles.forEach(({ x, y, raised }) => {
+          setPlayerLiftRaised(state, x, y, !raised);
+        });
+      }
     }
 
     function isSolved(state) {
@@ -1148,6 +1318,8 @@
       cellCount,
       cellIndex,
       cloneState,
+      copyStateInto,
+      createStateBuffer,
       height,
       heuristic,
       initialState,
@@ -1155,8 +1327,10 @@
       isPlayerMove,
       isSolved,
       move,
+      moveForSearch,
       stateKey,
       terrainTypes,
+      undoMove,
       width
     };
   }

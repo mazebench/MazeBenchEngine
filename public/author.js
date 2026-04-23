@@ -513,7 +513,64 @@
     }
   }
 
+  class SolverStatePool {
+    constructor(engine) {
+      this.engine = engine;
+      this.items = [];
+    }
+
+    acquire(source) {
+      const state = this.items.pop() || this.engine.createStateBuffer();
+
+      if (source) {
+        this.engine.copyStateInto(state, source);
+      }
+
+      return state;
+    }
+
+    release(state) {
+      if (state) {
+        this.items.push(state);
+      }
+    }
+  }
+
+  class SolverNodePool {
+    constructor() {
+      this.items = [];
+    }
+
+    acquire(values) {
+      const node = this.items.pop() || {};
+
+      node.cost = values.cost;
+      node.key = values.key;
+      node.order = values.order;
+      node.path = values.path;
+      node.priority = values.priority;
+      node.searchReward = values.searchReward || 0;
+      node.state = values.state;
+
+      return node;
+    }
+
+    release(node) {
+      if (!node) {
+        return;
+      }
+
+      node.path = "";
+      node.state = null;
+      this.items.push(node);
+    }
+  }
+
   function solverNonPlayerMoveReward(engine, moveResult) {
+    if (Number.isFinite(moveResult?.nonPlayerMoveCount)) {
+      return Math.min(solverNonPlayerMoveRewardCap, moveResult.nonPlayerMoveCount);
+    }
+
     const movedActorIndexes = new Set();
 
     if (!Array.isArray(moveResult?.moves)) {
@@ -538,15 +595,17 @@
   async function solveWithAStar(engine, options = {}) {
     const open = new SolverHeap();
     const bestCostByKey = new Map();
+    const statePool = new SolverStatePool(engine);
+    const nodePool = new SolverNodePool();
     const reportProgress =
       typeof options.onProgress === "function" ? options.onProgress : null;
     let order = 0;
     let expanded = 0;
-    const initialState = engine.cloneState(engine.initialState);
+    const initialState = statePool.acquire(engine.initialState);
     const initialKey = engine.stateKey(initialState);
 
     bestCostByKey.set(initialKey, 0);
-    open.push({
+    open.push(nodePool.acquire({
       state: initialState,
       key: initialKey,
       cost: 0,
@@ -554,7 +613,7 @@
       path: "",
       priority: engine.heuristic(initialState),
       order: order
-    });
+    }));
     order += 1;
 
     if (reportProgress) {
@@ -572,6 +631,8 @@
       const current = open.pop();
 
       if (current.cost !== bestCostByKey.get(current.key)) {
+        statePool.release(current.state);
+        nodePool.release(current);
         continue;
       }
 
@@ -624,26 +685,32 @@
         };
       }
 
-      solverDirections.forEach((direction) => {
-        const nextState = engine.cloneState(current.state);
-        const moveResult = engine.move(nextState, direction.dx, direction.dy);
+      for (const direction of solverDirections) {
+        const moveResult = engine.moveForSearch(
+          current.state,
+          direction.dx,
+          direction.dy
+        );
 
         if (!moveResult?.moved) {
-          return;
+          continue;
         }
 
         const nextCost = current.cost + 1;
         const nextSearchReward =
           current.searchReward + solverNonPlayerMoveReward(engine, moveResult);
-        const nextKey = engine.stateKey(nextState);
+        const nextKey = engine.stateKey(current.state);
         const bestKnownCost = bestCostByKey.get(nextKey);
 
         if (typeof bestKnownCost === "number" && bestKnownCost <= nextCost) {
-          return;
+          engine.undoMove(current.state, moveResult);
+          continue;
         }
 
+        const nextState = statePool.acquire(current.state);
+
         bestCostByKey.set(nextKey, nextCost);
-        open.push({
+        open.push(nodePool.acquire({
           state: nextState,
           key: nextKey,
           cost: nextCost,
@@ -651,9 +718,14 @@
           path: current.path + direction.label,
           priority: nextCost + engine.heuristic(nextState) - nextSearchReward,
           order
-        });
+        }));
         order += 1;
-      });
+
+        engine.undoMove(current.state, moveResult);
+      }
+
+      statePool.release(current.state);
+      nodePool.release(current);
     }
 
     if (reportProgress) {
@@ -726,22 +798,24 @@
     const open = new SolverHeap();
     const bestCostByKey = new Map();
     const bestCandidateByCell = new Map();
+    const statePool = new SolverStatePool(engine);
+    const nodePool = new SolverNodePool();
     const reportProgress =
       typeof options.onProgress === "function" ? options.onProgress : null;
     let order = 0;
     let expanded = 0;
-    const initialState = engine.cloneState(engine.initialState);
+    const initialState = statePool.acquire(engine.initialState);
     const initialKey = engine.stateKey(initialState);
 
     bestCostByKey.set(initialKey, 0);
-    open.push({
+    open.push(nodePool.acquire({
       state: initialState,
       key: initialKey,
       cost: 0,
       path: "",
       priority: 0,
       order
-    });
+    }));
     order += 1;
 
     if (reportProgress) {
@@ -759,6 +833,8 @@
       const current = open.pop();
 
       if (current.cost !== bestCostByKey.get(current.key)) {
+        statePool.release(current.state);
+        nodePool.release(current);
         continue;
       }
 
@@ -792,36 +868,47 @@
         };
       }
 
-      solverDirections.forEach((direction) => {
-        const nextState = engine.cloneState(current.state);
-        const moveResult = engine.move(nextState, direction.dx, direction.dy);
+      for (const direction of solverDirections) {
+        const moveResult = engine.moveForSearch(
+          current.state,
+          direction.dx,
+          direction.dy
+        );
 
         if (!moveResult?.moved) {
-          return;
+          continue;
         }
 
         const nextCost = current.cost + 1;
         const nextPath = current.path + direction.label;
-        const nextKey = engine.stateKey(nextState);
+        const nextKey = engine.stateKey(current.state);
         const bestKnownCost = bestCostByKey.get(nextKey);
 
         recordGemPlacementCandidates(engine, moveResult, nextCost, nextPath, bestCandidateByCell);
 
         if (typeof bestKnownCost === "number" && bestKnownCost <= nextCost) {
-          return;
+          engine.undoMove(current.state, moveResult);
+          continue;
         }
 
+        const nextState = statePool.acquire(current.state);
+
         bestCostByKey.set(nextKey, nextCost);
-        open.push({
+        open.push(nodePool.acquire({
           state: nextState,
           key: nextKey,
           cost: nextCost,
           path: nextPath,
           priority: nextCost,
           order
-        });
+        }));
         order += 1;
-      });
+
+        engine.undoMove(current.state, moveResult);
+      }
+
+      statePool.release(current.state);
+      nodePool.release(current);
     }
 
     const candidate = hardestGemPlacementCandidate(bestCandidateByCell);
