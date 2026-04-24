@@ -1,5 +1,6 @@
 (function () {
   const modules = window.PlayModules || {};
+  const previewOutputSize = 128;
 
   function previewCanvasToDataUrl(canvas) {
     if (!canvas || typeof canvas.toDataURL !== "function") {
@@ -7,6 +8,22 @@
     }
 
     return canvas.toDataURL("image/png");
+  }
+
+  function createThumbnailCanvas(sourceCanvas) {
+    const thumbnailCanvas = document.createElement("canvas");
+    const thumbnailContext = thumbnailCanvas.getContext("2d");
+
+    if (!thumbnailContext) {
+      throw new Error("Preview thumbnail canvas is not available.");
+    }
+
+    thumbnailCanvas.width = previewOutputSize;
+    thumbnailCanvas.height = previewOutputSize;
+    thumbnailContext.imageSmoothingEnabled = true;
+    thumbnailContext.imageSmoothingQuality = "high";
+    thumbnailContext.drawImage(sourceCanvas, 0, 0, previewOutputSize, previewOutputSize);
+    return thumbnailCanvas;
   }
 
   async function renderPreviewDataUrl(playData) {
@@ -51,7 +68,8 @@
       app.gl.finish();
     }
 
-    const dataUrl = previewCanvasToDataUrl(canvas);
+    const thumbnailCanvas = createThumbnailCanvas(canvas);
+    const dataUrl = previewCanvasToDataUrl(thumbnailCanvas);
 
     if (app.gl && typeof app.gl.getExtension === "function") {
       const loseContextExtension = app.gl.getExtension("WEBGL_lose_context");
@@ -63,6 +81,8 @@
 
     canvas.width = 0;
     canvas.height = 0;
+    thumbnailCanvas.width = 0;
+    thumbnailCanvas.height = 0;
 
     return dataUrl;
   }

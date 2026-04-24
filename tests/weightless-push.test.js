@@ -11,6 +11,10 @@ global.window = {
   },
   cancelAnimationFrame: () => {}
 };
+loadBrowserScript("public/play-rules.js");
+loadBrowserScript("public/maze-engine.js");
+loadBrowserScript("public/play-movement.js");
+loadBrowserScript("public/play-world-transitions.js");
 loadBrowserScript("public/play-gameplay.js");
 
 const { registerGameplayFunctions } = window.PlayModules;
@@ -18,6 +22,12 @@ const asyncTests = [];
 
 function posKey(x, y) {
   return `${x},${y}`;
+}
+
+function createTerrain(width, height, type = "floor") {
+  return Array.from({ length: height }, () =>
+    Array.from({ length: width }, () => ({ type }))
+  );
 }
 
 function createGameplayApp(actors, options = {}) {
@@ -226,43 +236,19 @@ function createUShapeActors(extraActors = []) {
   ];
 }
 
-function runAttempt(app, ignoredActors) {
-  const occupied = new Set(
-    app.state.actors
-      .filter((actor) => actor.type !== "player" && !actor.removed)
-      .map((actor) => posKey(actor.x, actor.y))
-  );
-  const moves = [];
-  const leftArm = app.state.actors.find(
-    (actor) => actor.type === "weightless_box" && actor.x === 1 && actor.y === 0
-  );
-  const result = app.attemptPushActor(leftArm, -1, 0, occupied, moves, 1, new Set(), new Set(), ignoredActors);
-
-  return { result, moves };
-}
-
-function runAttemptFromActor(app, actor, dx, dy, ignoredActors) {
-  const occupied = new Set(
-    app.state.actors
-      .filter((candidate) => candidate.type !== "player" && !candidate.removed)
-      .map((candidate) => posKey(candidate.x, candidate.y))
-  );
-  const moves = [];
-  const result = app.attemptPushActor(actor, dx, dy, occupied, moves, 1, new Set(), new Set(), ignoredActors);
-
-  return { result, moves };
-}
-
 {
   const passThroughGem = { type: "gem", x: 2, y: 0, removed: false };
   const landingGem = { type: "gem", x: 3, y: 0, removed: false };
+  const terrain = createTerrain(8, 8);
+  terrain[0][1] = { type: "ice" };
+  terrain[0][2] = { type: "ice" };
   const actors = [
     { type: "player", x: 0, y: 0, elevation: 0, removed: false },
     passThroughGem,
     landingGem
   ];
   const app = createGameplayApp(actors, {
-    isIce: (x, y) => y === 0 && (x === 1 || x === 2)
+    terrain
   });
 
   app.movePlayers(1, 0);
@@ -290,8 +276,10 @@ function runAttemptFromActor(app, actor, dx, dy, ignoredActors) {
 {
   const gem = { type: "gem", x: 1, y: 0, removed: false };
   const player = { type: "player", x: 0, y: 0, elevation: 0, removed: false };
+  const terrain = createTerrain(8, 8);
+  terrain[0][1] = { type: "hole" };
   const app = createGameplayApp([player, gem], {
-    isHole: (x, y) => x === 1 && y === 0
+    terrain
   });
 
   app.movePlayers(1, 0);
@@ -303,9 +291,12 @@ function runAttemptFromActor(app, actor, dx, dy, ignoredActors) {
 
 {
   const player = { type: "player", x: 0, y: 0, elevation: 0, removed: false };
+  const terrain = createTerrain(8, 8);
+  terrain[0][1] = { type: "ice" };
+  terrain[0][2] = { type: "ice" };
+  terrain[0][3] = { type: "hole" };
   const app = createGameplayApp([player], {
-    isIce: (x, y) => y === 0 && (x === 1 || x === 2),
-    isHole: (x, y) => x === 3 && y === 0
+    terrain
   });
 
   app.movePlayers(1, 0);
@@ -357,12 +348,56 @@ asyncTests.push(
 );
 
 {
-  const app = createGameplayApp(createUShapeActors());
-  const player = app.state.actors[0];
-  const { result, moves } = runAttempt(app, new Set([player]));
+  const edgePlayer = { type: "player", x: 7, y: 3, elevation: 0, removed: false };
+  const app = createGameplayApp([edgePlayer]);
+  const transition = app.edgeTransitionForMove(1, 0);
 
-  assert.notEqual(result, null);
-  assert.equal(moves.length, 7);
+  assert.equal(transition?.nextLevelId, "level_BxA");
+  assert.deepEqual([transition?.targetX, transition?.targetY], [0, 3]);
+}
+
+asyncTests.push(
+  (async () => {
+    const edgePlayer = { type: "player", x: 7, y: 2, elevation: 0, removed: false };
+    const nextTerrain = Array.from({ length: 8 }, () =>
+      Array.from({ length: 8 }, () => ({ type: "floor" }))
+    );
+    let loadedLevelId = null;
+    const app = createGameplayApp([edgePlayer], {
+      currentLevelId: "level_AxA",
+      loadLevelState: async (levelId) => {
+        loadedLevelId = levelId;
+        return {
+          levelId,
+          levelLabel: levelId,
+          width: 8,
+          height: 8,
+          terrain: nextTerrain,
+          actors: []
+        };
+      }
+    });
+
+    app.movePlayers(1, 0);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const incomingPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.equal(loadedLevelId, "level_BxA");
+    assert.equal(app.currentLevelId, "level_BxA");
+    assert.deepEqual([incomingPlayer.x, incomingPlayer.y], [0, 2]);
+    assert.equal(app.moveHistory.at(-1)?.kind, "level-transition");
+  })()
+);
+
+{
+  const app = createGameplayApp(createUShapeActors());
+  const result = app.tryMovePlayersInstant(-1, 0);
+
+  assert.equal(result.moved, true);
+  assert.equal(result.moves.filter((move) => move.actor.type === "weightless_box").length, 7);
+  assert.deepEqual([app.state.actors[0].x, app.state.actors[0].y], [1, 0]);
   assert.deepEqual(
     app.state.actors
       .filter((actor) => actor.type === "weightless_box")
@@ -381,13 +416,13 @@ asyncTests.push(
 }
 
 {
-  const blocker = { type: "circle_player", x: 2, y: 0, elevation: 0, removed: false };
+  const blocker = { type: "circle_player", x: 0, y: 0, elevation: 0, removed: false };
   const app = createGameplayApp(createUShapeActors([blocker]));
-  const pusher = app.state.actors[0];
-  const { result, moves } = runAttempt(app, new Set([pusher]));
+  const result = app.tryMovePlayersInstant(-1, 0);
 
-  assert.equal(result, null);
-  assert.equal(moves.length, 0);
+  assert.equal(result.moved, false);
+  assert.equal(result.moves.length, 0);
+  assert.deepEqual([app.state.actors[0].x, app.state.actors[0].y], [2, 0]);
 }
 
 {
@@ -400,11 +435,11 @@ asyncTests.push(
   ];
   const app = createGameplayApp(actors);
   const player = actors[0];
-  const leadGroup = actors[1];
-  const { result, moves } = runAttemptFromActor(app, leadGroup, -1, 0, new Set([player]));
+  const result = app.tryMovePlayersInstant(-1, 0);
 
-  assert.notEqual(result, null);
-  assert.equal(moves.length, 4);
+  assert.equal(result.moved, true);
+  assert.equal(result.moves.filter((move) => move.actor.type === "weightless_box").length, 4);
+  assert.deepEqual([player.x, player.y], [3, 0]);
   assert.deepEqual(
     actors
       .filter((actor) => actor.type === "weightless_box")

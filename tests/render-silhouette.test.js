@@ -100,7 +100,12 @@ function createRenderApp({ terrain, actors, playData = {} }) {
     PlayModules: {}
   };
 
+  loadBrowserScript("public/play-rules.js");
   loadBrowserScript("public/play-core.js");
+  loadBrowserScript("public/play-render-effects.js");
+  loadBrowserScript("public/play-render-terrain.js");
+  loadBrowserScript("public/play-render-actors.js");
+  loadBrowserScript("public/play-render-compositor.js");
   loadBrowserScript("public/play-render.js");
 
   const canvas = {
@@ -146,9 +151,9 @@ function createRenderApp({ terrain, actors, playData = {} }) {
   });
 
   assert.equal(app.elevatedSideBleedCoverFamily(1, 0, 1), "terrain:wall");
-  assert.equal(app.elevatedBleedCoverColor(app.elevatedSideBleedCoverFamily(1, 0, 1)), "#23262c");
+  assert.equal(app.renderTerrain.elevatedBleedCoverColor(app.elevatedSideBleedCoverFamily(1, 0, 1)), "#23262c");
 
-  app.paintElevatedSideBleedCover(app.sceneCtx, 1, 0, 1, 64, 74, 100);
+  app.renderTerrain.paintElevatedSideBleedCover(app.sceneCtx, 1, 0, 1, 64, 74, 100);
   assert.deepEqual(app.sceneCtx.__operations.at(-1), {
     type: "fillRect",
     fillStyle: "#23262c",
@@ -156,7 +161,7 @@ function createRenderApp({ terrain, actors, playData = {} }) {
   });
 
   app.sceneCtx.__operations.length = 0;
-  app.paintDepthSortedScene(0);
+  app.renderActors.paintDepthSortedScene(0);
   assert.ok(
     app.sceneCtx.__operations.some(
       (operation) =>
@@ -200,7 +205,7 @@ function createRenderApp({ terrain, actors, playData = {} }) {
     actor.renderY = actor.y + 0.25;
   });
   app.sceneCtx.__operations.length = 0;
-  app.paintDepthSortedScene(0);
+  app.renderActors.paintDepthSortedScene(0);
   assert.ok(
     app.sceneCtx.__operations.some(
       (operation) =>
@@ -217,7 +222,7 @@ function createRenderApp({ terrain, actors, playData = {} }) {
     actor.renderSink = 8;
   });
   app.sceneCtx.__operations.length = 0;
-  app.paintDepthSortedScene(0);
+  app.renderActors.paintDepthSortedScene(0);
   assert.equal(
     app.sceneCtx.__operations.some(
       (operation) =>

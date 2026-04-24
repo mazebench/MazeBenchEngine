@@ -7,17 +7,14 @@
 
   const elements = {
     authorLink: document.getElementById("world-map-author-link"),
-    columns: document.getElementById("world-map-columns"),
-    count: document.getElementById("world-map-count"),
+    canvas: document.querySelector(".world-map-canvas"),
+    deselect: document.getElementById("world-map-deselect"),
     grid: document.getElementById("world-map-grid"),
-    placed: document.getElementById("world-map-placed"),
+    gridShell: document.querySelector(".world-map-grid-shell"),
     playLink: document.getElementById("world-map-play-link"),
-    reset: document.getElementById("world-map-reset"),
-    rows: document.getElementById("world-map-rows"),
     save: document.getElementById("world-map-save"),
-    selection: document.getElementById("world-map-selection"),
+    sidebar: document.querySelector(".world-map-sidebar"),
     status: document.getElementById("world-map-status"),
-    unmap: document.getElementById("world-map-unmap"),
     unplaced: document.getElementById("world-map-unplaced")
   };
 
@@ -38,12 +35,17 @@
   const state = {
     entries: cloneEntries(worldMapData.entries || []),
     isDirty: false,
-    message: worldMapData.message || "Select a tile, then click a world slot to move it.",
+    layoutFrameId: null,
+    message: "World map ready.",
     messageTone: "warning",
     savedEntries: cloneEntries(worldMapData.entries || []),
     selectedFileName: null,
     selectedPosition: null
   };
+  const worldMapMaxCellSize = 56;
+  const worldMapMinCellSize = 8;
+  const worldMapGapSize = 2;
+  const worldMapGridPadding = 4;
 
   function escapeHtml(value) {
     return String(value)
@@ -52,6 +54,16 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
+  }
+
+  function readPixelValue(value) {
+    const parsed = parseFloat(value);
+
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function clampWorldMapSize(value, min, max) {
+    return Math.max(min, Math.min(max, Math.floor(value)));
   }
 
   function cloneEntries(entries) {
@@ -167,7 +179,7 @@
   }
 
   function describeEmptySlot(position) {
-    return "Empty slot " + formatPosition(position) + " selected. Press Author Slot to create or edit it.";
+    return "Empty slot " + formatPosition(position) + " selected. Press Edit Slot to create or edit it.";
   }
 
   function markDirty(message) {
@@ -186,23 +198,75 @@
   function renderStatus() {
     const dirtySuffix = state.isDirty ? " Unsaved changes." : "";
     elements.status.textContent = state.message + dirtySuffix;
-    elements.status.className = "author-status is-" + state.messageTone;
+    elements.status.className = "sr-only";
   }
 
-  function renderAxes() {
-    elements.columns.style.gridTemplateColumns =
-      "repeat(" + worldColumns.length + ", var(--world-map-cell-size, 56px))";
-    elements.columns.innerHTML = worldColumns
-      .map((value) => '<span class="world-map-axis__label">' + escapeHtml(value) + "</span>")
-      .join("");
-    elements.rows.innerHTML = worldRows
-      .map((value) => '<span class="world-map-row-label">' + escapeHtml(value) + "</span>")
-      .join("");
+  function measureWorldMapLayout() {
+    const shellStyles = window.getComputedStyle(elements.gridShell);
+    const paddingX =
+      readPixelValue(shellStyles.paddingLeft) + readPixelValue(shellStyles.paddingRight);
+    const paddingY =
+      readPixelValue(shellStyles.paddingTop) + readPixelValue(shellStyles.paddingBottom);
+    const viewportHeight =
+      window.visualViewport?.height || window.innerHeight || worldRows.length * worldMapMaxCellSize;
+    const shellRect = elements.gridShell.getBoundingClientRect();
+    const cappedTop = Math.max(0, Math.min(shellRect.top, Math.max(120, viewportHeight * 0.28)));
+    const availableWidth = Math.max(
+      worldMapMinCellSize,
+      elements.gridShell.clientWidth - paddingX
+    );
+    const availableHeight = Math.max(
+      worldMapMinCellSize,
+      viewportHeight - cappedTop - paddingY - 24
+    );
+    const widthExtras =
+      worldMapGridPadding +
+      Math.max(0, worldColumns.length - 1) * worldMapGapSize;
+    const heightExtras =
+      worldMapGridPadding +
+      Math.max(0, worldRows.length - 1) * worldMapGapSize;
+    const cellByWidth = (availableWidth - widthExtras) / Math.max(1, worldColumns.length);
+    const cellByHeight = (availableHeight - heightExtras) / Math.max(1, worldRows.length);
+
+    return {
+      cellSize: clampWorldMapSize(
+        Math.min(cellByWidth, cellByHeight),
+        worldMapMinCellSize,
+        worldMapMaxCellSize
+      )
+    };
+  }
+
+  function syncWorldMapTrayHeight() {
+    const trayHeight = Math.ceil(elements.gridShell.getBoundingClientRect().height);
+
+    if (Number.isFinite(trayHeight) && trayHeight > 0) {
+      elements.sidebar.style.setProperty("--world-map-tray-height", trayHeight + "px");
+    }
+  }
+
+  function syncWorldMapLayout() {
+    const layout = measureWorldMapLayout();
+
+    elements.canvas.style.setProperty("--world-map-cell-size", layout.cellSize + "px");
+    syncWorldMapTrayHeight();
+  }
+
+  function scheduleWorldMapLayout() {
+    if (state.layoutFrameId !== null) {
+      return;
+    }
+
+    state.layoutFrameId = window.requestAnimationFrame(() => {
+      state.layoutFrameId = null;
+      syncWorldMapLayout();
+    });
   }
 
   function renderGrid() {
     const cellCount = worldColumns.length * worldRows.length;
 
+    syncWorldMapLayout();
     elements.grid.style.gridTemplateColumns =
       "repeat(" + worldColumns.length + ", var(--world-map-cell-size, 56px))";
 
@@ -245,9 +309,6 @@
           : "";
         button.innerHTML =
           selectionMarkup +
-          '<span class="world-map-grid__slot">' +
-          escapeHtml(formatPosition(entry.position)) +
-          "</span>" +
           '<span class="world-map-grid__preview-shell">' +
           previewMarkup +
           "</span>";
@@ -258,9 +319,9 @@
         button.title = entry.fileName + " at " + formatPosition(entry.position);
       } else {
         button.innerHTML =
-          (isSelected
+          isSelected
             ? '<span class="world-map-grid__selection-frame" aria-hidden="true"></span>'
-            : "") + '<span class="world-map-grid__empty">.</span>';
+            : "";
         button.setAttribute("aria-label", "Empty slot " + formatPosition([column, row]));
         button.title = "Empty slot " + formatPosition([column, row]);
       }
@@ -269,33 +330,24 @@
 
   function renderSelection() {
     const selectedEntry = getEntryByFileName(state.selectedFileName);
-    const selectedFile = worldMapData.files.find((file) => file.fileName === state.selectedFileName) || null;
     const selectedPosition =
       Array.isArray(state.selectedPosition) && state.selectedPosition.length >= 2
         ? state.selectedPosition.slice(0, 2)
         : null;
     const selectedSlotIsEmpty =
       selectedPosition && !getEntryAtPosition(selectedPosition[0], selectedPosition[1]);
-    const hasMappedSelection = Boolean(selectedEntry);
+    const hasSelection = Boolean(state.selectedFileName || selectedPosition);
 
     function setLinkState(link, href, isEnabled) {
       link.href = isEnabled ? href : "#";
       link.classList.toggle("is-disabled", !isEnabled);
+      link.classList.toggle("is-active", isEnabled);
       link.setAttribute("aria-disabled", isEnabled ? "false" : "true");
     }
 
-    if (selectedEntry) {
-      elements.selection.textContent = describeSelection(selectedEntry);
-    } else if (selectedFile) {
-      elements.selection.textContent = describeUnplaced(selectedFile.fileName);
-    } else if (selectedSlotIsEmpty) {
-      elements.selection.textContent = describeEmptySlot(selectedPosition);
-    } else {
-      elements.selection.textContent = "No tile selected. Click a placed tile or an unplaced file to begin moving it.";
-    }
-
-    elements.unmap.disabled = !hasMappedSelection;
-    elements.unmap.setAttribute("aria-disabled", hasMappedSelection ? "false" : "true");
+    elements.deselect.disabled = !hasSelection;
+    elements.deselect.classList.toggle("is-disabled", !hasSelection);
+    elements.deselect.setAttribute("aria-disabled", hasSelection ? "false" : "true");
 
     if (selectedEntry) {
       setLinkState(elements.playLink, selectedEntry.playUrl, true);
@@ -314,38 +366,7 @@
   }
 
   function renderLists() {
-    const placedEntries = sortEntries(state.entries);
     const unplacedFiles = getUnplacedFiles();
-
-    elements.placed.innerHTML = placedEntries.length
-      ? placedEntries
-          .map((entry) => {
-            const previewUrl = getPreviewUrlForFile(entry.fileName);
-            const previewMarkup = previewUrl
-              ? '<img class="world-map-list__preview" src="' + escapeHtml(previewUrl) + '" alt="">'
-              : '<span class="world-map-list__preview-placeholder">No preview</span>';
-            return (
-              '<button class="tool-button world-map-list__item' +
-              (entry.fileName === state.selectedFileName ? " is-active" : "") +
-              '" type="button" data-file-name="' +
-              escapeHtml(entry.fileName) +
-              '">' +
-              '<span class="world-map-list__preview-shell">' +
-              previewMarkup +
-              "</span>" +
-              '<span class="world-map-list__body">' +
-              '<span class="world-map-list__title">' +
-              escapeHtml(entry.fileName) +
-              "</span>" +
-              '<span class="world-map-list__meta">' +
-              escapeHtml(formatPosition(entry.position)) +
-              "</span>" +
-              "</span>" +
-              "</button>"
-            );
-          })
-          .join("")
-      : '<p class="world-map-empty-copy">No tiles are placed yet.</p>';
 
     elements.unplaced.innerHTML = unplacedFiles.length
       ? unplacedFiles
@@ -372,9 +393,7 @@
             );
           })
           .join("")
-      : '<p class="world-map-empty-copy">Every top-level file is currently on the map.</p>';
-
-    elements.count.textContent = state.entries.length + " / " + worldMapData.files.length;
+      : '<p class="world-map-empty-copy">Every tile is currently mapped.</p>';
   }
 
   function renderAll() {
@@ -383,6 +402,7 @@
     renderGrid();
     renderSelection();
     renderLists();
+    scheduleWorldMapLayout();
   }
 
   function selectFile(fileName, message) {
@@ -491,31 +511,6 @@
     markDirty("Placed " + selectedFileName + " at " + formatPosition([column, row]) + ".");
   }
 
-  function unmapSelected() {
-    const selectedEntry = getEntryByFileName(state.selectedFileName);
-
-    if (!selectedEntry) {
-      setStatus("Select a placed tile to unmap it.", "warning");
-      return;
-    }
-
-    state.entries = state.entries.filter((entry) => entry.fileName !== selectedEntry.fileName);
-    markDirty("Moved " + selectedEntry.fileName + " to the unplaced list.");
-  }
-
-  function resetMap() {
-    state.entries = cloneEntries(state.savedEntries);
-    state.isDirty = false;
-    state.message = "Restored the last saved world map.";
-    state.messageTone = "warning";
-
-    if (state.selectedFileName && !worldMapData.files.some((file) => file.fileName === state.selectedFileName)) {
-      state.selectedFileName = null;
-    }
-
-    renderAll();
-  }
-
   async function saveMap() {
     try {
       const response = await fetch(worldMapData.apiUrl, {
@@ -550,8 +545,95 @@
     }
   }
 
-  renderAxes();
+  function resetDisclosureBodyStyles(body) {
+    body.style.height = "";
+    body.style.opacity = "";
+    body.style.overflow = "";
+  }
+
+  function setDisclosureOpen(details, shouldOpen) {
+    const body = details.querySelector(".author-disclosure__body");
+
+    if (!body || details.classList.contains("is-animating")) {
+      return;
+    }
+
+    const isOpen = details.hasAttribute("open");
+
+    if (isOpen === shouldOpen) {
+      return;
+    }
+
+    details.classList.add("is-animating");
+    body.style.overflow = "hidden";
+
+    let finished = false;
+    const finish = function () {
+      if (finished) {
+        return;
+      }
+
+      finished = true;
+      body.removeEventListener("transitionend", handleTransitionEnd);
+      details.classList.remove("is-animating");
+
+      if (!shouldOpen) {
+        details.removeAttribute("open");
+      }
+
+      resetDisclosureBodyStyles(body);
+      scheduleWorldMapLayout();
+    };
+    const handleTransitionEnd = function (event) {
+      if (event.target === body && event.propertyName === "height") {
+        finish();
+      }
+    };
+
+    body.addEventListener("transitionend", handleTransitionEnd);
+
+    if (shouldOpen) {
+      details.setAttribute("open", "");
+      body.style.height = "0px";
+      body.style.opacity = "0";
+
+      window.requestAnimationFrame(() => {
+        body.style.height = body.scrollHeight + "px";
+        body.style.opacity = "1";
+      });
+    } else {
+      body.style.height = body.scrollHeight + "px";
+      body.style.opacity = "1";
+
+      window.requestAnimationFrame(() => {
+        body.style.height = "0px";
+        body.style.opacity = "0";
+      });
+    }
+
+    window.setTimeout(finish, 260);
+  }
+
+  function initializeWorldMapDisclosures() {
+    document.querySelectorAll(".world-map-sidebar .author-disclosure").forEach((details) => {
+      const summary = details.querySelector(".author-disclosure__summary");
+      const body = details.querySelector(".author-disclosure__body");
+
+      if (!summary || !body) {
+        return;
+      }
+
+      details.removeAttribute("open");
+      resetDisclosureBodyStyles(body);
+      summary.addEventListener("click", function (event) {
+        event.preventDefault();
+        setDisclosureOpen(details, !details.hasAttribute("open"));
+      });
+    });
+  }
+
   renderAll();
+  initializeWorldMapDisclosures();
 
   elements.grid.addEventListener("click", function (event) {
     const button = event.target.closest(".world-map-grid__cell");
@@ -588,21 +670,6 @@
     moveSelectedTo(column, row);
   });
 
-  elements.placed.addEventListener("click", function (event) {
-    const button = event.target.closest("[data-file-name]");
-
-    if (!button) {
-      return;
-    }
-
-    if (button.dataset.fileName === state.selectedFileName) {
-      clearSelection("Deselected " + button.dataset.fileName + ".");
-      return;
-    }
-
-    selectFile(button.dataset.fileName);
-  });
-
   elements.unplaced.addEventListener("click", function (event) {
     const button = event.target.closest("[data-file-name]");
 
@@ -618,8 +685,9 @@
     selectFile(button.dataset.fileName);
   });
 
-  elements.unmap.addEventListener("click", unmapSelected);
-  elements.reset.addEventListener("click", resetMap);
+  elements.deselect.addEventListener("click", function () {
+    clearSelection("Selection cleared.");
+  });
   elements.save.addEventListener("click", saveMap);
 
   elements.playLink.addEventListener("click", function (event) {
@@ -633,4 +701,5 @@
       event.preventDefault();
     }
   });
+  window.addEventListener("resize", scheduleWorldMapLayout);
 })();

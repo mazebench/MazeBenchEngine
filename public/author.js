@@ -1,5 +1,6 @@
 (function () {
   const authorData = window.__AUTHOR_DATA__;
+  const authorPlayData = window.AuthorPlayData;
   const levelPreviewRenderer = window.LevelPreviewRenderer;
 
   if (!authorData) {
@@ -9,15 +10,20 @@
   const elements = {
     applyCellValue: document.getElementById("apply-cell-value"),
     boardHeight: document.getElementById("board-height"),
+    boardSizeLabel: document.getElementById("board-size-label"),
     boardWidth: document.getElementById("board-width"),
+    canvas: document.getElementById("author-canvas"),
     cellValue: document.getElementById("cell-value"),
     clearLevel: document.getElementById("clear-level"),
     currentFileName: document.getElementById("current-file-name"),
+    currentLevelName: document.getElementById("current-level-name"),
     existingLevels: document.getElementById("existing-levels"),
     flipHorizontal: document.getElementById("flip-horizontal"),
     flipVertical: document.getElementById("flip-vertical"),
     frameLevel: document.getElementById("frame-level"),
     grid: document.getElementById("author-grid"),
+    gridShell: document.querySelector(".author-grid-shell"),
+    hitGrid: document.getElementById("author-hit-grid"),
     levelNeighbors: document.getElementById("level-neighbors"),
     levelColumn: document.getElementById("level-column"),
     levelRow: document.getElementById("level-row"),
@@ -30,47 +36,67 @@
     rotateRight: document.getElementById("rotate-right"),
     saveLevel: document.getElementById("save-level"),
     selectedCellLabel: document.getElementById("selected-cell-label"),
+    selectedToolLabel: document.getElementById("selected-tool-label"),
+    sidebar: document.querySelector(".author-sidebar"),
     solveLevel: document.getElementById("solve-level"),
+    solverProgress: document.getElementById("solver-progress"),
+    solverProgressBar: document.getElementById("solver-progress-bar"),
+    solverProgressText: document.getElementById("solver-progress-text"),
+    solverProgressTrack: document.getElementById("solver-progress-track"),
     status: document.getElementById("author-status")
   };
 
-  if (Object.values(elements).some((element) => !element)) {
+  const optionalElementKeys = new Set([
+    "boardSizeLabel",
+    "currentFileName",
+    "currentLevelName",
+    "existingLevels",
+    "levelColumn",
+    "levelRow",
+    "solverProgress",
+    "solverProgressBar",
+    "solverProgressText",
+    "solverProgressTrack"
+  ]);
+
+  if (
+    Object.entries(elements).some(
+      ([key, element]) => !element && !optionalElementKeys.has(key)
+    )
+  ) {
     return;
   }
 
-  const toneByName = {
-    box: { background: "#d6bd94", color: "#111111" },
-    circle_player: { background: "#8dc7ff", color: "#111111" },
-    exit: { background: "#ff7b72", color: "#111111" },
-    floating_floor: { background: "#7ee0a1", color: "#111111" },
-    floor: { background: "#ffffff", color: "#111111" },
-    gem: { background: "#7ee0a1", color: "#111111" },
-    hole: { background: "#3a5876", color: "#ffffff" },
-    ice: { background: "#c6ecff", color: "#111111" },
-    player: { background: "#8dc7ff", color: "#111111" },
-    player_gate: { background: "#ffd84d", color: "#111111" },
-    player_lift: { background: "#ffb36c", color: "#111111" },
-    wall: { background: "#242424", color: "#ffffff" },
-    weightless_box: { background: "#ffb36c", color: "#111111" }
-  };
+  if (!authorPlayData || typeof authorPlayData.createAdapter !== "function") {
+    return;
+  }
 
-  const toolByToken = new Map(authorData.palette.map((tool) => [tool.token, tool]));
-  const toolByName = new Map(authorData.palette.map((tool) => [tool.name, tool]));
-  const solverActorNames = new Set([
-    "player",
-    "circle_player",
-    "box",
-    "gem",
-    "floating_floor",
-    "weightless_box"
-  ]);
-  const solverDirections = [
-    { label: "U", dx: 0, dy: -1 },
-    { label: "D", dx: 0, dy: 1 },
-    { label: "L", dx: -1, dy: 0 },
-    { label: "R", dx: 1, dy: 0 }
-  ];
-  const solverMaxExpandedStates = 150000;
+  const playDataAdapter = authorPlayData.createAdapter(authorData);
+  const {
+    buildPlayData,
+    getCellDescriptor,
+    getCellTokens,
+    getCellTools,
+    isActorTool,
+    normalizeCellValue,
+    toolByName,
+    toolByToken
+  } = playDataAdapter;
+  const editorTileSize = 64;
+  const minimumEditorTileSize = 12;
+  const editorGridOutlineSize = 8;
+  const editorRenderer = {
+    app: null,
+    layoutFrameId: null,
+    preloadVersion: 0
+  };
+  const palettePreviewRenderer = {
+    previewsByToken: new Map(),
+    promise: null
+  };
+  const solverMaxExpandedStates = 1000000;
+  const solverProgressYieldStateInterval = 4096;
+  const solverProgressRenderIntervalMs = 80;
   const worldColumns =
     Array.isArray(authorData.worldColumns) && authorData.worldColumns.length > 0
       ? authorData.worldColumns
@@ -88,6 +114,7 @@
     filePath: authorData.initialLevel.filePath,
     height: authorData.initialLevel.height,
     isDirty: false,
+    isSolverBusy: false,
     levelId: authorData.initialLevel.levelId,
     message: authorData.initialLevel.exists
       ? "Loaded existing level."
@@ -154,72 +181,12 @@
     return "level_" + worldColumns[nextColumnIndex] + "x" + worldRows[nextRowIndex];
   }
 
-  function normalizeCellValue(value) {
-    const trimmedValue = String(value ?? "").trim();
-
-    if (!trimmedValue) {
-      return authorData.defaultFloorToken;
-    }
-
-    const tokens = trimmedValue
-      .split(authorData.blockAdder)
-      .map((token) => token.trim())
-      .filter(Boolean);
-
-    if (tokens.length === 0) {
-      return authorData.defaultFloorToken;
-    }
-
-    const invalidToken = tokens.find((token) => !toolByToken.has(token));
-
-    if (invalidToken) {
-      throw new Error('Unknown token "' + invalidToken + '".');
-    }
-
-    return tokens.join(authorData.blockAdder);
-  }
-
-  function getCellTokens(value) {
-    return String(value || "")
-      .split(authorData.blockAdder)
-      .map((token) => token.trim())
-      .filter(Boolean);
-  }
-
-  function getCellTools(value) {
-    return getCellTokens(value)
-      .map((token) => toolByToken.get(token))
-      .filter(Boolean);
-  }
-
   function serializeCells() {
     return state.cells.map((row) => row.join(authorData.separator)).join("\n");
   }
 
-  function getCellDescriptor(value) {
-    const tokens = getCellTokens(value);
-    const topToken = tokens[tokens.length - 1] || authorData.defaultFloorToken;
-    const tool = toolByToken.get(topToken) || toolByToken.get(tokens[0]) || null;
-    const tone = toneByName[tool?.name] || { background: "#ffffff", color: "#111111" };
-
-    return {
-      label: tool ? tool.label : topToken,
-      tone,
-      tool,
-      topToken,
-      tokens
-    };
-  }
-
-  function titleCaseName(name) {
-    return String(name || "")
-      .split("_")
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" ");
-  }
-
   function isSolverActorTool(tool) {
-    return solverActorNames.has(tool?.name);
+    return isActorTool(tool);
   }
 
   function levelHasGem() {
@@ -264,201 +231,158 @@
     return tokens.length > 0 ? tokens.join(authorData.blockAdder) : authorData.defaultFloorToken;
   }
 
-  function buildSolverTerrainCell(type, tool = null, options = {}) {
-    return {
-      type,
-      label: tool?.label || titleCaseName(type),
-      imageUrl: tool?.imageUrl || null,
-      underlay: options.underlay || null,
-      raised: options.raised === true
-    };
-  }
-
-  function buildSolverCellState(tools) {
-    const floorTool = toolByName.get("floor") || null;
-    const exitTool = toolByName.get("exit") || null;
-    const terrainTools = tools.filter((tool) => !isSolverActorTool(tool));
-    const wallTool = terrainTools.find((tool) => tool.name === "wall") || null;
-    const exitCellTool = terrainTools.find((tool) => tool.name === "exit") || null;
-    const terrainTool = wallTool || exitCellTool || terrainTools[0] || null;
-
-    if (wallTool) {
-      const underlayTool = terrainTools.find((tool) => tool.name !== "wall") || floorTool;
-
-      return buildSolverTerrainCell("wall", wallTool, {
-        underlay: buildSolverTerrainCell(underlayTool?.name || "floor", underlayTool)
-      });
-    }
-
-    if (terrainTool?.name === "exit") {
-      return buildSolverTerrainCell("exit", exitTool || terrainTool);
-    }
-
-    if (terrainTool) {
-      return buildSolverTerrainCell(terrainTool.name, terrainTool, {
-        raised: terrainTool.name === "player_lift" ? false : undefined
-      });
-    }
-
-    if (tools.some((tool) => isSolverActorTool(tool))) {
-      return buildSolverTerrainCell("floor", floorTool);
-    }
-
-    return buildSolverTerrainCell("empty");
-  }
-
-  function buildSolverPlayData(options = {}) {
-    const includeGems = options.includeGems !== false;
-    const terrain = [];
-    const actors = [];
-
-    for (let y = 0; y < state.height; y += 1) {
-      const terrainRow = [];
-
-      for (let x = 0; x < state.width; x += 1) {
-        const tools = getCellTools(state.cells[y][x]);
-
-        terrainRow.push(buildSolverCellState(tools));
-        tools.forEach((tool) => {
-          if (!isSolverActorTool(tool)) {
-            return;
-          }
-
-          if (!includeGems && tool.name === "gem") {
-            return;
-          }
-
-          actors.push({
-            type: tool.name,
-            groupId: tool.name === "weightless_box" ? tool.token : null,
-            label: tool.label,
-            imageUrl: tool.imageUrl || null,
-            x,
-            y
-          });
-        });
-      }
-
-      terrain.push(terrainRow);
-    }
-
-    return {
+  function buildEditorPlayData(options = {}) {
+    return buildPlayData({
+      cameraView: options.cameraView || null,
+      cells: state.cells,
       gameId: authorData.game.id,
-      levelId: "__editor_solver__",
-      levelLabel: state.levelId,
+      height: state.height,
+      includeGems: options.includeGems,
+      levelId: options.levelId || "__editor_solver__",
+      levelLabel: options.levelLabel || state.levelId,
       sourceFileName: state.fileName,
       width: state.width,
-      height: state.height,
-      terrain,
-      actors,
-      cameraView: null,
-      worldColumns: null,
-      worldRows: null
-    };
+      worldColumns: options.worldColumns || null,
+      worldRows: options.worldRows || null
+    });
   }
 
   function isSolverPlayerActor(actor) {
     return actor?.type === "player" || actor?.type === "circle_player";
   }
 
-  function isSolvedSolverSnapshot(snapshot) {
-    if (snapshot.actors.some((actor) => actor.type === "gem" && actor.removed)) {
-      return true;
+  function createSolverEngine(playData) {
+    const mazeEngine = window.MazeEngine;
+
+    if (!mazeEngine || typeof mazeEngine.createEngine !== "function") {
+      throw new Error("Solver engine is not available.");
     }
 
-    const players = snapshot.actors.filter(
-      (actor) => isSolverPlayerActor(actor) && !actor.removed && (actor.elevation ?? 0) === 0
-    );
-    const gems = snapshot.actors.filter((actor) => actor.type === "gem" && !actor.removed);
-
-    return gems.some((gem) => players.some((player) => player.x === gem.x && player.y === gem.y));
+    return mazeEngine.createEngine(playData);
   }
 
-  function solverHeuristic(snapshot) {
-    const players = snapshot.actors.filter((actor) => isSolverPlayerActor(actor) && !actor.removed);
-    const gems = snapshot.actors.filter((actor) => actor.type === "gem" && !actor.removed);
+  function getMazeSolver() {
+    const mazeSolver = window.MazeSolver;
 
-    if (players.length === 0 || gems.length === 0) {
-      return 0;
+    if (
+      !mazeSolver ||
+      typeof mazeSolver.solveWithAStar !== "function" ||
+      typeof mazeSolver.findHardestGemPlacement !== "function"
+    ) {
+      throw new Error("Solver module is not available.");
     }
 
-    let best = 2;
+    return mazeSolver;
+  }
 
-    players.forEach((player) => {
-      gems.forEach((gem) => {
-        if (player.x === gem.x && player.y === gem.y && (player.elevation ?? 0) === 0) {
-          best = 0;
-        } else if (player.x === gem.x || player.y === gem.y) {
-          best = Math.min(best, 1);
-        }
-      });
+  function formatStateCount(value) {
+    return Math.max(0, value).toLocaleString("en-US");
+  }
+
+  function nextSolverProgressFrame() {
+    return new Promise((resolve) => {
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(() => resolve());
+        return;
+      }
+
+      window.setTimeout(resolve, 0);
     });
-
-    return best;
   }
 
-  function solverTerrainKey(terrain) {
-    return terrain
-      .map((row) => row.map((cell) => cell.type + (cell.raised ? "^" : "")).join(","))
-      .join("/");
+  function renderSolverProgress(label, expanded, maxExpanded) {
+    if (
+      !elements.solverProgress ||
+      !elements.solverProgressBar ||
+      !elements.solverProgressText ||
+      !elements.solverProgressTrack
+    ) {
+      return;
+    }
+
+    const safeMax = Math.max(1, maxExpanded);
+    const safeExpanded = Math.max(0, Math.min(expanded, safeMax));
+    const percent = Math.min(100, (safeExpanded / safeMax) * 100);
+
+    elements.solverProgress.hidden = false;
+    elements.solverProgress.removeAttribute("aria-hidden");
+    elements.solverProgressBar.style.width = percent.toFixed(1) + "%";
+    elements.solverProgressTrack.setAttribute("aria-valuenow", String(Math.round(percent)));
+    elements.solverProgressText.textContent =
+      label +
+      ": " +
+      formatStateCount(safeExpanded) +
+      " / " +
+      formatStateCount(safeMax) +
+      " states";
   }
 
-  function solverStateKey(snapshot) {
-    const actorKey = snapshot.actors
-      .map((actor) =>
-        [
-          actor.type,
-          actor.groupId || "",
-          actor.x,
-          actor.y,
-          actor.elevation ?? 0,
-          actor.removed ? 1 : 0
-        ].join(":")
-      )
-      .join("|");
+  function hideSolverProgress() {
+    if (
+      !elements.solverProgress ||
+      !elements.solverProgressBar ||
+      !elements.solverProgressTrack
+    ) {
+      return;
+    }
 
-    return solverTerrainKey(snapshot.terrain) + "::" + actorKey;
+    elements.solverProgress.hidden = true;
+    elements.solverProgress.setAttribute("aria-hidden", "true");
+    elements.solverProgressBar.style.width = "0%";
+    elements.solverProgressTrack.setAttribute("aria-valuenow", "0");
   }
 
-  function captureSolverSnapshot(app) {
-    return {
-      width: app.state.width,
-      height: app.state.height,
-      terrain: app.cloneTerrainState(app.state.terrain),
-      actors: app.cloneActorStateList()
+  function createSolverProgressReporter(label) {
+    let lastRenderAt = 0;
+
+    renderSolverProgress(label, 0, solverMaxExpandedStates);
+
+    return async function reportSolverProgress(progress, force = false) {
+      const expanded = progress?.expanded ?? 0;
+      const maxExpanded = progress?.maxExpanded ?? solverMaxExpandedStates;
+      const now =
+        window.performance && typeof window.performance.now === "function"
+          ? window.performance.now()
+          : Date.now();
+
+      if (!force && now - lastRenderAt < solverProgressRenderIntervalMs) {
+        return;
+      }
+
+      lastRenderAt = now;
+      renderSolverProgress(label, expanded, maxExpanded);
+      await nextSolverProgressFrame();
     };
   }
 
-  function restoreSolverSnapshot(app, snapshot) {
-    app.state.width = snapshot.width;
-    app.state.height = snapshot.height;
-    app.state.terrain = app.cloneTerrainState(snapshot.terrain);
-    app.state.actors = snapshot.actors.map((actor) => app.createRuntimeActor(actor));
-    app.moveHistory.length = 0;
-    app.isAnimating = false;
-    app.isTransitioningLevel = false;
-    app.queuedAction = null;
-    app.gateRenderOverride = null;
-    app.liveRaisedPlayerGates.clear();
+  function buildEditorRenderPlayData() {
+    return buildEditorPlayData({
+      cameraView: {
+        width: state.width,
+        height: state.height
+      },
+      levelId: "__editor_render__",
+      levelLabel: state.levelId
+    });
   }
 
-  function createSolverApp(playData) {
+  function ensureEditorRenderApp(playData) {
     const modules = window.PlayModules || {};
 
     if (
       typeof modules.createPlayCore !== "function" ||
-      typeof modules.registerGameplayFunctions !== "function"
+      typeof modules.registerRenderFunctions !== "function"
     ) {
-      throw new Error("Solver modules are not available.");
+      return null;
     }
 
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, playData.width * 64);
-    canvas.height = Math.max(1, playData.height * 64);
+    if (editorRenderer.app) {
+      return editorRenderer.app;
+    }
 
     const app = modules.createPlayCore({
       playData,
-      canvas,
+      canvas: elements.canvas,
       playShell: null,
       playHeader: null,
       playStage: null,
@@ -467,310 +391,46 @@
     });
 
     if (!app) {
-      throw new Error("Could not initialize the solver.");
+      return null;
     }
 
-    app.render = function () {};
-    modules.registerGameplayFunctions(app);
-
-    if (typeof app.tryMovePlayersInstant !== "function") {
-      throw new Error("Instant movement is not available to the solver.");
-    }
-
+    modules.registerRenderFunctions(app);
+    editorRenderer.app = app;
     return app;
   }
 
-  function compareSolverNodes(left, right) {
-    return left.priority - right.priority || left.cost - right.cost || left.order - right.order;
-  }
+  function renderEditorScene() {
+    const playData = buildEditorRenderPlayData();
+    const shouldStartNoiseTicker = !editorRenderer.app;
+    const app = ensureEditorRenderApp(playData);
 
-  class SolverHeap {
-    constructor() {
-      this.items = [];
+    if (!app || typeof app.applyLevelState !== "function") {
+      return;
     }
 
-    get size() {
-      return this.items.length;
-    }
-
-    push(item) {
-      this.items.push(item);
-      this.bubbleUp(this.items.length - 1);
-    }
-
-    pop() {
-      if (this.items.length === 0) {
-        return null;
-      }
-
-      const first = this.items[0];
-      const last = this.items.pop();
-
-      if (this.items.length > 0) {
-        this.items[0] = last;
-        this.bubbleDown(0);
-      }
-
-      return first;
-    }
-
-    bubbleUp(index) {
-      let currentIndex = index;
-
-      while (currentIndex > 0) {
-        const parentIndex = Math.floor((currentIndex - 1) / 2);
-
-        if (compareSolverNodes(this.items[parentIndex], this.items[currentIndex]) <= 0) {
-          return;
-        }
-
-        [this.items[parentIndex], this.items[currentIndex]] = [
-          this.items[currentIndex],
-          this.items[parentIndex]
-        ];
-        currentIndex = parentIndex;
-      }
-    }
-
-    bubbleDown(index) {
-      let currentIndex = index;
-
-      while (true) {
-        const leftIndex = currentIndex * 2 + 1;
-        const rightIndex = currentIndex * 2 + 2;
-        let smallestIndex = currentIndex;
-
-        if (
-          leftIndex < this.items.length &&
-          compareSolverNodes(this.items[leftIndex], this.items[smallestIndex]) < 0
-        ) {
-          smallestIndex = leftIndex;
-        }
-
-        if (
-          rightIndex < this.items.length &&
-          compareSolverNodes(this.items[rightIndex], this.items[smallestIndex]) < 0
-        ) {
-          smallestIndex = rightIndex;
-        }
-
-        if (smallestIndex === currentIndex) {
-          return;
-        }
-
-        [this.items[currentIndex], this.items[smallestIndex]] = [
-          this.items[smallestIndex],
-          this.items[currentIndex]
-        ];
-        currentIndex = smallestIndex;
-      }
-    }
-  }
-
-  function solveWithAStar(app, initialSnapshot) {
-    const open = new SolverHeap();
-    const bestCostByKey = new Map();
-    let order = 0;
-    let expanded = 0;
-    const initialKey = solverStateKey(initialSnapshot);
-
-    bestCostByKey.set(initialKey, 0);
-    open.push({
-      snapshot: initialSnapshot,
-      cost: 0,
-      path: "",
-      priority: solverHeuristic(initialSnapshot),
-      order: order
-    });
-    order += 1;
-
-    while (open.size > 0) {
-      const current = open.pop();
-      const currentKey = solverStateKey(current.snapshot);
-
-      if (current.cost !== bestCostByKey.get(currentKey)) {
-        continue;
-      }
-
-      if (isSolvedSolverSnapshot(current.snapshot)) {
-        return {
-          status: "solved",
-          moves: current.cost,
-          path: current.path,
-          expanded
-        };
-      }
-
-      expanded += 1;
-
-      if (expanded > solverMaxExpandedStates) {
-        return {
-          status: "capped",
-          expanded,
-          maxExpanded: solverMaxExpandedStates
-        };
-      }
-
-      solverDirections.forEach((direction) => {
-        restoreSolverSnapshot(app, current.snapshot);
-        const moveResult = app.tryMovePlayersInstant(direction.dx, direction.dy);
-
-        if (!moveResult?.moved) {
-          return;
-        }
-
-        const nextSnapshot = captureSolverSnapshot(app);
-        const nextCost = current.cost + 1;
-        const nextKey = solverStateKey(nextSnapshot);
-        const bestKnownCost = bestCostByKey.get(nextKey);
-
-        if (typeof bestKnownCost === "number" && bestKnownCost <= nextCost) {
-          return;
-        }
-
-        bestCostByKey.set(nextKey, nextCost);
-        open.push({
-          snapshot: nextSnapshot,
-          cost: nextCost,
-          path: current.path + direction.label,
-          priority: nextCost + solverHeuristic(nextSnapshot),
-          order
-        });
-        order += 1;
-      });
-    }
-
-    return {
-      status: "unsolved",
-      expanded
-    };
-  }
-
-  function canCollectGemAtMoveEndpoint(app, move) {
-    if (!isSolverPlayerActor(move.actor) || move.toRemoved) {
-      return false;
-    }
-
-    const toElevation = move.toElevation ?? move.actor.elevation ?? 0;
-    const fromElevation = move.fromElevation ?? 0;
-
-    return toElevation === 0 || (fromElevation === 0 && app.isPlayerLift(move.toX, move.toY));
-  }
-
-  function recordGemPlacementCandidates(app, moveResult, cost, path, bestCandidateByCell) {
-    moveResult.moves.forEach((move) => {
-      if (!canCollectGemAtMoveEndpoint(app, move)) {
-        return;
-      }
-
-      if (!isTerrainOnlyGemPlacementCell(move.toX, move.toY)) {
-        return;
-      }
-
-      const key = move.toX + "," + move.toY;
-      const previousCandidate = bestCandidateByCell.get(key);
-
-      if (previousCandidate && previousCandidate.moves <= cost) {
-        return;
-      }
-
-      bestCandidateByCell.set(key, {
-        x: move.toX,
-        y: move.toY,
-        moves: cost,
-        path
-      });
-    });
-  }
-
-  function hardestGemPlacementCandidate(bestCandidateByCell) {
-    let hardest = null;
-
-    bestCandidateByCell.forEach((candidate) => {
-      if (!hardest || candidate.moves > hardest.moves) {
-        hardest = candidate;
-      }
+    app.applyLevelState(playData, {
+      deferRender: true,
+      immediateCamera: true,
+      resetHistory: true,
+      resetLevelEntry: true
     });
 
-    return hardest;
-  }
-
-  function findHardestGemPlacement(app, initialSnapshot) {
-    const open = new SolverHeap();
-    const bestCostByKey = new Map();
-    const bestCandidateByCell = new Map();
-    let order = 0;
-    let expanded = 0;
-    const initialKey = solverStateKey(initialSnapshot);
-
-    bestCostByKey.set(initialKey, 0);
-    open.push({
-      snapshot: initialSnapshot,
-      cost: 0,
-      path: "",
-      priority: 0,
-      order
-    });
-    order += 1;
-
-    while (open.size > 0) {
-      const current = open.pop();
-      const currentKey = solverStateKey(current.snapshot);
-
-      if (current.cost !== bestCostByKey.get(currentKey)) {
-        continue;
-      }
-
-      expanded += 1;
-
-      if (expanded > solverMaxExpandedStates) {
-        return {
-          status: "capped",
-          candidate: hardestGemPlacementCandidate(bestCandidateByCell),
-          expanded,
-          maxExpanded: solverMaxExpandedStates
-        };
-      }
-
-      solverDirections.forEach((direction) => {
-        restoreSolverSnapshot(app, current.snapshot);
-        const moveResult = app.tryMovePlayersInstant(direction.dx, direction.dy);
-
-        if (!moveResult?.moved) {
-          return;
-        }
-
-        const nextCost = current.cost + 1;
-        const nextPath = current.path + direction.label;
-        const nextSnapshot = captureSolverSnapshot(app);
-        const nextKey = solverStateKey(nextSnapshot);
-        const bestKnownCost = bestCostByKey.get(nextKey);
-
-        recordGemPlacementCandidates(app, moveResult, nextCost, nextPath, bestCandidateByCell);
-
-        if (typeof bestKnownCost === "number" && bestKnownCost <= nextCost) {
-          return;
-        }
-
-        bestCostByKey.set(nextKey, nextCost);
-        open.push({
-          snapshot: nextSnapshot,
-          cost: nextCost,
-          path: nextPath,
-          priority: nextCost,
-          order
-        });
-        order += 1;
-      });
+    if (shouldStartNoiseTicker) {
+      app.syncNoiseTicker();
     }
 
-    const candidate = hardestGemPlacementCandidate(bestCandidateByCell);
+    app.render();
 
-    return {
-      status: candidate ? "found" : "none",
-      candidate,
-      expanded
-    };
+    const preloadVersion = editorRenderer.preloadVersion + 1;
+    editorRenderer.preloadVersion = preloadVersion;
+
+    app.preloadImagesForLevelState(playData)
+      .then(() => {
+        if (editorRenderer.app === app && editorRenderer.preloadVersion === preloadVersion) {
+          app.render();
+        }
+      })
+      .catch(() => {});
   }
 
   function setStatus(message, tone) {
@@ -789,6 +449,14 @@
     const hasGem = levelHasGem();
     const hasPlayer = levelHasPlayer();
 
+    if (state.isSolverBusy) {
+      elements.solveLevel.disabled = true;
+      elements.solveLevel.title = "Search is running.";
+      elements.placeGem.disabled = true;
+      elements.placeGem.title = "Search is running.";
+      return;
+    }
+
     elements.solveLevel.disabled = !hasGem;
     elements.solveLevel.title = hasGem
       ? "Run A* from the current editor grid."
@@ -800,6 +468,10 @@
   }
 
   function syncLevelSelectors() {
+    if (!elements.levelColumn || !elements.levelRow) {
+      return;
+    }
+
     const coordinates = parseLevelCoordinates(state.levelId);
 
     if (!coordinates) {
@@ -811,6 +483,10 @@
   }
 
   function renderLevelSelectors() {
+    if (!elements.levelColumn || !elements.levelRow) {
+      return;
+    }
+
     const columnOptions = worldColumns
       .map((letter) => '<option value="' + escapeHtml(letter) + '">' + escapeHtml(letter) + "</option>")
       .join("");
@@ -826,31 +502,162 @@
   function renderPalette() {
     elements.palette.innerHTML = authorData.palette
       .map((tool) => {
-        const swatchContents = tool.imageUrl
-          ? '<img src="' + escapeHtml(tool.imageUrl) + '" alt="">'
-          : '<span>' + escapeHtml(tool.token) + "</span>";
+        const previewUrl = palettePreviewRenderer.previewsByToken.get(tool.token);
+        const swatchContents = previewUrl
+          ? '<img src="' + escapeHtml(previewUrl) + '" alt="">'
+          : '<span class="palette__swatch-placeholder" aria-hidden="true"></span>';
+        const accessibleLabel = tool.label + " (" + tool.token + ")";
 
         return (
           '<button class="tool-button palette__button' +
           (tool.token === state.selectedToken ? " is-active" : "") +
           '" type="button" data-token="' +
           escapeHtml(tool.token) +
+          '" aria-label="' +
+          escapeHtml(accessibleLabel) +
+          '" title="' +
+          escapeHtml(accessibleLabel) +
           '">' +
           '<span class="palette__swatch">' +
           swatchContents +
           "</span>" +
-          '<span class="palette__meta">' +
-          '<span class="palette__label">' +
-          escapeHtml(tool.label) +
-          "</span>" +
           '<span class="palette__token">' +
           escapeHtml(tool.token) +
-          "</span>" +
           "</span>" +
           "</button>"
         );
       })
       .join("");
+  }
+
+  function createPalettePreviewPlayData() {
+    const stride = 3;
+    const columns = Math.max(1, Math.min(4, authorData.palette.length));
+    const rows = Math.max(1, Math.ceil(authorData.palette.length / columns));
+    const width = columns * stride;
+    const height = rows * stride;
+    const cells = createBlankCells(width, height, authorData.defaultFloorToken);
+    const positionsByToken = new Map();
+
+    authorData.palette.forEach((tool, index) => {
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      const x = column * stride + 1;
+      const y = row * stride + 1;
+
+      cells[y][x] = tool.token;
+      positionsByToken.set(tool.token, { x, y });
+    });
+
+    return {
+      playData: buildPlayData({
+        cameraView: { width, height },
+        cells,
+        gameId: authorData.game.id,
+        height,
+        includeGems: true,
+        levelId: "__palette_preview__",
+        levelLabel: "Palette",
+        width
+      }),
+      positionsByToken
+    };
+  }
+
+  function cropPalettePreview(sceneCanvas, position) {
+    const sourceSize = 80;
+    const previewCanvas = document.createElement("canvas");
+    const previewContext = previewCanvas.getContext("2d");
+
+    if (!previewContext) {
+      return "";
+    }
+
+    const sourceCenterX = position.x * editorTileSize + editorTileSize / 2;
+    const sourceCenterY = position.y * editorTileSize + editorTileSize / 2;
+    const sourceX = Math.round(sourceCenterX - sourceSize / 2);
+    const sourceY = Math.round(sourceCenterY - sourceSize / 2 - 8);
+
+    previewCanvas.width = sourceSize;
+    previewCanvas.height = sourceSize;
+    previewContext.imageSmoothingEnabled = true;
+    previewContext.fillStyle = "#d6bd94";
+    previewContext.fillRect(0, 0, sourceSize, sourceSize);
+    previewContext.drawImage(
+      sceneCanvas,
+      sourceX,
+      sourceY,
+      sourceSize,
+      sourceSize,
+      0,
+      0,
+      sourceSize,
+      sourceSize
+    );
+
+    return previewCanvas.toDataURL("image/png");
+  }
+
+  async function renderPalettePreviews() {
+    if (palettePreviewRenderer.promise) {
+      return palettePreviewRenderer.promise;
+    }
+
+    palettePreviewRenderer.promise = (async function () {
+      const modules = window.PlayModules || {};
+
+      if (
+        typeof modules.createPlayCore !== "function" ||
+        typeof modules.registerRenderFunctions !== "function"
+      ) {
+        return;
+      }
+
+      const { playData, positionsByToken } = createPalettePreviewPlayData();
+      const canvas = document.createElement("canvas");
+      const app = modules.createPlayCore({
+        playData,
+        canvas,
+        playShell: null,
+        playHeader: null,
+        playStage: null,
+        mazeFrame: null,
+        fuzzyToggle: null
+      });
+
+      if (!app) {
+        return;
+      }
+
+      modules.registerRenderFunctions(app);
+      await app.preloadImagesForLevelState(playData);
+      app.setupCanvas();
+      app.liveRaisedPlayerGates = app.computeRaisedPlayerGateSet();
+      app.syncGateAnimationTargets(0);
+      app.syncPlayerLiftAnimationTargets(0);
+      app.renderCompositor.drawScene(0);
+
+      const previewsByToken = new Map();
+      positionsByToken.forEach((position, token) => {
+        const previewUrl = cropPalettePreview(app.sceneCanvas, position);
+
+        if (previewUrl) {
+          previewsByToken.set(token, previewUrl);
+        }
+      });
+
+      palettePreviewRenderer.previewsByToken = previewsByToken;
+      renderPalette();
+    })().catch(() => {});
+
+    return palettePreviewRenderer.promise;
+  }
+
+  function renderSelectedTool() {
+    const tool = toolByToken.get(state.selectedToken);
+
+    elements.selectedToolLabel.textContent = state.selectedToken;
+    elements.selectedToolLabel.title = tool ? tool.label : state.selectedToken;
   }
 
   function renderNeighborButtons() {
@@ -870,9 +677,7 @@
     const isSelected = state.selectedCell.x === x && state.selectedCell.y === y;
 
     button.className = "author-grid__cell" + (isSelected ? " is-selected" : "");
-    button.textContent = value;
-    button.style.background = descriptor.tone.background;
-    button.style.color = descriptor.tone.color;
+    button.textContent = "";
     button.setAttribute(
       "aria-label",
       "Cell " + (x + 1) + ", " + (y + 1) + ": " + value + " (" + descriptor.label + ")"
@@ -880,14 +685,83 @@
     button.title = "Cell " + (x + 1) + ", " + (y + 1) + ": " + value;
   }
 
-  function renderGrid() {
+  function readPixelValue(value) {
+    const parsed = parseFloat(value);
+
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function clampEditorTileSize(value) {
+    return Math.max(minimumEditorTileSize, Math.min(editorTileSize, Math.floor(value)));
+  }
+
+  function measureEditorTileSize() {
+    const shellStyles = window.getComputedStyle(elements.gridShell);
+    const paddingX =
+      readPixelValue(shellStyles.paddingLeft) + readPixelValue(shellStyles.paddingRight);
+    const paddingY =
+      readPixelValue(shellStyles.paddingTop) + readPixelValue(shellStyles.paddingBottom);
+    const viewportHeight =
+      window.visualViewport?.height || window.innerHeight || state.height * editorTileSize;
+    const shellRect = elements.gridShell.getBoundingClientRect();
+    const cappedTop = Math.max(0, Math.min(shellRect.top, Math.max(120, viewportHeight * 0.28)));
+    const availableWidth = Math.max(
+      minimumEditorTileSize,
+      elements.gridShell.clientWidth - paddingX - editorGridOutlineSize
+    );
+    const availableHeight = Math.max(
+      minimumEditorTileSize,
+      viewportHeight - cappedTop - paddingY - editorGridOutlineSize - 24
+    );
+    const widthTileSize = availableWidth / Math.max(1, state.width);
+    const heightTileSize = availableHeight / Math.max(1, state.height);
+
+    return clampEditorTileSize(Math.min(widthTileSize, heightTileSize));
+  }
+
+  function syncEditorGridLayout() {
+    const displayTileSize = measureEditorTileSize();
+    const gridWidth = state.width * displayTileSize;
+    const gridHeight = state.height * displayTileSize;
+
+    elements.grid.style.setProperty("--editor-cell-size", displayTileSize + "px");
+    elements.grid.style.width = gridWidth + "px";
+    elements.grid.style.height = gridHeight + "px";
+    elements.hitGrid.style.gridTemplateColumns =
+      "repeat(" + state.width + ", " + displayTileSize + "px)";
+    elements.hitGrid.style.gridTemplateRows =
+      "repeat(" + state.height + ", " + displayTileSize + "px)";
+
+    const gridShellHeight = Math.ceil(elements.gridShell.getBoundingClientRect().height);
+    if (Number.isFinite(gridShellHeight) && gridShellHeight > 0) {
+      elements.sidebar.style.setProperty("--author-level-tray-height", gridShellHeight + "px");
+    }
+  }
+
+  function scheduleEditorGridLayout() {
+    if (editorRenderer.layoutFrameId !== null) {
+      return;
+    }
+
+    editorRenderer.layoutFrameId = window.requestAnimationFrame(() => {
+      editorRenderer.layoutFrameId = null;
+      syncEditorGridLayout();
+    });
+  }
+
+  function renderGrid(options = {}) {
     const cellCount = state.width * state.height;
 
-    elements.grid.style.gridTemplateColumns =
-      "repeat(" + state.width + ", var(--author-cell-size, 32px))";
+    syncEditorGridLayout();
 
-    if (elements.grid.children.length !== cellCount) {
-      elements.grid.innerHTML = "";
+    if (
+      elements.hitGrid.children.length !== cellCount ||
+      elements.hitGrid.dataset.width !== String(state.width) ||
+      elements.hitGrid.dataset.height !== String(state.height)
+    ) {
+      elements.hitGrid.innerHTML = "";
+      elements.hitGrid.dataset.width = String(state.width);
+      elements.hitGrid.dataset.height = String(state.height);
 
       for (let y = 0; y < state.height; y += 1) {
         for (let x = 0; x < state.width; x += 1) {
@@ -895,16 +769,20 @@
           button.type = "button";
           button.dataset.x = String(x);
           button.dataset.y = String(y);
-          elements.grid.appendChild(button);
+          elements.hitGrid.appendChild(button);
         }
       }
     }
 
-    Array.from(elements.grid.children).forEach((button) => {
+    Array.from(elements.hitGrid.children).forEach((button) => {
       const x = Number(button.dataset.x);
       const y = Number(button.dataset.y);
       updateCellButton(button, x, y);
     });
+
+    if (options.renderScene !== false) {
+      renderEditorScene();
+    }
   }
 
   function renderSelectedCell() {
@@ -933,13 +811,25 @@
   function renderMeta() {
     elements.boardWidth.value = String(state.width);
     elements.boardHeight.value = String(state.height);
-    elements.currentFileName.textContent = state.filePath;
+    if (elements.boardSizeLabel) {
+      elements.boardSizeLabel.textContent = state.width + " x " + state.height;
+    }
+    if (elements.currentFileName) {
+      elements.currentFileName.textContent = state.filePath;
+    }
+    if (elements.currentLevelName) {
+      elements.currentLevelName.textContent = state.levelId.replace("level_", "");
+    }
     elements.playLink.href = "/play/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId);
     elements.playLink.setAttribute("aria-label", "Play " + state.levelId);
     syncSolverButtonState();
   }
 
   function renderExistingLevels() {
+    if (!elements.existingLevels) {
+      return;
+    }
+
     const levelIds = new Set(authorData.existingLevels.map((level) => level.id));
 
     if (state.exists && !levelIds.has(state.levelId)) {
@@ -973,6 +863,7 @@
     renderStatus();
     renderMeta();
     renderNeighborButtons();
+    renderSelectedTool();
     renderGrid();
     renderSelectedCell();
     renderRawOutput();
@@ -986,6 +877,7 @@
 
     state.selectedToken = token;
     renderPalette();
+    renderSelectedTool();
   }
 
   function selectCell(x, y) {
@@ -993,7 +885,7 @@
       x: Math.max(0, Math.min(state.width - 1, x)),
       y: Math.max(0, Math.min(state.height - 1, y))
     };
-    renderGrid();
+    renderGrid({ renderScene: false });
     renderSelectedCell();
   }
 
@@ -1013,7 +905,12 @@
     }
 
     state.cells[y][x] = normalizedValue;
-    selectCell(x, y);
+    state.selectedCell = {
+      x: Math.max(0, Math.min(state.width - 1, x)),
+      y: Math.max(0, Math.min(state.height - 1, y))
+    };
+    renderGrid();
+    renderSelectedCell();
     markDirty();
   }
 
@@ -1323,13 +1220,20 @@
     }
 
     setStatus("Place Gem running reachability search...", "warning");
-    elements.placeGem.disabled = true;
+    state.isSolverBusy = true;
+    syncSolverButtonState();
+    renderSolverProgress("Place Gem", 0, solverMaxExpandedStates);
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     try {
-      const app = createSolverApp(buildSolverPlayData({ includeGems: false }));
-      const result = findHardestGemPlacement(app, captureSolverSnapshot(app));
+      const engine = createSolverEngine(buildEditorPlayData({ includeGems: false }));
+      const result = await getMazeSolver().findHardestGemPlacement(engine, {
+        canPlaceGemAt: isTerrainOnlyGemPlacementCell,
+        maxExpandedStates: solverMaxExpandedStates,
+        onProgress: createSolverProgressReporter("Place Gem"),
+        progressYieldStateInterval: solverProgressYieldStateInterval
+      });
 
       if (result.candidate) {
         const placedValue = applyGemPlacement(result.candidate);
@@ -1339,7 +1243,7 @@
             : "Place Gem: placed hardest spot at ";
         const suffix =
           result.status === "capped"
-            ? " Search stopped after " + result.expanded + " states."
+            ? " Search stopped after " + formatStateCount(result.expanded) + " states."
             : "";
 
         setStatus(
@@ -1364,8 +1268,8 @@
       }
 
       setStatus(
-        "Place Gem: no reachable empty terrain cell found. Explored " +
-          result.expanded +
+          "Place Gem: no reachable empty terrain cell found. Explored " +
+          formatStateCount(result.expanded) +
           " state" +
           (result.expanded === 1 ? "" : "s") +
           ".",
@@ -1374,6 +1278,8 @@
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Place Gem failed.", "error");
     } finally {
+      state.isSolverBusy = false;
+      hideSolverProgress();
       syncSolverButtonState();
     }
   }
@@ -1385,7 +1291,7 @@
       return;
     }
 
-    const playData = buildSolverPlayData();
+    const playData = buildEditorPlayData();
 
     if (!playData.actors.some((actor) => isSolverPlayerActor(actor))) {
       setStatus("Solver needs a player first.", "error");
@@ -1394,13 +1300,19 @@
     }
 
     setStatus("Solver running A*...", "warning");
-    elements.solveLevel.disabled = true;
+    state.isSolverBusy = true;
+    syncSolverButtonState();
+    renderSolverProgress("A*", 0, solverMaxExpandedStates);
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     try {
-      const app = createSolverApp(playData);
-      const result = solveWithAStar(app, captureSolverSnapshot(app));
+      const engine = createSolverEngine(playData);
+      const result = await getMazeSolver().solveWithAStar(engine, {
+        maxExpandedStates: solverMaxExpandedStates,
+        onProgress: createSolverProgressReporter("A*"),
+        progressYieldStateInterval: solverProgressYieldStateInterval
+      });
 
       if (result.status === "solved") {
         setStatus(
@@ -1416,7 +1328,7 @@
       } else if (result.status === "unsolved") {
         setStatus(
           "Solver: not possible. Explored " +
-            result.expanded +
+            formatStateCount(result.expanded) +
             " state" +
             (result.expanded === 1 ? "" : "s") +
             ".",
@@ -1425,9 +1337,9 @@
       } else {
         setStatus(
           "Solver: no answer within " +
-            result.maxExpanded +
+            formatStateCount(result.maxExpanded) +
             " states. Search stopped after " +
-            result.expanded +
+            formatStateCount(result.expanded) +
             ".",
           "warning"
         );
@@ -1435,6 +1347,8 @@
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Solver failed.", "error");
     } finally {
+      state.isSolverBusy = false;
+      hideSolverProgress();
       syncSolverButtonState();
     }
   }
@@ -1471,9 +1385,98 @@
     }
   }
 
+  function resetDisclosureBodyStyles(body) {
+    body.style.height = "";
+    body.style.opacity = "";
+    body.style.overflow = "";
+  }
+
+  function setDisclosureOpen(details, shouldOpen) {
+    const body = details.querySelector(".author-disclosure__body");
+
+    if (!body || details.classList.contains("is-animating")) {
+      return;
+    }
+
+    const isOpen = details.hasAttribute("open");
+
+    if (isOpen === shouldOpen) {
+      return;
+    }
+
+    details.classList.add("is-animating");
+    body.style.overflow = "hidden";
+
+    let finished = false;
+    const finish = function () {
+      if (finished) {
+        return;
+      }
+
+      finished = true;
+      body.removeEventListener("transitionend", handleTransitionEnd);
+      details.classList.remove("is-animating");
+
+      if (!shouldOpen) {
+        details.removeAttribute("open");
+      }
+
+      resetDisclosureBodyStyles(body);
+      scheduleEditorGridLayout();
+    };
+    const handleTransitionEnd = function (event) {
+      if (event.target === body && event.propertyName === "height") {
+        finish();
+      }
+    };
+
+    body.addEventListener("transitionend", handleTransitionEnd);
+
+    if (shouldOpen) {
+      details.setAttribute("open", "");
+      body.style.height = "0px";
+      body.style.opacity = "0";
+
+      window.requestAnimationFrame(() => {
+        body.style.height = body.scrollHeight + "px";
+        body.style.opacity = "1";
+      });
+    } else {
+      body.style.height = body.scrollHeight + "px";
+      body.style.opacity = "1";
+
+      window.requestAnimationFrame(() => {
+        body.style.height = "0px";
+        body.style.opacity = "0";
+      });
+    }
+
+    window.setTimeout(finish, 260);
+  }
+
+  function initializeAuthorDisclosures() {
+    document.querySelectorAll(".author-disclosure").forEach((details) => {
+      const summary = details.querySelector(".author-disclosure__summary");
+      const body = details.querySelector(".author-disclosure__body");
+
+      if (!summary || !body) {
+        return;
+      }
+
+      details.removeAttribute("open");
+      resetDisclosureBodyStyles(body);
+      summary.addEventListener("click", function (event) {
+        event.preventDefault();
+        setDisclosureOpen(details, !details.hasAttribute("open"));
+      });
+    });
+  }
+
   renderLevelSelectors();
   renderPalette();
+  renderPalettePreviews();
   renderAll();
+  initializeAuthorDisclosures();
 
   elements.palette.addEventListener("click", function (event) {
     const button = event.target.closest("[data-token]");
@@ -1505,21 +1508,23 @@
     selectToken(descriptor.topToken);
   });
 
-  elements.levelColumn.addEventListener("change", function () {
-    const nextLevelId = levelIdFromSelectors();
+  if (elements.levelColumn && elements.levelRow) {
+    elements.levelColumn.addEventListener("change", function () {
+      const nextLevelId = levelIdFromSelectors();
 
-    if (nextLevelId !== state.levelId) {
-      loadLevel(nextLevelId);
-    }
-  });
+      if (nextLevelId !== state.levelId) {
+        loadLevel(nextLevelId);
+      }
+    });
 
-  elements.levelRow.addEventListener("change", function () {
-    const nextLevelId = levelIdFromSelectors();
+    elements.levelRow.addEventListener("change", function () {
+      const nextLevelId = levelIdFromSelectors();
 
-    if (nextLevelId !== state.levelId) {
-      loadLevel(nextLevelId);
-    }
-  });
+      if (nextLevelId !== state.levelId) {
+        loadLevel(nextLevelId);
+      }
+    });
+  }
 
   elements.resizeLevel.addEventListener("click", resizeLevel);
   elements.clearLevel.addEventListener("click", clearLevel);
@@ -1561,22 +1566,30 @@
     }
   });
 
-  elements.existingLevels.addEventListener("click", function (event) {
-    const link = event.target.closest("[data-level-id]");
+  if (elements.existingLevels) {
+    elements.existingLevels.addEventListener("click", function (event) {
+      const link = event.target.closest("[data-level-id]");
 
-    if (!link) {
-      return;
-    }
+      if (!link) {
+        return;
+      }
 
-    event.preventDefault();
-    const nextLevelId = link.dataset.levelId;
+      event.preventDefault();
+      const nextLevelId = link.dataset.levelId;
 
-    if (nextLevelId !== state.levelId) {
-      elements.levelColumn.value = parseLevelCoordinates(nextLevelId).column;
-      elements.levelRow.value = parseLevelCoordinates(nextLevelId).row;
-      loadLevel(nextLevelId);
-    }
-  });
+      if (nextLevelId !== state.levelId) {
+        if (elements.levelColumn && elements.levelRow) {
+          const coordinates = parseLevelCoordinates(nextLevelId);
+
+          if (coordinates) {
+            elements.levelColumn.value = coordinates.column;
+            elements.levelRow.value = coordinates.row;
+          }
+        }
+        loadLevel(nextLevelId);
+      }
+    });
+  }
 
   window.addEventListener("beforeunload", function (event) {
     if (!state.isDirty) {
@@ -1586,4 +1599,5 @@
     event.preventDefault();
     event.returnValue = "";
   });
+  window.addEventListener("resize", scheduleEditorGridLayout);
 })();

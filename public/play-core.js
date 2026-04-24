@@ -1,6 +1,81 @@
 (function () {
   const modules = window.PlayModules || (window.PlayModules = {});
 
+  function createFallbackPlayRules() {
+    const DEFAULT_WORLD_AXIS = Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    const WORLD_LEVEL_PATTERN = /^level_([A-Z])x([A-Z])$/;
+
+    function normalizeAxisValues(values, fallback = DEFAULT_WORLD_AXIS) {
+      const safeFallback = Array.isArray(fallback) ? fallback : DEFAULT_WORLD_AXIS;
+
+      if (!Array.isArray(values) || values.length === 0) {
+        return safeFallback.slice();
+      }
+
+      const normalized = values
+        .filter((value) => typeof value === "string" && /^[A-Z]$/.test(value))
+        .slice();
+
+      return normalized.length > 0 ? normalized : safeFallback.slice();
+    }
+
+    function parseWorldLevelId(levelId, worldColumns = DEFAULT_WORLD_AXIS, worldRows = DEFAULT_WORLD_AXIS) {
+      const match = String(levelId || "").match(WORLD_LEVEL_PATTERN);
+
+      if (!match) {
+        return null;
+      }
+
+      const columns = normalizeAxisValues(worldColumns);
+      const rows = normalizeAxisValues(worldRows);
+      const columnIndex = columns.indexOf(match[1]);
+      const rowIndex = rows.indexOf(match[2]);
+
+      if (columnIndex === -1 || rowIndex === -1) {
+        return null;
+      }
+
+      return {
+        columnIndex,
+        rowIndex
+      };
+    }
+
+    function worldLevelId(columnIndex, rowIndex, worldColumns = DEFAULT_WORLD_AXIS, worldRows = DEFAULT_WORLD_AXIS) {
+      const columns = normalizeAxisValues(worldColumns);
+      const rows = normalizeAxisValues(worldRows);
+
+      if (columns.length === 0 || rows.length === 0) {
+        return null;
+      }
+
+      const normalizedColumn = ((columnIndex % columns.length) + columns.length) % columns.length;
+      const normalizedRow = ((rowIndex % rows.length) + rows.length) % rows.length;
+      return `level_${columns[normalizedColumn]}x${rows[normalizedRow]}`;
+    }
+
+    function adjacentWorldLevelId(levelId, dx, dy, worldColumns = DEFAULT_WORLD_AXIS, worldRows = DEFAULT_WORLD_AXIS) {
+      const coordinates = parseWorldLevelId(levelId, worldColumns, worldRows);
+
+      if (!coordinates) {
+        return null;
+      }
+
+      return worldLevelId(coordinates.columnIndex + dx, coordinates.rowIndex + dy, worldColumns, worldRows);
+    }
+
+    return {
+      DEFAULT_WORLD_AXIS,
+      WORLD_LEVEL_PATTERN,
+      normalizeAxisValues,
+      parseWorldLevelId,
+      worldLevelId,
+      adjacentWorldLevelId
+    };
+  }
+
+  modules.PlayRules = modules.PlayRules || createFallbackPlayRules();
+
   modules.createPlayCore = function createPlayCore({
     playData,
     canvas,
@@ -19,16 +94,10 @@
       (typeof playData?.levelId === "string" && playData.levelId) ||
       (currentPathSegments[0] === "play" ? currentPathSegments[2] : "") ||
       "";
-    function normalizeAxisValues(values, fallback) {
-      if (!Array.isArray(values) || values.length === 0) {
-        return fallback.slice();
-      }
+    const playRules = modules.PlayRules;
 
-      const normalized = values
-        .filter((value) => typeof value === "string" && /^[A-Z]$/.test(value))
-        .slice();
-
-      return normalized.length > 0 ? normalized : fallback.slice();
+    if (!playRules) {
+      throw new Error("PlayRules must be loaded before play-core.js");
     }
 
     function normalizeViewportTiles(cameraView, fallbackWidth, fallbackHeight) {
@@ -41,15 +110,15 @@
       };
     }
 
-    const defaultWorldAxis = Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    const defaultWorldAxis = playRules.DEFAULT_WORLD_AXIS;
     const initialViewportTiles = normalizeViewportTiles(playData?.cameraView, 10, 10);
     const app = {
       playData,
       currentGameId,
       currentLevelId,
       currentLevelLabel: playData.levelLabel || currentLevelId,
-      worldColumns: normalizeAxisValues(playData?.worldColumns, defaultWorldAxis),
-      worldRows: normalizeAxisValues(playData?.worldRows, defaultWorldAxis),
+      worldColumns: playRules.normalizeAxisValues(playData?.worldColumns, defaultWorldAxis),
+      worldRows: playRules.normalizeAxisValues(playData?.worldRows, defaultWorldAxis),
       canvas,
       playShell,
       playHeader,
@@ -145,43 +214,15 @@
     app.horizontalNeighborLevelStates = new Map();
 
     function parseWorldLevelId(levelId) {
-      const match = String(levelId || "").match(/^level_([A-Z])x([A-Z])$/);
-
-      if (!match) {
-        return null;
-      }
-
-      const columnIndex = app.worldColumns.indexOf(match[1]);
-      const rowIndex = app.worldRows.indexOf(match[2]);
-
-      if (columnIndex === -1 || rowIndex === -1) {
-        return null;
-      }
-
-      return {
-        columnIndex,
-        rowIndex
-      };
+      return playRules.parseWorldLevelId(levelId, app.worldColumns, app.worldRows);
     }
 
     function worldLevelId(columnIndex, rowIndex) {
-      if (app.worldColumns.length === 0 || app.worldRows.length === 0) {
-        return null;
-      }
-
-      const normalizedColumn = ((columnIndex % app.worldColumns.length) + app.worldColumns.length) % app.worldColumns.length;
-      const normalizedRow = ((rowIndex % app.worldRows.length) + app.worldRows.length) % app.worldRows.length;
-      return `level_${app.worldColumns[normalizedColumn]}x${app.worldRows[normalizedRow]}`;
+      return playRules.worldLevelId(columnIndex, rowIndex, app.worldColumns, app.worldRows);
     }
 
     function adjacentWorldLevelId(levelId, dx, dy) {
-      const coordinates = parseWorldLevelId(levelId);
-
-      if (!coordinates) {
-        return null;
-      }
-
-      return worldLevelId(coordinates.columnIndex + dx, coordinates.rowIndex + dy);
+      return playRules.adjacentWorldLevelId(levelId, dx, dy, app.worldColumns, app.worldRows);
     }
 
     function rememberHorizontalNeighborLevelState(levelState) {
@@ -823,8 +864,8 @@
       app.gateRenderOverride = null;
       app.currentLevelId = levelState.levelId || app.currentLevelId;
       app.currentLevelLabel = levelState.levelLabel || app.currentLevelLabel || app.currentLevelId;
-      app.worldColumns = normalizeAxisValues(levelState.worldColumns, app.worldColumns);
-      app.worldRows = normalizeAxisValues(levelState.worldRows, app.worldRows);
+      app.worldColumns = playRules.normalizeAxisValues(levelState.worldColumns, app.worldColumns);
+      app.worldRows = playRules.normalizeAxisValues(levelState.worldRows, app.worldRows);
       const viewportTiles = normalizeViewportTiles(
         levelState.cameraView,
         app.VIEWPORT_TILE_WIDTH,
