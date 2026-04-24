@@ -81,9 +81,28 @@ def config_tokens(config: dict[str, Any]) -> list[str]:
 
     tokens = config.get("tokens")
     if isinstance(tokens, list):
-        return [token for token in tokens if isinstance(token, str) and token]
+        return [
+            entry if isinstance(entry, str) else entry.get("token")
+            for entry in tokens
+            if (isinstance(entry, str) and entry) or (isinstance(entry, dict) and isinstance(entry.get("token"), str))
+        ]
 
     return []
+
+
+def config_token_entry(config: dict[str, Any], token: str) -> dict[str, Any]:
+    if config.get("token") == token:
+        return config
+
+    tokens = config.get("tokens")
+    if isinstance(tokens, list):
+        for entry in tokens:
+            if entry == token:
+                return {"token": token}
+            if isinstance(entry, dict) and entry.get("token") == token:
+                return entry
+
+    return {"token": token}
 
 
 def is_actor_object_name(object_name: str) -> bool:
@@ -149,8 +168,8 @@ class PlayerGate(MazeSprite):
 class PlayerLift(MazeSprite):
     token = "l"
 
-    def __init__(self, x: int, y: int) -> None:
-        self.raised = False
+    def __init__(self, x: int, y: int, *, raised: bool = False) -> None:
+        self.raised = raised
         super().__init__(x, y, name="player_lift")
 
 
@@ -321,12 +340,21 @@ class MazeWorld(GridWorld):
     def object_definition_for_token(self, token: str) -> dict[str, str] | None:
         for object_name, config in self.parser.get("objects", {}).items():
             if token in config_tokens(config):
-                return {"name": object_name, "token": token}
+                entry = config_token_entry(config, token)
+                return {
+                    "initial_raised": bool(entry.get("initial_raised") or config.get("initial_raised")),
+                    "name": object_name,
+                    "token": token,
+                }
         return None
 
     def build_sprite(self, object_name: str, x: int, y: int, *, token: str | None = None) -> MazeSprite:
         if object_name == "weightless_box":
             return WeightlessBox(x, y, group_key=token or WeightlessBox.token)
+
+        if object_name == "player_lift":
+            definition = self.object_definition_for_token(token or PlayerLift.token) or {}
+            return PlayerLift(x, y, raised=bool(definition.get("initial_raised")))
 
         sprite_class = self.object_classes.get(object_name, MazeSprite)
         return sprite_class(x, y)

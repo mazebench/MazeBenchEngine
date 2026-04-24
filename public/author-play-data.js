@@ -26,6 +26,10 @@
     const toolByToken = new Map(palette.map((tool) => [tool.token, tool]));
     const toolByName = new Map(palette.map((tool) => [tool.name, tool]));
 
+    function toolType(tool) {
+      return tool?.type || tool?.name;
+    }
+
     function normalizeCellValue(value) {
       const trimmedValue = String(value ?? "").trim();
 
@@ -78,7 +82,7 @@
     }
 
     function isActorTool(tool) {
-      return actorNames.has(tool?.name);
+      return actorNames.has(toolType(tool));
     }
 
     function buildTerrainCell(type, tool = null, options = {}) {
@@ -95,25 +99,27 @@
       const floorTool = toolByName.get("floor") || null;
       const exitTool = toolByName.get("exit") || null;
       const terrainTools = tools.filter((tool) => !isActorTool(tool));
-      const wallTool = terrainTools.find((tool) => tool.name === "wall") || null;
-      const exitCellTool = terrainTools.find((tool) => tool.name === "exit") || null;
+      const wallTool = terrainTools.find((tool) => toolType(tool) === "wall") || null;
+      const exitCellTool = terrainTools.find((tool) => toolType(tool) === "exit") || null;
       const terrainTool = wallTool || exitCellTool || terrainTools[0] || null;
 
       if (wallTool) {
-        const underlayTool = terrainTools.find((tool) => tool.name !== "wall") || floorTool;
+        const underlayTool = terrainTools.find((tool) => toolType(tool) !== "wall") || floorTool;
 
         return buildTerrainCell("wall", wallTool, {
-          underlay: buildTerrainCell(underlayTool?.name || "floor", underlayTool)
+          underlay: buildTerrainCell(toolType(underlayTool) || "floor", underlayTool)
         });
       }
 
-      if (terrainTool?.name === "exit") {
+      if (toolType(terrainTool) === "exit") {
         return buildTerrainCell("exit", exitTool || terrainTool);
       }
 
       if (terrainTool) {
-        return buildTerrainCell(terrainTool.name, terrainTool, {
-          raised: terrainTool.name === "player_lift" ? false : undefined
+        const terrainType = toolType(terrainTool);
+
+        return buildTerrainCell(terrainType, terrainTool, {
+          raised: terrainType === "player_lift" ? terrainTool.initialRaised === true : undefined
         });
       }
 
@@ -149,8 +155,8 @@
             }
 
             actors.push({
-              type: tool.name,
-              groupId: tool.name === "weightless_box" ? tool.token : null,
+              type: toolType(tool),
+              groupId: toolType(tool) === "weightless_box" ? tool.token : null,
               label: tool.label,
               imageUrl: tool.imageUrl || null,
               x,

@@ -12,6 +12,8 @@ const authorData = {
   palette: [
     { imageUrl: null, label: "Floor", name: "floor", token: "." },
     { imageUrl: null, label: "Wall", name: "wall", token: "W" },
+    { imageUrl: null, initialRaised: false, label: "Player Lift l", name: "player_lift", token: "l", type: "player_lift" },
+    { imageUrl: null, initialRaised: true, label: "Raised Player Lift", name: "player_lift", token: "L", type: "player_lift" },
     { imageUrl: null, label: "Player", name: "player", token: "P" },
     { imageUrl: "/assets/maze/images/gem.png", label: "Gem", name: "gem", token: "G" },
     {
@@ -65,5 +67,21 @@ assert.deepEqual(
 );
 assert.equal(adapter.getCellDescriptor("P+G").topToken, "G");
 assert.throws(() => adapter.normalizeCellValue("NOPE"), /Unknown token/);
+
+const loweredLiftPlayData = adapter.buildPlayData({
+  cells: [["l"]],
+  height: 1,
+  width: 1
+});
+assert.equal(loweredLiftPlayData.terrain[0][0].type, "player_lift");
+assert.equal(loweredLiftPlayData.terrain[0][0].raised, false);
+
+const raisedLiftPlayData = adapter.buildPlayData({
+  cells: [["L"]],
+  height: 1,
+  width: 1
+});
+assert.equal(raisedLiftPlayData.terrain[0][0].type, "player_lift");
+assert.equal(raisedLiftPlayData.terrain[0][0].raised, true);
 
 console.log("author play data tests passed");

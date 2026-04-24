@@ -126,10 +126,46 @@ function createMazeLevelService({
     }
 
     if (Array.isArray(config?.tokens)) {
-      return config.tokens.filter((token) => typeof token === "string" && token.length > 0);
+      return config.tokens
+        .map((entry) => (typeof entry === "string" ? entry : entry?.token))
+        .filter((token) => typeof token === "string" && token.length > 0);
     }
 
     return [];
+  }
+
+  function getDefinitionTokenEntries(config) {
+    if (typeof config?.token === "string" && config.token.length > 0) {
+      return [
+        {
+          initialRaised: config.initial_raised === true,
+          label: typeof config.label === "string" ? config.label : null,
+          token: config.token
+        }
+      ];
+    }
+
+    if (!Array.isArray(config?.tokens)) {
+      return [];
+    }
+
+    return config.tokens
+      .map((entry) => {
+        if (typeof entry === "string") {
+          return {
+            initialRaised: false,
+            label: null,
+            token: entry
+          };
+        }
+
+        return {
+          initialRaised: entry?.initial_raised === true,
+          label: typeof entry?.label === "string" ? entry.label : null,
+          token: entry?.token
+        };
+      })
+      .filter((entry) => typeof entry.token === "string" && entry.token.length > 0);
   }
 
   function getObjectDefinitions(game) {
@@ -138,10 +174,13 @@ function createMazeLevelService({
       const assetPath = relativeImagePath ? resolveGameAssetPath(game.id, relativeImagePath) : null;
 
       return {
+        initialRaised: config?.initial_raised === true,
         name,
         tokens: getDefinitionTokens(config),
+        tokenEntries: getDefinitionTokenEntries(config),
         imageUrl: assetPath ? buildGameAssetUrl(game.id, relativeImagePath) : null,
-        label: titleCase(name)
+        label: typeof config?.label === "string" ? config.label : titleCase(name),
+        type: typeof config?.type === "string" ? config.type : name
       };
     });
 
@@ -150,11 +189,13 @@ function createMazeLevelService({
       byToken: new Map(
         definitions
           .flatMap((definition) =>
-            definition.tokens.map((token) => [
-              token,
+            definition.tokenEntries.map((entry) => [
+              entry.token,
               {
                 ...definition,
-                token
+                initialRaised: definition.initialRaised || entry.initialRaised,
+                label: entry.label || definition.label,
+                token: entry.token
               }
             ])
           )
@@ -172,14 +213,20 @@ function createMazeLevelService({
     };
   }
 
+  function definitionType(definition) {
+    return definition?.type || definition?.name;
+  }
+
   function isActorDefinition(definition) {
+    const type = definitionType(definition);
+
     return (
-      definition?.name === "player" ||
-      definition?.name === "circle_player" ||
-      definition?.name === "box" ||
-      definition?.name === "gem" ||
-      definition?.name === "floating_floor" ||
-      definition?.name === "weightless_box"
+      type === "player" ||
+      type === "circle_player" ||
+      type === "box" ||
+      type === "gem" ||
+      type === "floating_floor" ||
+      type === "weightless_box"
     );
   }
 
@@ -189,8 +236,8 @@ function createMazeLevelService({
 
   function buildCellState(cellDefinitions, floorDefinition, exitDefinition) {
     const terrainDefinitions = cellDefinitions.filter((definition) => isTerrainDefinition(definition));
-    const wallDefinition = terrainDefinitions.find((definition) => definition.name === "wall") || null;
-    const exitCellDefinition = terrainDefinitions.find((definition) => definition.name === "exit") || null;
+    const wallDefinition = terrainDefinitions.find((definition) => definitionType(definition) === "wall") || null;
+    const exitCellDefinition = terrainDefinitions.find((definition) => definitionType(definition) === "exit") || null;
     const terrainDefinition =
       wallDefinition ||
       exitCellDefinition ||
@@ -199,23 +246,25 @@ function createMazeLevelService({
 
     if (wallDefinition) {
       const underlayDefinition =
-        terrainDefinitions.find((definition) => definition.name !== "wall") || floorDefinition || null;
+        terrainDefinitions.find((definition) => definitionType(definition) !== "wall") || floorDefinition || null;
 
       return buildTerrainCell("wall", wallDefinition, {
         underlay: buildTerrainCell(
-          underlayDefinition?.name || "floor",
+          definitionType(underlayDefinition) || "floor",
           underlayDefinition
         )
       });
     }
 
-    if (terrainDefinition?.name === "exit") {
+    if (definitionType(terrainDefinition) === "exit") {
       return buildTerrainCell("exit", exitDefinition || terrainDefinition);
     }
 
     if (terrainDefinition) {
-      return buildTerrainCell(terrainDefinition.name, terrainDefinition, {
-        raised: terrainDefinition.name === "player_lift" ? false : undefined
+      const terrainType = definitionType(terrainDefinition);
+
+      return buildTerrainCell(terrainType, terrainDefinition, {
+        raised: terrainType === "player_lift" ? terrainDefinition.initialRaised === true : undefined
       });
     }
 
@@ -264,8 +313,8 @@ function createMazeLevelService({
           }
 
           actors.push({
-            type: definition.name,
-            groupId: definition.name === "weightless_box" ? definition.token : null,
+            type: definitionType(definition),
+            groupId: definitionType(definition) === "weightless_box" ? definition.token : null,
             label: definition.label,
             imageUrl: definition.imageUrl,
             x: index,
@@ -409,17 +458,19 @@ function createMazeLevelService({
 
     Object.entries(game.parser?.objects || {}).forEach(([name, config]) => {
       const definition = definitions.byName.get(name);
-      const tokens = getDefinitionTokens(config);
 
-      tokens.forEach((token) => {
+      definition.tokenEntries.forEach((entry) => {
         palette.push({
           imageUrl: definition?.imageUrl || null,
           label:
-            tokens.length > 1
-              ? `${definition?.label || titleCase(name)} ${token}`
-              : definition?.label || titleCase(name),
+            entry.label ||
+            (definition.tokenEntries.length > 1
+              ? `${definition?.label || titleCase(name)} ${entry.token}`
+              : definition?.label || titleCase(name)),
+          initialRaised: definition.initialRaised || entry.initialRaised,
           name,
-          token
+          token: entry.token,
+          type: definition.type
         });
       });
     });

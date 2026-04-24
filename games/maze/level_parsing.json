@@ -21,7 +21,14 @@
       "token": "g"
     },
     "player_lift": {
-      "token": "l"
+      "tokens": [
+        "l",
+        {
+          "token": "L",
+          "label": "Raised Player Lift",
+          "initial_raised": true
+        }
+      ]
     },
     "box": {
       "token": "b",
