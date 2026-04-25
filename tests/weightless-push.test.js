@@ -354,6 +354,28 @@ asyncTests.push(
 
   assert.equal(transition?.nextLevelId, "level_BxA");
   assert.deepEqual([transition?.targetX, transition?.targetY], [0, 3]);
+  assert.equal(transition?.sourceType, "floor");
+}
+
+{
+  const edgePlayer = { type: "player", x: 7, y: 3, elevation: 1, removed: false };
+  const terrain = createTerrain(8, 8);
+  terrain[3][7] = { type: "wall" };
+  const app = createGameplayApp([edgePlayer], { terrain });
+  const transition = app.edgeTransitionForMove(1, 0);
+
+  assert.equal(transition?.nextLevelId, "level_BxA");
+  assert.deepEqual([transition?.targetX, transition?.targetY], [0, 3]);
+  assert.equal(transition?.sourceType, "wall");
+}
+
+{
+  const edgePlayer = { type: "player", x: 7, y: 3, elevation: 0, removed: false };
+  const terrain = createTerrain(8, 8);
+  terrain[3][7] = { type: "wall" };
+  const app = createGameplayApp([edgePlayer], { terrain });
+
+  assert.equal(app.edgeTransitionForMove(1, 0), null);
 }
 
 asyncTests.push(
@@ -388,6 +410,114 @@ asyncTests.push(
     assert.equal(app.currentLevelId, "level_BxA");
     assert.deepEqual([incomingPlayer.x, incomingPlayer.y], [0, 2]);
     assert.equal(app.moveHistory.at(-1)?.kind, "level-transition");
+  })()
+);
+
+asyncTests.push(
+  (async () => {
+    const edgePlayer = { type: "player", x: 7, y: 2, elevation: 0, removed: false };
+    const nextTerrain = createTerrain(8, 8);
+    nextTerrain[2][0] = { type: "wall" };
+    const app = createGameplayApp([edgePlayer], {
+      currentLevelId: "level_AxA",
+      loadLevelState: async (levelId) => ({
+        levelId,
+        levelLabel: levelId,
+        width: 8,
+        height: 8,
+        terrain: nextTerrain,
+        actors: []
+      })
+    });
+
+    const didTransition = await app.transitionToAdjacentLevel({
+      player: edgePlayer,
+      nextLevelId: "level_BxA",
+      sourceType: "floor",
+      dx: 1,
+      dy: 0,
+      targetX: 0,
+      targetY: 2
+    });
+
+    assert.equal(didTransition, false);
+    assert.equal(app.currentLevelId, "level_AxA");
+    assert.equal(app.moveHistory.length, 0);
+    assert.equal(app.isTransitioningLevel, false);
+  })()
+);
+
+asyncTests.push(
+  (async () => {
+    const edgePlayer = { type: "player", x: 7, y: 2, elevation: 1, removed: false };
+    const terrain = createTerrain(8, 8);
+    terrain[2][7] = { type: "wall" };
+    const nextTerrain = createTerrain(8, 8);
+    nextTerrain[2][0] = { type: "wall" };
+    const app = createGameplayApp([edgePlayer], {
+      currentLevelId: "level_AxA",
+      terrain,
+      loadLevelState: async (levelId) => ({
+        levelId,
+        levelLabel: levelId,
+        width: 8,
+        height: 8,
+        terrain: nextTerrain,
+        actors: []
+      })
+    });
+
+    const didTransition = await app.transitionToAdjacentLevel({
+      player: edgePlayer,
+      nextLevelId: "level_BxA",
+      sourceType: "wall",
+      dx: 1,
+      dy: 0,
+      targetX: 0,
+      targetY: 2
+    });
+    const incomingPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.equal(didTransition, true);
+    assert.equal(app.currentLevelId, "level_BxA");
+    assert.deepEqual([incomingPlayer.x, incomingPlayer.y], [0, 2]);
+    assert.equal(incomingPlayer.elevation, 1);
+  })()
+);
+
+asyncTests.push(
+  (async () => {
+    const edgePlayer = { type: "player", x: 7, y: 2, elevation: 1, removed: false };
+    const terrain = createTerrain(8, 8);
+    terrain[2][7] = { type: "wall" };
+    const nextTerrain = createTerrain(8, 8);
+    const app = createGameplayApp([edgePlayer], {
+      currentLevelId: "level_AxA",
+      terrain,
+      loadLevelState: async (levelId) => ({
+        levelId,
+        levelLabel: levelId,
+        width: 8,
+        height: 8,
+        terrain: nextTerrain,
+        actors: []
+      })
+    });
+
+    const didTransition = await app.transitionToAdjacentLevel({
+      player: edgePlayer,
+      nextLevelId: "level_BxA",
+      sourceType: "wall",
+      dx: 1,
+      dy: 0,
+      targetX: 0,
+      targetY: 2
+    });
+
+    assert.equal(didTransition, false);
+    assert.equal(app.currentLevelId, "level_AxA");
+    assert.equal(app.moveHistory.length, 0);
+    assert.equal(app.isTransitioningLevel, false);
   })()
 );
 

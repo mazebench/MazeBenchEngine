@@ -84,6 +84,22 @@
       return players.find((actor) => actor.type === preferredType) || players[0];
     }
 
+    function isAllowedEdgeTransition(sourceType, targetType) {
+      if (sourceType === "floor") {
+        return targetType === "floor" || targetType === "hole";
+      }
+
+      if (sourceType === "wall") {
+        return targetType === "wall";
+      }
+
+      return false;
+    }
+
+    function edgeTransitionElevationForTarget(targetType) {
+      return targetType === "wall" ? 1 : 0;
+    }
+
     function rememberCurrentLevelEntryState() {
       app.initialPositions = cloneActorPositions();
       app.initialTerrain = cloneTerrainState(state.terrain);
@@ -199,8 +215,15 @@
       }
 
       const player = players[0];
+      const sourceCell = terrainAt(player.x, player.y);
+      const sourceType = sourceCell?.type || "empty";
+      const sourceElevation = actorElevation(player);
 
-      if (actorElevation(player) !== 0 || terrainAt(player.x, player.y).type !== "floor") {
+      if (
+        (sourceType === "floor" && sourceElevation !== 0) ||
+        (sourceType === "wall" && sourceElevation !== 1) ||
+        (sourceType !== "floor" && sourceType !== "wall")
+      ) {
         return null;
       }
 
@@ -223,6 +246,7 @@
       return {
         player,
         nextLevelId,
+        sourceType,
         dx,
         dy,
         targetX: dx < 0 ? state.width - 1 : dx > 0 ? 0 : player.x,
@@ -256,11 +280,21 @@
         const nextLevelState = await loadLevelState(transition.nextLevelId);
         const levelStartPlayer = playerStartForLevelState(nextLevelState, transition.player.type);
         const reviveStartPlayer = levelStartPlayer ? { ...levelStartPlayer } : null;
-        const entersHole = terrainCellInLevelState(
+        const sourceType = transition.sourceType || terrainAt(transition.player.x, transition.player.y)?.type || "empty";
+        const targetCell = terrainCellInLevelState(
           nextLevelState,
           transition.targetX,
           transition.targetY
-        )?.type === "hole";
+        );
+        const targetType = targetCell?.type || "empty";
+
+        if (!isAllowedEdgeTransition(sourceType, targetType)) {
+          app.isTransitioningLevel = false;
+          return false;
+        }
+
+        const entersHole = targetType === "hole";
+        const targetElevation = edgeTransitionElevationForTarget(targetType);
         const transferredPlayer = {
           type: transition.player.type,
           groupId: transition.player.groupId ?? null,
@@ -269,7 +303,7 @@
           x: transition.targetX,
           y: transition.targetY,
           removed: false,
-          elevation: 0
+          elevation: targetElevation
         };
 
         nextLevelState.actors = [
