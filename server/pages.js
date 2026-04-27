@@ -261,6 +261,12 @@ function createPageRenderer({
                   </button>
                 </div>
                 <div class="author-control-row">
+                  <label class="field">
+                    <span>Search states</span>
+                    <input id="solver-max-states" type="number" min="1" step="1" value="1000000" inputmode="numeric" aria-label="Solver search state limit">
+                  </label>
+                </div>
+                <div class="author-control-row">
                   <button id="place-gem" class="tool-button" type="button">Place Gem</button>
                   <button id="solve-level" class="tool-button" type="button">Solver</button>
                   <button id="play-solution" class="tool-button" type="button">

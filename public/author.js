@@ -44,6 +44,7 @@
     solverProgressBar: document.getElementById("solver-progress-bar"),
     solverProgressText: document.getElementById("solver-progress-text"),
     solverProgressTrack: document.getElementById("solver-progress-track"),
+    solverMaxStates: document.getElementById("solver-max-states"),
     status: document.getElementById("author-status")
   };
 
@@ -95,7 +96,7 @@
     previewsByToken: new Map(),
     promise: null
   };
-  const solverMaxExpandedStates = 1000000;
+  const defaultSolverMaxExpandedStates = 1000000;
   const solverProgressYieldStateInterval = 4096;
   const solverProgressRenderIntervalMs = 80;
   const solutionDirections = {
@@ -306,6 +307,24 @@
     return Math.max(0, value).toLocaleString("en-US");
   }
 
+  function getSolverMaxExpandedStates() {
+    const value = Number(elements.solverMaxStates.value);
+
+    if (!Number.isFinite(value) || value < 1) {
+      return defaultSolverMaxExpandedStates;
+    }
+
+    return Math.max(1, Math.floor(value));
+  }
+
+  function normalizeSolverMaxExpandedStatesInput() {
+    const maxExpandedStates = getSolverMaxExpandedStates();
+
+    elements.solverMaxStates.value = String(maxExpandedStates);
+
+    return maxExpandedStates;
+  }
+
   function nextSolverProgressFrame() {
     return new Promise((resolve) => {
       if (typeof window.requestAnimationFrame === "function") {
@@ -359,14 +378,14 @@
     elements.solverProgressTrack.setAttribute("aria-valuenow", "0");
   }
 
-  function createSolverProgressReporter(label) {
+  function createSolverProgressReporter(label, maxExpandedStates) {
     let lastRenderAt = 0;
 
-    renderSolverProgress(label, 0, solverMaxExpandedStates);
+    renderSolverProgress(label, 0, maxExpandedStates);
 
     return async function reportSolverProgress(progress, force = false) {
       const expanded = progress?.expanded ?? 0;
-      const maxExpanded = progress?.maxExpanded ?? solverMaxExpandedStates;
+      const maxExpanded = progress?.maxExpanded ?? maxExpandedStates;
       const now =
         window.performance && typeof window.performance.now === "function"
           ? window.performance.now()
@@ -1268,7 +1287,8 @@
     setStatus("Place Gem running reachability search...", "warning");
     state.isSolverBusy = true;
     syncSolverButtonState();
-    renderSolverProgress("Place Gem", 0, solverMaxExpandedStates);
+    const maxExpandedStates = normalizeSolverMaxExpandedStatesInput();
+    renderSolverProgress("Place Gem", 0, maxExpandedStates);
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
@@ -1276,8 +1296,8 @@
       const engine = createSolverEngine(buildEditorPlayData({ includeGems: false }));
       const result = await getMazeSolver().findHardestGemPlacement(engine, {
         canPlaceGemAt: isTerrainOnlyGemPlacementCell,
-        maxExpandedStates: solverMaxExpandedStates,
-        onProgress: createSolverProgressReporter("Place Gem"),
+        maxExpandedStates,
+        onProgress: createSolverProgressReporter("Place Gem", maxExpandedStates),
         progressYieldStateInterval: solverProgressYieldStateInterval
       });
 
@@ -1348,15 +1368,16 @@
     setStatus("Solver running A*...", "warning");
     state.isSolverBusy = true;
     syncSolverButtonState();
-    renderSolverProgress("A*", 0, solverMaxExpandedStates);
+    const maxExpandedStates = normalizeSolverMaxExpandedStatesInput();
+    renderSolverProgress("A*", 0, maxExpandedStates);
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     try {
       const engine = createSolverEngine(playData);
       const result = await getMazeSolver().solveWithAStar(engine, {
-        maxExpandedStates: solverMaxExpandedStates,
-        onProgress: createSolverProgressReporter("A*"),
+        maxExpandedStates,
+        onProgress: createSolverProgressReporter("A*", maxExpandedStates),
         progressYieldStateInterval: solverProgressYieldStateInterval
       });
 
@@ -1696,6 +1717,7 @@
   });
   elements.placeGem.addEventListener("click", placeGem);
   elements.playSolution.addEventListener("click", playSolution);
+  elements.solverMaxStates.addEventListener("change", normalizeSolverMaxExpandedStatesInput);
   elements.applyCellValue.addEventListener("click", applySelectedCellValue);
   elements.cellValue.addEventListener("keydown", function (event) {
     if (event.key === "Enter") {
