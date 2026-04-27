@@ -52,6 +52,76 @@
       };
     }
 
+    function actorSnapshotsFromEngineState(engineState) {
+      return state.actors.map((actor, index) => ({
+        ...actor,
+        elevation: engineState.actorElevation[index] ?? actor.elevation ?? 0,
+        removed: Boolean(engineState.actorRemoved[index]),
+        x: engineState.actorX[index] ?? actor.x,
+        y: engineState.actorY[index] ?? actor.y
+      }));
+    }
+
+    function hasOrangeWallLowered(fromRaised, toRaised) {
+      for (const key of fromRaised) {
+        if (!toRaised.has(key)) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    function isOrangeButtonAt(x, y) {
+      return state.terrain[y]?.[x]?.type === "orange_button";
+    }
+
+    function preTerrainOrangeButtonLiftMoves(moves, fromRaisedOrangeWalls, toRaisedOrangeWalls) {
+      if (!hasOrangeWallLowered(fromRaisedOrangeWalls, toRaisedOrangeWalls)) {
+        return new Set();
+      }
+
+      const buttonPressingActors = new Set();
+      const buttonPressingWeightlessGroups = new Set();
+
+      moves.forEach((move) => {
+        const fromElevation = move.fromElevation ?? move.actor?.elevation ?? 0;
+        const toElevation = move.toElevation ?? fromElevation;
+
+        if (toElevation !== 0 || fromElevation <= toElevation || !isOrangeButtonAt(move.toX, move.toY)) {
+          return;
+        }
+
+        if (move.actor?.type === "weightless_box") {
+          buttonPressingWeightlessGroups.add(move.actor.groupId);
+          return;
+        }
+
+        buttonPressingActors.add(move.actor);
+      });
+
+      if (buttonPressingActors.size === 0 && buttonPressingWeightlessGroups.size === 0) {
+        return new Set();
+      }
+
+      return new Set(
+        moves.filter((move) => {
+          const fromElevation = move.fromElevation ?? move.actor?.elevation ?? 0;
+          const toElevation = move.toElevation ?? fromElevation;
+
+          if (toElevation !== 0 || fromElevation <= toElevation) {
+            return false;
+          }
+
+          return (
+            buttonPressingActors.has(move.actor) ||
+            (move.actor?.type === "weightless_box" &&
+              buttonPressingWeightlessGroups.has(move.actor.groupId))
+          );
+        })
+      );
+    }
+
     function iceSlideMoveMetadata(moves) {
       return moves
         .filter(({ iceSlide = false }) => iceSlide)
@@ -169,6 +239,14 @@
       const moveResult = engine.move(engineState, dx, dy);
       const moves = moveResult.moves.map(moveFromEngineRecord).filter(Boolean);
       const liftToggles = Array.isArray(moveResult.liftToggles) ? moveResult.liftToggles : [];
+      const finalRaisedOrangeWalls = computeRaisedOrangeWallSet(
+        actorSnapshotsFromEngineState(engineState)
+      );
+      const preTerrainLiftMoves = preTerrainOrangeButtonLiftMoves(
+        moves,
+        raisedOrangeWalls,
+        finalRaisedOrangeWalls
+      );
 
       if (moves.length > 0) {
         if (recordHistory) {
@@ -182,6 +260,7 @@
           app.orangeWallRenderOverride = raisedOrangeWalls;
           app.animateMoves(moves, null, {
             onFinish,
+            preTerrainLiftMoves,
             startLiftPhase: () => {
               liftToggles.forEach(({ x, y, raised }) => {
                 setPlayerLiftRaised(x, y, raised);

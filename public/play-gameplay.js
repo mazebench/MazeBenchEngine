@@ -209,30 +209,36 @@
       const liftStateMoves = moves.filter(
         ({ fromElevation = 0, toElevation = fromElevation }) => fromElevation !== toElevation
       );
+      const preTerrainLiftMoveSet =
+        options.preTerrainLiftMoves instanceof Set ? options.preTerrainLiftMoves : new Set();
+      const preTerrainLiftStateMoves = liftStateMoves.filter((move) =>
+        preTerrainLiftMoveSet.has(move)
+      );
+      const postTerrainLiftStateMoves = liftStateMoves.filter(
+        (move) => !preTerrainLiftMoveSet.has(move)
+      );
       const moveDuration =
         typeof durationMs === "number"
           ? durationMs
           : Math.max(MOVE_DURATION_MS, ...moves.map(moveDurationFor));
       const useIceSlideTiming = typeof durationMs !== "number";
+      const completedLiftMoves = new Set();
 
-      function startLiftPhase(nextPhase) {
-        if (startLiftPhaseCallback) {
-          startLiftPhaseCallback();
-          app.render();
-        }
-
-        if (liftStateMoves.length === 0) {
+      function runLiftAnimation(activeLiftMoves, nextPhase, options = {}) {
+        if (activeLiftMoves.length === 0) {
           nextPhase();
           return;
         }
 
+        const activeLiftMoveSet = new Set(activeLiftMoves);
+        const commitElevationAtEnd = options.commitElevationAtEnd === true;
         const liftStartTime = performance.now();
 
         function stepLift(now) {
           let hasActiveLift = false;
 
-          moves.forEach(
-            ({
+          moves.forEach((move) => {
+            const {
               actor,
               fromX,
               fromY,
@@ -244,7 +250,8 @@
               visibleDuringMove = false,
               fadeOut = false,
               toRemoved = false
-            }) => {
+            } = move;
+
               actor.renderX = liftPhaseFirst ? fromX : toX;
               actor.renderY = liftPhaseFirst ? fromY : toY;
               actor.renderInHole = false;
@@ -263,6 +270,12 @@
                 return;
               }
 
+              if (!activeLiftMoveSet.has(move)) {
+                actor.renderElevation = completedLiftMoves.has(move) ? toElevation : fromElevation;
+                actor.renderAlpha = fadeOut && toRemoved ? 0 : 1;
+                return;
+              }
+
               const duration =
                 toElevation > fromElevation
                   ? PLAYER_LIFT_RISE_DURATION_MS
@@ -277,8 +290,7 @@
               if (progress < 1) {
                 hasActiveLift = true;
               }
-            }
-          );
+          });
 
           app.render();
 
@@ -287,10 +299,39 @@
             return;
           }
 
+          activeLiftMoves.forEach((move) => {
+            completedLiftMoves.add(move);
+
+            if (commitElevationAtEnd) {
+              move.actor.elevation = move.toElevation ?? move.fromElevation ?? move.actor.elevation ?? 0;
+              move.actor.renderElevation = move.actor.elevation;
+            }
+          });
+
           nextPhase();
         }
 
         app.animationFrameId = window.requestAnimationFrame(stepLift);
+      }
+
+      function startLiftPhase(nextPhase) {
+        const startPostTerrainLiftPhase = () => {
+          if (startLiftPhaseCallback) {
+            startLiftPhaseCallback();
+            app.render();
+          }
+
+          runLiftAnimation(postTerrainLiftStateMoves, nextPhase);
+        };
+
+        if (preTerrainLiftStateMoves.length > 0) {
+          runLiftAnimation(preTerrainLiftStateMoves, startPostTerrainLiftPhase, {
+            commitElevationAtEnd: true
+          });
+          return;
+        }
+
+        startPostTerrainLiftPhase();
       }
 
       function startMovePhase(useToElevation = false) {

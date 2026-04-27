@@ -1014,7 +1014,7 @@
     }
 
     function actorElevation(actor) {
-      if (!isPlayerActor(actor)) {
+      if (!isPlayerActor(actor) && actor?.type !== "weightless_box") {
         return 0;
       }
 
@@ -1022,7 +1022,7 @@
     }
 
     function actorRenderElevation(actor) {
-      if (!isPlayerActor(actor)) {
+      if (!isPlayerActor(actor) && actor?.type !== "weightless_box") {
         return 0;
       }
 
@@ -1065,6 +1065,8 @@
         return {
           offsetX: 0,
           offsetY: 0,
+          renderElevation: 0,
+          surfaceLift: 0,
           scale: 1,
           sink: 0,
           centerX: 0,
@@ -1088,14 +1090,18 @@
 
       const offsetX = Math.round(anchor.renderX * app.TILE_SIZE) - anchor.x * app.TILE_SIZE;
       const offsetY = Math.round(anchor.renderY * app.TILE_SIZE) - anchor.y * app.TILE_SIZE;
+      const renderElevation = actorRenderElevation(anchor);
+      const surfaceLift = Math.round(app.TILE_SIZE * 0.26 * renderElevation);
 
       return {
         offsetX,
         offsetY,
+        renderElevation,
+        surfaceLift,
         scale: anchor.renderScale ?? 1,
         sink: anchor.renderSink ?? 0,
         centerX: ((minX + maxX + 1) * app.TILE_SIZE) / 2 + offsetX,
-        centerY: ((minY + maxY + 1) * app.TILE_SIZE) / 2 + offsetY
+        centerY: ((minY + maxY + 1) * app.TILE_SIZE) / 2 + offsetY - surfaceLift
       };
     }
 
@@ -1291,6 +1297,18 @@
       }
 
       return terrainHeight;
+    }
+
+    function weightlessGroupSupportedElevation(
+      members,
+      gateState = app.liveRaisedPlayerGates,
+      orangeWallState = app.liveRaisedOrangeWalls
+    ) {
+      return members.some(
+        (member) => terrainSurfaceHeightAt(member.x, member.y, gateState, orangeWallState) === 1
+      )
+        ? 1
+        : 0;
     }
 
     function computeRaisedPlayerGateSet(actors = app.state.actors) {
@@ -1879,17 +1897,35 @@
     function initializeActorElevations() {
       const gateState = computeRaisedPlayerGateSet(app.state.actors);
       const orangeWallState = computeRaisedOrangeWallSet(app.state.actors);
+      const initializedWeightlessGroups = new Set();
 
       app.state.actors.forEach((actor) => {
-        if (!isPlayerActor(actor)) {
+        if (isPlayerActor(actor)) {
+          const elevation = playerSurfaceHeightAt(actor.x, actor.y, gateState, orangeWallState) === 1 ? 1 : 0;
+          actor.elevation = elevation;
+          actor.renderElevation = elevation;
+          return;
+        }
+
+        if (actor.type !== "weightless_box") {
           actor.elevation = 0;
           actor.renderElevation = 0;
           return;
         }
 
-        const elevation = playerSurfaceHeightAt(actor.x, actor.y, gateState, orangeWallState) === 1 ? 1 : 0;
-        actor.elevation = elevation;
-        actor.renderElevation = elevation;
+        if (initializedWeightlessGroups.has(actor.groupId)) {
+          return;
+        }
+
+        initializedWeightlessGroups.add(actor.groupId);
+
+        const members = weightlessGroupMembers(actor.groupId);
+        const elevation = weightlessGroupSupportedElevation(members, gateState, orangeWallState);
+
+        members.forEach((member) => {
+          member.elevation = elevation;
+          member.renderElevation = elevation;
+        });
       });
     }
 

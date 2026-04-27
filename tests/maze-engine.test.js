@@ -263,4 +263,107 @@ function createState(playData) {
   assert.deepEqual([state.actorX[0], state.actorY[0]], [0, 0]);
 }
 
+{
+  const terrain = floorTerrain(2, 2);
+  terrain[0][0] = { type: "orange_button" };
+  terrain[0][1] = { type: "orange_wall" };
+  const { engine, state } = createState({
+    width: 2,
+    height: 2,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, removed: false }
+    ]
+  });
+
+  assert.equal(state.actorElevation[1], 0);
+
+  const result = engine.move(state, 0, 1);
+  const boxMove = result.moves.find((move) => move.actorIndex === 1);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorY[0]], [0, 1]);
+  assert.equal(state.actorElevation[1], 1);
+  assert.equal(boxMove.fromElevation, 0);
+  assert.equal(boxMove.toElevation, 1);
+}
+
+{
+  const terrain = floorTerrain(4, 1);
+  terrain[0][0] = { type: "orange_wall" };
+  terrain[0][1] = { type: "orange_wall" };
+  terrain[0][2] = { type: "orange_wall" };
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 2, y: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[1], state.actorY[1]], [2, 0]);
+  assert.deepEqual([state.actorX[2], state.actorY[2]], [3, 0]);
+  assert.equal(state.actorElevation[1], 1);
+  assert.equal(state.actorElevation[2], 1);
+}
+
+{
+  const terrain = floorTerrain(3, 1);
+  terrain[0][0] = { type: "orange_wall" };
+  terrain[0][1] = { type: "orange_wall" };
+  const { engine, state } = createState({
+    width: 3,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  const boxMove = result.moves.find((move) => move.actorIndex === 1);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[1], state.actorY[1]], [2, 0]);
+  assert.equal(state.actorElevation[1], 0);
+  assert.equal(state.actorRemoved[1], 0);
+  assert.equal(boxMove.fromElevation, 1);
+  assert.equal(boxMove.toElevation, 0);
+}
+
+{
+  const terrain = floorTerrain(3, 1);
+  terrain[0][0] = { type: "orange_wall" };
+  terrain[0][1] = { type: "orange_wall" };
+  terrain[0][2] = { type: "hole" };
+  const { engine, state } = createState({
+    width: 3,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  const boxMove = result.moves.find((move) => move.actorIndex === 1);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[1], state.actorY[1]], [2, 0]);
+  assert.equal(state.actorElevation[1], 0);
+  assert.equal(state.actorRemoved[1], 1);
+  assert.equal(boxMove.fromElevation, 1);
+  assert.equal(boxMove.toElevation, 0);
+  assert.equal(boxMove.toRemoved, true);
+}
+
 console.log("maze-engine tests passed");

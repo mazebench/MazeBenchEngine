@@ -47,10 +47,10 @@ function createGameplayApp(actors, options = {}) {
       actors
     },
     moveHistory: [],
-    MOVE_DURATION_MS: 0,
-    PLAYER_LIFT_RISE_DURATION_MS: 0,
-    PLAYER_LIFT_FALL_DURATION_MS: 0,
-    HOLE_FALL_DURATION_MS: 0,
+    MOVE_DURATION_MS: options.moveDurationMs ?? 0,
+    PLAYER_LIFT_RISE_DURATION_MS: options.playerLiftRiseDurationMs ?? 0,
+    PLAYER_LIFT_FALL_DURATION_MS: options.playerLiftFallDurationMs ?? 0,
+    HOLE_FALL_DURATION_MS: options.holeFallDurationMs ?? 0,
     PLAYER_REVIVE_BLINK_DURATION_MS: 0,
     HOLE_SINK_DISTANCE: 0,
     cameraX: 0,
@@ -128,7 +128,9 @@ function createGameplayApp(actors, options = {}) {
       return actor?.type === "player" || actor?.type === "circle_player";
     },
     actorElevation(actor) {
-      return actor?.type === "player" || actor?.type === "circle_player" ? actor?.elevation ?? 0 : 0;
+      return actor?.type === "player" || actor?.type === "circle_player" || actor?.type === "weightless_box"
+        ? actor?.elevation ?? 0
+        : 0;
     },
     isCollectibleActor(actor) {
       return actor?.type === "gem";
@@ -322,6 +324,92 @@ function createUShapeActors(extraActors = []) {
 
   assert.deepEqual([player.x, player.y], [3, 0]);
   assert.equal(player.removed, true);
+}
+
+{
+  const originalRequestAnimationFrame = window.requestAnimationFrame;
+  const originalCancelAnimationFrame = window.cancelAnimationFrame;
+  const queuedFrames = [];
+  window.requestAnimationFrame = (callback) => {
+    queuedFrames.push(callback);
+    return queuedFrames.length;
+  };
+  window.cancelAnimationFrame = () => {};
+
+  const buttonBox = {
+    type: "weightless_box",
+    groupId: "M0",
+    x: 2,
+    y: 0,
+    elevation: 1,
+    renderX: 1,
+    renderY: 0,
+    renderElevation: 1,
+    removed: false
+  };
+  const orangeWallPassenger = {
+    type: "player",
+    x: 1,
+    y: 0,
+    elevation: 1,
+    renderX: 1,
+    renderY: 0,
+    renderElevation: 1,
+    removed: false
+  };
+  const app = createGameplayApp([buttonBox, orangeWallPassenger], {
+    moveDurationMs: 1,
+    playerLiftFallDurationMs: 1,
+    playerLiftRiseDurationMs: 1
+  });
+  const moves = [
+    {
+      actor: buttonBox,
+      actorIndex: 0,
+      actorType: "weightless_box",
+      fromX: 1,
+      fromY: 0,
+      toX: 2,
+      toY: 0,
+      fromElevation: 1,
+      toElevation: 0
+    },
+    {
+      actor: orangeWallPassenger,
+      actorIndex: 1,
+      actorType: "player",
+      fromX: 1,
+      fromY: 0,
+      toX: 1,
+      toY: 0,
+      fromElevation: 1,
+      toElevation: 0
+    }
+  ];
+  let releasedOrangeWalls = false;
+
+  app.animateMoves(moves, 1, {
+    preTerrainLiftMoves: new Set([moves[0]]),
+    startLiftPhase: () => {
+      releasedOrangeWalls = true;
+      assert.equal(buttonBox.elevation, 0);
+      assert.equal(buttonBox.renderElevation, 0);
+      assert.equal(orangeWallPassenger.elevation, 1);
+      assert.equal(orangeWallPassenger.renderElevation, 1);
+    }
+  });
+
+  while (queuedFrames.length > 0) {
+    const callback = queuedFrames.shift();
+    callback(performance.now() + 1000);
+  }
+
+  assert.equal(releasedOrangeWalls, true);
+  assert.equal(buttonBox.elevation, 0);
+  assert.equal(orangeWallPassenger.elevation, 0);
+
+  window.requestAnimationFrame = originalRequestAnimationFrame;
+  window.cancelAnimationFrame = originalCancelAnimationFrame;
 }
 
 asyncTests.push(

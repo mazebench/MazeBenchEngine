@@ -129,23 +129,47 @@
 
       const gateState = computeRaisedPlayerGateSet(state);
       const orangeButtonsPressed = areOrangeButtonsPressed(state);
+      const initializedWeightlessGroups = new Set();
 
       for (let index = 0; index < actorCount; index += 1) {
-        if (!isPlayerActor(index)) {
+        if (isPlayerActor(index)) {
+          state.actorElevation[index] =
+            playerSurfaceHeightAt(
+              state,
+              state.actorX[index],
+              state.actorY[index],
+              gateState,
+              orangeButtonsPressed
+            ) === 1
+              ? 1
+              : 0;
+          continue;
+        }
+
+        if (actorTypes[index] !== "weightless_box") {
           state.actorElevation[index] = 0;
           continue;
         }
 
-        state.actorElevation[index] =
-          playerSurfaceHeightAt(
-            state,
-            state.actorX[index],
-            state.actorY[index],
-            gateState,
-            orangeButtonsPressed
-          ) === 1
-            ? 1
-            : 0;
+        const groupId = actorGroupIds[index];
+
+        if (initializedWeightlessGroups.has(groupId)) {
+          continue;
+        }
+
+        initializedWeightlessGroups.add(groupId);
+
+        const members = weightlessGroupMembers(state, groupId);
+        const elevation = weightlessGroupSupportedElevation(
+          state,
+          members,
+          gateState,
+          orangeButtonsPressed
+        );
+
+        members.forEach((member) => {
+          state.actorElevation[member] = elevation;
+        });
       }
 
       return state;
@@ -234,7 +258,9 @@
     }
 
     function actorElevation(state, actorIndex) {
-      return isPlayerActor(actorIndex) ? state.actorElevation[actorIndex] || 0 : 0;
+      return isPlayerActor(actorIndex) || actorTypes[actorIndex] === "weightless_box"
+        ? state.actorElevation[actorIndex] || 0
+        : 0;
     }
 
     function isTerrainTypeAt(state, x, y, type) {
@@ -339,6 +365,21 @@
       }
 
       return 0;
+    }
+
+    function weightlessGroupSupportedElevation(state, members, gateState, orangeButtonsPressed) {
+      return members.some(
+        (member) =>
+          terrainSurfaceHeightAt(
+            state,
+            state.actorX[member],
+            state.actorY[member],
+            gateState,
+            orangeButtonsPressed
+          ) === 1
+      )
+        ? 1
+        : 0;
     }
 
     function hasElevatedActorSurfaceAt(state, x, y) {
@@ -688,15 +729,30 @@
       );
     }
 
+    function canWeightlessMemberEnter(
+      state,
+      member,
+      targetX,
+      targetY,
+      gateState,
+      orangeButtonsPressed
+    ) {
+      if (!isInsideBoard(targetX, targetY)) {
+        return false;
+      }
+
+      return (
+        actorElevation(state, member) === 1 ||
+        !isWall(state, targetX, targetY, gateState, orangeButtonsPressed)
+      );
+    }
+
     function canMoveWeightlessGroup(state, members, dx, dy, occupied, gateState, orangeButtonsPressed) {
       return members.every((member) => {
         const targetX = state.actorX[member] + dx;
         const targetY = state.actorY[member] + dy;
 
-        if (
-          !isInsideBoard(targetX, targetY) ||
-          isWall(state, targetX, targetY, gateState, orangeButtonsPressed)
-        ) {
+        if (!canWeightlessMemberEnter(state, member, targetX, targetY, gateState, orangeButtonsPressed)) {
           return false;
         }
 
@@ -728,10 +784,7 @@
             const targetX = state.actorX[member] + dx;
             const targetY = state.actorY[member] + dy;
 
-            if (
-              !isInsideBoard(targetX, targetY) ||
-              isWall(state, targetX, targetY, gateState, orangeButtonsPressed)
-            ) {
+            if (!canWeightlessMemberEnter(state, member, targetX, targetY, gateState, orangeButtonsPressed)) {
               blockers.push(null);
               return;
             }
@@ -749,6 +802,11 @@
 
             if (blocker === -1) {
               continue;
+            }
+
+            if (actorElevation(state, blocker) !== actorElevation(state, member)) {
+              blockers.push(null);
+              return;
             }
 
             if (!isPushableActor(blocker)) {
@@ -804,9 +862,11 @@
 
       const startPositions = members.map((actorIndex) => ({
         actorIndex,
+        fromElevation: actorElevation(state, actorIndex),
         fromX: state.actorX[actorIndex],
         fromY: state.actorY[actorIndex]
       }));
+      const groupElevation = actorElevation(state, members[0]);
 
       members.forEach((member) => {
         occupied[actorCell(state, member)] = 0;
@@ -826,7 +886,10 @@
           break;
         }
 
-        if (!members.every((member) => isIceOrHole(state, state.actorX[member], state.actorY[member]))) {
+        if (
+          groupElevation !== 0 ||
+          !members.every((member) => isIceOrHole(state, state.actorX[member], state.actorY[member]))
+        ) {
           break;
         }
       }
@@ -838,12 +901,14 @@
         return false;
       }
 
-      startPositions.forEach(({ actorIndex, fromX, fromY }) => {
+      startPositions.forEach(({ actorIndex, fromElevation, fromX, fromY }) => {
         const moveRecord = {
           actorIndex,
           actorType: actorTypes[actorIndex],
+          fromElevation,
           fromX,
           fromY,
+          toElevation: fromElevation,
           toX: state.actorX[actorIndex],
           toY: state.actorY[actorIndex]
         };
@@ -942,6 +1007,10 @@
             continue;
           }
 
+          if (actorElevation(state, blocker) !== actorElevation(state, member)) {
+            return null;
+          }
+
           if (!isPushableActor(blocker)) {
             return null;
           }
@@ -1019,31 +1088,11 @@
     }
 
     function applyHoleFalls(state, moves) {
-      const moveByActor = new Map(moves.map((move) => [move.actorIndex, move]));
-      const handledGroups = new Set();
-
       moves.forEach((move) => {
         move.fromRemoved = Boolean(move.fromRemoved);
         move.toRemoved = Boolean(move.toRemoved);
 
         if (move.actorType === "weightless_box") {
-          if (handledGroups.has(actorGroupIds[move.actorIndex])) {
-            return;
-          }
-
-          handledGroups.add(actorGroupIds[move.actorIndex]);
-          const members = weightlessGroupMembers(state, actorGroupIds[move.actorIndex]);
-
-          if (members.length > 0 && members.every((member) => isHole(state, state.actorX[member], state.actorY[member]))) {
-            members.forEach((member) => {
-              const memberMove = moveByActor.get(member);
-
-              if (memberMove) {
-                memberMove.toRemoved = true;
-              }
-            });
-          }
-
           return;
         }
 
@@ -1085,12 +1134,107 @@
       });
     }
 
-    function syncOrangeWallPlayerElevations(state, moves, gateState, orangeButtonsPressed) {
-      if (orangeWallCells.length === 0) {
-        return;
+    function syncDynamicActorElevationsAndFalls(state, moves) {
+      const moveByActor = new Map(moves.map((move) => [move.actorIndex, move]));
+      const originalElevations = new Int8Array(state.actorElevation);
+      let gateState = computeRaisedPlayerGateSet(state);
+      let orangeButtonsPressed = areOrangeButtonsPressed(state);
+
+      for (let iteration = 0; iteration < 4; iteration += 1) {
+        gateState = computeRaisedPlayerGateSet(state);
+        orangeButtonsPressed = areOrangeButtonsPressed(state);
+        let changed = false;
+
+        if (orangeWallCells.length > 0) {
+          for (let index = 0; index < actorCount; index += 1) {
+            if (!isPlayerActor(index) || state.actorRemoved[index]) {
+              continue;
+            }
+
+            const x = state.actorX[index];
+            const y = state.actorY[index];
+
+            if (!isOrangeWall(x, y)) {
+              continue;
+            }
+
+            const toElevation =
+              playerSurfaceHeightAt(state, x, y, gateState, orangeButtonsPressed) === 1
+                ? 1
+                : 0;
+
+            if (state.actorElevation[index] !== toElevation) {
+              state.actorElevation[index] = toElevation;
+              changed = true;
+            }
+          }
+        }
+
+        const handledWeightlessGroups = new Set();
+
+        for (let index = 0; index < actorCount; index += 1) {
+          if (actorTypes[index] !== "weightless_box" || state.actorRemoved[index]) {
+            continue;
+          }
+
+          const groupId = actorGroupIds[index];
+
+          if (handledWeightlessGroups.has(groupId)) {
+            continue;
+          }
+
+          handledWeightlessGroups.add(groupId);
+
+          const members = weightlessGroupMembers(state, groupId);
+          const toElevation = weightlessGroupSupportedElevation(
+            state,
+            members,
+            gateState,
+            orangeButtonsPressed
+          );
+
+          members.forEach((member) => {
+            if (state.actorElevation[member] !== toElevation) {
+              state.actorElevation[member] = toElevation;
+              changed = true;
+            }
+          });
+        }
+
+        if (!changed) {
+          break;
+        }
       }
 
-      const moveByActor = new Map(moves.map((move) => [move.actorIndex, move]));
+      gateState = computeRaisedPlayerGateSet(state);
+      orangeButtonsPressed = areOrangeButtonsPressed(state);
+
+      function ensureDynamicMove(index, toElevation) {
+        const existingMove = moveByActor.get(index);
+
+        if (existingMove) {
+          if (typeof existingMove.fromElevation !== "number") {
+            existingMove.fromElevation = originalElevations[index] || 0;
+          }
+
+          existingMove.toElevation = toElevation;
+          return existingMove;
+        }
+
+        const moveRecord = {
+          actorIndex: index,
+          actorType: actorTypes[index],
+          fromX: state.actorX[index],
+          fromY: state.actorY[index],
+          toX: state.actorX[index],
+          toY: state.actorY[index],
+          fromElevation: originalElevations[index] || 0,
+          toElevation
+        };
+        moves.push(moveRecord);
+        moveByActor.set(index, moveRecord);
+        return moveRecord;
+      }
 
       for (let index = 0; index < actorCount; index += 1) {
         if (!isPlayerActor(index) || state.actorRemoved[index]) {
@@ -1104,33 +1248,59 @@
           continue;
         }
 
-        const fromElevation = actorElevation(state, index);
-        const toElevation = playerSurfaceHeightAt(state, x, y, gateState, orangeButtonsPressed) === 1 ? 1 : 0;
+        const toElevation =
+          playerSurfaceHeightAt(state, x, y, gateState, orangeButtonsPressed) === 1
+            ? 1
+            : 0;
 
-        if (fromElevation === toElevation) {
+        if ((originalElevations[index] || 0) === toElevation) {
           continue;
         }
 
-        const existingMove = moveByActor.get(index);
+        ensureDynamicMove(index, toElevation);
+        state.actorElevation[index] = toElevation;
+      }
 
-        if (existingMove) {
-          existingMove.toElevation = toElevation;
-        } else {
-          const moveRecord = {
-            actorIndex: index,
-            actorType: actorTypes[index],
-            fromX: x,
-            fromY: y,
-            toX: x,
-            toY: y,
-            fromElevation,
-            toElevation
-          };
-          moves.push(moveRecord);
-          moveByActor.set(index, moveRecord);
+      const handledWeightlessGroups = new Set();
+
+      for (let index = 0; index < actorCount; index += 1) {
+        if (actorTypes[index] !== "weightless_box" || state.actorRemoved[index]) {
+          continue;
         }
 
-        state.actorElevation[index] = toElevation;
+        const groupId = actorGroupIds[index];
+
+        if (handledWeightlessGroups.has(groupId)) {
+          continue;
+        }
+
+        handledWeightlessGroups.add(groupId);
+
+        const members = weightlessGroupMembers(state, groupId);
+        const toElevation = weightlessGroupSupportedElevation(
+          state,
+          members,
+          gateState,
+          orangeButtonsPressed
+        );
+        const groupMovedOrChangedElevation = members.some(
+          (member) => moveByActor.has(member) || (originalElevations[member] || 0) !== toElevation
+        );
+        const shouldFallIntoHole =
+          groupMovedOrChangedElevation &&
+          toElevation === 0 &&
+          members.length > 0 &&
+          members.every((member) => isHole(state, state.actorX[member], state.actorY[member]));
+
+        members.forEach((member) => {
+          if ((originalElevations[member] || 0) !== toElevation || shouldFallIntoHole) {
+            const moveRecord = ensureDynamicMove(member, toElevation);
+            moveRecord.toRemoved = shouldFallIntoHole;
+          }
+
+          state.actorElevation[member] = toElevation;
+          state.actorRemoved[member] = shouldFallIntoHole ? 1 : 0;
+        });
       }
     }
 
@@ -1218,7 +1388,7 @@
           if (blockingActor !== -1) {
             let didMoveBlockingActor = false;
 
-            if (fromElevation === 0 && isInitialStep && isPushableActor(blockingActor)) {
+            if (isInitialStep && isPushableActor(blockingActor)) {
               const attemptSnapshot = attemptSnapshotBuffer || cloneState(state);
               const occupiedSnapshot =
                 occupiedSnapshotBuffer || new Uint8Array(occupied);
@@ -1338,12 +1508,7 @@
           setPlayerLiftRaised(state, x, y, raised);
         });
         applyMoveFinalState(state, moves);
-        syncOrangeWallPlayerElevations(
-          state,
-          moves,
-          computeRaisedPlayerGateSet(state),
-          areOrangeButtonsPressed(state)
-        );
+        syncDynamicActorElevationsAndFalls(state, moves);
       }
 
       return {

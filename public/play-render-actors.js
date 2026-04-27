@@ -364,7 +364,11 @@
 
       if (!weightlessGroupCtx) {
         members.forEach((member) => {
-          paintWeightlessBoxTile(member, groupState.offsetX, groupState.offsetY);
+          paintWeightlessBoxTile(
+            member,
+            groupState.offsetX,
+            groupState.offsetY - (groupState.surfaceLift ?? 0)
+          );
         });
         return;
       }
@@ -379,7 +383,11 @@
       const tileOffsetX = -minX * TILE_SIZE;
       const tileOffsetY = faceHeight - minY * TILE_SIZE;
       const drawLeft = minX * TILE_SIZE + groupState.offsetX;
-      const drawTop = minY * TILE_SIZE - faceHeight + groupState.offsetY;
+      const drawTop =
+        minY * TILE_SIZE -
+        faceHeight +
+        groupState.offsetY -
+        (groupState.surfaceLift ?? 0);
 
       if (
         weightlessGroupCanvas.width !== bitmapWidth ||
@@ -577,7 +585,11 @@
 
       if (actor.type === "weightless_box") {
         const groupState = weightlessGroupRenderState(actor.groupId);
-        paintWeightlessBoxTile(actor, groupState.offsetX, groupState.offsetY);
+        paintWeightlessBoxTile(
+          actor,
+          groupState.offsetX,
+          groupState.offsetY - (groupState.surfaceLift ?? 0)
+        );
         if (clipToHole) {
           sceneCtx.restore();
         }
