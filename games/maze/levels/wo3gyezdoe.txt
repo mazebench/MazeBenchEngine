@@ -1,0 +1,16 @@
+h h h h h h h h h h h h h h h h
+h h h h h h h h h h h h h h h h
+h h h h . . . . . . . . h h h h
+h h h . . L L . L L . . # # h h
+h . p . # L L . L L . # L # # h
+h i i # # L l L L L # # G # . #
+h i i # . L . L L L # . # . . .
+h i i # . L L L L L # . . . . .
+h i i # . L L L L L # . . . . .
+h i i # . L L L L L . . # # # .
+h i i . # . . . . l . L # l . #
+h . . . # # # # # . # # # . # h
+h h . . . . . . . # . . . . # h
+h h h . . l L L L . . . . # h h
+h h h h . . . . . # . . . # h h
+h h h h h h h h h # . . . # h h
