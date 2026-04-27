@@ -19,6 +19,7 @@
       terrainAt,
       gateLiftAt,
       playerLiftAt,
+      orangeWallLiftAt,
       isWeightlessBoxAt,
       weightlessGroupRenderState,
       weightlessGroupMembers,
@@ -32,6 +33,7 @@
       paintWallTile,
       paintRaisedPlayerGateTile,
       paintRaisedPlayerLiftTile,
+      paintRaisedOrangeWallTile,
       queueElevatedSideBleedCoverItems
     } = app.renderTerrain;
 
@@ -433,8 +435,14 @@
           const cell = terrainAt(x, y);
           const gateLift = cell.type === "player_gate" ? gateLiftAt(x, y, now) : 0;
           const playerLift = cell.type === "player_lift" ? playerLiftAt(x, y, now) : 0;
+          const orangeWallLift = cell.type === "orange_wall" ? orangeWallLiftAt(x, y, now) : 0;
 
-          if (cell.type !== "wall" && gateLift <= 0.001 && playerLift <= 0.001) {
+          if (
+            cell.type !== "wall" &&
+            gateLift <= 0.001 &&
+            playerLift <= 0.001 &&
+            orangeWallLift <= 0.001
+          ) {
             continue;
           }
 
@@ -450,6 +458,11 @@
 
               if (cell.type === "player_lift") {
                 paintRaisedPlayerLiftTile(x, y, cell, playerLift);
+                return;
+              }
+
+              if (cell.type === "orange_wall") {
+                paintRaisedOrangeWallTile(x, y, cell, orangeWallLift);
                 return;
               }
 

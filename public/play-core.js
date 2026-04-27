@@ -131,6 +131,8 @@
       MOVE_DURATION_MS: 98,
       GATE_RISE_DURATION_MS: 220,
       GATE_FALL_DURATION_MS: 180,
+      ORANGE_WALL_RISE_DURATION_MS: 220,
+      ORANGE_WALL_FALL_DURATION_MS: 180,
       PLAYER_LIFT_RISE_DURATION_MS: 220,
       PLAYER_LIFT_FALL_DURATION_MS: 180,
       HOLE_FALL_DURATION_MS: 300,
@@ -193,9 +195,14 @@
       lastNoiseTickMs: 0,
       liveRaisedPlayerGates: new Set(),
       gateRenderOverride: null,
+      liveRaisedOrangeWalls: new Set(),
+      orangeWallRenderOverride: null,
       gateAnimationFrameId: null,
       gateAnimationsInitialized: false,
       gateAnimations: new Map(),
+      orangeWallAnimationFrameId: null,
+      orangeWallAnimationsInitialized: false,
+      orangeWallAnimations: new Map(),
       playerLiftAnimationFrameId: null,
       playerLiftAnimationsInitialized: false,
       playerLiftAnimations: new Map(),
@@ -848,6 +855,11 @@
         app.gateAnimationFrameId = null;
       }
 
+      if (app.orangeWallAnimationFrameId !== null) {
+        window.cancelAnimationFrame(app.orangeWallAnimationFrameId);
+        app.orangeWallAnimationFrameId = null;
+      }
+
       if (app.playerLiftAnimationFrameId !== null) {
         window.cancelAnimationFrame(app.playerLiftAnimationFrameId);
         app.playerLiftAnimationFrameId = null;
@@ -862,6 +874,7 @@
       app.isTransitioningLevel = false;
       app.levelTransition = null;
       app.gateRenderOverride = null;
+      app.orangeWallRenderOverride = null;
       app.currentLevelId = levelState.levelId || app.currentLevelId;
       app.currentLevelLabel = levelState.levelLabel || app.currentLevelLabel || app.currentLevelId;
       app.worldColumns = playRules.normalizeAxisValues(levelState.worldColumns, app.worldColumns);
@@ -882,6 +895,8 @@
       updateBoardMetrics(app.state.width, app.state.height);
       app.gateAnimations.clear();
       app.gateAnimationsInitialized = false;
+      app.orangeWallAnimations.clear();
+      app.orangeWallAnimationsInitialized = false;
       app.playerLiftAnimations.clear();
       app.playerLiftAnimationsInitialized = false;
       initializeActorElevations();
@@ -1127,6 +1142,75 @@
       return terrainAt(x, y).type === "player_lift";
     }
 
+    function isOrangeWall(x, y) {
+      return terrainAt(x, y).type === "orange_wall";
+    }
+
+    function isOrangeButton(x, y) {
+      return terrainAt(x, y).type === "orange_button";
+    }
+
+    function eachOrangeWall(callback) {
+      for (let y = 0; y < app.state.height; y += 1) {
+        for (let x = 0; x < app.state.width; x += 1) {
+          if (!isOrangeWall(x, y)) {
+            continue;
+          }
+
+          callback(x, y, posKey(x, y));
+        }
+      }
+    }
+
+    function isOrangeButtonPressed(x, y, actors = app.state.actors) {
+      return actors.some(
+        (actor) =>
+          !actor.removed &&
+          !isCollectibleActor(actor) &&
+          actorElevation(actor) === 0 &&
+          actor.x === x &&
+          actor.y === y
+      );
+    }
+
+    function areOrangeButtonsPressed(actors = app.state.actors) {
+      let hasOrangeButton = false;
+
+      for (let y = 0; y < app.state.height; y += 1) {
+        for (let x = 0; x < app.state.width; x += 1) {
+          if (!isOrangeButton(x, y)) {
+            continue;
+          }
+
+          hasOrangeButton = true;
+
+          if (!isOrangeButtonPressed(x, y, actors)) {
+            return false;
+          }
+        }
+      }
+
+      return hasOrangeButton;
+    }
+
+    function computeRaisedOrangeWallSet(actors = app.state.actors) {
+      const raised = new Set();
+
+      if (areOrangeButtonsPressed(actors)) {
+        return raised;
+      }
+
+      eachOrangeWall((x, y, key) => {
+        raised.add(key);
+      });
+
+      return raised;
+    }
+
+    function isRaisedOrangeWall(x, y, orangeWallState = app.liveRaisedOrangeWalls) {
+      return isOrangeWall(x, y) && orangeWallState.has(posKey(x, y));
+    }
+
     function eachPlayerLift(callback) {
       for (let y = 0; y < app.state.height; y += 1) {
         for (let x = 0; x < app.state.width; x += 1) {
@@ -1156,12 +1240,22 @@
       return setPlayerLiftRaised(x, y, !isRaisedPlayerLift(x, y));
     }
 
-    function terrainSurfaceHeightAt(x, y, gateState = app.liveRaisedPlayerGates) {
+    function terrainSurfaceHeightAt(
+      x,
+      y,
+      gateState = app.liveRaisedPlayerGates,
+      orangeWallState = app.liveRaisedOrangeWalls
+    ) {
       if (!isInsideBoard(x, y)) {
         return null;
       }
 
-      if (isTerrainWall(x, y) || isRaisedPlayerGate(x, y, gateState) || isRaisedPlayerLift(x, y)) {
+      if (
+        isTerrainWall(x, y) ||
+        isRaisedPlayerGate(x, y, gateState) ||
+        isRaisedPlayerLift(x, y) ||
+        isRaisedOrangeWall(x, y, orangeWallState)
+      ) {
         return 1;
       }
 
@@ -1184,8 +1278,13 @@
       );
     }
 
-    function playerSurfaceHeightAt(x, y, gateState = app.liveRaisedPlayerGates) {
-      const terrainHeight = terrainSurfaceHeightAt(x, y, gateState);
+    function playerSurfaceHeightAt(
+      x,
+      y,
+      gateState = app.liveRaisedPlayerGates,
+      orangeWallState = app.liveRaisedOrangeWalls
+    ) {
+      const terrainHeight = terrainSurfaceHeightAt(x, y, gateState, orangeWallState);
 
       if (terrainHeight === 1 || hasElevatedActorSurfaceAt(x, y)) {
         return 1;
@@ -1286,11 +1385,26 @@
       return terrainCellAcrossHorizontalWorldEdge(x, y)?.type === "wall";
     }
 
-    function isWall(x, y, gateState = app.liveRaisedPlayerGates) {
-      return isTerrainWall(x, y) || isRaisedPlayerGate(x, y, gateState) || isRaisedPlayerLift(x, y);
+    function isWall(
+      x,
+      y,
+      gateState = app.liveRaisedPlayerGates,
+      orangeWallState = app.liveRaisedOrangeWalls
+    ) {
+      return (
+        isTerrainWall(x, y) ||
+        isRaisedPlayerGate(x, y, gateState) ||
+        isRaisedPlayerLift(x, y) ||
+        isRaisedOrangeWall(x, y, orangeWallState)
+      );
     }
 
-    function elevatedBlockFamiliesAt(x, y, gateState = app.liveRaisedPlayerGates) {
+    function elevatedBlockFamiliesAt(
+      x,
+      y,
+      gateState = app.liveRaisedPlayerGates,
+      orangeWallState = app.liveRaisedOrangeWalls
+    ) {
       const families = new Set();
 
       if ((x === -1 || x === app.state.width) && isTerrainWallAcrossHorizontalWorldEdge(x, y)) {
@@ -1314,6 +1428,10 @@
         families.add("terrain:player_lift");
       }
 
+      if (isRaisedOrangeWall(x, y, orangeWallState)) {
+        families.add("terrain:orange_wall");
+      }
+
       app.state.actors.forEach((actor) => {
         if (actor.removed || actor.x !== x || actor.y !== y) {
           return;
@@ -1332,11 +1450,15 @@
       return families;
     }
 
-    function sharedElevatedBlockFamilies(positions, gateState = app.liveRaisedPlayerGates) {
+    function sharedElevatedBlockFamilies(
+      positions,
+      gateState = app.liveRaisedPlayerGates,
+      orangeWallState = app.liveRaisedOrangeWalls
+    ) {
       let sharedFamilies = null;
 
       for (const position of positions) {
-        const families = elevatedBlockFamiliesAt(position.x, position.y, gateState);
+        const families = elevatedBlockFamiliesAt(position.x, position.y, gateState, orangeWallState);
 
         if (families.size === 0) {
           return new Set();
@@ -1359,11 +1481,21 @@
       return sharedFamilies || new Set();
     }
 
-    function sharedElevatedBlockFamily(positions, gateState = app.liveRaisedPlayerGates) {
-      return sharedElevatedBlockFamilies(positions, gateState).size > 0;
+    function sharedElevatedBlockFamily(
+      positions,
+      gateState = app.liveRaisedPlayerGates,
+      orangeWallState = app.liveRaisedOrangeWalls
+    ) {
+      return sharedElevatedBlockFamilies(positions, gateState, orangeWallState).size > 0;
     }
 
-    function elevatedSideBleedCoverFamily(x, y, dx, gateState = app.liveRaisedPlayerGates) {
+    function elevatedSideBleedCoverFamily(
+      x,
+      y,
+      dx,
+      gateState = app.liveRaisedPlayerGates,
+      orangeWallState = app.liveRaisedOrangeWalls
+    ) {
       if (dx !== -1 && dx !== 1) {
         return null;
       }
@@ -1378,7 +1510,8 @@
           { x, y: y + 1 },
           { x: x + dx, y: y + 1 }
         ],
-        gateState
+        gateState,
+        orangeWallState
       );
 
       return families.values().next().value || null;
@@ -1546,6 +1679,105 @@
       }
     }
 
+    function orangeWallLiftAt(x, y, now = performance.now()) {
+      const key = posKey(x, y);
+      const animation = app.orangeWallAnimations.get(key);
+      const target = app.liveRaisedOrangeWalls.has(key) ? 1 : 0;
+      const value = animation ? gateAnimationValue(animation, now) : target;
+      return clamp(value, 0, 1.08);
+    }
+
+    function startOrangeWallAnimationLoop() {
+      if (app.orangeWallAnimationFrameId !== null) {
+        return;
+      }
+
+      function step(now) {
+        let hasActiveAnimation = false;
+
+        app.orangeWallAnimations.forEach((animation) => {
+          if (animation.startMs === null) {
+            return;
+          }
+
+          if (now - animation.startMs >= animation.durationMs) {
+            animation.from = animation.to;
+            animation.startMs = null;
+            return;
+          }
+
+          hasActiveAnimation = true;
+        });
+
+        app.render();
+
+        if (hasActiveAnimation) {
+          app.orangeWallAnimationFrameId = window.requestAnimationFrame(step);
+          return;
+        }
+
+        app.orangeWallAnimationFrameId = null;
+      }
+
+      app.orangeWallAnimationFrameId = window.requestAnimationFrame(step);
+    }
+
+    function syncOrangeWallAnimationTargets(now = performance.now()) {
+      if (!app.orangeWallAnimationsInitialized) {
+        eachOrangeWall((x, y, key) => {
+          const target = app.liveRaisedOrangeWalls.has(key) ? 1 : 0;
+          app.orangeWallAnimations.set(key, {
+            from: target,
+            to: target,
+            startMs: null,
+            durationMs: app.ORANGE_WALL_RISE_DURATION_MS
+          });
+        });
+        app.orangeWallAnimationsInitialized = true;
+        return;
+      }
+
+      let hasActiveAnimation = false;
+
+      eachOrangeWall((x, y, key) => {
+        const target = app.liveRaisedOrangeWalls.has(key) ? 1 : 0;
+        const animation = app.orangeWallAnimations.get(key);
+
+        if (!animation) {
+          app.orangeWallAnimations.set(key, {
+            from: target,
+            to: target,
+            startMs: null,
+            durationMs: app.ORANGE_WALL_RISE_DURATION_MS
+          });
+          return;
+        }
+
+        if (animation.startMs !== null && now - animation.startMs >= animation.durationMs) {
+          animation.from = animation.to;
+          animation.startMs = null;
+        }
+
+        const current = gateAnimationValue(animation, now);
+
+        if (animation.to !== target) {
+          animation.from = current;
+          animation.to = target;
+          animation.startMs = now;
+          animation.durationMs =
+            target > current ? app.ORANGE_WALL_RISE_DURATION_MS : app.ORANGE_WALL_FALL_DURATION_MS;
+        }
+
+        if (animation.startMs !== null) {
+          hasActiveAnimation = true;
+        }
+      });
+
+      if (hasActiveAnimation) {
+        startOrangeWallAnimationLoop();
+      }
+    }
+
     function playerLiftAt(x, y, now = performance.now()) {
       const animation = app.playerLiftAnimations.get(posKey(x, y));
       const target = isRaisedPlayerLift(x, y) ? 1 : 0;
@@ -1646,6 +1878,7 @@
 
     function initializeActorElevations() {
       const gateState = computeRaisedPlayerGateSet(app.state.actors);
+      const orangeWallState = computeRaisedOrangeWallSet(app.state.actors);
 
       app.state.actors.forEach((actor) => {
         if (!isPlayerActor(actor)) {
@@ -1654,7 +1887,7 @@
           return;
         }
 
-        const elevation = playerSurfaceHeightAt(actor.x, actor.y, gateState) === 1 ? 1 : 0;
+        const elevation = playerSurfaceHeightAt(actor.x, actor.y, gateState, orangeWallState) === 1 ? 1 : 0;
         actor.elevation = elevation;
         actor.renderElevation = elevation;
       });
@@ -1847,6 +2080,13 @@
       groundSurfaceCell,
       isPlayerGate,
       isPlayerLift,
+      isOrangeWall,
+      isOrangeButton,
+      eachOrangeWall,
+      isOrangeButtonPressed,
+      areOrangeButtonsPressed,
+      computeRaisedOrangeWallSet,
+      isRaisedOrangeWall,
       eachPlayerLift,
       isRaisedPlayerLift,
       setPlayerLiftRaised,
@@ -1875,6 +2115,9 @@
       easeInOutQuad,
       gateAnimationValue,
       gateLiftAt,
+      orangeWallLiftAt,
+      startOrangeWallAnimationLoop,
+      syncOrangeWallAnimationTargets,
       playerLiftAt,
       startGateAnimationLoop,
       syncGateAnimationTargets,

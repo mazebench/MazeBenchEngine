@@ -15,6 +15,7 @@
       cloneActorPositions,
       cloneTerrainState,
       computeRaisedPlayerGateSet,
+      computeRaisedOrangeWallSet,
       setPlayerLiftRaised
     } = app;
 
@@ -164,6 +165,7 @@
         terrain: cloneTerrainState(state.terrain)
       };
       const raisedPlayerGates = computeRaisedPlayerGateSet();
+      const raisedOrangeWalls = computeRaisedOrangeWallSet();
       const moveResult = engine.move(engineState, dx, dy);
       const moves = moveResult.moves.map(moveFromEngineRecord).filter(Boolean);
       const liftToggles = Array.isArray(moveResult.liftToggles) ? moveResult.liftToggles : [];
@@ -177,12 +179,14 @@
         if (animate) {
           applyMoveLogicalPositions(moves);
           app.gateRenderOverride = raisedPlayerGates;
+          app.orangeWallRenderOverride = raisedOrangeWalls;
           app.animateMoves(moves, null, {
             onFinish,
             startLiftPhase: () => {
               liftToggles.forEach(({ x, y, raised }) => {
                 setPlayerLiftRaised(x, y, raised);
               });
+              app.orangeWallRenderOverride = null;
             }
           });
         } else {
@@ -191,6 +195,7 @@
           });
           applyMoveFinalState(moves);
           app.gateRenderOverride = null;
+          app.orangeWallRenderOverride = null;
           if (onFinish) {
             onFinish();
           }

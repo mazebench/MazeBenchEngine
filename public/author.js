@@ -554,8 +554,12 @@
     syncLevelSelectors();
   }
 
+  function selectablePaletteTools() {
+    return authorData.palette.filter((tool) => tool.selectable !== false);
+  }
+
   function renderPalette() {
-    elements.palette.innerHTML = authorData.palette
+    elements.palette.innerHTML = selectablePaletteTools()
       .map((tool) => {
         const previewUrl = palettePreviewRenderer.previewsByToken.get(tool.token);
         const swatchContents = previewUrl
@@ -587,14 +591,15 @@
 
   function createPalettePreviewPlayData() {
     const stride = 3;
-    const columns = Math.max(1, Math.min(4, authorData.palette.length));
-    const rows = Math.max(1, Math.ceil(authorData.palette.length / columns));
+    const paletteTools = selectablePaletteTools();
+    const columns = Math.max(1, Math.min(4, paletteTools.length));
+    const rows = Math.max(1, Math.ceil(paletteTools.length / columns));
     const width = columns * stride;
     const height = rows * stride;
     const cells = createBlankCells(width, height, authorData.defaultFloorToken);
     const positionsByToken = new Map();
 
-    authorData.palette.forEach((tool, index) => {
+    paletteTools.forEach((tool, index) => {
       const column = index % columns;
       const row = Math.floor(index / columns);
       const x = column * stride + 1;
@@ -688,7 +693,9 @@
       await app.preloadImagesForLevelState(playData);
       app.setupCanvas();
       app.liveRaisedPlayerGates = app.computeRaisedPlayerGateSet();
+      app.liveRaisedOrangeWalls = app.computeRaisedOrangeWallSet();
       app.syncGateAnimationTargets(0);
+      app.syncOrangeWallAnimationTargets(0);
       app.syncPlayerLiftAnimationTargets(0);
       app.renderCompositor.drawScene(0);
 

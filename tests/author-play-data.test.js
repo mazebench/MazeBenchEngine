@@ -14,6 +14,8 @@ const authorData = {
     { imageUrl: null, label: "Wall", name: "wall", token: "W" },
     { imageUrl: null, initialRaised: false, label: "Player Lift l", name: "player_lift", token: "l", type: "player_lift" },
     { imageUrl: null, initialRaised: true, label: "Raised Player Lift", name: "player_lift", token: "L", type: "player_lift" },
+    { imageUrl: null, label: "Orange Wall", name: "orange_wall", token: "O", type: "orange_wall" },
+    { imageUrl: null, label: "Orange Button", name: "orange_button", token: "o", type: "orange_button" },
     { imageUrl: null, label: "Player", name: "player", token: "P" },
     { imageUrl: "/assets/maze/images/gem.png", label: "Gem", name: "gem", token: "G" },
     {
@@ -83,5 +85,17 @@ const raisedLiftPlayData = adapter.buildPlayData({
 });
 assert.equal(raisedLiftPlayData.terrain[0][0].type, "player_lift");
 assert.equal(raisedLiftPlayData.terrain[0][0].raised, true);
+
+const orangePlayData = adapter.buildPlayData({
+  cells: [["O", "o+B"]],
+  height: 1,
+  width: 2
+});
+assert.equal(orangePlayData.terrain[0][0].type, "orange_wall");
+assert.equal(orangePlayData.terrain[0][1].type, "orange_button");
+assert.deepEqual(
+  orangePlayData.actors.map((actor) => [actor.type, actor.x, actor.y]),
+  [["weightless_box", 1, 0]]
+);
 
 console.log("author play data tests passed");

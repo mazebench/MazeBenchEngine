@@ -65,7 +65,9 @@
       }
 
       app.liveRaisedPlayerGates = app.gateRenderOverride || app.computeRaisedPlayerGateSet();
+      app.liveRaisedOrangeWalls = app.orangeWallRenderOverride || app.computeRaisedOrangeWallSet();
       app.syncGateAnimationTargets(now);
+      app.syncOrangeWallAnimationTargets(now);
       app.syncPlayerLiftAnimationTargets(now);
       renderCompositor.drawScene(now);
       const settings = app.getEffectSettings();

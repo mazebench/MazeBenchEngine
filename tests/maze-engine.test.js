@@ -205,4 +205,62 @@ function createState(playData) {
   assert.equal(state.actorRemoved[1], 0);
 }
 
+{
+  const terrain = floorTerrain(2, 1);
+  terrain[0][1] = { type: "orange_wall" };
+  const { engine, state } = createState({
+    width: 2,
+    height: 1,
+    terrain,
+    actors: [{ type: "player", x: 0, y: 0, removed: false }]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, false);
+  assert.deepEqual([state.actorX[0], state.actorY[0]], [0, 0]);
+}
+
+{
+  const terrain = floorTerrain(3, 1);
+  terrain[0][1] = { type: "orange_wall" };
+  terrain[0][2] = { type: "orange_button" };
+  const { engine, state } = createState({
+    width: 3,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "box", x: 2, y: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorY[0]], [1, 0]);
+  assert.equal(state.actorElevation[0], 0);
+}
+
+{
+  const terrain = floorTerrain(4, 1);
+  terrain[0][1] = { type: "orange_wall" };
+  terrain[0][2] = { type: "orange_button" };
+  terrain[0][3] = { type: "orange_button" };
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "box", x: 2, y: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, false);
+  assert.deepEqual([state.actorX[0], state.actorY[0]], [0, 0]);
+}
+
 console.log("maze-engine tests passed");

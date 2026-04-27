@@ -192,7 +192,9 @@
       const skipActorsPredicate =
         typeof options.skipActorsPredicate === "function" ? options.skipActorsPredicate : null;
       app.liveRaisedPlayerGates = app.gateRenderOverride || app.computeRaisedPlayerGateSet();
+      app.liveRaisedOrangeWalls = app.orangeWallRenderOverride || app.computeRaisedOrangeWallSet();
       app.syncGateAnimationTargets(now);
+      app.syncOrangeWallAnimationTargets(now);
       app.syncPlayerLiftAnimationTargets(now);
       const hiddenActors = [];
 
@@ -222,7 +224,9 @@
       const skipActorsPredicate =
         typeof options.skipActorsPredicate === "function" ? options.skipActorsPredicate : null;
       app.liveRaisedPlayerGates = app.gateRenderOverride || app.computeRaisedPlayerGateSet();
+      app.liveRaisedOrangeWalls = app.orangeWallRenderOverride || app.computeRaisedOrangeWallSet();
       app.syncGateAnimationTargets(now);
+      app.syncOrangeWallAnimationTargets(now);
       app.syncPlayerLiftAnimationTargets(now);
       const hiddenActors = [];
 
@@ -269,7 +273,9 @@
               : 1;
 
       app.liveRaisedPlayerGates = app.gateRenderOverride || app.computeRaisedPlayerGateSet();
+      app.liveRaisedOrangeWalls = app.orangeWallRenderOverride || app.computeRaisedOrangeWallSet();
       app.syncGateAnimationTargets(now);
+      app.syncOrangeWallAnimationTargets(now);
       app.syncPlayerLiftAnimationTargets(now);
 
       if (skipActorsPredicate) {

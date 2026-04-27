@@ -23,6 +23,7 @@
       actorElevation,
       terrainAt,
       computeRaisedPlayerGateSet,
+      computeRaisedOrangeWallSet,
       playerSurfaceHeightAt,
       cloneLevelSnapshot,
       applyLevelState,
@@ -122,7 +123,9 @@
 
     function revivePlayerAtLevelStart(player, startPlayer) {
       const gateState = computeRaisedPlayerGateSet();
-      const elevation = playerSurfaceHeightAt(startPlayer.x, startPlayer.y, gateState) === 1 ? 1 : 0;
+      const orangeWallState = computeRaisedOrangeWallSet();
+      const elevation =
+        playerSurfaceHeightAt(startPlayer.x, startPlayer.y, gateState, orangeWallState) === 1 ? 1 : 0;
 
       revivePlayerAtPosition(player, startPlayer.x, startPlayer.y, elevation);
       rememberCurrentLevelEntryState();

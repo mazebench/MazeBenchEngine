@@ -1,7 +1,7 @@
 # # # # # # # # # # # # # # # #
 # g g g g g g g g g g g g . . #
 # g g g g g g g g g g g M3 . . #
-# g g g g M2 g g g g g g g . . #
+# g g M4 g . g g g g g g g . . #
 # g g g g g g g g g g # # # # #
 # g g g g g g g g g g g g . . #
 # g g g g g g g g g g g g M0 . .
@@ -11,6 +11,6 @@
 # g g g g g g g g g g g g . . #
 # g g g g g g g g g g # # # # #
 # g g g g g g g g g g g . . . #
-# g g g g M4 g g g g g g . . . #
+# g g g g M2 g g g g g g . . . #
 # g g g g g g g g g g g . . . #
 # # # # # # . . . . # # # # # #

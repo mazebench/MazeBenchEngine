@@ -18,6 +18,7 @@
     const {
       restoreTerrainState,
       computeRaisedPlayerGateSet,
+      computeRaisedOrangeWallSet,
       easeOutBack,
       easeInOutQuad,
       syncFloatingFloorTicker,
@@ -174,6 +175,7 @@
       const onFinish = typeof options.onFinish === "function" ? options.onFinish : null;
       movement.applyMoveFinalState(moves);
       app.gateRenderOverride = null;
+      app.orangeWallRenderOverride = null;
       app.isAnimating = false;
       app.animationFrameId = null;
       syncFloatingFloorTicker();
@@ -573,6 +575,7 @@
       }
 
       const raisedPlayerGates = computeRaisedPlayerGateSet();
+      const raisedOrangeWalls = computeRaisedOrangeWallSet();
       const moves = buildMovesToPositions(previousState.actors);
       movement.applyUndoIceSlideMetadata(moves, previousState);
       const hasLiftReversal = moves.some(
@@ -582,11 +585,13 @@
       if (moves.length > 0) {
         if (hasLiftReversal) {
           app.gateRenderOverride = raisedPlayerGates;
+          app.orangeWallRenderOverride = raisedOrangeWalls;
           animateMoves(moves, null, {
             liftPhaseFirst: true,
             startLiftPhase: () => {
               restoreTerrainState(previousState.terrain);
               app.gateRenderOverride = null;
+              app.orangeWallRenderOverride = null;
             }
           });
           return;
@@ -594,12 +599,14 @@
 
         restoreTerrainState(previousState.terrain);
         app.gateRenderOverride = raisedPlayerGates;
+        app.orangeWallRenderOverride = raisedOrangeWalls;
         animateMoves(moves);
         return;
       }
 
       restoreTerrainState(previousState.terrain);
       app.gateRenderOverride = null;
+      app.orangeWallRenderOverride = null;
       syncFloatingFloorTicker();
       app.render();
     }
@@ -613,6 +620,7 @@
       moveHistory.length = 0;
       restoreTerrainState(app.initialTerrain);
       app.gateRenderOverride = computeRaisedPlayerGateSet();
+      app.orangeWallRenderOverride = computeRaisedOrangeWallSet();
       const moves = buildMovesToPositions(app.initialPositions);
 
       if (moves.length > 0) {
@@ -621,6 +629,7 @@
       }
 
       app.gateRenderOverride = null;
+      app.orangeWallRenderOverride = null;
       syncFloatingFloorTicker();
       app.render();
     }

@@ -17,8 +17,10 @@
       isHole,
       isPlayerGate,
       isPlayerLift,
+      isOrangeWall,
       gateLiftAt,
       playerLiftAt,
+      orangeWallLiftAt,
       isTerrainWall,
       isTerrainWallAcrossHorizontalWorldEdge,
       elevatedSideBleedCoverFamily,
@@ -82,6 +84,10 @@
 
       if (family === "terrain:player_lift") {
         return "#8a63d2";
+      }
+
+      if (family === "terrain:orange_wall") {
+        return "#b85f16";
       }
 
       if (family === "actor:player") {
@@ -163,6 +169,10 @@
 
       if (family === "terrain:player_lift") {
         return faceHeight * playerLiftAt(x, lowerY, now);
+      }
+
+      if (family === "terrain:orange_wall") {
+        return faceHeight * orangeWallLiftAt(x, lowerY, now);
       }
 
       if (family === "actor:floating_floor") {
@@ -373,6 +383,65 @@
         return;
       }
 
+      if (cell.type === "orange_wall") {
+        sceneCtx.fillStyle = "#b85f16";
+        sceneCtx.fillRect(left, top, TILE_SIZE, TILE_SIZE);
+        sceneCtx.strokeStyle = "rgba(0, 0, 0, 0.24)";
+        sceneCtx.lineWidth = 1.5;
+        sceneCtx.beginPath();
+
+        if (!isOrangeWall(x, y - 1)) {
+          sceneCtx.moveTo(left + 0.75, top + 0.75);
+          sceneCtx.lineTo(left + TILE_SIZE - 0.75, top + 0.75);
+        }
+
+        if (!isOrangeWall(x + 1, y)) {
+          sceneCtx.moveTo(left + TILE_SIZE - 0.75, top + 0.75);
+          sceneCtx.lineTo(left + TILE_SIZE - 0.75, top + TILE_SIZE - 0.75);
+        }
+
+        if (!isOrangeWall(x, y + 1)) {
+          sceneCtx.moveTo(left + TILE_SIZE - 0.75, top + TILE_SIZE - 0.75);
+          sceneCtx.lineTo(left + 0.75, top + TILE_SIZE - 0.75);
+        }
+
+        if (!isOrangeWall(x - 1, y)) {
+          sceneCtx.moveTo(left + 0.75, top + TILE_SIZE - 0.75);
+          sceneCtx.lineTo(left + 0.75, top + 0.75);
+        }
+
+        sceneCtx.stroke();
+        return;
+      }
+
+      if (cell.type === "orange_button") {
+        const buttonWidth = TILE_SIZE * 0.42;
+        const buttonHeight = TILE_SIZE * 0.3;
+        const buttonLeft = left + (TILE_SIZE - buttonWidth) / 2;
+        const buttonTop = top + TILE_SIZE * 0.38;
+        const buttonLift = Math.max(2, TILE_SIZE * 0.055);
+        const radius = TILE_SIZE * 0.07;
+        const radii = { tl: radius, tr: radius, br: radius, bl: radius };
+
+        sceneCtx.fillStyle = "#d6bd94";
+        sceneCtx.fillRect(left, top, TILE_SIZE, TILE_SIZE);
+        sceneCtx.strokeStyle = "rgba(0, 0, 0, 0.12)";
+        sceneCtx.lineWidth = 1.5;
+        sceneCtx.strokeRect(left + 0.75, top + 0.75, TILE_SIZE - 1.5, TILE_SIZE - 1.5);
+
+        roundRectPath(sceneCtx, buttonLeft, buttonTop + buttonLift, buttonWidth, buttonHeight, radii);
+        sceneCtx.fillStyle = "#b85f16";
+        sceneCtx.fill();
+
+        roundRectPath(sceneCtx, buttonLeft, buttonTop, buttonWidth, buttonHeight, radii);
+        sceneCtx.fillStyle = "#f59e0b";
+        sceneCtx.fill();
+        sceneCtx.lineWidth = 2;
+        sceneCtx.strokeStyle = "#000000";
+        sceneCtx.stroke();
+        return;
+      }
+
       if (cell.type === "ice") {
         const centerX = left + TILE_SIZE * 0.5;
         const centerY = top + TILE_SIZE * 0.5;
@@ -415,6 +484,10 @@
 
       if (groundCell.type === "player_lift") {
         return "#6f4eb4";
+      }
+
+      if (groundCell.type === "orange_wall" || groundCell.type === "orange_button") {
+        return "#f59e0b";
       }
 
       return "#b89c73";
@@ -745,6 +818,139 @@
       sceneCtx.stroke();
     }
 
+    function paintRaisedOrangeWallTile(x, y, cell, lift = 1) {
+      if (lift <= 0.001) {
+        return;
+      }
+
+      void cell;
+
+      const left = x * TILE_SIZE;
+      const top = y * TILE_SIZE;
+      const right = left + TILE_SIZE;
+      const bottom = top + TILE_SIZE;
+      const faceHeight = Math.round(TILE_SIZE * 0.26);
+      const liftHeight = faceHeight;
+      const travel = liftHeight * lift;
+      const openTop = !isOrangeWall(x, y - 1);
+      const openRight = !isOrangeWall(x + 1, y);
+      const openBottom = !isOrangeWall(x, y + 1);
+      const openLeft = !isOrangeWall(x - 1, y);
+      const topTravel = openTop ? travel : 0;
+      const platformTop = top - topTravel;
+      const platformBottom = bottom - travel;
+      const borderAlpha = clamp(lift, 0, 1);
+      const borderColor = `rgba(0, 0, 0, ${borderAlpha})`;
+      const radius = TILE_SIZE * 0.18;
+      const radii = {
+        tl: openTop && openLeft ? radius : 0,
+        tr: openTop && openRight ? radius : 0,
+        br: 0,
+        bl: 0
+      };
+      const rightSideVisibleEnd =
+        openRight &&
+        !openBottom &&
+        x < state.width - 1 &&
+        y < state.height - 1 &&
+        isOrangeWall(x + 1, y + 1) &&
+        !isOrangeWall(x + 1, y)
+          ? bottom - travel
+          : bottom - radii.br;
+      const leftSideVisibleEnd =
+        openLeft &&
+        !openBottom &&
+        x > 0 &&
+        y < state.height - 1 &&
+        isOrangeWall(x - 1, y + 1) &&
+        !isOrangeWall(x - 1, y)
+          ? bottom - travel
+          : bottom - radii.bl;
+      const rightSideEnd = rightSideVisibleEnd;
+      const leftSideEnd = leftSideVisibleEnd;
+
+      if (x === 0 && y === 0) {
+        radii.tl = 0;
+      }
+      if (x === state.width - 1 && y === 0) {
+        radii.tr = 0;
+      }
+
+      roundRectPath(sceneCtx, left, platformTop, TILE_SIZE, TILE_SIZE + topTravel, radii);
+      sceneCtx.save();
+      sceneCtx.clip();
+      sceneCtx.fillStyle = "#b85f16";
+      sceneCtx.fillRect(left, platformTop, TILE_SIZE, TILE_SIZE + topTravel);
+
+      if (travel > 0.001 && openBottom) {
+        const shineBorderWidth = 3;
+        const leftNeighborHasShine =
+          isOrangeWall(x - 1, y) && !isOrangeWall(x - 1, y + 1);
+        const rightNeighborHasShine =
+          isOrangeWall(x + 1, y) && !isOrangeWall(x + 1, y + 1);
+
+        sceneCtx.fillStyle = "#f59e0b";
+        sceneCtx.fillRect(left, platformBottom, TILE_SIZE, Math.min(faceHeight, travel));
+        sceneCtx.lineWidth = shineBorderWidth;
+        sceneCtx.strokeStyle = "#000000";
+        sceneCtx.beginPath();
+        sceneCtx.moveTo(left, platformBottom + shineBorderWidth / 2);
+        sceneCtx.lineTo(right, platformBottom + shineBorderWidth / 2);
+        sceneCtx.stroke();
+        sceneCtx.fillStyle = "#000000";
+
+        if (!openLeft && !leftNeighborHasShine) {
+          sceneCtx.fillRect(left, platformBottom, shineBorderWidth, Math.min(faceHeight, travel));
+        }
+
+        if (!openRight && !rightNeighborHasShine) {
+          sceneCtx.fillRect(right - shineBorderWidth, platformBottom, shineBorderWidth, Math.min(faceHeight, travel));
+        }
+      }
+      sceneCtx.restore();
+
+      sceneCtx.lineWidth = 3;
+      sceneCtx.strokeStyle = borderColor;
+      sceneCtx.beginPath();
+
+      if (openTop) {
+        sceneCtx.moveTo(left + radii.tl, platformTop);
+        sceneCtx.lineTo(right - radii.tr, platformTop);
+      }
+
+      if (openRight) {
+        sceneCtx.moveTo(right, platformTop + radii.tr);
+        sceneCtx.lineTo(right, rightSideEnd);
+      }
+
+      if (openBottom) {
+        sceneCtx.moveTo(right - radii.br, bottom);
+        sceneCtx.lineTo(left + radii.bl, bottom);
+      }
+
+      if (openLeft) {
+        sceneCtx.moveTo(left, leftSideEnd);
+        sceneCtx.lineTo(left, platformTop + radii.tl);
+      }
+
+      if (radii.tl > 0) {
+        sceneCtx.moveTo(left + radii.tl, platformTop);
+        sceneCtx.quadraticCurveTo(left, platformTop, left, platformTop + radii.tl);
+      }
+
+      if (radii.tr > 0) {
+        sceneCtx.moveTo(right - radii.tr, platformTop);
+        sceneCtx.quadraticCurveTo(right, platformTop, right, platformTop + radii.tr);
+      }
+
+      if (travel > 0.001 && openBottom) {
+        sceneCtx.moveTo(left, platformBottom);
+        sceneCtx.lineTo(right, platformBottom);
+      }
+
+      sceneCtx.stroke();
+    }
+
     function paintExit(x, y, cell) {
       paintFloorTile(x, y, cell);
 
@@ -772,6 +978,7 @@
           const cell = terrainAt(x, y);
           const gateLift = cell.type === "player_gate" ? gateLiftAt(x, y, now) : 0;
           const playerLift = cell.type === "player_lift" ? playerLiftAt(x, y, now) : 0;
+          const orangeWallLift = cell.type === "orange_wall" ? orangeWallLiftAt(x, y, now) : 0;
 
           if (cell.type === "wall") {
             continue;
@@ -782,6 +989,10 @@
           }
 
           if (cell.type === "player_lift" && playerLift > 0.001) {
+            continue;
+          }
+
+          if (cell.type === "orange_wall" && orangeWallLift > 0.001) {
             continue;
           }
 
@@ -798,7 +1009,8 @@
         for (let x = 0; x < state.width; x += 1) {
           if (
             (isPlayerGate(x, y) && gateLiftAt(x, y, now) > 0.001) ||
-            (isPlayerLift(x, y) && playerLiftAt(x, y, now) > 0.001)
+            (isPlayerLift(x, y) && playerLiftAt(x, y, now) > 0.001) ||
+            (isOrangeWall(x, y) && orangeWallLiftAt(x, y, now) > 0.001)
           ) {
             continue;
           }
@@ -831,6 +1043,7 @@
       paintWallTile,
       paintRaisedPlayerGateTile,
       paintRaisedPlayerLiftTile,
+      paintRaisedOrangeWallTile,
       paintExit,
       paintGround,
       paintWalls

@@ -30,6 +30,14 @@
         }
       ]
     },
+    "orange_wall": {
+      "token": "O",
+      "label": "Orange Wall"
+    },
+    "orange_button": {
+      "token": "o",
+      "label": "Orange Button"
+    },
     "box": {
       "token": "b",
       "image": "images/crate.png"

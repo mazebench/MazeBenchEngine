@@ -173,6 +173,20 @@ class PlayerLift(MazeSprite):
         super().__init__(x, y, name="player_lift")
 
 
+class OrangeWall(MazeSprite):
+    token = "O"
+
+    def __init__(self, x: int, y: int) -> None:
+        super().__init__(x, y, name="orange_wall")
+
+
+class OrangeButton(MazeSprite):
+    token = "o"
+
+    def __init__(self, x: int, y: int) -> None:
+        super().__init__(x, y, name="orange_button")
+
+
 class Box(MazeSprite):
     token = "b"
     solid = True
@@ -258,6 +272,8 @@ class MazeWorld(GridWorld):
         "circle_player": CirclePlayer,
         "player_gate": PlayerGate,
         "player_lift": PlayerLift,
+        "orange_wall": OrangeWall,
+        "orange_button": OrangeButton,
         "box": Box,
         "gem": Gem,
         "floating_floor": FloatingFloor,
@@ -412,11 +428,31 @@ class MazeWorld(GridWorld):
         lift.raised = raised
         return lift.raised
 
+    def are_orange_buttons_pressed(self) -> bool:
+        button_positions = [
+            (x, y)
+            for (x, y), sprites in self.tiles.items()
+            if any(sprite.name == "orange_button" for sprite in sprites)
+        ]
+
+        return bool(button_positions) and all(
+            self.has_ground_mobile_actor_at(x, y)
+            for x, y in button_positions
+        )
+
+    def is_raised_orange_wall(self, x: int, y: int) -> bool:
+        return self.tile_has_name(x, y, "orange_wall") and not self.are_orange_buttons_pressed()
+
     def terrain_surface_height(self, x: int, y: int) -> int | None:
         if not self.in_bounds(x, y):
             return None
 
-        if self.tile_has_name(x, y, "wall") or self.is_raised_player_gate(x, y) or self.is_raised_player_lift(x, y):
+        if (
+            self.tile_has_name(x, y, "wall")
+            or self.is_raised_player_gate(x, y)
+            or self.is_raised_player_lift(x, y)
+            or self.is_raised_orange_wall(x, y)
+        ):
             return 1
 
         if self.tile_has_name(x, y, "hole"):
@@ -581,6 +617,9 @@ class MazeWorld(GridWorld):
             if self.is_raised_player_lift(target_x, target_y):
                 return False
 
+            if self.is_raised_orange_wall(target_x, target_y):
+                return False
+
             for occupant in self.tiles.get((target_x, target_y), []):
                 if occupant in members:
                     continue
@@ -671,6 +710,9 @@ class MazeWorld(GridWorld):
                 return None
 
             if self.is_raised_player_lift(target_x, target_y):
+                return None
+
+            if self.is_raised_orange_wall(target_x, target_y):
                 return None
 
             for occupant in self.tiles.get((target_x, target_y), []):
@@ -782,7 +824,7 @@ class MazeWorld(GridWorld):
 
             return True
 
-        if self.is_raised_player_gate(x, y) or self.is_raised_player_lift(x, y):
+        if self.is_raised_player_gate(x, y) or self.is_raised_player_lift(x, y) or self.is_raised_orange_wall(x, y):
             return False
 
         for occupant in self.tiles.get((x, y), []):

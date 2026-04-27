@@ -7,7 +7,9 @@
     ice: 4,
     hole: 5,
     player_gate: 6,
-    player_lift: 7
+    player_lift: 7,
+    orange_wall: 8,
+    orange_button: 9
   };
   const fallbackTerrainCell = {
     type: "empty",
@@ -57,6 +59,8 @@
     const baseLiftRaised = new Uint8Array(cellCount);
     const playerGateCells = [];
     const playerLiftCells = [];
+    const orangeWallCells = [];
+    const orangeButtonCells = [];
     const actorSource = Array.isArray(playData?.actors) ? playData.actors : [];
     const actorTypes = actorSource.map((actor) => actorType(actor));
     const actorGroupIds = actorSource.map((actor) => actor?.groupId ?? "");
@@ -82,6 +86,14 @@
 
         if (terrainType === terrainTypes.player_gate) {
           playerGateCells.push(index);
+        }
+
+        if (terrainType === terrainTypes.orange_wall) {
+          orangeWallCells.push(index);
+        }
+
+        if (terrainType === terrainTypes.orange_button) {
+          orangeButtonCells.push(index);
         }
       }
     }
@@ -116,6 +128,7 @@
       });
 
       const gateState = computeRaisedPlayerGateSet(state);
+      const orangeButtonsPressed = areOrangeButtonsPressed(state);
 
       for (let index = 0; index < actorCount; index += 1) {
         if (!isPlayerActor(index)) {
@@ -124,7 +137,13 @@
         }
 
         state.actorElevation[index] =
-          playerSurfaceHeightAt(state, state.actorX[index], state.actorY[index], gateState) === 1
+          playerSurfaceHeightAt(
+            state,
+            state.actorX[index],
+            state.actorY[index],
+            gateState,
+            orangeButtonsPressed
+          ) === 1
             ? 1
             : 0;
       }
@@ -251,6 +270,38 @@
       return state.liftRaised[cellIndex(x, y)] === 1;
     }
 
+    function isOrangeWall(x, y) {
+      return isInsideBoard(x, y) && baseTerrain[cellIndex(x, y)] === terrainTypes.orange_wall;
+    }
+
+    function areOrangeButtonsPressed(state) {
+      if (orangeButtonCells.length === 0) {
+        return false;
+      }
+
+      const occupiedGround = new Uint8Array(cellCount);
+
+      for (let index = 0; index < actorCount; index += 1) {
+        if (state.actorRemoved[index] || isCollectibleActor(index) || actorElevation(state, index) !== 0) {
+          continue;
+        }
+
+        occupiedGround[actorCell(state, index)] = 1;
+      }
+
+      for (let index = 0; index < orangeButtonCells.length; index += 1) {
+        if (!occupiedGround[orangeButtonCells[index]]) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    function isRaisedOrangeWall(x, y, orangeButtonsPressed) {
+      return isOrangeWall(x, y) && !orangeButtonsPressed;
+    }
+
     function isPlayerGate(x, y) {
       return isInsideBoard(x, y) && baseTerrain[cellIndex(x, y)] === terrainTypes.player_gate;
     }
@@ -263,20 +314,21 @@
       return isTerrainTypeAt(state, x, y, terrainTypes.wall);
     }
 
-    function isWall(state, x, y, gateState) {
+    function isWall(state, x, y, gateState, orangeButtonsPressed = areOrangeButtonsPressed(state)) {
       return (
         isTerrainWall(state, x, y) ||
         isRaisedPlayerGate(x, y, gateState) ||
-        isRaisedPlayerLift(state, x, y)
+        isRaisedPlayerLift(state, x, y) ||
+        isRaisedOrangeWall(x, y, orangeButtonsPressed)
       );
     }
 
-    function terrainSurfaceHeightAt(state, x, y, gateState) {
+    function terrainSurfaceHeightAt(state, x, y, gateState, orangeButtonsPressed = areOrangeButtonsPressed(state)) {
       if (!isInsideBoard(x, y)) {
         return null;
       }
 
-      if (isWall(state, x, y, gateState)) {
+      if (isWall(state, x, y, gateState, orangeButtonsPressed)) {
         return 1;
       }
 
@@ -307,8 +359,8 @@
       return false;
     }
 
-    function playerSurfaceHeightAt(state, x, y, gateState) {
-      const terrainHeight = terrainSurfaceHeightAt(state, x, y, gateState);
+    function playerSurfaceHeightAt(state, x, y, gateState, orangeButtonsPressed = areOrangeButtonsPressed(state)) {
+      const terrainHeight = terrainSurfaceHeightAt(state, x, y, gateState, orangeButtonsPressed);
 
       if (terrainHeight === 1 || hasElevatedActorSurfaceAt(state, x, y)) {
         return 1;
@@ -465,23 +517,23 @@
       return members;
     }
 
-    function canMoveInto(state, x, y, occupied, gateState) {
+    function canMoveInto(state, x, y, occupied, gateState, orangeButtonsPressed) {
       if (!isInsideBoard(x, y)) {
         return false;
       }
 
-      if (isWall(state, x, y, gateState)) {
+      if (isWall(state, x, y, gateState, orangeButtonsPressed)) {
         return false;
       }
 
       return occupied[cellIndex(x, y)] === 0;
     }
 
-    function findSlideDestination(state, startX, startY, dx, dy, occupied, gateState) {
+    function findSlideDestination(state, startX, startY, dx, dy, occupied, gateState, orangeButtonsPressed) {
       let nextX = startX;
       let nextY = startY;
 
-      while (canMoveInto(state, nextX + dx, nextY + dy, occupied, gateState)) {
+      while (canMoveInto(state, nextX + dx, nextY + dy, occupied, gateState, orangeButtonsPressed)) {
         nextX += dx;
         nextY += dy;
 
@@ -493,12 +545,21 @@
       return { x: nextX, y: nextY };
     }
 
-    function moveBox(state, actorIndex, dx, dy, occupied, moves, gateState, searchMode) {
+    function moveBox(state, actorIndex, dx, dy, occupied, moves, gateState, orangeButtonsPressed, searchMode) {
       const fromX = state.actorX[actorIndex];
       const fromY = state.actorY[actorIndex];
       occupied[cellIndex(fromX, fromY)] = 0;
 
-      const target = findSlideDestination(state, fromX, fromY, dx, dy, occupied, gateState);
+      const target = findSlideDestination(
+        state,
+        fromX,
+        fromY,
+        dx,
+        dy,
+        occupied,
+        gateState,
+        orangeButtonsPressed
+      );
 
       if (target.x === fromX && target.y === fromY) {
         occupied[cellIndex(fromX, fromY)] = 1;
@@ -627,12 +688,15 @@
       );
     }
 
-    function canMoveWeightlessGroup(state, members, dx, dy, occupied, gateState) {
+    function canMoveWeightlessGroup(state, members, dx, dy, occupied, gateState, orangeButtonsPressed) {
       return members.every((member) => {
         const targetX = state.actorX[member] + dx;
         const targetY = state.actorY[member] + dy;
 
-        if (!isInsideBoard(targetX, targetY) || isWall(state, targetX, targetY, gateState)) {
+        if (
+          !isInsideBoard(targetX, targetY) ||
+          isWall(state, targetX, targetY, gateState, orangeButtonsPressed)
+        ) {
           return false;
         }
 
@@ -640,7 +704,15 @@
       });
     }
 
-    function collectWeightlessPushCluster(state, groupId, dx, dy, gateState, ignoredActors) {
+    function collectWeightlessPushCluster(
+      state,
+      groupId,
+      dx,
+      dy,
+      gateState,
+      orangeButtonsPressed,
+      ignoredActors
+    ) {
       const clusterGroupIds = new Set([groupId]);
       const blockers = [];
       const blockerKeys = new Set();
@@ -656,7 +728,10 @@
             const targetX = state.actorX[member] + dx;
             const targetY = state.actorY[member] + dy;
 
-            if (!isInsideBoard(targetX, targetY) || isWall(state, targetX, targetY, gateState)) {
+            if (
+              !isInsideBoard(targetX, targetY) ||
+              isWall(state, targetX, targetY, gateState, orangeButtonsPressed)
+            ) {
               blockers.push(null);
               return;
             }
@@ -710,7 +785,17 @@
       };
     }
 
-    function moveWeightlessCluster(state, groupIds, dx, dy, occupied, moves, gateState, searchMode) {
+    function moveWeightlessCluster(
+      state,
+      groupIds,
+      dx,
+      dy,
+      occupied,
+      moves,
+      gateState,
+      orangeButtonsPressed,
+      searchMode
+    ) {
       const members = weightlessClusterMembers(state, groupIds);
 
       if (members.length === 0) {
@@ -729,7 +814,7 @@
 
       let moved = false;
 
-      while (canMoveWeightlessGroup(state, members, dx, dy, occupied, gateState)) {
+      while (canMoveWeightlessGroup(state, members, dx, dy, occupied, gateState, orangeButtonsPressed)) {
         members.forEach((member) => {
           state.actorX[member] += dx;
           state.actorY[member] += dy;
@@ -790,6 +875,7 @@
       budget,
       handled = new Set(),
       gateState,
+      orangeButtonsPressed,
       ignoredActors = new Set(),
       searchMode = false
     ) {
@@ -815,6 +901,7 @@
               dx,
               dy,
               gateState,
+              orangeButtonsPressed,
               ignoredActors
             )
           : null;
@@ -834,7 +921,10 @@
           const targetX = state.actorX[member] + dx;
           const targetY = state.actorY[member] + dy;
 
-          if (!isInsideBoard(targetX, targetY) || isWall(state, targetX, targetY, gateState)) {
+          if (
+            !isInsideBoard(targetX, targetY) ||
+            isWall(state, targetX, targetY, gateState, orangeButtonsPressed)
+          ) {
             return null;
           }
 
@@ -876,6 +966,7 @@
           remainingBudget,
           handled,
           gateState,
+          orangeButtonsPressed,
           ignoredActors,
           searchMode
         );
@@ -897,9 +988,20 @@
               occupied,
               moves,
               gateState,
+              orangeButtonsPressed,
               searchMode
             )
-          : moveBox(state, actorIndex, dx, dy, occupied, moves, gateState, searchMode);
+          : moveBox(
+              state,
+              actorIndex,
+              dx,
+              dy,
+              occupied,
+              moves,
+              gateState,
+              orangeButtonsPressed,
+              searchMode
+            );
 
       if (!moved) {
         return null;
@@ -983,6 +1085,55 @@
       });
     }
 
+    function syncOrangeWallPlayerElevations(state, moves, gateState, orangeButtonsPressed) {
+      if (orangeWallCells.length === 0) {
+        return;
+      }
+
+      const moveByActor = new Map(moves.map((move) => [move.actorIndex, move]));
+
+      for (let index = 0; index < actorCount; index += 1) {
+        if (!isPlayerActor(index) || state.actorRemoved[index]) {
+          continue;
+        }
+
+        const x = state.actorX[index];
+        const y = state.actorY[index];
+
+        if (!isOrangeWall(x, y)) {
+          continue;
+        }
+
+        const fromElevation = actorElevation(state, index);
+        const toElevation = playerSurfaceHeightAt(state, x, y, gateState, orangeButtonsPressed) === 1 ? 1 : 0;
+
+        if (fromElevation === toElevation) {
+          continue;
+        }
+
+        const existingMove = moveByActor.get(index);
+
+        if (existingMove) {
+          existingMove.toElevation = toElevation;
+        } else {
+          const moveRecord = {
+            actorIndex: index,
+            actorType: actorTypes[index],
+            fromX: x,
+            fromY: y,
+            toX: x,
+            toY: y,
+            fromElevation,
+            toElevation
+          };
+          moves.push(moveRecord);
+          moveByActor.set(index, moveRecord);
+        }
+
+        state.actorElevation[index] = toElevation;
+      }
+    }
+
     function sortPlayersForMove(state, dx, dy) {
       const players = [];
 
@@ -1012,6 +1163,7 @@
       const occupiedSnapshotBuffer = options.occupiedSnapshot || null;
       const occupied = buildOccupiedMap(state);
       const raisedPlayerGates = computeRaisedPlayerGateSet(state);
+      const orangeButtonsPressed = areOrangeButtonsPressed(state);
       const orderedPlayers = sortPlayersForMove(state, dx, dy);
       const moves = [];
       const collectedGems = new Set();
@@ -1032,8 +1184,20 @@
           const isInitialStep = nextX === fromX && nextY === fromY;
           const targetSurfaceHeight =
             fromElevation === 1
-              ? playerSurfaceHeightAt(state, targetX, targetY, raisedPlayerGates)
-              : terrainSurfaceHeightAt(state, targetX, targetY, raisedPlayerGates);
+              ? playerSurfaceHeightAt(
+                  state,
+                  targetX,
+                  targetY,
+                  raisedPlayerGates,
+                  orangeButtonsPressed
+                )
+              : terrainSurfaceHeightAt(
+                  state,
+                  targetX,
+                  targetY,
+                  raisedPlayerGates,
+                  orangeButtonsPressed
+                );
           const canEnterHole = fromElevation === 0 && isHole(state, targetX, targetY);
 
           if (
@@ -1079,6 +1243,7 @@
                 pushBudget,
                 new Set(),
                 raisedPlayerGates,
+                orangeButtonsPressed,
                 new Set([player]),
                 searchMode
               );
@@ -1120,7 +1285,13 @@
             toElevation = toRaised ? 1 : 0;
           } else {
             toElevation =
-              playerSurfaceHeightAt(state, nextX, nextY, raisedPlayerGates) ?? fromElevation;
+              playerSurfaceHeightAt(
+                state,
+                nextX,
+                nextY,
+                raisedPlayerGates,
+                orangeButtonsPressed
+              ) ?? fromElevation;
           }
 
           const travelDistance = Math.abs(nextX - fromX) + Math.abs(nextY - fromY);
@@ -1167,6 +1338,12 @@
           setPlayerLiftRaised(state, x, y, raised);
         });
         applyMoveFinalState(state, moves);
+        syncOrangeWallPlayerElevations(
+          state,
+          moves,
+          computeRaisedPlayerGateSet(state),
+          areOrangeButtonsPressed(state)
+        );
       }
 
       return {

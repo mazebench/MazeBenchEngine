@@ -62,6 +62,7 @@ function createGameplayApp(actors, options = {}) {
     queuedAction: null,
     animationFrameId: null,
     liveRaisedPlayerGates: new Set(),
+    liveRaisedOrangeWalls: new Set(),
     posKey,
     cloneActorPositions() {
       return app.state.actors.map((actor) => ({
@@ -163,6 +164,7 @@ function createGameplayApp(actors, options = {}) {
     isRaisedPlayerLift: () => false,
     setPlayerLiftRaised: () => {},
     computeRaisedPlayerGateSet: () => new Set(),
+    computeRaisedOrangeWallSet: () => new Set(),
     isIce: options.isIce || (() => false),
     isHole: options.isHole || (() => false),
     isIceOrHole: () => false,
