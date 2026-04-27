@@ -423,7 +423,7 @@
     function actorDepthRow(actor) {
       const renderY = actor.renderY ?? actor.y;
 
-      if (!isPlayerActor(actor)) {
+      if (!isPlayerActor(actor) && actor.type !== "weightless_box") {
         return renderY;
       }
 

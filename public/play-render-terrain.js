@@ -228,9 +228,11 @@
       if (family.startsWith("actor:weightless_box:")) {
         const groupId = family.slice("actor:weightless_box:".length);
         const groupState = weightlessGroupRenderState(groupId);
+        const surfaceLift = groupState.surfaceLift ?? 0;
+        const liftedOffsetY = groupState.offsetY - surfaceLift;
 
         return {
-          offset: { x: groupState.offsetX, y: groupState.offsetY },
+          offset: { x: groupState.offsetX, y: liftedOffsetY },
           depthOffset: (groupState.offsetY + groupState.sink) / TILE_SIZE,
           transform: {
             centerX: groupState.centerX,

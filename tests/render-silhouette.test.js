@@ -238,6 +238,36 @@ function createRenderApp({ terrain, actors, playData = {} }) {
   const app = createRenderApp({
     terrain: buildTerrain(4, 4),
     actors: [
+      { type: "weightless_box", groupId: "M0", x: 2, y: 0, removed: false, elevation: 1, renderElevation: 1, imageUrl: null },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 1, removed: false, elevation: 1, renderElevation: 1, imageUrl: null },
+      { type: "weightless_box", groupId: "M0", x: 2, y: 1, removed: false, elevation: 1, renderElevation: 1, imageUrl: null }
+    ]
+  });
+
+  app.state.actors.forEach((actor) => {
+    actor.renderX = actor.x - 0.5;
+    actor.renderY = actor.y + 0.25;
+    actor.renderElevation = 1;
+  });
+  app.sceneCtx.__operations.length = 0;
+  app.renderActors.paintDepthSortedScene(0);
+  assert.ok(
+    app.sceneCtx.__operations.some(
+      (operation) =>
+        operation.fillStyle === "#315991" &&
+        operation.args[0] === 93.5 &&
+        operation.args[1] === 49 &&
+        operation.args[2] === 5 &&
+        operation.args[3] === 19
+    )
+  );
+  assert.equal(app.renderActors.actorDepthRow(app.state.actors[1]), 2);
+}
+
+{
+  const app = createRenderApp({
+    terrain: buildTerrain(4, 4),
+    actors: [
       { type: "weightless_box", groupId: "M0", x: 2, y: 0, removed: false, elevation: 0, imageUrl: null },
       { type: "weightless_box", groupId: "M1", x: 1, y: 1, removed: false, elevation: 0, imageUrl: null },
       { type: "weightless_box", groupId: "M1", x: 2, y: 1, removed: false, elevation: 0, imageUrl: null }
