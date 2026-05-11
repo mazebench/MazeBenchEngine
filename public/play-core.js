@@ -1274,12 +1274,13 @@
       return 0;
     }
 
-    function hasElevatedActorSurfaceAt(x, y) {
+    function hasElevatedActorSurfaceAt(x, y, ignoredActors = null) {
       return (
         actorsAt(
           x,
           y,
           (actor) =>
+            !ignoredActors?.has(actor) &&
             actorElevation(actor) === 0 &&
             (actor.type === "floating_floor" || actor.type === "weightless_box")
         ).length > 0
@@ -1306,8 +1307,12 @@
       gateState = app.liveRaisedPlayerGates,
       orangeWallState = app.liveRaisedOrangeWalls
     ) {
+      const memberSet = new Set(members);
+
       return members.some(
-        (member) => terrainSurfaceHeightAt(member.x, member.y, gateState, orangeWallState) === 1
+        (member) =>
+          terrainSurfaceHeightAt(member.x, member.y, gateState, orangeWallState) === 1 ||
+          hasElevatedActorSurfaceAt(member.x, member.y, memberSet)
       )
         ? 1
         : 0;

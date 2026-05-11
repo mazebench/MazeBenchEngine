@@ -413,24 +413,13 @@
       return 0;
     }
 
-    function weightlessGroupSupportedElevation(state, members, gateState, orangeButtonsPressed) {
-      return members.some(
-        (member) =>
-          terrainSurfaceHeightAt(
-            state,
-            state.actorX[member],
-            state.actorY[member],
-            gateState,
-            orangeButtonsPressed
-          ) === 1
-      )
-        ? 1
-        : 0;
-    }
-
-    function hasElevatedActorSurfaceAt(state, x, y) {
+    function hasElevatedActorSurfaceAt(state, x, y, ignoredActors = null) {
       for (let index = 0; index < actorCount; index += 1) {
         if (state.actorRemoved[index]) {
+          continue;
+        }
+
+        if (ignoredActors?.has(index)) {
           continue;
         }
 
@@ -447,6 +436,22 @@
       }
 
       return false;
+    }
+
+    function weightlessGroupSupportedElevation(state, members, gateState, orangeButtonsPressed) {
+      const memberSet = new Set(members);
+
+      return members.some((member) => {
+        const x = state.actorX[member];
+        const y = state.actorY[member];
+
+        return (
+          terrainSurfaceHeightAt(state, x, y, gateState, orangeButtonsPressed) === 1 ||
+          hasElevatedActorSurfaceAt(state, x, y, memberSet)
+        );
+      })
+        ? 1
+        : 0;
     }
 
     function playerSurfaceHeightAt(state, x, y, gateState, orangeButtonsPressed = areOrangeButtonsPressed(state)) {
