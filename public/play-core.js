@@ -159,20 +159,7 @@
         width: playData.width,
         height: playData.height,
         terrain: playData.terrain,
-        actors: playData.actors.map((actor) => ({
-          ...actor,
-          hoverSeed:
-            (((actor.x + 1) * 0.61803398875 + (actor.y + 1) * 1.41421356237) % 1) * Math.PI * 2,
-          renderX: actor.x,
-          renderY: actor.y,
-          elevation: 0,
-          renderElevation: 0,
-          renderScale: 1,
-          renderAlpha: 1,
-          renderSink: 0,
-          renderInHole: false,
-          removed: false
-        })),
+        actors: playData.actors.map((actor) => ({ ...actor })),
         effects: {
           fuzzyEnabled: fuzzyToggle ? fuzzyToggle.getAttribute("aria-pressed") === "true" : true,
           noisePhase: 0
@@ -316,8 +303,7 @@
     function createRuntimeActor(actor) {
       const removed = Boolean(actor?.removed);
       const elevation = actor?.elevation ?? 0;
-
-      return {
+      const runtimeActor = {
         ...actor,
         hoverSeed: actor?.hoverSeed ?? hoverSeedForActor(actor),
         renderX: actor?.renderX ?? actor.x,
@@ -330,6 +316,12 @@
         renderInHole: Boolean(actor?.renderInHole),
         removed
       };
+
+      Object.defineProperty(runtimeActor, "__explicitElevation", {
+        value: Object.prototype.hasOwnProperty.call(actor ?? {}, "elevation")
+      });
+
+      return runtimeActor;
     }
 
     function registerImageUrl(url) {
@@ -1918,10 +1910,17 @@
     }
 
     function initializeActorElevations() {
-      app.state.actors.forEach((actor) => {
+      app.state.actors.forEach((actor, index) => {
         if (!isPlayerActor(actor) && actor.type !== "weightless_box") {
           actor.elevation = 0;
           actor.renderElevation = 0;
+          return;
+        }
+
+        if (actor.type === "weightless_box" && !actor.__explicitElevation) {
+          const elevation = initialWeightlessStackElevation(actor, index);
+          actor.elevation = elevation;
+          actor.renderElevation = elevation;
         }
       });
 
@@ -1973,6 +1972,23 @@
         actor.elevation = elevation;
         actor.renderElevation = elevation;
       });
+    }
+
+    function initialWeightlessStackElevation(actor, index) {
+      for (let otherIndex = 0; otherIndex < index; otherIndex += 1) {
+        const other = app.state.actors[otherIndex];
+
+        if (
+          other?.type === "weightless_box" &&
+          !other.removed &&
+          other.x === actor.x &&
+          other.y === actor.y
+        ) {
+          return 1;
+        }
+      }
+
+      return 0;
     }
 
     function syncFuzzyToggle() {

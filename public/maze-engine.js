@@ -123,7 +123,7 @@
       actorSource.forEach((actor, index) => {
         state.actorX[index] = Number.isInteger(actor?.x) ? actor.x : 0;
         state.actorY[index] = Number.isInteger(actor?.y) ? actor.y : 0;
-        state.actorElevation[index] = actor?.elevation ?? 0;
+        state.actorElevation[index] = initialActorElevation(actor, index);
         state.actorRemoved[index] = actor?.removed ? 1 : 0;
       });
 
@@ -167,6 +167,38 @@
       }
 
       return state;
+    }
+
+    function hasExplicitElevation(actor) {
+      return Object.prototype.hasOwnProperty.call(actor ?? {}, "elevation");
+    }
+
+    function initialActorElevation(actor, index) {
+      if (hasExplicitElevation(actor)) {
+        return actor?.elevation ?? 0;
+      }
+
+      if (actorTypes[index] !== "weightless_box") {
+        return 0;
+      }
+
+      const x = Number.isInteger(actor?.x) ? actor.x : 0;
+      const y = Number.isInteger(actor?.y) ? actor.y : 0;
+
+      for (let other = 0; other < index; other += 1) {
+        const otherActor = actorSource[other];
+
+        if (
+          actorTypes[other] === "weightless_box" &&
+          !otherActor?.removed &&
+          (Number.isInteger(otherActor?.x) ? otherActor.x : 0) === x &&
+          (Number.isInteger(otherActor?.y) ? otherActor.y : 0) === y
+        ) {
+          return 1;
+        }
+      }
+
+      return 0;
     }
 
     function syncWeightlessGroupElevations(state, gateState, orangeButtonsPressed) {

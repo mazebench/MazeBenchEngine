@@ -425,6 +425,30 @@ function createRenderApp({ terrain, actors, playData = {} }) {
 
 {
   const app = createRenderApp({
+    terrain: buildTerrain(3, 1),
+    actors: [
+      { type: "weightless_box", groupId: "M2", x: 0, y: 0, removed: false, imageUrl: null },
+      { type: "weightless_box", groupId: "M2", x: 1, y: 0, removed: false, imageUrl: null },
+      { type: "weightless_box", groupId: "M3", x: 1, y: 0, removed: false, imageUrl: null },
+      { type: "weightless_box", groupId: "M2", x: 2, y: 0, removed: false, imageUrl: null },
+      { type: "weightless_box", groupId: "M3", x: 2, y: 0, removed: false, imageUrl: null }
+    ]
+  });
+
+  assert.deepEqual(
+    app.state.actors.map((actor) => [actor.groupId, actor.elevation, actor.renderElevation]),
+    [
+      ["M2", 0, 0],
+      ["M2", 0, 0],
+      ["M3", 1, 1],
+      ["M2", 0, 0],
+      ["M3", 1, 1]
+    ]
+  );
+}
+
+{
+  const app = createRenderApp({
     terrain: buildTerrain(3, 4),
     actors: [
       { type: "player", x: 1, y: 1, removed: false, elevation: 0, renderElevation: 0, imageUrl: null },

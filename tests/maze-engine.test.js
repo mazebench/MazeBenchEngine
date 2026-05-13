@@ -391,6 +391,23 @@ function createState(playData) {
 }
 
 {
+  const { state } = createState({
+    width: 3,
+    height: 1,
+    terrain: floorTerrain(3, 1),
+    actors: [
+      { type: "weightless_box", groupId: "M2", x: 0, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M2", x: 1, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M3", x: 1, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M2", x: 2, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M3", x: 2, y: 0, removed: false }
+    ]
+  });
+
+  assert.deepEqual(Array.from(state.actorElevation), [0, 0, 1, 0, 1]);
+}
+
+{
   const terrain = floorTerrain(3, 1);
   terrain[0][0] = { type: "orange_wall" };
   terrain[0][1] = { type: "orange_wall" };
