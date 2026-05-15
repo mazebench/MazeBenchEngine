@@ -185,8 +185,6 @@
         } else {
           rows.unshift(bottomSurfaceToken);
         }
-      } else if (!isAirToken(rows[0]) && !isBaseSurfaceToken(rows[0])) {
-        rows.unshift("");
       }
 
       return trimTrailingAirTokens(rows);
@@ -207,8 +205,10 @@
 
       if (tokens.length === 0) {
         tokens.push(normalizedToken);
-      } else {
+      } else if (isAirToken(tokens[0]) || isBaseSurfaceToken(tokens[0])) {
         tokens[0] = normalizedToken;
+      } else {
+        tokens.unshift(normalizedToken);
       }
 
       return normalizeTokenRows(enforceBottomSurfaceRows(tokens));
@@ -223,11 +223,20 @@
 
       const tokens = enforceBottomSurfaceRows(getCellTokens(currentValue));
 
-      while (tokens.length < 2) {
-        tokens.push("");
+      if (tokens.length === 0 || isAirToken(tokens[0])) {
+        tokens[0] = normalizedToken;
+        return normalizeTokenRows(enforceBottomSurfaceRows(tokens));
       }
 
-      tokens[1] = normalizedToken;
+      if (isBaseSurfaceToken(tokens[0])) {
+        while (tokens.length < 2) {
+          tokens.push("");
+        }
+
+        tokens[1] = normalizedToken;
+      } else {
+        tokens[0] = normalizedToken;
+      }
 
       return normalizeTokenRows(enforceBottomSurfaceRows(tokens));
     }
