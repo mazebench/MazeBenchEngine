@@ -45,6 +45,8 @@
     const edgeGeometryCache = new Map();
     const materialCache = new Map();
     const lineMaterialCache = new Map();
+    const textureCache = new Map();
+    const imageMaterialCache = new Map();
     const outlineOffsetCache = new Map();
     const levelStateSignatureCache = new WeakMap();
 
@@ -570,6 +572,51 @@
       }
 
       return lineMaterialCache.get(key);
+    }
+
+    function imageTexture(url) {
+      const image = app.imageCache?.get(url);
+
+      if (!image) {
+        return null;
+      }
+
+      if (!textureCache.has(url)) {
+        const texture = new THREE.CanvasTexture(image);
+
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.needsUpdate = true;
+        textureCache.set(url, texture);
+      }
+
+      return textureCache.get(url);
+    }
+
+    function imageMaterial(url, opacity = 1) {
+      const texture = imageTexture(url);
+
+      if (!texture) {
+        return null;
+      }
+
+      const alpha = clamp01(opacity);
+      const key = `${url}:${Math.round(alpha * 1000)}`;
+
+      if (!imageMaterialCache.has(key)) {
+        imageMaterialCache.set(
+          key,
+          new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true,
+            opacity: alpha,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+            alphaTest: 0.02
+          })
+        );
+      }
+
+      return imageMaterialCache.get(key);
     }
 
     function edgeOutlinesEnabled() {
@@ -1498,6 +1545,21 @@
       return elevation;
     }
 
+    function renderTerrainLayerLiftValue(layer, x, y, now = performance.now()) {
+      const key = `${x},${y}`;
+      const surfaceLiftValue = activeRenderContext?.surfaceLiftValues?.get(`${layer.type}:${key}`);
+
+      if (typeof surfaceLiftValue === "number") {
+        return clamp01(surfaceLiftValue);
+      }
+
+      if (layer.type === "player_lift") {
+        return renderState() === app.state ? app.playerLiftAt(x, y, now) : layer.raised === true ? 1 : 0;
+      }
+
+      return 0;
+    }
+
     function renderTerrainSurfaceHeightAt(x, y, now = performance.now()) {
       if (!renderIsInsideBoard(x, y)) {
         return null;
@@ -1534,7 +1596,94 @@
       };
     }
 
-    function addTileTopDetails(x, y, layer, topY) {
+    function playerLiftTriangleGeometry(direction) {
+      const key = `player-lift-triangle:${direction}`;
+
+      if (geometryCache.has(key)) {
+        return geometryCache.get(key);
+      }
+
+      const pointZ = direction < 0 ? -unit * 0.22 : unit * 0.22;
+      const baseZ = direction < 0 ? unit * 0.16 : -unit * 0.16;
+      const halfWidth = unit * 0.17;
+      const geometry = new THREE.BufferGeometry();
+
+      geometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(
+          direction < 0
+            ? [
+                0,
+                0,
+                pointZ,
+                -halfWidth,
+                0,
+                baseZ,
+                halfWidth,
+                0,
+                baseZ
+              ]
+            : [
+                0,
+                0,
+                pointZ,
+                halfWidth,
+                0,
+                baseZ,
+                -halfWidth,
+                0,
+                baseZ
+              ],
+          3
+        )
+      );
+      geometry.computeVertexNormals();
+      geometryCache.set(key, geometry);
+      return geometry;
+    }
+
+    function addPlayerLiftTriangle(center, topY, direction, opacity) {
+      const markerOpacity = clamp01(opacity);
+
+      if (markerOpacity <= 0.015) {
+        return;
+      }
+
+      const arrowMaterial = imageMaterial(app.PLAYER_LIFT_ARROW_URL, markerOpacity);
+
+      if (arrowMaterial) {
+        const size = unit * 0.46;
+        const geometryKey = `player-lift-arrow-plane:${Math.round(size * 100)}`;
+
+        if (!geometryCache.has(geometryKey)) {
+          const geometry = new THREE.PlaneGeometry(size, size);
+
+          geometry.rotateX(-Math.PI / 2);
+          geometryCache.set(geometryKey, geometry);
+        }
+
+        const arrow = new THREE.Mesh(geometryCache.get(geometryKey), arrowMaterial);
+
+        arrow.position.set(center.x, topY + Math.max(0.75, unit * 0.012), center.z);
+        arrow.rotation.y = direction > 0 ? Math.PI : 0;
+        arrow.castShadow = false;
+        arrow.receiveShadow = false;
+        scene.add(arrow);
+        return;
+      }
+
+      const triangle = new THREE.Mesh(
+        playerLiftTriangleGeometry(direction),
+        material("#050608", markerOpacity)
+      );
+
+      triangle.position.set(center.x, topY + Math.max(0.75, unit * 0.012), center.z);
+      triangle.castShadow = false;
+      triangle.receiveShadow = false;
+      scene.add(triangle);
+    }
+
+    function addTileTopDetails(x, y, layer, topY, now = performance.now()) {
       const visibility = transitionPieceProgressForCell(x, y);
 
       if (visibility <= 0.05) {
@@ -1560,6 +1709,13 @@
             opacity: visibility
           }
         );
+      }
+
+      if (layer.type === "player_lift") {
+        const lift = clamp01(renderTerrainLayerLiftValue(layer, x, y, now));
+
+        addPlayerLiftTriangle(center, topY, -1, visibility * (1 - lift));
+        addPlayerLiftTriangle(center, topY, 1, visibility * lift);
       }
 
       if (layer.type === "exit") {
@@ -1595,7 +1751,8 @@
           type,
           terrainHeight === null ? "null" : terrainHeight,
           Math.round(blockHeight * 100) / 100,
-          Math.round(topY * 100) / 100
+          Math.round(topY * 100) / 100,
+          type === "player_lift" ? `${x},${y}` : ""
         ].join(":"),
         layer,
         terrainHeight,
@@ -1777,7 +1934,7 @@
       for (let y = 0; y < state.height; y += 1) {
         for (let x = 0; x < state.width; x += 1) {
           const descriptor = descriptors[y][x];
-          addTileTopDetails(x, y, descriptor.layer, descriptor.topY);
+          addTileTopDetails(x, y, descriptor.layer, descriptor.topY, now);
         }
       }
 
