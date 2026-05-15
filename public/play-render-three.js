@@ -3006,9 +3006,21 @@
       const polycubeGroups = new Map();
       const state = renderState();
       const rounded = (value) => Math.round(value * 1000);
-      const roundedLevel = (value) => Math.round(value / elevationUnit);
-      const isWholeLevel = (value) =>
-        Math.abs(value / elevationUnit - roundedLevel(value)) <= 0.001;
+      const levelValue = (value) => value / elevationUnit;
+      const roundedLevel = (value) => Math.round(levelValue(value));
+      const baseLevel = (value) => {
+        const nearest = roundedLevel(value);
+
+        return Math.abs(levelValue(value) - nearest) <= 0.001
+          ? nearest
+          : Math.floor(levelValue(value));
+      };
+      const columnHeightLevels = (column) => roundedLevel(column.topY - column.bottomY);
+      const hasWholeLevelHeight = (column) =>
+        Math.abs(levelValue(column.topY - column.bottomY) - columnHeightLevels(column)) <= 0.001;
+      const columnYOffset = (column) => column.bottomY - baseLevel(column.bottomY) * elevationUnit;
+      const columnRenderOffsetX = (column) => column.renderX - column.gridX;
+      const columnRenderOffsetY = (column) => column.renderY - column.gridY;
       const entryCellKey = (entry) => [
         entry.groupId,
         entry.gridX,
@@ -3038,13 +3050,13 @@
         !column.hasHoleFade &&
         Math.abs(column.scale - 1) <= 0.001 &&
         Math.abs(column.sink) <= 0.001 &&
-        Math.abs(column.renderX - column.gridX) <= 0.001 &&
-        Math.abs(column.renderY - column.gridY) <= 0.001 &&
-        isWholeLevel(column.bottomY) &&
-        isWholeLevel(column.topY) &&
-        roundedLevel(column.topY) > roundedLevel(column.bottomY);
+        hasWholeLevelHeight(column) &&
+        columnHeightLevels(column) > 0;
       const polycubeGroupKey = (column) => [
         column.groupId,
+        rounded(columnRenderOffsetX(column)),
+        rounded(columnRenderOffsetY(column)),
+        rounded(columnYOffset(column)),
         rounded(column.scale),
         rounded(column.sink)
       ].join(":");
@@ -3067,6 +3079,11 @@
         const fade = Math.min(...columns.map((column) => column.fade));
         const bottomY = Math.min(...columns.map((column) => column.bottomY));
         const topY = Math.max(...columns.map((column) => column.topY));
+        const renderOffset = {
+          x: columnRenderOffsetX(columns[0]) * unit,
+          y: columnYOffset(columns[0]),
+          z: columnRenderOffsetY(columns[0]) * unit
+        };
         const cells = Array.from(
           columns
             .reduce((cellMap, column) => {
@@ -3076,10 +3093,10 @@
                 cellMap.set(key, {
                   gridX: column.gridX,
                   gridY: column.gridY,
-                  left: column.gridX * unit + renderOffsetX(),
-                  right: (column.gridX + 1) * unit + renderOffsetX(),
-                  top: column.gridY * unit + renderOffsetZ(),
-                  bottom: (column.gridY + 1) * unit + renderOffsetZ()
+                  left: column.renderX * unit + renderOffsetX(),
+                  right: (column.renderX + 1) * unit + renderOffsetX(),
+                  top: column.renderY * unit + renderOffsetZ(),
+                  bottom: (column.renderY + 1) * unit + renderOffsetZ()
                 });
               }
 
@@ -3091,7 +3108,7 @@
         addOutlinedMesh(
           polycubeGeometry(voxels),
           actorColor(columns[0].actor),
-          { x: 0, y: 0, z: 0 },
+          renderOffset,
           {
             edgeGeometry: polycubeEdgeGeometry(voxels),
             edgeThreshold: 18,
@@ -3113,8 +3130,8 @@
         const voxels = [];
 
         columns.forEach((column) => {
-          const bottomLevel = roundedLevel(column.bottomY);
-          const topLevel = roundedLevel(column.topY);
+          const bottomLevel = baseLevel(column.bottomY);
+          const topLevel = bottomLevel + columnHeightLevels(column);
 
           for (let z = bottomLevel; z < topLevel; z += 1) {
             voxels.push({
