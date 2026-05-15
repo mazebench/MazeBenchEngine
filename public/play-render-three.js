@@ -1431,6 +1431,7 @@
 
         return (
           nonZeroAxes === 2 &&
+          offset.z !== 0 &&
           (offset.x > 0 || (offset.x === 0 && offset.y > 0))
         );
       });
@@ -2072,6 +2073,23 @@
         })[0];
     }
 
+    function editorVoxelLayerAt(pointY, mode = "side") {
+      const y = Math.max(0, pointY - actorVisualLift);
+
+      if (mode === "top") {
+        return Math.max(0, Math.round(y / unit));
+      }
+
+      return Math.max(0, Math.floor(Math.max(0, y - 0.001) / unit));
+    }
+
+    function editorVoxelLayerBounds(layer) {
+      return {
+        bottomY: layer * unit + actorVisualLift,
+        topY: (layer + 1) * unit + actorVisualLift
+      };
+    }
+
     function pickEditorFace(clientX, clientY, targetElement = app.canvas) {
       if (!THREE || !camera || !scene || !targetElement) {
         return null;
@@ -2118,15 +2136,28 @@
         let face = "top";
         let dx = 0;
         let dy = 0;
-        const topPaintLayer = Math.max(0, Math.round((pick.topY || 0) / unit));
+        const isVoxelPick = pick.voxelPick === true;
+        let topPaintLayer = isVoxelPick
+          ? editorVoxelLayerAt(intersection.point.y, "top")
+          : Math.max(0, Math.round((pick.topY || 0) / unit));
         let sourceLayer = Math.max(0, topPaintLayer - 1);
+        let targetBottomY = isVoxelPick ? sourceLayer * unit + actorVisualLift : pick.bottomY;
+        let targetTopY = isVoxelPick ? topPaintLayer * unit + actorVisualLift : pick.topY;
 
         if (normal.y <= 0.55) {
-          const sideTopLayer = Math.max(1, Math.ceil((pick.topY || 0) / unit));
-          sourceLayer = Math.max(
-            0,
-            Math.min(sideTopLayer - 1, Math.floor(Math.max(0, intersection.point.y) / unit))
-          );
+          if (isVoxelPick) {
+            sourceLayer = editorVoxelLayerAt(intersection.point.y, "side");
+            const bounds = editorVoxelLayerBounds(sourceLayer);
+
+            targetBottomY = bounds.bottomY;
+            targetTopY = bounds.topY;
+          } else {
+            const sideTopLayer = Math.max(1, Math.ceil((pick.topY || 0) / unit));
+            sourceLayer = Math.max(
+              0,
+              Math.min(sideTopLayer - 1, Math.floor(Math.max(0, intersection.point.y) / unit))
+            );
+          }
 
           if (Math.abs(normal.x) >= Math.abs(normal.z)) {
             dx = normal.x >= 0 ? 1 : -1;
@@ -2138,7 +2169,7 @@
         }
 
         return {
-          bottomY: pick.bottomY,
+          bottomY: targetBottomY,
           bounds: {
             left: cell.left,
             right: cell.right,
@@ -2155,7 +2186,7 @@
           sourceLayer,
           sourceX: cell.gridX,
           sourceY: cell.gridY,
-          topY: pick.topY
+          topY: targetTopY
         };
       }
 
@@ -2689,6 +2720,7 @@
           editorPick: {
             kind: "terrain",
             cells,
+            voxelPick: true,
             topY,
             bottomY
           }
@@ -3070,6 +3102,7 @@
             editorPick: {
               kind: "actor",
               cells,
+              voxelPick: true,
               topY,
               bottomY
             }
