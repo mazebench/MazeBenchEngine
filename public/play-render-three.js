@@ -1397,6 +1397,217 @@
       return geometry;
     }
 
+    function polycubeVoxelKey(x, y, z) {
+      return `${x},${y},${z}`;
+    }
+
+    function polycubeFaceKey(kind, plane) {
+      return `${kind}:${plane}`;
+    }
+
+    function collectPolycubeFaceCells(voxels) {
+      const voxelKeys = new Set(voxels.map((voxel) => polycubeVoxelKey(voxel.x, voxel.y, voxel.z)));
+      const faceGroups = new Map();
+      const addFaceCell = (kind, plane, a, b) => {
+        const key = polycubeFaceKey(kind, plane);
+
+        if (!faceGroups.has(key)) {
+          faceGroups.set(key, {
+            cells: new Set(),
+            kind,
+            plane
+          });
+        }
+
+        faceGroups.get(key).cells.add(`${a},${b}`);
+      };
+
+      voxels.forEach((voxel) => {
+        if (!voxelKeys.has(polycubeVoxelKey(voxel.x + 1, voxel.y, voxel.z))) {
+          addFaceCell("xplus", voxel.x + 1, voxel.y, voxel.z);
+        }
+
+        if (!voxelKeys.has(polycubeVoxelKey(voxel.x - 1, voxel.y, voxel.z))) {
+          addFaceCell("xminus", voxel.x, voxel.y, voxel.z);
+        }
+
+        if (!voxelKeys.has(polycubeVoxelKey(voxel.x, voxel.y + 1, voxel.z))) {
+          addFaceCell("zplus", voxel.y + 1, voxel.x, voxel.z);
+        }
+
+        if (!voxelKeys.has(polycubeVoxelKey(voxel.x, voxel.y - 1, voxel.z))) {
+          addFaceCell("zminus", voxel.y, voxel.x, voxel.z);
+        }
+
+        if (!voxelKeys.has(polycubeVoxelKey(voxel.x, voxel.y, voxel.z + 1))) {
+          addFaceCell("top", voxel.z + 1, voxel.x, voxel.y);
+        }
+
+        if (!voxelKeys.has(polycubeVoxelKey(voxel.x, voxel.y, voxel.z - 1))) {
+          addFaceCell("bottom", voxel.z, voxel.x, voxel.y);
+        }
+      });
+
+      return faceGroups;
+    }
+
+    function polycubePointForFace(kind, plane, a, b) {
+      if (kind === "top" || kind === "bottom") {
+        return [
+          a * unit + renderOffsetX(),
+          plane * elevationUnit + actorVisualLift,
+          b * unit + renderOffsetZ()
+        ];
+      }
+
+      if (kind === "xplus" || kind === "xminus") {
+        return [
+          plane * unit + renderOffsetX(),
+          b * elevationUnit + actorVisualLift,
+          a * unit + renderOffsetZ()
+        ];
+      }
+
+      return [
+        a * unit + renderOffsetX(),
+        b * elevationUnit + actorVisualLift,
+        plane * unit + renderOffsetZ()
+      ];
+    }
+
+    function pushQuadPositions(positions, vertices) {
+      const [a, b, c, d] = vertices;
+
+      positions.push(...a, ...b, ...c, ...a, ...c, ...d);
+    }
+
+    function addPolycubeFaceQuad(positions, kind, plane, a, b) {
+      if (kind === "top") {
+        pushQuadPositions(positions, [
+          polycubePointForFace(kind, plane, a, b),
+          polycubePointForFace(kind, plane, a, b + 1),
+          polycubePointForFace(kind, plane, a + 1, b + 1),
+          polycubePointForFace(kind, plane, a + 1, b)
+        ]);
+        return;
+      }
+
+      if (kind === "bottom") {
+        pushQuadPositions(positions, [
+          polycubePointForFace(kind, plane, a, b),
+          polycubePointForFace(kind, plane, a + 1, b),
+          polycubePointForFace(kind, plane, a + 1, b + 1),
+          polycubePointForFace(kind, plane, a, b + 1)
+        ]);
+        return;
+      }
+
+      if (kind === "xplus") {
+        pushQuadPositions(positions, [
+          polycubePointForFace(kind, plane, a, b),
+          polycubePointForFace(kind, plane, a, b + 1),
+          polycubePointForFace(kind, plane, a + 1, b + 1),
+          polycubePointForFace(kind, plane, a + 1, b)
+        ]);
+        return;
+      }
+
+      if (kind === "xminus") {
+        pushQuadPositions(positions, [
+          polycubePointForFace(kind, plane, a, b),
+          polycubePointForFace(kind, plane, a + 1, b),
+          polycubePointForFace(kind, plane, a + 1, b + 1),
+          polycubePointForFace(kind, plane, a, b + 1)
+        ]);
+        return;
+      }
+
+      if (kind === "zplus") {
+        pushQuadPositions(positions, [
+          polycubePointForFace(kind, plane, a, b),
+          polycubePointForFace(kind, plane, a + 1, b),
+          polycubePointForFace(kind, plane, a + 1, b + 1),
+          polycubePointForFace(kind, plane, a, b + 1)
+        ]);
+        return;
+      }
+
+      pushQuadPositions(positions, [
+        polycubePointForFace(kind, plane, a, b),
+        polycubePointForFace(kind, plane, a, b + 1),
+        polycubePointForFace(kind, plane, a + 1, b + 1),
+        polycubePointForFace(kind, plane, a + 1, b)
+      ]);
+    }
+
+    function polycubeGeometry(voxels) {
+      const positions = [];
+
+      collectPolycubeFaceCells(voxels).forEach((faceGroup) => {
+        faceGroup.cells.forEach((cellKey) => {
+          const [a, b] = cellKey.split(",").map(Number);
+          addPolycubeFaceQuad(positions, faceGroup.kind, faceGroup.plane, a, b);
+        });
+      });
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.computeVertexNormals();
+      return geometry;
+    }
+
+    function addPolycubeEdgeSegment(positions, seenSegments, from, to) {
+      const keyParts = [from, to].map((point) =>
+        point.map((value) => Math.round(value * 1000)).join(",")
+      ).sort();
+      const key = `${keyParts[0]}:${keyParts[1]}`;
+
+      if (seenSegments.has(key)) {
+        return;
+      }
+
+      seenSegments.add(key);
+      positions.push(...from, ...to);
+    }
+
+    function addPolycubeFaceBoundaryEdges(positions, seenSegments, faceGroup) {
+      faceGroup.cells.forEach((cellKey) => {
+        const [a, b] = cellKey.split(",").map(Number);
+        const neighbors = [
+          { key: `${a - 1},${b}`, from: [a, b], to: [a, b + 1] },
+          { key: `${a + 1},${b}`, from: [a + 1, b], to: [a + 1, b + 1] },
+          { key: `${a},${b - 1}`, from: [a, b], to: [a + 1, b] },
+          { key: `${a},${b + 1}`, from: [a, b + 1], to: [a + 1, b + 1] }
+        ];
+
+        neighbors.forEach((edge) => {
+          if (faceGroup.cells.has(edge.key)) {
+            return;
+          }
+
+          addPolycubeEdgeSegment(
+            positions,
+            seenSegments,
+            polycubePointForFace(faceGroup.kind, faceGroup.plane, edge.from[0], edge.from[1]),
+            polycubePointForFace(faceGroup.kind, faceGroup.plane, edge.to[0], edge.to[1])
+          );
+        });
+      });
+    }
+
+    function polycubeEdgeGeometry(voxels) {
+      const positions = [];
+      const seenSegments = new Set();
+
+      collectPolycubeFaceCells(voxels).forEach((faceGroup) => {
+        addPolycubeFaceBoundaryEdges(positions, seenSegments, faceGroup);
+      });
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      return geometry;
+    }
+
     function topCapHeight(height) {
       return Math.min(height, Math.max(5, Math.min(height * 0.32, unit * 0.12)));
     }
@@ -2141,6 +2352,18 @@
       };
     }
 
+    function terrainPieceDescriptorKey(descriptor, x, y) {
+      return [
+        descriptor.type,
+        Math.round((descriptor.elevation ?? 0) * 100) / 100,
+        Math.round((descriptor.terrainHeight ?? 0) * 100) / 100,
+        Math.round(descriptor.blockHeight * 100) / 100,
+        Math.round(descriptor.topY * 100) / 100,
+        Math.round(descriptor.bottomY * 100) / 100,
+        descriptor.type === "player_lift" ? `${x},${y}` : ""
+      ].join(":");
+    }
+
     function terrainPieceDescriptorForLayer(layer, x, y, now = performance.now()) {
       const terrainHeight = renderTerrainLayerSurfaceHeight(layer, x, y, now);
 
@@ -2161,33 +2384,62 @@
         ? Math.max(1, topHeight - baseHeight)
         : floorThickness;
       const bottomY = topY - blockHeight;
-
-      return {
+      const descriptor = {
         blockHeight,
         bottomY,
         elevation,
         isVoid: false,
-        key: [
-          type,
-          Math.round(elevation * 100) / 100,
-          Math.round(terrainHeight * 100) / 100,
-          Math.round(blockHeight * 100) / 100,
-          Math.round(topY * 100) / 100,
-          Math.round(bottomY * 100) / 100,
-          type === "player_lift" ? `${x},${y}` : ""
-        ].join(":"),
         layer,
         terrainHeight,
         isSunkenFloor,
         topY,
         type
       };
+
+      descriptor.key = terrainPieceDescriptorKey(descriptor, x, y);
+      return descriptor;
+    }
+
+    function canMergeStackedTerrainPieces(lower, upper) {
+      return (
+        lower.type === upper.type &&
+        !lower.isSunkenFloor &&
+        !upper.isSunkenFloor &&
+        Math.abs(lower.topY - upper.bottomY) <= 0.001
+      );
+    }
+
+    function mergeStackedTerrainPieces(descriptors, x, y) {
+      const merged = [];
+
+      descriptors
+        .slice()
+        .sort((left, right) => left.bottomY - right.bottomY || left.topY - right.topY)
+        .forEach((descriptor) => {
+          const previous = merged[merged.length - 1];
+
+          if (!previous || !canMergeStackedTerrainPieces(previous, descriptor)) {
+            merged.push({ ...descriptor });
+            return;
+          }
+
+          previous.blockHeight = descriptor.topY - previous.bottomY;
+          previous.elevation = Math.min(previous.elevation ?? 0, descriptor.elevation ?? 0);
+          previous.layer = descriptor.layer;
+          previous.terrainHeight = Math.max(previous.terrainHeight ?? 0, descriptor.terrainHeight ?? 0);
+          previous.topY = descriptor.topY;
+          previous.key = terrainPieceDescriptorKey(previous, x, y);
+        });
+
+      return merged;
     }
 
     function terrainPieceDescriptorsAt(x, y, now = performance.now()) {
-      return renderTerrainLayersAt(x, y)
+      const descriptors = renderTerrainLayersAt(x, y)
         .map((layer) => terrainPieceDescriptorForLayer(layer, x, y, now))
         .filter(Boolean);
+
+      return mergeStackedTerrainPieces(descriptors, x, y);
     }
 
     function shouldOutlineTerrainRegion(descriptor) {
@@ -2427,8 +2679,177 @@
 
     function addWeightlessActorGroups() {
       const renderedActors = new Set();
+      const columnsByCell = new Map();
       const groups = new Map();
+      const polycubeGroups = new Map();
       const state = renderState();
+      const rounded = (value) => Math.round(value * 1000);
+      const roundedLevel = (value) => Math.round(value / elevationUnit);
+      const isWholeLevel = (value) =>
+        Math.abs(value / elevationUnit - roundedLevel(value)) <= 0.001;
+      const entryCellKey = (entry) => [
+        entry.groupId,
+        entry.gridX,
+        entry.gridY,
+        rounded(entry.renderX),
+        rounded(entry.renderY),
+        rounded(entry.scale),
+        rounded(entry.sink),
+        entry.actor.renderInHole ? 1 : 0
+      ].join(":");
+      const columnGroupKey = (column) => [
+        column.groupId,
+        rounded(column.bottomY),
+        rounded(column.topY),
+        rounded(column.scale),
+        rounded(column.sink),
+        column.hasHoleFade ? 1 : 0
+      ].join(":");
+      const canMergeStackedWeightlessEntries = (lower, upper) =>
+        lower.groupId === upper.groupId &&
+        !lower.actor.renderInHole &&
+        !upper.actor.renderInHole &&
+        Math.abs(lower.scale - upper.scale) <= 0.001 &&
+        Math.abs(lower.sink - upper.sink) <= 0.001 &&
+        Math.abs(lower.topY - upper.bottomY) <= 0.001;
+      const canRenderPolycubeColumn = (column) =>
+        !column.hasHoleFade &&
+        Math.abs(column.scale - 1) <= 0.001 &&
+        Math.abs(column.sink) <= 0.001 &&
+        Math.abs(column.renderX - column.gridX) <= 0.001 &&
+        Math.abs(column.renderY - column.gridY) <= 0.001 &&
+        isWholeLevel(column.bottomY) &&
+        isWholeLevel(column.topY) &&
+        roundedLevel(column.topY) > roundedLevel(column.bottomY);
+      const polycubeGroupKey = (column) => [
+        column.groupId,
+        rounded(column.scale),
+        rounded(column.sink)
+      ].join(":");
+      const addColumnToGroup = (targetGroups, key, column) => {
+        if (!targetGroups.has(key)) {
+          targetGroups.set(key, []);
+        }
+
+        targetGroups.get(key).push(column);
+      };
+      const renderPolycubeComponent = (voxels) => {
+        const columns = Array.from(new Set(voxels.map((voxel) => voxel.column)));
+        const visibility = transitionPieceProgressForCells(columns);
+
+        if (visibility <= 0.015) {
+          return;
+        }
+
+        const opacity = Math.min(...columns.map((column) => column.opacity)) * visibility;
+        const fade = Math.min(...columns.map((column) => column.fade));
+        const bottomY = Math.min(...columns.map((column) => column.bottomY));
+        const topY = Math.max(...columns.map((column) => column.topY));
+        const cells = Array.from(
+          columns
+            .reduce((cellMap, column) => {
+              const key = `${column.gridX},${column.gridY}`;
+
+              if (!cellMap.has(key)) {
+                cellMap.set(key, {
+                  gridX: column.gridX,
+                  gridY: column.gridY,
+                  left: column.gridX * unit + renderOffsetX(),
+                  right: (column.gridX + 1) * unit + renderOffsetX(),
+                  top: column.gridY * unit + renderOffsetZ(),
+                  bottom: (column.gridY + 1) * unit + renderOffsetZ()
+                });
+              }
+
+              return cellMap;
+            }, new Map())
+            .values()
+        );
+
+        addOutlinedMesh(
+          polycubeGeometry(voxels),
+          actorColor(columns[0].actor),
+          { x: 0, y: 0, z: 0 },
+          {
+            edgeGeometry: polycubeEdgeGeometry(voxels),
+            edgeThreshold: 18,
+            opacity,
+            edgeOpacity: fade * visibility,
+            castShadow: renderContextCastsShadows(),
+            receiveShadow: false,
+            editorPick: {
+              kind: "actor",
+              cells,
+              topY,
+              bottomY
+            }
+          }
+        );
+      };
+      const renderPolycubeGroup = (columns) => {
+        const voxelMap = new Map();
+
+        columns.forEach((column) => {
+          const bottomLevel = roundedLevel(column.bottomY);
+          const topLevel = roundedLevel(column.topY);
+
+          for (let z = bottomLevel; z < topLevel; z += 1) {
+            const key = polycubeVoxelKey(column.gridX, column.gridY, z);
+
+            if (!voxelMap.has(key)) {
+              voxelMap.set(key, {
+                column,
+                x: column.gridX,
+                y: column.gridY,
+                z
+              });
+            }
+          }
+        });
+
+        const visited = new Set();
+        const neighborOffsets = [
+          { x: 1, y: 0, z: 0 },
+          { x: -1, y: 0, z: 0 },
+          { x: 0, y: 1, z: 0 },
+          { x: 0, y: -1, z: 0 },
+          { x: 0, y: 0, z: 1 },
+          { x: 0, y: 0, z: -1 }
+        ];
+
+        voxelMap.forEach((startVoxel, startKey) => {
+          if (visited.has(startKey)) {
+            return;
+          }
+
+          const stack = [startVoxel];
+          const component = [];
+          visited.add(startKey);
+
+          while (stack.length > 0) {
+            const voxel = stack.pop();
+
+            component.push(voxel);
+
+            neighborOffsets.forEach((offset) => {
+              const key = polycubeVoxelKey(
+                voxel.x + offset.x,
+                voxel.y + offset.y,
+                voxel.z + offset.z
+              );
+
+              if (!voxelMap.has(key) || visited.has(key)) {
+                return;
+              }
+
+              visited.add(key);
+              stack.push(voxelMap.get(key));
+            });
+          }
+
+          renderPolycubeComponent(component);
+        });
+      };
 
       state.actors.forEach((actor, index) => {
         if (actor.type !== "weightless_box" || !actorIsVisible(actor)) {
@@ -2436,30 +2857,100 @@
         }
 
         renderedActors.add(actor);
-        const elevation = Math.round((actor.renderElevation ?? actor.elevation ?? 0) * 1000);
-        const sink = Math.round((actor.renderSink ?? 0) * 1000);
-        const key = `${actor.groupId || `weightless-${index}`}:${elevation}:${sink}`;
+        const scale = actorVisualScale(actor);
+        const height = actorCuboidHeight(scale);
+        const elevation = actor.renderElevation ?? actor.elevation ?? 0;
+        const sink = actor.renderSink ?? 0;
+        const bottomY = elevation * elevationUnit - sink + actorVisualLift;
+        const renderX = actor.renderX ?? actor.x;
+        const renderY = actor.renderY ?? actor.y;
+        const entry = {
+          actor,
+          bottomY,
+          fade: actorFadeVisibility(actor),
+          gridX: actor.x,
+          gridY: actor.y,
+          groupId: actor.groupId || `weightless-${index}`,
+          height,
+          index,
+          opacity: actorOpacity(actor),
+          renderX,
+          renderY,
+          scale,
+          sink,
+          topY: bottomY + height
+        };
+        const key = entryCellKey(entry);
 
-        if (!groups.has(key)) {
-          groups.set(key, []);
+        if (!columnsByCell.has(key)) {
+          columnsByCell.set(key, []);
         }
 
-        groups.get(key).push({ actor, index });
+        columnsByCell.get(key).push(entry);
       });
 
-      groups.forEach((entries) => {
+      columnsByCell.forEach((entries) => {
+        const columns = [];
+
+        entries
+          .slice()
+          .sort((left, right) => left.bottomY - right.bottomY || left.topY - right.topY)
+          .forEach((entry) => {
+            const previous = columns[columns.length - 1];
+
+            if (!previous || !canMergeStackedWeightlessEntries(previous, entry)) {
+              columns.push({
+                ...entry,
+                actors: [entry.actor],
+                hasHoleFade: Boolean(entry.actor.renderInHole)
+              });
+              return;
+            }
+
+            previous.actors.push(entry.actor);
+            previous.fade = Math.min(previous.fade, entry.fade);
+            previous.hasHoleFade = previous.hasHoleFade || Boolean(entry.actor.renderInHole);
+            previous.height = entry.topY - previous.bottomY;
+            previous.opacity = Math.min(previous.opacity, entry.opacity);
+            previous.topY = entry.topY;
+          });
+
+        columns.forEach((column) => {
+          if (canRenderPolycubeColumn(column)) {
+            addColumnToGroup(polycubeGroups, polycubeGroupKey(column), column);
+            return;
+          }
+
+          addColumnToGroup(groups, columnGroupKey(column), column);
+        });
+      });
+
+      polycubeGroups.forEach(renderPolycubeGroup);
+
+      groups.forEach((columns) => {
         const cellsByKey = new Map();
 
-        entries.forEach((entry) => {
-          const gridX = entry.actor.x;
-          const gridY = entry.actor.y;
+        columns.forEach((column) => {
+          const gridX = column.gridX;
+          const gridY = column.gridY;
           const key = `${gridX},${gridY}`;
 
           if (!cellsByKey.has(key)) {
             cellsByKey.set(key, {
-              actor: entry.actor,
+              actor: column.actor,
+              actors: column.actors,
+              bottomY: column.bottomY,
+              fade: column.fade,
               gridX,
-              gridY
+              gridY,
+              hasHoleFade: column.hasHoleFade,
+              height: column.height,
+              opacity: column.opacity,
+              renderX: column.renderX,
+              renderY: column.renderY,
+              scale: column.scale,
+              sink: column.sink,
+              topY: column.topY
             });
           }
         });
@@ -2502,43 +2993,34 @@
             return;
           }
 
-          const scale = Math.min(...component.map((cell) => actorVisualScale(cell.actor)));
-          const fade = Math.min(...component.map((cell) => actorFadeVisibility(cell.actor)));
-          const hasHoleFade = component.some((cell) => cell.actor.renderInHole);
+          const scale = Math.min(...component.map((cell) => cell.scale));
+          const fade = Math.min(...component.map((cell) => cell.fade));
+          const hasHoleFade = component.some((cell) => cell.hasHoleFade);
           const usesStaticGeometry = component.every((cell) => {
-            const actor = cell.actor;
-            const renderX = actor.renderX ?? actor.x;
-            const renderY = actor.renderY ?? actor.y;
-
             return (
               !hasHoleFade &&
               Math.abs(scale - 1) <= 0.001 &&
-              Math.abs(renderX - actor.x) <= 0.001 &&
-              Math.abs(renderY - actor.y) <= 0.001
+              Math.abs(cell.renderX - cell.gridX) <= 0.001 &&
+              Math.abs(cell.renderY - cell.gridY) <= 0.001
             );
           });
           const opacity =
-            Math.min(...component.map((cell) => actorOpacity(cell.actor))) *
+            Math.min(...component.map((cell) => cell.opacity)) *
             visibility;
           const edgeOpacity = fade * visibility;
           const color = hasHoleFade
             ? dimHexColor(actorColor(component[0].actor), fade)
             : actorColor(component[0].actor);
-          const height = actorCuboidHeight(scale);
-          const elevation = component[0].actor.renderElevation ?? component[0].actor.elevation ?? 0;
-          const sink = component[0].actor.renderSink ?? 0;
-          const topY = elevation * elevationUnit - sink + actorVisualLift + height;
+          const height = component[0].height;
+          const topY = component[0].topY;
           const unscaledCells = component.map((cell) => {
-            const renderX = cell.actor.renderX ?? cell.actor.x;
-            const renderY = cell.actor.renderY ?? cell.actor.y;
-
             return {
               gridX: cell.gridX,
               gridY: cell.gridY,
-              left: renderX * unit + renderOffsetX(),
-              right: (renderX + 1) * unit + renderOffsetX(),
-              top: renderY * unit + renderOffsetZ(),
-              bottom: (renderY + 1) * unit + renderOffsetZ()
+              left: cell.renderX * unit + renderOffsetX(),
+              right: (cell.renderX + 1) * unit + renderOffsetX(),
+              top: cell.renderY * unit + renderOffsetZ(),
+              bottom: (cell.renderY + 1) * unit + renderOffsetZ()
             };
           });
           const bounds = unscaledCells.reduce(
