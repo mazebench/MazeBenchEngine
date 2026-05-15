@@ -1671,7 +1671,7 @@
     }
 
     function addWeightlessGroupFaceLabels(voxels, groupId, renderOffset, opacity) {
-      if (!isEditorRenderMode()) {
+      if (!isEditorRenderMode() && !isPalettePreviewRenderMode()) {
         return;
       }
 
