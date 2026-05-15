@@ -1,0 +1,16 @@
+h # h h h h # # # # h h h h h h
+h # h h h h # # # # h h h h h h
+h # h h h h # # # # O i i . i .
+h # h h h h # # # # i h h i h h
+h # h h h h # # # # i h h i h h
+# # . . . M0 M0 M0 M0 M0 M0 M0 M0 i h h
+. . . o M0 M0 . O O . . M0 . i h h
+. p . . . . . O O . . . . # # #
+. . . . . . . O O . . . . . L h
+. . . . l . . O O . . M1 . h h h
+. . . . . . . O O . . . . h h h
+h h h h h h h O O h h h h h h h
+h h h h h h h O O h h h h h h h
+# # # # # # # # # # h h h h h h
+h h h h h h # # # # h h h h h h
+h h h h h h # # # # h h h h h h
