@@ -408,6 +408,7 @@
         gameId: options.gameId || authorData?.game?.id || "maze",
         levelId: options.levelId || "__editor__",
         levelLabel: options.levelLabel || options.levelId || "__editor__",
+        editorRender: options.editorRender === true,
         sourceFileName: options.sourceFileName || "",
         width,
         height,

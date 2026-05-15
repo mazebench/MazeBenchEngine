@@ -117,6 +117,7 @@
     const initialViewportTiles = normalizeViewportTiles(playData?.cameraView, 10, 10);
     const app = {
       playData,
+      isEditorRenderApp: playData?.editorRender === true,
       currentGameId,
       currentLevelId,
       currentLevelLabel: playData.levelLabel || currentLevelId,
@@ -948,6 +949,9 @@
       app.orangeWallRenderOverride = null;
       app.currentLevelId = levelState.levelId || app.currentLevelId;
       app.currentLevelLabel = levelState.levelLabel || app.currentLevelLabel || app.currentLevelId;
+      if (Object.prototype.hasOwnProperty.call(levelState, "editorRender")) {
+        app.isEditorRenderApp = levelState.editorRender === true;
+      }
       app.worldColumns = playRules.normalizeAxisValues(levelState.worldColumns, app.worldColumns);
       app.worldRows = playRules.normalizeAxisValues(levelState.worldRows, app.worldRows);
       const viewportTiles = normalizeViewportTiles(

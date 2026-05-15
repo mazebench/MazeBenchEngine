@@ -127,7 +127,12 @@
     }
 
     function isEditorRenderMode() {
-      return app.currentLevelId === "__editor_render__" || renderState().levelId === "__editor_render__";
+      return (
+        app.isEditorRenderApp === true ||
+        app.canvas?.id === "author-canvas" ||
+        app.currentLevelId === "__editor_render__" ||
+        renderState().levelId === "__editor_render__"
+      );
     }
 
     function isPalettePreviewRenderMode() {
@@ -1335,7 +1340,7 @@
       mesh.castShadow = options.castShadow !== false;
       mesh.receiveShadow = options.receiveShadow !== false;
       if (options.editorPick) {
-        mesh.userData.editorPick = options.editorPick;
+        mesh.userData.editorPick = editorPickForRenderContext(options.editorPick);
       }
       scene.add(mesh);
 
@@ -2182,12 +2187,34 @@
       };
     }
 
+    function editorPickForRenderContext(pick) {
+      if (!pick) {
+        return null;
+      }
+
+      const context = activeRenderContext;
+
+      if (isEditorRenderMode() && context?.role === "neighbor" && context.state?.levelId) {
+        return {
+          ...pick,
+          levelSwitch: true,
+          levelId: context.state.levelId,
+          dx: Number(context.dx) || 0,
+          dy: Number(context.dy) || 0
+        };
+      }
+
+      return pick;
+    }
+
     function editorHoverTargetKey(target) {
       if (!target) {
         return "";
       }
 
       return [
+        target.kind || "",
+        target.levelId || "",
         target.face || "",
         target.sourceX,
         target.sourceY,
@@ -2364,6 +2391,30 @@
             dy = normal.z >= 0 ? 1 : -1;
             face = dy > 0 ? "bottom" : "top-side";
           }
+        }
+
+        if (pick.levelSwitch) {
+          return {
+            bottomY: targetBottomY,
+            bounds: {
+              left: cell.left,
+              right: cell.right,
+              top: cell.top,
+              bottom: cell.bottom
+            },
+            dx: pick.dx,
+            dy: pick.dy,
+            face,
+            kind: "levelSwitch",
+            levelId: pick.levelId,
+            paintLayer: null,
+            paintX: cell.gridX,
+            paintY: cell.gridY,
+            sourceLayer,
+            sourceX: cell.gridX,
+            sourceY: cell.gridY,
+            topY: targetTopY
+          };
         }
 
         return {
@@ -3591,7 +3642,7 @@
         elevation * elevationUnit - sink + actorVisualLift + unit * 0.32 + Math.max(0, app.floatingFloorHoverOffset(actor, now)),
         z
       );
-      gem.userData.editorPick = {
+      gem.userData.editorPick = editorPickForRenderContext({
         kind: "actor",
         cells: [
           {
@@ -3605,7 +3656,7 @@
         ],
         topY: gem.position.y + unit * 0.22 * scale,
         bottomY: gem.position.y - unit * 0.22 * scale
-      };
+      });
       gem.castShadow = renderContextCastsShadows();
       gem.receiveShadow = false;
       scene.add(gem);
@@ -4277,6 +4328,25 @@
       camera.updateProjectionMatrix();
     }
 
+    function editorSurroundingFitOptions() {
+      if (!isEditorRenderMode() || isPalettePreviewRenderMode()) {
+        return null;
+      }
+
+      const currentWidth = Math.max(1, app.state.width) * unit;
+      const currentHeight = Math.max(1, app.state.height) * unit;
+
+      return {
+        minX: 0,
+        maxX: currentWidth,
+        minZ: 0,
+        maxZ: currentHeight,
+        centerX: currentWidth / 2,
+        centerZ: currentHeight / 2,
+        stableHeight: stableCameraWorldHeight()
+      };
+    }
+
     function renderActorsForCurrentContext(now = performance.now()) {
       const state = renderState();
       const renderedActors = addWeightlessActorGroups();
@@ -4405,6 +4475,8 @@
           renderLevelStateAt(view.levelState, view.offset, {
             role: "neighbor",
             brightness: view.brightness,
+            dx: view.dx,
+            dy: view.dy,
             hidePlayers: true
           }, now);
         });
@@ -4572,23 +4644,10 @@
     }
 
     function transitionIncomingOffset(outgoingState, incomingState, dx, dy) {
-      if (dx > 0) {
-        return { x: outgoingState.width * unit, z: 0 };
-      }
-
-      if (dx < 0) {
-        return { x: -incomingState.width * unit, z: 0 };
-      }
-
-      if (dy > 0) {
-        return { x: 0, z: outgoingState.height * unit };
-      }
-
-      if (dy < 0) {
-        return { x: 0, z: -incomingState.height * unit };
-      }
-
-      return { x: 0, z: 0 };
+      return {
+        x: dx < 0 ? -incomingState.width * unit : dx > 0 ? outgoingState.width * unit : 0,
+        z: dy < 0 ? -incomingState.height * unit : dy > 0 ? outgoingState.height * unit : 0
+      };
     }
 
     function renderLevelStateAt(state, offset, context, now) {
@@ -4780,7 +4839,7 @@
         renderSurroundingLevelViews(now, surroundingViews);
         addTerrainRegions(now);
         renderActorsForCurrentContext(now);
-        fitCameraToScene();
+        fitCameraToScene(editorSurroundingFitOptions() || {});
       }
 
       addEditorHoverHighlight();

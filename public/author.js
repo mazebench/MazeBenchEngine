@@ -133,6 +133,7 @@
     filePath: authorData.initialLevel.filePath,
     height: authorData.initialLevel.height,
     isDirty: false,
+    isLevelSwitching: false,
     isSolutionPlaying: false,
     isSolverBusy: false,
     levelId: authorData.initialLevel.levelId,
@@ -278,6 +279,7 @@
     return buildPlayData({
       cameraView: options.cameraView || null,
       cells: state.cells,
+      editorRender: options.editorRender === true,
       gameId: authorData.game.id,
       height: state.height,
       includeGems: options.includeGems,
@@ -422,8 +424,11 @@
         width: state.width,
         height: state.height
       },
-      levelId: "__editor_render__",
-      levelLabel: state.levelId
+      editorRender: true,
+      levelId: state.levelId,
+      levelLabel: state.levelId,
+      worldColumns,
+      worldRows
     });
   }
 
@@ -460,6 +465,7 @@
     if (typeof modules.registerGameplayFunctions === "function") {
       modules.registerGameplayFunctions(app);
     }
+    app.isEditorRenderApp = true;
     editorRenderer.app = app;
     return app;
   }
@@ -954,12 +960,14 @@
       .join("");
   }
 
-  function renderAll() {
+  function renderAll(options = {}) {
+    const renderScene = options.renderScene !== false;
+
     renderStatus();
     renderMeta();
     renderNeighborButtons();
     renderSelectedTool();
-    renderGrid();
+    renderGrid({ renderScene });
     renderSelectedCell();
     renderRawOutput();
     renderExistingLevels();
@@ -1097,6 +1105,10 @@
       return "";
     }
 
+    if (target.kind === "levelSwitch") {
+      return "level-switch:" + (target.levelId || "") + ":" + (target.dx || 0) + ":" + (target.dy || 0);
+    }
+
     const isEraser = state.selectedToken === eraserToken;
     const x = isEraser ? target.sourceX : target.paintX;
     const y = isEraser ? target.sourceY : target.paintY;
@@ -1114,7 +1126,7 @@
   }
 
   function paintFaceTarget(target) {
-    if (!target) {
+    if (!target || target.kind === "levelSwitch") {
       return false;
     }
 
@@ -1173,7 +1185,7 @@
   }
 
   function paintDragPlaneForTarget(target) {
-    if (!target || target.face !== "top") {
+    if (!target || target.kind === "levelSwitch" || target.face !== "top") {
       return null;
     }
 
@@ -1361,6 +1373,38 @@
     return !state.isDirty || window.confirm("Discard your unsaved changes?");
   }
 
+  async function fetchAuthorLevelPayload(levelId) {
+    const response = await fetch(
+      authorData.authorApiBaseUrl + "/" + encodeURIComponent(levelId),
+      { headers: { Accept: "application/json" } }
+    );
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(payload.error || "Could not load that level.");
+    }
+
+    return payload;
+  }
+
+  function applyAuthorLevelPayload(payload, options = {}) {
+    state.cells = cloneCells(payload.cells);
+    state.exists = payload.exists;
+    state.fileName = payload.fileName;
+    state.filePath = payload.filePath;
+    state.height = payload.height;
+    state.isDirty = false;
+    state.levelId = payload.levelId;
+    state.message =
+      options.message ||
+      (payload.exists ? "Loaded existing level." : "Fresh level. Paint something good.");
+    state.messageTone =
+      options.messageTone || (payload.exists ? "success" : "warning");
+    state.selectedCell = { x: 0, y: 0 };
+    clearSolverSolution();
+    state.width = payload.width;
+  }
+
   async function loadLevel(levelId) {
     if (!shouldDiscardUnsavedChanges()) {
       syncLevelSelectors();
@@ -1368,28 +1412,7 @@
     }
 
     try {
-      const response = await fetch(
-        authorData.authorApiBaseUrl + "/" + encodeURIComponent(levelId),
-        { headers: { Accept: "application/json" } }
-      );
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error || "Could not load that level.");
-      }
-
-      state.cells = cloneCells(payload.cells);
-      state.exists = payload.exists;
-      state.fileName = payload.fileName;
-      state.filePath = payload.filePath;
-      state.height = payload.height;
-      state.isDirty = false;
-      state.levelId = payload.levelId;
-      state.message = payload.exists ? "Loaded existing level." : "Fresh level. Paint something good.";
-      state.messageTone = payload.exists ? "success" : "warning";
-      state.selectedCell = { x: 0, y: 0 };
-      clearSolverSolution();
-      state.width = payload.width;
+      applyAuthorLevelPayload(await fetchAuthorLevelPayload(levelId));
       syncLevelSelectors();
       window.history.replaceState(
         null,
@@ -1403,7 +1426,12 @@
     }
   }
 
-  async function saveLevel() {
+  async function saveLevel(options = {}) {
+    const renderAfterSave = options.renderAfterSave !== false;
+    const refreshPreview = options.refreshPreview !== false;
+    const updateStatus = options.updateStatus !== false;
+    const throwOnError = options.throwOnError === true;
+
     try {
       const response = await fetch(
         authorData.authorApiBaseUrl + "/" + encodeURIComponent(state.levelId),
@@ -1441,7 +1469,11 @@
       let previewMessage = payload.message || "Saved.";
       let previewTone = "success";
 
-      if (levelPreviewRenderer && typeof levelPreviewRenderer.savePreview === "function") {
+      if (
+        refreshPreview &&
+        levelPreviewRenderer &&
+        typeof levelPreviewRenderer.savePreview === "function"
+      ) {
         try {
           const playResponse = await fetch(
             "/api/play/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId),
@@ -1471,12 +1503,158 @@
         }
       }
 
-      state.message = previewMessage;
-      state.messageTone = previewTone;
+      if (updateStatus) {
+        state.message = previewMessage;
+        state.messageTone = previewTone;
+      }
       syncLevelSelectors();
-      renderAll();
+      if (renderAfterSave) {
+        renderAll();
+      }
+      return payload;
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not save that level.", "error");
+      if (throwOnError) {
+        throw error;
+      }
+      return null;
+    }
+  }
+
+  function raisedSurfaceSnapshotForApp(app) {
+    const raisedPlayerGates =
+      typeof app.computeRaisedPlayerGateSet === "function"
+        ? app.computeRaisedPlayerGateSet()
+        : new Set();
+    const raisedOrangeWalls =
+      typeof app.computeRaisedOrangeWallSet === "function"
+        ? app.computeRaisedOrangeWallSet()
+        : new Set();
+
+    app.liveRaisedPlayerGates = raisedPlayerGates;
+    app.liveRaisedOrangeWalls = raisedOrangeWalls;
+    app.syncGateAnimationTargets?.(0);
+    app.syncOrangeWallAnimationTargets?.(0);
+    app.syncPlayerLiftAnimationTargets?.(0);
+
+    return {
+      raisedPlayerGates: Array.from(raisedPlayerGates),
+      raisedOrangeWalls: Array.from(raisedOrangeWalls)
+    };
+  }
+
+  function editorLevelSnapshotForTransition(app) {
+    const snapshot =
+      typeof app.cloneLevelSnapshot === "function"
+        ? app.cloneLevelSnapshot()
+        : buildEditorRenderPlayData();
+
+    return {
+      ...snapshot,
+      ...raisedSurfaceSnapshotForApp(app)
+    };
+  }
+
+  async function prepareEditorAppLevelState(app, playData) {
+    app.applyLevelState(playData, {
+      deferRender: true,
+      immediateCamera: true,
+      resetHistory: true,
+      resetLevelEntry: true
+    });
+    await app.preloadImagesForLevelState?.(playData);
+    if (app.threeRendererReady && typeof app.threeRendererReady.then === "function") {
+      await app.threeRendererReady.catch(() => {});
+    }
+
+    return editorLevelSnapshotForTransition(app);
+  }
+
+  function renderLoadedLevelWithoutScene(payload, options = {}) {
+    applyAuthorLevelPayload(payload, options);
+    syncLevelSelectors();
+    window.history.replaceState(
+      null,
+      "",
+      "/author/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId)
+    );
+    renderAll({ renderScene: false });
+  }
+
+  async function switchToNeighborLevel(target) {
+    if (state.isLevelSwitching || !target || target.kind !== "levelSwitch") {
+      return;
+    }
+
+    const dx = Math.max(-1, Math.min(1, Math.round(Number(target.dx) || 0)));
+    const dy = Math.max(-1, Math.min(1, Math.round(Number(target.dy) || 0)));
+    const nextLevelId = target.levelId || adjacentLevelId(state.levelId, dx, dy);
+
+    if (!nextLevelId || nextLevelId === state.levelId) {
+      return;
+    }
+
+    state.isLevelSwitching = true;
+    clearEditorHoverTarget();
+    setStatus("Saving before switching rooms...", "warning");
+
+    try {
+      await saveLevel({
+        refreshPreview: false,
+        renderAfterSave: false,
+        throwOnError: true,
+        updateStatus: false
+      });
+
+      const outgoingPlayData = buildEditorRenderPlayData();
+      const app = ensureEditorRenderApp(outgoingPlayData);
+
+      if (
+        !app ||
+        typeof app.applyLevelState !== "function" ||
+        !app.renderCompositor?.startLevelTransition
+      ) {
+        state.isLevelSwitching = false;
+        await loadLevel(nextLevelId);
+        return;
+      }
+
+      const outgoingLevel = await prepareEditorAppLevelState(app, outgoingPlayData);
+      const payload = await fetchAuthorLevelPayload(nextLevelId);
+      renderLoadedLevelWithoutScene(payload, {
+        message: "Saved and switched to " + nextLevelId.replace("level_", "") + ".",
+        messageTone: payload.exists ? "success" : "warning"
+      });
+
+      const incomingPlayData = buildEditorRenderPlayData();
+      const incomingLevel = await prepareEditorAppLevelState(app, incomingPlayData);
+      const incomingRaised = raisedSurfaceSnapshotForApp(app);
+
+      app.renderCompositor.startLevelTransition(null, null, dx, dy, null, null, null, {
+        durationMs: app.LEVEL_TRANSITION_DURATION_MS || 1000,
+        renderImmediately: false,
+        transitionData: {
+          kind: "adjacent-scene",
+          dx,
+          dy,
+          outgoingLevel,
+          outgoingResetLevel: outgoingLevel,
+          incomingLevel,
+          incomingRaisedPlayerGates: incomingRaised.raisedPlayerGates,
+          incomingRaisedOrangeWalls: incomingRaised.raisedOrangeWalls
+        },
+        onComplete: () => {
+          state.isLevelSwitching = false;
+          renderEditorScene();
+        }
+      });
+      app.render();
+    } catch (error) {
+      state.isLevelSwitching = false;
+      setStatus(
+        error instanceof Error ? error.message : "Could not switch to that level.",
+        "error"
+      );
     }
   }
 
@@ -1762,6 +1940,12 @@
     }
 
     event.preventDefault();
+
+    if (target.kind === "levelSwitch") {
+      switchToNeighborLevel(target);
+      return;
+    }
+
     state.paintPointerId = event.pointerId;
     state.lastPaintTargetKey = null;
     state.paintDragPlane = paintDragPlaneForTarget(target);
