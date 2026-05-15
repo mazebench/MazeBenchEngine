@@ -69,6 +69,13 @@ assert.deepEqual(
 );
 assert.equal(adapter.getCellDescriptor("P+G").topToken, "G");
 assert.throws(() => adapter.normalizeCellValue("NOPE"), /Unknown token/);
+assert.equal(adapter.normalizeCellValue("W++W"), "W++W");
+assert.equal(adapter.normalizeCellValue("++"), ".");
+assert.equal(adapter.setCellElevationToken(".", "W", 1), ".++W");
+assert.equal(adapter.eraseCellElevationValue("W++W", 0), "++W");
+assert.equal(adapter.eraseCellElevationValue("W++W", 2), "W");
+assert.equal(adapter.eraseCellElevationValue(".++W", 0), "+W");
+assert.equal(adapter.eraseCellElevationValue("B++B", 0), "++B");
 
 const loweredLiftPlayData = adapter.buildPlayData({
   cells: [["l"]],
@@ -119,6 +126,24 @@ assert.deepEqual(
     ["weightless_box", 1, 0, 0],
     ["weightless_box", 1, 0, 1]
   ]
+);
+
+const gappedStackPlayData = adapter.buildPlayData({
+  cells: [["W++W", "W++B"]],
+  height: 1,
+  width: 2
+});
+
+assert.deepEqual(
+  gappedStackPlayData.terrain[0][0].layers.map((layer) => [layer.type, layer.elevation]),
+  [
+    ["wall", 0],
+    ["wall", 2]
+  ]
+);
+assert.deepEqual(
+  gappedStackPlayData.actors.map((actor) => [actor.type, actor.x, actor.y, actor.elevation]),
+  [["weightless_box", 1, 0, 2]]
 );
 
 console.log("author play data tests passed");

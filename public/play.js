@@ -53,7 +53,8 @@
     mazeFrame: document.querySelector(".maze-frame"),
     fuzzyToggle: document.getElementById("fuzzy-toggle"),
     edgeToggle,
-    cameraModeToggle: document.getElementById("camera-mode-toggle")
+    cameraModeToggle: document.getElementById("camera-mode-toggle"),
+    enableCameraControls: true
   });
 
   if (!app) {

@@ -45,16 +45,13 @@
         return defaultFloorToken;
       }
 
-      const tokens = trimmedValue
-        .split(blockAdder)
-        .map((token) => token.trim())
-        .filter(Boolean);
+      const tokens = trimmedValue.split(blockAdder).map((token) => token.trim());
 
-      if (tokens.length === 0) {
+      if (tokens.length === 0 || tokens.every((token) => token.length === 0)) {
         return defaultFloorToken;
       }
 
-      const invalidToken = tokens.find((token) => !toolByToken.has(token));
+      const invalidToken = tokens.find((token) => token.length > 0 && !toolByToken.has(token));
 
       if (invalidToken) {
         throw new Error('Unknown token "' + invalidToken + '".');
@@ -66,8 +63,7 @@
     function getCellTokens(value) {
       return String(value || "")
         .split(blockAdder)
-        .map((token) => token.trim())
-        .filter(Boolean);
+        .map((token) => token.trim());
     }
 
     function getCellTools(value) {
@@ -76,9 +72,83 @@
         .filter(Boolean);
     }
 
+    function getCellStackEntries(value) {
+      return getCellTokens(value)
+        .map((token) => (token.length === 0 ? { isAir: true } : toolByToken.get(token)))
+        .filter(Boolean);
+    }
+
+    function cellStackMetadata(tokens) {
+      const entries = [];
+      let surfaceHeight = null;
+      let previousSurfaceTerrain = false;
+
+      tokens.forEach((token, index) => {
+        if (token.length === 0) {
+          const elevation = Math.max(0, surfaceHeight ?? 0);
+          entries.push({ elevation, index, isAir: true, token });
+          surfaceHeight = elevation + 1;
+          previousSurfaceTerrain = false;
+          return;
+        }
+
+        const tool = toolByToken.get(token);
+
+        if (!tool) {
+          return;
+        }
+
+        if (isActorTool(tool)) {
+          const elevation = Math.max(0, surfaceHeight ?? 0);
+          entries.push({ elevation, index, isAir: false, token, tool });
+
+          if (isSupportActorTool(tool)) {
+            surfaceHeight = elevation + 1;
+            previousSurfaceTerrain = false;
+          }
+
+          return;
+        }
+
+        const isRaisedTerrain = isRaisedTerrainTool(tool);
+        let elevation = Math.max(0, surfaceHeight ?? 0);
+
+        if (!isRaisedTerrain && previousSurfaceTerrain && surfaceHeight !== null) {
+          elevation = surfaceHeight + 1;
+        }
+
+        entries.push({ elevation, index, isAir: false, token, tool });
+        surfaceHeight = elevation + (isRaisedTerrain ? 1 : 0);
+        previousSurfaceTerrain = !isRaisedTerrain;
+      });
+
+      return {
+        entries,
+        nextElevation: Math.max(0, surfaceHeight ?? 0)
+      };
+    }
+
+    function stackEntryCreatesElevationSlot(entry) {
+      if (!entry || entry.isAir || !entry.tool) {
+        return false;
+      }
+
+      return isActorTool(entry.tool)
+        ? isSupportActorTool(entry.tool)
+        : isRaisedTerrainTool(entry.tool);
+    }
+
+    function trimTrailingAirTokens(tokens) {
+      while (tokens.length > 0 && String(tokens[tokens.length - 1] || "").trim().length === 0) {
+        tokens.pop();
+      }
+
+      return tokens;
+    }
+
     function getCellDescriptor(value) {
       const tokens = getCellTokens(value);
-      const topToken = tokens[tokens.length - 1] || defaultFloorToken;
+      const topToken = tokens.slice().reverse().find((token) => token.length > 0) || defaultFloorToken;
       const tool = toolByToken.get(topToken) || toolByToken.get(tokens[0]) || null;
 
       return {
@@ -129,7 +199,7 @@
       };
     }
 
-    function buildCellStack(tools) {
+    function buildCellStack(entries) {
       const floorTool = toolByName.get("floor") || null;
       const exitTool = toolByName.get("exit") || null;
       const terrainLayers = [];
@@ -137,7 +207,15 @@
       let surfaceHeight = null;
       let previousSurfaceTerrain = false;
 
-      tools.forEach((tool) => {
+      entries.forEach((entry) => {
+        if (entry?.isAir) {
+          surfaceHeight = Math.max(0, surfaceHeight ?? 0) + 1;
+          previousSurfaceTerrain = false;
+          return;
+        }
+
+        const tool = entry;
+
         if (isActorTool(tool)) {
           const elevation = Math.max(0, surfaceHeight ?? 0);
 
@@ -236,6 +314,60 @@
       return buildCellStack(tools).terrain;
     }
 
+    function setCellElevationToken(currentValue, token, targetElevation) {
+      const normalizedToken = normalizeCellValue(token);
+      const tokens = getCellTokens(currentValue);
+      const elevation = Math.max(0, Math.floor(Number(targetElevation) || 0));
+      let metadata = cellStackMetadata(tokens);
+      const matchingEntry = metadata.entries.find((entry) => entry.elevation === elevation);
+
+      if (matchingEntry) {
+        tokens[matchingEntry.index] = normalizedToken;
+        return normalizeCellValue(tokens.join(blockAdder));
+      }
+
+      while (metadata.nextElevation < elevation) {
+        tokens.push("");
+        metadata = cellStackMetadata(tokens);
+      }
+
+      tokens.push(normalizedToken);
+
+      return normalizeCellValue(tokens.join(blockAdder));
+    }
+
+    function eraseCellElevationValue(currentValue, targetElevation) {
+      const tokens = getCellTokens(currentValue);
+      const elevation = Math.max(0, Math.floor(Number(targetElevation) || 0));
+      const metadata = cellStackMetadata(tokens);
+      const matchingEntry = metadata.entries
+        .slice()
+        .reverse()
+        .find((entry) => !entry.isAir && entry.elevation === elevation);
+
+      if (!matchingEntry) {
+        return normalizeCellValue(currentValue);
+      }
+
+      const hasNonAirAbove = metadata.entries.some(
+        (entry) => !entry.isAir && entry.index > matchingEntry.index
+      );
+
+      if (hasNonAirAbove && stackEntryCreatesElevationSlot(matchingEntry)) {
+        tokens[matchingEntry.index] = "";
+      } else {
+        tokens.splice(matchingEntry.index, 1);
+      }
+
+      trimTrailingAirTokens(tokens);
+
+      return normalizeCellValue(
+        tokens.some((token) => token.length > 0)
+          ? tokens.join(blockAdder)
+          : defaultFloorToken
+      );
+    }
+
     function buildPlayData(options = {}) {
       const includeGems = options.includeGems !== false;
       const width = Math.max(1, Number(options.width) || 1);
@@ -248,8 +380,8 @@
         const terrainRow = [];
 
         for (let x = 0; x < width; x += 1) {
-          const tools = getCellTools(cells[y]?.[x] || defaultFloorToken);
-          const cellStack = buildCellStack(tools);
+          const entries = getCellStackEntries(cells[y]?.[x] || defaultFloorToken);
+          const cellStack = buildCellStack(entries);
 
           terrainRow.push(cellStack.terrain);
           cellStack.actors.forEach(({ tool, elevation }) => {
@@ -291,11 +423,13 @@
       actorNames,
       buildCellState,
       buildPlayData,
+      eraseCellElevationValue,
       getCellDescriptor,
       getCellTokens,
       getCellTools,
       isActorTool,
       normalizeCellValue,
+      setCellElevationToken,
       toolByName,
       toolByToken
     };

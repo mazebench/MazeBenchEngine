@@ -9,6 +9,7 @@
     let scene = null;
     let edgeScene = null;
     let camera = null;
+    let raycaster = null;
     let lastWidth = 0;
     let lastHeight = 0;
     let lastSceneSignature = "";
@@ -25,6 +26,9 @@
     let cameraMode = "perspective";
     let activeRenderContext = null;
     let cameraEstimateOverride = null;
+    let editorHoverTarget = null;
+    let editorHoverRenderFrameId = 0;
+    let editorHighlightMaterial = null;
     let debugCameraTiltHoldFrameId = 0;
     let debugCameraTiltHoldLastMs = 0;
     const debugCameraTiltHoldKeys = new Set();
@@ -474,8 +478,30 @@
       scheduleDebugCameraTiltHold();
     }
 
+    function eventTargetsEditableText(event) {
+      const target = event.target;
+
+      if (!target) {
+        return false;
+      }
+
+      if (target.isContentEditable) {
+        return true;
+      }
+
+      const tagName = String(target.tagName || "").toLowerCase();
+
+      return tagName === "input" || tagName === "textarea" || tagName === "select";
+    }
+
     function handleDebugCameraKeydown(event) {
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
+      if (
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        eventTargetsEditableText(event)
+      ) {
         return;
       }
 
@@ -519,6 +545,10 @@
     }
 
     function handleDebugCameraKeyup(event) {
+      if (eventTargetsEditableText(event)) {
+        return;
+      }
+
       const key = event.key.toLowerCase();
 
       if (key !== "w" && key !== "s") {
@@ -1012,6 +1042,31 @@
       return descriptor;
     }
 
+    function terrainPieceDescriptorsForState(state, x, y, now) {
+      if (!state || x < 0 || y < 0 || x >= state.width || y >= state.height) {
+        return [];
+      }
+
+      const previousContext = activeRenderContext;
+      let descriptors = [];
+
+      activeRenderContext = {
+        state,
+        offsetX: 0,
+        offsetZ: 0,
+        raisedPlayerGates: transitionSet(state.raisedPlayerGates),
+        raisedOrangeWalls: transitionSet(state.raisedOrangeWalls)
+      };
+
+      try {
+        descriptors = terrainPieceDescriptorsAt(x, y, now);
+      } finally {
+        activeRenderContext = previousContext;
+      }
+
+      return descriptors;
+    }
+
     function sameRoomBoundaryDescriptor(leftDescriptor, rightDescriptor) {
       return (
         leftDescriptor?.type === "wall" &&
@@ -1057,6 +1112,11 @@
         neighborY >= neighborState.height
       ) {
         return false;
+      }
+
+      if (options?.descriptor?.type === "wall") {
+        return terrainPieceDescriptorsForState(neighborState, neighborX, neighborY, options.now)
+          .some((descriptor) => sameRoomBoundaryDescriptor(options.descriptor, descriptor));
       }
 
       const localDescriptor =
@@ -1173,6 +1233,9 @@
       mesh.position.set(position.x, position.y, position.z);
       mesh.castShadow = options.castShadow !== false;
       mesh.receiveShadow = options.receiveShadow !== false;
+      if (options.editorPick) {
+        mesh.userData.editorPick = options.editorPick;
+      }
       scene.add(mesh);
 
       if (options.outline === false || !edgeOutlinesEnabled()) {
@@ -1348,7 +1411,8 @@
         castShadow: options.castShadow,
         receiveShadow: options.receiveShadow,
         opacity,
-        edgeOpacity: options.edgeOpacity
+        edgeOpacity: options.edgeOpacity,
+        editorPick: options.editorPick
       });
     }
 
@@ -1372,7 +1436,8 @@
         castShadow: options.castShadow,
         receiveShadow: options.receiveShadow,
         opacity,
-        edgeOpacity: options.edgeOpacity
+        edgeOpacity: options.edgeOpacity,
+        editorPick: options.editorPick
       });
     }
 
@@ -1396,7 +1461,8 @@
           castShadow: options.castShadow,
           receiveShadow: options.receiveShadow,
           opacity,
-          edgeOpacity: options.edgeOpacity
+          edgeOpacity: options.edgeOpacity,
+          editorPick: options.editorPick
         });
         return;
       }
@@ -1532,6 +1598,288 @@
         x: (x + 0.5) * unit + renderOffsetX(),
         z: (y + 0.5) * unit + renderOffsetZ()
       };
+    }
+
+    function editorHoverTargetKey(target) {
+      if (!target) {
+        return "";
+      }
+
+      return [
+        target.face || "",
+        target.sourceX,
+        target.sourceY,
+        target.paintX,
+        target.paintY,
+        Math.round((target.topY ?? 0) * 1000),
+        Math.round((target.bottomY ?? 0) * 1000)
+      ].join(":");
+    }
+
+    function scheduleEditorHoverRender() {
+      if (editorHoverRenderFrameId || typeof app.render !== "function") {
+        return;
+      }
+
+      editorHoverRenderFrameId = window.requestAnimationFrame(() => {
+        editorHoverRenderFrameId = 0;
+        app.render();
+      });
+    }
+
+    function setEditorHoverTarget(target) {
+      const nextTarget = target || null;
+
+      if (editorHoverTargetKey(editorHoverTarget) === editorHoverTargetKey(nextTarget)) {
+        return;
+      }
+
+      editorHoverTarget = nextTarget;
+      lastSceneSignature = "";
+      scheduleEditorHoverRender();
+    }
+
+    function editorPickableMeshes() {
+      if (!scene) {
+        return [];
+      }
+
+      return scene.children.filter((child) => child.userData?.editorPick);
+    }
+
+    function editorPickCellForPoint(pick, point, normal) {
+      const cells = Array.isArray(pick?.cells) ? pick.cells : [];
+      const tolerance = Math.max(1, unit * 0.035);
+      const candidates = cells.filter(
+        (cell) =>
+          point.x >= cell.left - tolerance &&
+          point.x <= cell.right + tolerance &&
+          point.z >= cell.top - tolerance &&
+          point.z <= cell.bottom + tolerance
+      );
+      const pool = candidates.length > 0 ? candidates : cells;
+
+      if (pool.length === 0) {
+        return null;
+      }
+
+      if (Math.abs(normal.x) >= Math.abs(normal.z) && Math.abs(normal.x) > 0.4) {
+        const edge = normal.x > 0 ? "right" : "left";
+        return pool
+          .slice()
+          .sort((a, b) => Math.abs(a[edge] - point.x) - Math.abs(b[edge] - point.x))[0];
+      }
+
+      if (Math.abs(normal.z) > 0.4) {
+        const edge = normal.z > 0 ? "bottom" : "top";
+        return pool
+          .slice()
+          .sort((a, b) => Math.abs(a[edge] - point.z) - Math.abs(b[edge] - point.z))[0];
+      }
+
+      return pool
+        .slice()
+        .sort((a, b) => {
+          const ax = (a.left + a.right) / 2 - point.x;
+          const az = (a.top + a.bottom) / 2 - point.z;
+          const bx = (b.left + b.right) / 2 - point.x;
+          const bz = (b.top + b.bottom) / 2 - point.z;
+
+          return ax * ax + az * az - (bx * bx + bz * bz);
+        })[0];
+    }
+
+    function pickEditorFace(clientX, clientY, targetElement = app.canvas) {
+      if (!THREE || !camera || !scene || !targetElement) {
+        return null;
+      }
+
+      const rect = targetElement.getBoundingClientRect();
+
+      if (rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+
+      if (!raycaster) {
+        raycaster = new THREE.Raycaster();
+      }
+
+      const pointer = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -(((clientY - rect.top) / rect.height) * 2 - 1)
+      );
+      raycaster.setFromCamera(pointer, camera);
+
+      const intersections = raycaster.intersectObjects(editorPickableMeshes(), false);
+
+      for (const intersection of intersections) {
+        const pick = intersection.object.userData?.editorPick;
+        const faceNormal = intersection.face?.normal;
+
+        if (!pick || !faceNormal) {
+          continue;
+        }
+
+        const normal = faceNormal.clone().transformDirection(intersection.object.matrixWorld);
+
+        if (normal.y < -0.45) {
+          continue;
+        }
+
+        const cell = editorPickCellForPoint(pick, intersection.point, normal);
+
+        if (!cell) {
+          continue;
+        }
+
+        let face = "top";
+        let dx = 0;
+        let dy = 0;
+        const topPaintLayer = Math.max(0, Math.round((pick.topY || 0) / unit));
+        let sourceLayer = Math.max(0, topPaintLayer - 1);
+
+        if (normal.y <= 0.55) {
+          const sideTopLayer = Math.max(1, Math.ceil((pick.topY || 0) / unit));
+          sourceLayer = Math.max(
+            0,
+            Math.min(sideTopLayer - 1, Math.floor(Math.max(0, intersection.point.y) / unit))
+          );
+
+          if (Math.abs(normal.x) >= Math.abs(normal.z)) {
+            dx = normal.x >= 0 ? 1 : -1;
+            face = dx > 0 ? "right" : "left";
+          } else {
+            dy = normal.z >= 0 ? 1 : -1;
+            face = dy > 0 ? "bottom" : "top-side";
+          }
+        }
+
+        return {
+          bottomY: pick.bottomY,
+          bounds: {
+            left: cell.left,
+            right: cell.right,
+            top: cell.top,
+            bottom: cell.bottom
+          },
+          dx,
+          dy,
+          face,
+          kind: pick.kind || "terrain",
+          paintLayer: dx === 0 && dy === 0 ? topPaintLayer : sourceLayer,
+          paintX: cell.gridX + dx,
+          paintY: cell.gridY + dy,
+          sourceLayer,
+          sourceX: cell.gridX,
+          sourceY: cell.gridY,
+          topY: pick.topY
+        };
+      }
+
+      return null;
+    }
+
+    function editorHighlightPlaneGeometry(width, height, orientation) {
+      const geometry = new THREE.PlaneGeometry(width, height);
+
+      if (orientation === "top") {
+        geometry.rotateX(-Math.PI / 2);
+      } else if (orientation === "right") {
+        geometry.rotateY(Math.PI / 2);
+      } else if (orientation === "left") {
+        geometry.rotateY(-Math.PI / 2);
+      } else if (orientation === "top-side") {
+        geometry.rotateY(Math.PI);
+      }
+
+      return geometry;
+    }
+
+    function editorHighlightMeshMaterial() {
+      if (!editorHighlightMaterial) {
+        editorHighlightMaterial = new THREE.MeshBasicMaterial({
+          color: "#fff3a6",
+          depthTest: true,
+          depthWrite: false,
+          opacity: 0.5,
+          side: THREE.DoubleSide,
+          transparent: true
+        });
+      }
+
+      return editorHighlightMaterial;
+    }
+
+    function addEditorHoverHighlight() {
+      if (!editorHoverTarget || !THREE) {
+        return;
+      }
+
+      const { bounds } = editorHoverTarget;
+
+      if (!bounds) {
+        return;
+      }
+
+      const topY = Number(editorHoverTarget.topY);
+      const bottomY = Number(editorHoverTarget.bottomY);
+
+      if (!Number.isFinite(topY) || !Number.isFinite(bottomY)) {
+        return;
+      }
+
+      const faceInset = Math.max(1, unit * 0.035);
+      const normalOffset = Math.max(0.75, unit * 0.012);
+      const material = editorHighlightMeshMaterial();
+      let geometry = null;
+      let position = null;
+
+      if (editorHoverTarget.face === "top") {
+        geometry = editorHighlightPlaneGeometry(
+          Math.max(1, bounds.right - bounds.left - faceInset * 2),
+          Math.max(1, bounds.bottom - bounds.top - faceInset * 2),
+          "top"
+        );
+        position = new THREE.Vector3(
+          (bounds.left + bounds.right) / 2,
+          topY + normalOffset,
+          (bounds.top + bounds.bottom) / 2
+        );
+      } else if (editorHoverTarget.dx !== 0) {
+        const height = Math.max(1, topY - bottomY - faceInset);
+        geometry = editorHighlightPlaneGeometry(
+          Math.max(1, bounds.bottom - bounds.top - faceInset * 2),
+          height,
+          editorHoverTarget.dx > 0 ? "right" : "left"
+        );
+        position = new THREE.Vector3(
+          editorHoverTarget.dx > 0 ? bounds.right + normalOffset : bounds.left - normalOffset,
+          bottomY + (topY - bottomY) / 2,
+          (bounds.top + bounds.bottom) / 2
+        );
+      } else if (editorHoverTarget.dy !== 0) {
+        const height = Math.max(1, topY - bottomY - faceInset);
+        geometry = editorHighlightPlaneGeometry(
+          Math.max(1, bounds.right - bounds.left - faceInset * 2),
+          height,
+          editorHoverTarget.dy > 0 ? "bottom" : "top-side"
+        );
+        position = new THREE.Vector3(
+          (bounds.left + bounds.right) / 2,
+          bottomY + (topY - bottomY) / 2,
+          editorHoverTarget.dy > 0 ? bounds.bottom + normalOffset : bounds.top - normalOffset
+        );
+      }
+
+      if (!geometry || !position) {
+        return;
+      }
+
+      const highlight = new THREE.Mesh(geometry, material);
+      highlight.position.copy(position);
+      highlight.castShadow = false;
+      highlight.receiveShadow = false;
+      scene.add(highlight);
     }
 
     function renderTerrainLayerSurfaceHeight(layer, x, y, now = performance.now()) {
@@ -1793,6 +2141,55 @@
       };
     }
 
+    function terrainPieceDescriptorForLayer(layer, x, y, now = performance.now()) {
+      const terrainHeight = renderTerrainLayerSurfaceHeight(layer, x, y, now);
+
+      if (terrainHeight === null) {
+        return null;
+      }
+
+      const elevation = layer.elevation ?? 0;
+      const type = layer.type || "floor";
+      const topHeight = Math.max(0, terrainHeight) * elevationUnit;
+      const baseHeight = Math.max(0, elevation) * elevationUnit;
+      const isRaisedPiece = terrainHeight > elevation;
+      const isSunkenFloor = !isRaisedPiece && terrainHeight === 0 && isSunkenFloorType(type);
+      const topY = isRaisedPiece
+        ? topHeight
+        : topHeight - (isSunkenFloor ? floorDrop : 0);
+      const blockHeight = isRaisedPiece
+        ? Math.max(1, topHeight - baseHeight)
+        : floorThickness;
+      const bottomY = topY - blockHeight;
+
+      return {
+        blockHeight,
+        bottomY,
+        elevation,
+        isVoid: false,
+        key: [
+          type,
+          Math.round(elevation * 100) / 100,
+          Math.round(terrainHeight * 100) / 100,
+          Math.round(blockHeight * 100) / 100,
+          Math.round(topY * 100) / 100,
+          Math.round(bottomY * 100) / 100,
+          type === "player_lift" ? `${x},${y}` : ""
+        ].join(":"),
+        layer,
+        terrainHeight,
+        isSunkenFloor,
+        topY,
+        type
+      };
+    }
+
+    function terrainPieceDescriptorsAt(x, y, now = performance.now()) {
+      return renderTerrainLayersAt(x, y)
+        .map((layer) => terrainPieceDescriptorForLayer(layer, x, y, now))
+        .filter(Boolean);
+    }
+
     function shouldOutlineTerrainRegion(descriptor) {
       if ((descriptor.terrainHeight ?? 0) > 0) {
         return true;
@@ -1819,6 +2216,19 @@
         castShadow: (descriptor.terrainHeight ?? 0) > 0 && renderContextCastsShadows(),
         receiveShadow: descriptor.type !== "orange_wall",
         opacity: visibility,
+        editorPick: {
+          kind: "terrain",
+          cells: cells.map((cell) => ({
+            gridX: cell.gridX,
+            gridY: cell.gridY,
+            left: cell.left + renderOffsetX(),
+            right: cell.right + renderOffsetX(),
+            top: cell.top + renderOffsetZ(),
+            bottom: cell.bottom + renderOffsetZ()
+          })),
+          topY: descriptor.topY,
+          bottomY: descriptor.bottomY ?? descriptor.topY - descriptor.blockHeight
+        },
         edgeOptions: {
           descriptor,
           now,
@@ -1886,20 +2296,27 @@
 
     function addTerrainRegions(now = performance.now()) {
       const descriptors = [];
-      const visited = [];
+      const pieceMaps = [];
+      const pieceEntries = [];
       const state = renderState();
 
       for (let y = 0; y < state.height; y += 1) {
         const descriptorRow = [];
-        const visitedRow = [];
+        const pieceMapRow = [];
 
         for (let x = 0; x < state.width; x += 1) {
           descriptorRow.push(terrainDescriptorAt(x, y, now));
-          visitedRow.push(false);
+
+          const pieceMap = new Map();
+          terrainPieceDescriptorsAt(x, y, now).forEach((descriptor) => {
+            pieceMap.set(descriptor.key, descriptor);
+            pieceEntries.push({ descriptor, x, y });
+          });
+          pieceMapRow.push(pieceMap);
         }
 
         descriptors.push(descriptorRow);
-        visited.push(visitedRow);
+        pieceMaps.push(pieceMapRow);
       }
 
       const previousTerrainDescriptors = activeRenderContext?.terrainDescriptors;
@@ -1908,53 +2325,61 @@
         activeRenderContext.terrainDescriptors = descriptors;
       }
 
-      for (let y = 0; y < state.height; y += 1) {
-        for (let x = 0; x < state.width; x += 1) {
-          if (visited[y][x]) {
-            continue;
-          }
+      const visitedPieces = new Set();
+      const pieceVisitKey = (x, y, key) => `${x},${y}:${key}`;
 
-          const descriptor = descriptors[y][x];
-          const stack = [{ x, y }];
-          const cells = [];
-          visited[y][x] = true;
+      pieceEntries.forEach((entry) => {
+        const firstKey = pieceVisitKey(entry.x, entry.y, entry.descriptor.key);
 
-          while (stack.length > 0) {
-            const current = stack.pop();
-            cells.push({
-              gridX: current.x,
-              gridY: current.y,
-              left: current.x * unit,
-              right: (current.x + 1) * unit,
-              top: current.y * unit,
-              bottom: (current.y + 1) * unit
-            });
-
-            [
-              { x: current.x + 1, y: current.y },
-              { x: current.x - 1, y: current.y },
-              { x: current.x, y: current.y + 1 },
-              { x: current.x, y: current.y - 1 }
-            ].forEach((neighbor) => {
-              if (
-                neighbor.x < 0 ||
-                neighbor.y < 0 ||
-                neighbor.x >= state.width ||
-                neighbor.y >= state.height ||
-                visited[neighbor.y][neighbor.x] ||
-                descriptors[neighbor.y][neighbor.x].key !== descriptor.key
-              ) {
-                return;
-              }
-
-              visited[neighbor.y][neighbor.x] = true;
-              stack.push(neighbor);
-            });
-          }
-
-          addTerrainComponent(cells, descriptor, now);
+        if (visitedPieces.has(firstKey)) {
+          return;
         }
-      }
+
+        const descriptor = entry.descriptor;
+        const stack = [{ x: entry.x, y: entry.y }];
+        const cells = [];
+        visitedPieces.add(firstKey);
+
+        while (stack.length > 0) {
+          const current = stack.pop();
+          cells.push({
+            gridX: current.x,
+            gridY: current.y,
+            left: current.x * unit,
+            right: (current.x + 1) * unit,
+            top: current.y * unit,
+            bottom: (current.y + 1) * unit
+          });
+
+          [
+            { x: current.x + 1, y: current.y },
+            { x: current.x - 1, y: current.y },
+            { x: current.x, y: current.y + 1 },
+            { x: current.x, y: current.y - 1 }
+          ].forEach((neighbor) => {
+            if (
+              neighbor.x < 0 ||
+              neighbor.y < 0 ||
+              neighbor.x >= state.width ||
+              neighbor.y >= state.height ||
+              !pieceMaps[neighbor.y][neighbor.x].has(descriptor.key)
+            ) {
+              return;
+            }
+
+            const neighborKey = pieceVisitKey(neighbor.x, neighbor.y, descriptor.key);
+
+            if (visitedPieces.has(neighborKey)) {
+              return;
+            }
+
+            visitedPieces.add(neighborKey);
+            stack.push(neighbor);
+          });
+        }
+
+        addTerrainComponent(cells, descriptor, now);
+      });
 
       if (activeRenderContext) {
         activeRenderContext.terrainDescriptors = previousTerrainDescriptors;
@@ -2142,7 +2567,20 @@
             opacity,
             edgeOpacity,
             castShadow: renderContextCastsShadows(),
-            receiveShadow: false
+            receiveShadow: false,
+            editorPick: {
+              kind: "actor",
+              cells: geometryCells.map((cell) => ({
+                gridX: cell.gridX,
+                gridY: cell.gridY,
+                left: cell.left,
+                right: cell.right,
+                top: cell.top,
+                bottom: cell.bottom
+              })),
+              topY,
+              bottomY: topY - height
+            }
           });
         });
       });
@@ -2170,6 +2608,21 @@
         elevation * elevationUnit - sink + actorVisualLift + unit * 0.32 + Math.max(0, app.floatingFloorHoverOffset(actor, now)),
         z
       );
+      gem.userData.editorPick = {
+        kind: "actor",
+        cells: [
+          {
+            gridX: actor.x,
+            gridY: actor.y,
+            left: (actor.renderX ?? actor.x) * unit + renderOffsetX(),
+            right: ((actor.renderX ?? actor.x) + 1) * unit + renderOffsetX(),
+            top: (actor.renderY ?? actor.y) * unit + renderOffsetZ(),
+            bottom: ((actor.renderY ?? actor.y) + 1) * unit + renderOffsetZ()
+          }
+        ],
+        topY: gem.position.y + unit * 0.22 * scale,
+        bottomY: gem.position.y - unit * 0.22 * scale
+      };
       gem.castShadow = renderContextCastsShadows();
       gem.receiveShadow = false;
       scene.add(gem);
@@ -2222,6 +2675,14 @@
       const height = actorCuboidHeight(scale);
       const topY = elevation * elevationUnit - sink + actorVisualLift + height;
       const radius = shapeCornerRadius;
+      const actorBounds = {
+        gridX: actor.x,
+        gridY: actor.y,
+        left: center.x - width / 2,
+        right: center.x + width / 2,
+        top: center.z - depth / 2,
+        bottom: center.z + depth / 2
+      };
 
       addTopRoundedCuboid(width, depth, height, radius, actorRenderColor(actor), {
         x: center.x,
@@ -2231,7 +2692,13 @@
         opacity,
         edgeOpacity: fade * visibility,
         castShadow: renderContextCastsShadows(),
-        receiveShadow: false
+        receiveShadow: false,
+        editorPick: {
+          kind: "actor",
+          cells: [actorBounds],
+          topY,
+          bottomY: topY - height
+        }
       });
     }
 
@@ -3323,6 +3790,7 @@
         fitCameraToScene();
       }
 
+      addEditorHoverHighlight();
       renderer.setClearColor("#050608", 1);
       renderer.clear(true, true, true);
       renderer.shadowMap.needsUpdate = shouldUpdateShadowMap;
@@ -3377,6 +3845,8 @@
       });
 
     app.threeRenderer = {
+      pickEditorFace,
+      setEditorHoverTarget,
       useLevelPreviewCamera,
       renderScene,
       threeCanvas
@@ -3384,12 +3854,14 @@
 
     ensureEdgeToggleControl();
     updateCameraDirectionMapper();
-    window.addEventListener("keydown", handleDebugCameraKeydown, true);
-    window.addEventListener("keyup", handleDebugCameraKeyup, true);
-    window.addEventListener("blur", () => {
-      debugCameraTiltHoldKeys.clear();
-      stopDebugCameraTiltHold();
-    });
+    if (app.enableCameraControls) {
+      window.addEventListener("keydown", handleDebugCameraKeydown, true);
+      window.addEventListener("keyup", handleDebugCameraKeyup, true);
+      window.addEventListener("blur", () => {
+        debugCameraTiltHoldKeys.clear();
+        stopDebugCameraTiltHold();
+      });
+    }
 
     if (app.cameraModeToggle) {
       app.cameraModeToggle.addEventListener("click", toggleCameraMode);

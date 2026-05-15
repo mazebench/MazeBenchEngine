@@ -113,8 +113,7 @@ function createMazeLevelService({
 
     if (typeof blockAdder === "string" && blockAdder.length > 0) {
       return String(cell)
-        .split(blockAdder)
-        .filter((token) => token.length > 0);
+        .split(blockAdder);
     }
 
     return cell ? [cell] : [];
@@ -276,6 +275,12 @@ function createMazeLevelService({
     let previousSurfaceTerrain = false;
 
     cellDefinitions.forEach((definition) => {
+      if (definition?.isAir) {
+        surfaceHeight = Math.max(0, surfaceHeight ?? 0) + 1;
+        previousSurfaceTerrain = false;
+        return;
+      }
+
       if (isActorDefinition(definition)) {
         const elevation = Math.max(0, surfaceHeight ?? 0);
 
@@ -396,7 +401,10 @@ function createMazeLevelService({
         const hasSourceCell = y < rawRows.length && index < row.length;
         const cell = hasSourceCell ? row[index] : "";
         const cellDefinitions = parseCellStack(game.parser, cell)
-          .map((token) => definitions.byToken.get(token))
+          .map((token) => {
+            const normalizedToken = String(token).trim();
+            return normalizedToken.length === 0 ? { isAir: true } : definitions.byToken.get(normalizedToken);
+          })
           .filter(Boolean);
         const cellStack = hasSourceCell
           ? buildCellStack(cellDefinitions, floorDefinition, exitDefinition)
@@ -472,13 +480,13 @@ function createMazeLevelService({
       return floorToken;
     }
 
-    const tokens = parseCellStack(game.parser, trimmedCell).map((token) => String(token).trim()).filter(Boolean);
+    const tokens = parseCellStack(game.parser, trimmedCell).map((token) => String(token).trim());
 
-    if (tokens.length === 0) {
+    if (tokens.length === 0 || tokens.every((token) => token.length === 0)) {
       return floorToken;
     }
 
-    const invalidToken = tokens.find((token) => !definitions.byToken.has(token));
+    const invalidToken = tokens.find((token) => token.length > 0 && !definitions.byToken.has(token));
 
     if (invalidToken) {
       throw new Error(`Unknown token "${invalidToken}".`);

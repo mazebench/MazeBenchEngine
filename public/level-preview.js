@@ -42,7 +42,8 @@
       playHeader: null,
       playStage: null,
       mazeFrame: null,
-      fuzzyToggle: null
+      fuzzyToggle: null,
+      enableCameraControls: false
     });
 
     if (!app) {

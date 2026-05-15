@@ -189,7 +189,8 @@
         const changed = syncWeightlessGroupElevations(
           state,
           gateState,
-          orangeButtonsPressed
+          orangeButtonsPressed,
+          true
         );
 
         gateState = computeRaisedPlayerGateSet(state);
@@ -281,7 +282,12 @@
       }
     }
 
-    function syncWeightlessGroupElevations(state, gateState, orangeButtonsPressed) {
+    function syncWeightlessGroupElevations(
+      state,
+      gateState,
+      orangeButtonsPressed,
+      preserveAuthoredElevations = false
+    ) {
       const initializedWeightlessGroups = new Set();
       let changed = false;
 
@@ -299,6 +305,14 @@
         initializedWeightlessGroups.add(groupId);
 
         const members = weightlessGroupMembers(state, groupId);
+
+        if (
+          preserveAuthoredElevations &&
+          members.every((member) => hasExplicitElevation(actorSource[member]))
+        ) {
+          continue;
+        }
+
         const baseElevation = weightlessGroupSupportedElevation(
           state,
           members,

@@ -85,7 +85,8 @@
     mazeFrame,
     fuzzyToggle,
     edgeToggle,
-    cameraModeToggle
+    cameraModeToggle,
+    enableCameraControls
   }) {
     const currentPathSegments = window.location.pathname.split("/").filter(Boolean);
     const currentGameId =
@@ -122,6 +123,9 @@
       worldColumns: playRules.normalizeAxisValues(playData?.worldColumns, defaultWorldAxis),
       worldRows: playRules.normalizeAxisValues(playData?.worldRows, defaultWorldAxis),
       canvas,
+      enableCameraControls:
+        enableCameraControls === true ||
+        (enableCameraControls !== false && Boolean(canvas?.isConnected)),
       playShell,
       playHeader,
       playStage,
@@ -2149,6 +2153,11 @@
           initializedWeightlessGroups.add(actor.groupId);
 
           const members = weightlessGroupMembers(actor.groupId);
+
+          if (members.every((member) => member.__explicitElevation)) {
+            return;
+          }
+
           const baseElevation = weightlessGroupSupportedElevation(members, gateState, orangeWallState);
 
           members.forEach((member) => {

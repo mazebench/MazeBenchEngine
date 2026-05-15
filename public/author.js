@@ -76,11 +76,13 @@
   const playDataAdapter = authorPlayData.createAdapter(authorData);
   const {
     buildPlayData,
+    eraseCellElevationValue,
     getCellDescriptor,
     getCellTokens,
     getCellTools,
     isActorTool,
     normalizeCellValue,
+    setCellElevationToken,
     toolByName,
     toolByToken
   } = playDataAdapter;
@@ -138,6 +140,7 @@
       ? "Loaded existing level."
       : "Fresh level. Paint something good.",
     messageTone: authorData.initialLevel.exists ? "success" : "warning",
+    lastPaintTargetKey: null,
     paintPointerId: null,
     selectedCell: { x: 0, y: 0 },
     selectedToken:
@@ -265,7 +268,9 @@
     const gemToken = toolByName.get("gem")?.token || "G";
     const tokens = getCellTokens(value).filter((token) => token !== gemToken);
 
-    return tokens.length > 0 ? tokens.join(authorData.blockAdder) : authorData.defaultFloorToken;
+    return tokens.some((token) => token.length > 0)
+      ? normalizeCellValue(tokens.join(authorData.blockAdder))
+      : authorData.defaultFloorToken;
   }
 
   function buildEditorPlayData(options = {}) {
@@ -442,7 +447,8 @@
       playHeader: null,
       playStage: null,
       mazeFrame: null,
-      fuzzyToggle: null
+      fuzzyToggle: null,
+      enableCameraControls: true
     });
 
     if (!app) {
@@ -692,7 +698,8 @@
         playHeader: null,
         playStage: null,
         mazeFrame: null,
-        fuzzyToggle: null
+        fuzzyToggle: null,
+        enableCameraControls: false
       });
 
       if (!app) {
@@ -1013,7 +1020,9 @@
     tokens.pop();
 
     return normalizeCellValue(
-      tokens.length > 0 ? tokens.join(authorData.blockAdder) : authorData.defaultFloorToken
+      tokens.some((token) => token.length > 0)
+        ? tokens.join(authorData.blockAdder)
+        : authorData.defaultFloorToken
     );
   }
 
@@ -1024,6 +1033,128 @@
     }
 
     updateCellValue(x, y, appendTokenToCellValue(state.cells[y][x], value));
+  }
+
+  function isInsideEditorCell(x, y) {
+    return x >= 0 && y >= 0 && x < state.width && y < state.height;
+  }
+
+  function fallbackPaintTargetFromButton(button) {
+    if (!button) {
+      return null;
+    }
+
+    const x = Number(button.dataset.x);
+    const y = Number(button.dataset.y);
+
+    if (!isInsideEditorCell(x, y)) {
+      return null;
+    }
+
+    return {
+      face: "top",
+      paintLayer: null,
+      paintX: x,
+      paintY: y,
+      sourceLayer: null,
+      sourceX: x,
+      sourceY: y
+    };
+  }
+
+  function paintTargetFromPointerEvent(event) {
+    const pickedTarget = editorRenderer.app?.threeRenderer?.pickEditorFace?.(
+      event.clientX,
+      event.clientY,
+      elements.canvas
+    );
+
+    if (pickedTarget) {
+      return pickedTarget;
+    }
+
+    return fallbackPaintTargetFromButton(event.target.closest(".author-grid__cell"));
+  }
+
+  function syncEditorHoverFromPointerEvent(event) {
+    const target = paintTargetFromPointerEvent(event);
+
+    editorRenderer.app?.threeRenderer?.setEditorHoverTarget?.(target);
+    return target;
+  }
+
+  function clearEditorHoverTarget() {
+    editorRenderer.app?.threeRenderer?.setEditorHoverTarget?.(null);
+  }
+
+  function paintTargetKey(target) {
+    if (!target) {
+      return "";
+    }
+
+    const isEraser = state.selectedToken === eraserToken;
+    const x = isEraser ? target.sourceX : target.paintX;
+    const y = isEraser ? target.sourceY : target.paintY;
+
+    return [
+      state.selectedToken,
+      x,
+      y,
+      target.paintLayer ?? "top",
+      target.sourceLayer ?? "top",
+      target.sourceX,
+      target.sourceY,
+      target.face || "top"
+    ].join(":");
+  }
+
+  function paintFaceTarget(target) {
+    if (!target) {
+      return false;
+    }
+
+    if (state.selectedToken === eraserToken) {
+      if (!isInsideEditorCell(target.sourceX, target.sourceY)) {
+        return false;
+      }
+
+      updateCellValue(
+        target.sourceX,
+        target.sourceY,
+        target.sourceLayer === null || target.sourceLayer === undefined
+          ? eraseTopCellValue(state.cells[target.sourceY][target.sourceX])
+          : eraseCellElevationValue(state.cells[target.sourceY][target.sourceX], target.sourceLayer)
+      );
+      return true;
+    }
+
+    if (!isInsideEditorCell(target.paintX, target.paintY)) {
+      return false;
+    }
+
+    updateCellValue(
+      target.paintX,
+      target.paintY,
+      target.paintLayer === null || target.paintLayer === undefined
+        ? appendTokenToCellValue(state.cells[target.paintY][target.paintX], state.selectedToken)
+        : setCellElevationToken(
+            state.cells[target.paintY][target.paintX],
+            state.selectedToken,
+            target.paintLayer
+          )
+    );
+    return true;
+  }
+
+  function paintFaceTargetOnce(target) {
+    const key = paintTargetKey(target);
+
+    if (!key || key === state.lastPaintTargetKey) {
+      return false;
+    }
+
+    state.lastPaintTargetKey = key;
+    return paintFaceTarget(target);
   }
 
   function resizeLevel() {
@@ -1584,34 +1715,36 @@
   }
 
   function handleGridPointerDown(event) {
-    const button = event.target.closest(".author-grid__cell");
+    const target = syncEditorHoverFromPointerEvent(event);
 
-    if (!button) {
+    if (!target) {
       return;
     }
 
     event.preventDefault();
     state.paintPointerId = event.pointerId;
-    paintCell(Number(button.dataset.x), Number(button.dataset.y), state.selectedToken);
+    state.lastPaintTargetKey = null;
+    elements.grid.setPointerCapture?.(event.pointerId);
+    paintFaceTargetOnce(target);
   }
 
   function handleGridPointerMove(event) {
+    const target = syncEditorHoverFromPointerEvent(event);
+
     if (state.paintPointerId !== event.pointerId || event.buttons !== 1) {
       return;
     }
 
-    const button = event.target.closest(".author-grid__cell");
-
-    if (!button) {
-      return;
-    }
-
-    paintCell(Number(button.dataset.x), Number(button.dataset.y), state.selectedToken);
+    paintFaceTargetOnce(target);
   }
 
   function stopPainting(event) {
     if (state.paintPointerId === event.pointerId) {
       state.paintPointerId = null;
+      state.lastPaintTargetKey = null;
+      if (elements.grid.hasPointerCapture?.(event.pointerId)) {
+        elements.grid.releasePointerCapture(event.pointerId);
+      }
     }
   }
 
@@ -1722,16 +1855,21 @@
   elements.grid.addEventListener("pointermove", handleGridPointerMove);
   elements.grid.addEventListener("pointerup", stopPainting);
   elements.grid.addEventListener("pointercancel", stopPainting);
+  elements.grid.addEventListener("pointerleave", function (event) {
+    if (state.paintPointerId !== event.pointerId) {
+      clearEditorHoverTarget();
+    }
+  });
   elements.grid.addEventListener("contextmenu", function (event) {
-    const button = event.target.closest(".author-grid__cell");
+    const target = paintTargetFromPointerEvent(event);
 
-    if (!button) {
+    if (!target || !isInsideEditorCell(target.sourceX, target.sourceY)) {
       return;
     }
 
     event.preventDefault();
-    const x = Number(button.dataset.x);
-    const y = Number(button.dataset.y);
+    const x = target.sourceX;
+    const y = target.sourceY;
     const descriptor = getCellDescriptor(state.cells[y][x]);
 
     selectCell(x, y);

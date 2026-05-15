@@ -40,6 +40,21 @@ function createState(playData) {
 }
 
 {
+  const { state } = createState({
+    width: 2,
+    height: 1,
+    terrain: floorTerrain(2, 1),
+    actors: [
+      { type: "weightless_box", groupId: "M0", x: 0, y: 0, elevation: 2, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 3, removed: false }
+    ]
+  });
+
+  assert.equal(state.actorElevation[0], 2);
+  assert.equal(state.actorElevation[1], 3);
+}
+
+{
   const { engine, state } = createState({
     width: 4,
     height: 1,
