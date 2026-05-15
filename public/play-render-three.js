@@ -1855,16 +1855,25 @@
       voxels.forEach((voxel) => {
         contactOffsets.forEach((offset) => {
           if (
-            voxelKeys.has(
-              polycubeVoxelKey(
-                voxel.x + offset.x,
-                voxel.y + offset.y,
-                voxel.z + offset.z
-              )
+            !voxelKeys.has(
+              polycubeVoxelKey(voxel.x + offset.x, voxel.y + offset.y, voxel.z + offset.z)
             )
           ) {
-            addPolycubeEdgeContact(suppressedEdges, voxel, offset);
+            return;
           }
+
+          const horizontalBridgeKey = polycubeVoxelKey(
+            voxel.x + offset.x,
+            voxel.y + offset.y,
+            voxel.z
+          );
+          const verticalBridgeKey = polycubeVoxelKey(voxel.x, voxel.y, voxel.z + offset.z);
+
+          if (voxelKeys.has(horizontalBridgeKey) || voxelKeys.has(verticalBridgeKey)) {
+            return;
+          }
+
+          addPolycubeEdgeContact(suppressedEdges, voxel, offset);
         });
       });
 
