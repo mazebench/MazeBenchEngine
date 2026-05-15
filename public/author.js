@@ -141,6 +141,7 @@
       : "Fresh level. Paint something good.",
     messageTone: authorData.initialLevel.exists ? "success" : "warning",
     lastPaintTargetKey: null,
+    paintDragPlane: null,
     paintPointerId: null,
     selectedCell: { x: 0, y: 0 },
     selectedToken:
@@ -605,43 +606,33 @@
       .join("");
   }
 
-  function createPalettePreviewPlayData() {
-    const stride = 3;
-    const paletteTools = selectablePaletteTools().filter((tool) => tool.token !== eraserToken);
-    const columns = Math.max(1, Math.min(4, paletteTools.length));
-    const rows = Math.max(1, Math.ceil(paletteTools.length / columns));
-    const width = columns * stride;
-    const height = rows * stride;
+  function createPalettePreviewPlayData(tool) {
+    const width = 1;
+    const height = 1;
     const cells = createBlankCells(width, height, authorData.defaultFloorToken);
-    const positionsByToken = new Map();
 
-    paletteTools.forEach((tool, index) => {
-      const column = index % columns;
-      const row = Math.floor(index / columns);
-      const x = column * stride + 1;
-      const y = row * stride + 1;
+    cells[0][0] = tool.token;
 
-      cells[y][x] = tool.token;
-      positionsByToken.set(tool.token, { x, y });
+    return buildPlayData({
+      cameraView: { width, height },
+      cells,
+      gameId: authorData.game.id,
+      height,
+      includeGems: true,
+      levelId: "__palette_preview_" + encodeURIComponent(tool.token),
+      levelLabel: tool.label || tool.token,
+      width
     });
-
-    return {
-      playData: buildPlayData({
-        cameraView: { width, height },
-        cells,
-        gameId: authorData.game.id,
-        height,
-        includeGems: true,
-        levelId: "__palette_preview__",
-        levelLabel: "Palette",
-        width
-      }),
-      positionsByToken
-    };
   }
 
-  function cropPalettePreview(sceneCanvas, position) {
-    const sourceSize = 80;
+  function capturePalettePreview(sceneCanvas) {
+    const outputSize = 96;
+    const sourceSize = Math.max(
+      1,
+      Math.round(Math.min(sceneCanvas.width, sceneCanvas.height) * 0.64)
+    );
+    const sourceX = Math.max(0, Math.round(sceneCanvas.width / 2 - sourceSize / 2));
+    const sourceY = Math.max(0, Math.round(sceneCanvas.height / 2 - sourceSize / 2));
     const previewCanvas = document.createElement("canvas");
     const previewContext = previewCanvas.getContext("2d");
 
@@ -649,16 +640,12 @@
       return "";
     }
 
-    const sourceCenterX = position.x * editorTileSize + editorTileSize / 2;
-    const sourceCenterY = position.y * editorTileSize + editorTileSize / 2;
-    const sourceX = Math.round(sourceCenterX - sourceSize / 2);
-    const sourceY = Math.round(sourceCenterY - sourceSize / 2 - 8);
-
-    previewCanvas.width = sourceSize;
-    previewCanvas.height = sourceSize;
+    previewCanvas.width = outputSize;
+    previewCanvas.height = outputSize;
     previewContext.imageSmoothingEnabled = true;
+    previewContext.imageSmoothingQuality = "high";
     previewContext.fillStyle = "#d6bd94";
-    previewContext.fillRect(0, 0, sourceSize, sourceSize);
+    previewContext.fillRect(0, 0, outputSize, outputSize);
     previewContext.drawImage(
       sceneCanvas,
       sourceX,
@@ -667,8 +654,8 @@
       sourceSize,
       0,
       0,
-      sourceSize,
-      sourceSize
+      outputSize,
+      outputSize
     );
 
     return previewCanvas.toDataURL("image/png");
@@ -689,10 +676,19 @@
         return;
       }
 
-      const { playData, positionsByToken } = createPalettePreviewPlayData();
+      const paletteTools = selectablePaletteTools().filter((tool) => tool.token !== eraserToken);
+
+      if (paletteTools.length === 0) {
+        return;
+      }
+
+      const previewPlayDataByToken = new Map(
+        paletteTools.map((tool) => [tool.token, createPalettePreviewPlayData(tool)])
+      );
+      const firstPlayData = previewPlayDataByToken.get(paletteTools[0].token);
       const canvas = document.createElement("canvas");
       const app = modules.createPlayCore({
-        playData,
+        playData: firstPlayData,
         canvas,
         playShell: null,
         playHeader: null,
@@ -707,23 +703,32 @@
       }
 
       modules.registerRenderFunctions(app);
-      await app.preloadImagesForLevelState(playData);
+      await Promise.all(
+        Array.from(previewPlayDataByToken.values()).map((playData) =>
+          app.preloadImagesForLevelState(playData)
+        )
+      );
 
       if (app.threeRendererReady && typeof app.threeRendererReady.then === "function") {
         await app.threeRendererReady;
       }
 
-      app.setupCanvas();
-      app.liveRaisedPlayerGates = app.computeRaisedPlayerGateSet();
-      app.liveRaisedOrangeWalls = app.computeRaisedOrangeWallSet();
-      app.syncGateAnimationTargets(0);
-      app.syncOrangeWallAnimationTargets(0);
-      app.syncPlayerLiftAnimationTargets(0);
-      app.renderCompositor.drawScene(0);
-
       const previewsByToken = new Map();
-      positionsByToken.forEach((position, token) => {
-        const previewUrl = cropPalettePreview(app.sceneCanvas, position);
+      previewPlayDataByToken.forEach((playData, token) => {
+        app.applyLevelState(playData, {
+          deferRender: true,
+          immediateCamera: true,
+          resetHistory: true,
+          resetLevelEntry: true
+        });
+        app.liveRaisedPlayerGates = app.computeRaisedPlayerGateSet();
+        app.liveRaisedOrangeWalls = app.computeRaisedOrangeWallSet();
+        app.syncGateAnimationTargets(0);
+        app.syncOrangeWallAnimationTargets(0);
+        app.syncPlayerLiftAnimationTargets(0);
+        app.renderCompositor.drawScene(0);
+
+        const previewUrl = capturePalettePreview(app.sceneCanvas);
 
         if (previewUrl) {
           previewsByToken.set(token, previewUrl);
@@ -1155,6 +1160,41 @@
 
     state.lastPaintTargetKey = key;
     return paintFaceTarget(target);
+  }
+
+  function paintGestureLayerForTarget(target) {
+    if (!target) {
+      return null;
+    }
+
+    return state.selectedToken === eraserToken
+      ? target.sourceLayer
+      : target.paintLayer;
+  }
+
+  function paintDragPlaneForTarget(target) {
+    if (!target || target.face !== "top") {
+      return null;
+    }
+
+    const layer = paintGestureLayerForTarget(target);
+
+    if (layer === null || layer === undefined) {
+      return null;
+    }
+
+    return {
+      face: "top",
+      layer
+    };
+  }
+
+  function canDragPaintTarget(target) {
+    if (!target || !state.paintDragPlane || target.face !== state.paintDragPlane.face) {
+      return false;
+    }
+
+    return paintGestureLayerForTarget(target) === state.paintDragPlane.layer;
   }
 
   function resizeLevel() {
@@ -1724,6 +1764,7 @@
     event.preventDefault();
     state.paintPointerId = event.pointerId;
     state.lastPaintTargetKey = null;
+    state.paintDragPlane = paintDragPlaneForTarget(target);
     elements.grid.setPointerCapture?.(event.pointerId);
     paintFaceTargetOnce(target);
   }
@@ -1735,6 +1776,10 @@
       return;
     }
 
+    if (!canDragPaintTarget(target)) {
+      return;
+    }
+
     paintFaceTargetOnce(target);
   }
 
@@ -1742,6 +1787,7 @@
     if (state.paintPointerId === event.pointerId) {
       state.paintPointerId = null;
       state.lastPaintTargetKey = null;
+      state.paintDragPlane = null;
       if (elements.grid.hasPointerCapture?.(event.pointerId)) {
         elements.grid.releasePointerCapture(event.pointerId);
       }

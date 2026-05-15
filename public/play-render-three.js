@@ -130,6 +130,12 @@
       return app.currentLevelId === "__editor_render__" || renderState().levelId === "__editor_render__";
     }
 
+    function isPalettePreviewRenderMode() {
+      const levelId = renderState().levelId || app.currentLevelId || "";
+
+      return String(levelId).startsWith("__palette_preview_");
+    }
+
     function transitionPieceProgressForCell() {
       return transitionSceneVisibility();
     }
@@ -4122,6 +4128,10 @@
       return Math.max(elevationUnit, 3.25 * elevationUnit + floorThickness + actorVisualLift);
     }
 
+    function palettePreviewCameraWorldHeight() {
+      return Math.max(elevationUnit * 1.7, elevationUnit + floorThickness);
+    }
+
     function stableCameraWorldHeight() {
       const signature = cameraFitSignature();
 
@@ -4140,7 +4150,11 @@
     }
 
     function fitCameraToScene(options = {}) {
-      const stableHeight = options.stableHeight ?? stableCameraWorldHeight();
+      const stableHeight =
+        options.stableHeight ??
+        (isPalettePreviewRenderMode()
+          ? palettePreviewCameraWorldHeight()
+          : stableCameraWorldHeight());
       const minWorldX = options.minX ?? 0;
       const maxWorldX = options.maxX ?? app.boardRect.width;
       const minWorldZ = options.minZ ?? 0;
@@ -4155,15 +4169,17 @@
       const worldWidth = Math.max(1, maxWorldX - minWorldX);
       const worldHeight = Math.max(1, maxWorldZ - minWorldZ);
       const maxSpan = Math.max(worldWidth, worldHeight, stableHeight, unit);
-      const cameraTilt = clampDebugCameraTilt(debugCameraTilt);
+      const isPalettePreview = isPalettePreviewRenderMode();
+      const cameraYaw = isPalettePreview ? 0 : debugCameraYaw;
+      const cameraTilt = clampDebugCameraTilt(isPalettePreview ? Math.PI * 0.18 : debugCameraTilt);
       const horizontalTilt = Math.sin(cameraTilt);
       const verticalTilt = Math.cos(cameraTilt);
       const viewDirection = new THREE.Vector3(
-        Math.sin(debugCameraYaw) * horizontalTilt,
+        Math.sin(cameraYaw) * horizontalTilt,
         verticalTilt,
-        Math.cos(debugCameraYaw) * horizontalTilt
+        Math.cos(cameraYaw) * horizontalTilt
       ).normalize();
-      const cameraUp = cameraUpVectorFor(viewDirection, debugCameraYaw);
+      const cameraUp = cameraUpVectorFor(viewDirection, cameraYaw);
 
       camera.zoom = 1;
 
