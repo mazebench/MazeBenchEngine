@@ -97,6 +97,9 @@ assert.equal(adapter.eraseCellElevationValue(".++W", 0), "+W");
 assert.equal(adapter.eraseCellElevationValue(".+W", 0), ".");
 assert.equal(adapter.eraseCellElevationValue(".", 0), "+");
 assert.equal(adapter.eraseCellElevationValue("B++B", 0), "++B");
+assert.equal(adapter.eraseCellElevationValue(".+l", 1), ".");
+assert.equal(adapter.eraseCellElevationValue("W+l", 1), "W");
+assert.equal(adapter.eraseCellElevationValue(".+L", 0), ".");
 
 const loweredLiftPlayData = adapter.buildPlayData({
   cells: [["l"]],

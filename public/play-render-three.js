@@ -2378,7 +2378,10 @@
         let topPaintLayer = isVoxelPick
           ? editorVoxelLayerAt(intersection.point.y, "top")
           : Math.max(0, Math.round((pick.topY || 0) / unit));
-        let sourceLayer = Math.max(0, topPaintLayer - 1);
+        const explicitSourceLayer = Number.isFinite(pick.sourceLayer)
+          ? Math.max(0, Math.floor(pick.sourceLayer))
+          : null;
+        let sourceLayer = explicitSourceLayer ?? Math.max(0, topPaintLayer - 1);
         let targetBottomY = isVoxelPick ? sourceLayer * unit + actorVisualLift : pick.bottomY;
         let targetTopY = isVoxelPick ? topPaintLayer * unit + actorVisualLift : pick.topY;
 
@@ -2389,7 +2392,7 @@
 
             targetBottomY = bounds.bottomY;
             targetTopY = bounds.topY;
-          } else {
+          } else if (explicitSourceLayer === null) {
             const sideTopLayer = Math.max(1, Math.ceil((pick.topY || 0) / unit));
             sourceLayer = Math.max(
               0,
@@ -3097,7 +3100,8 @@
             bottom: cell.bottom + renderOffsetZ()
           })),
           topY: descriptor.topY,
-          bottomY: descriptor.bottomY ?? descriptor.topY - descriptor.blockHeight
+          bottomY: descriptor.bottomY ?? descriptor.topY - descriptor.blockHeight,
+          sourceLayer: descriptor.elevation ?? 0
         },
         edgeOptions: {
           descriptor,
