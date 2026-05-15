@@ -4,8 +4,8 @@ h # # # # # # # # # # # # # h h
 h h . . h h h h h O h h . G # h
 h . . . . . h h h O h h h h # h
 h . . . . l h h . O O O O h # h
-h h . . . . h h h h h h O h # h
-# # . h h h h h h h h h O h # #
+h h . . . . h + + h h h O h # h
+# # . h h h h + h h h h O h # #
 h # . . . . . . . . . . M2 . # h
 h # . . . . M1 o . . . h h . # h
 h # . . . . . . . . . h h . # h
