@@ -30,6 +30,7 @@
     let editorHoverTarget = null;
     let editorHoverRenderFrameId = 0;
     let editorHighlightMaterial = null;
+    let editorPickMaterial = null;
     let debugCameraTiltHoldFrameId = 0;
     let debugCameraTiltHoldLastMs = 0;
     const debugCameraTiltHoldKeys = new Set();
@@ -715,6 +716,20 @@
       }
 
       return imageMaterialCache.get(key);
+    }
+
+    function invisibleEditorPickMaterial() {
+      if (!editorPickMaterial) {
+        editorPickMaterial = new THREE.MeshBasicMaterial({
+          color: "#ffffff",
+          colorWrite: false,
+          depthWrite: false,
+          opacity: 0,
+          transparent: true
+        });
+      }
+
+      return editorPickMaterial;
     }
 
     function xmlElements(parent, tagName) {
@@ -4824,8 +4839,27 @@
           }
         ],
         topY,
-        bottomY
+        bottomY,
+        sourceLayer: Math.max(0, Math.floor(Number(actor.elevation) || 0))
       });
+    }
+
+    function addGemEditorPickVolume(actor, x, z, editorPick) {
+      if (!isEditorRenderMode() || !editorPick) {
+        return;
+      }
+
+      const elevation = Math.max(0, Math.floor(Number(actor.elevation) || 0));
+      const bottomY = elevation * elevationUnit + unit * 0.06;
+      const height = unit * 0.88;
+      const pickMesh = new THREE.Mesh(
+        boxGeometry(unit, height, unit),
+        invisibleEditorPickMaterial()
+      );
+
+      pickMesh.position.set(x, bottomY + height / 2, z);
+      pickMesh.userData.editorPick = editorPick;
+      scene.add(pickMesh);
     }
 
     function addGemModel(actor, model, x, z, elevation, sink, scale, opacity, visibility, now) {
@@ -4834,6 +4868,7 @@
       const topY = placement.bottomY + (model.bounds.max.y - model.bounds.min.y) * placement.scale;
       const editorPick = gemEditorPick(actor, topY, placement.bottomY);
 
+      addGemEditorPickVolume(actor, x, z, editorPick);
       group.position.set(x, placement.bottomY, z);
       group.scale.setScalar(placement.scale);
       group.rotation.y = placement.spin;
@@ -4896,6 +4931,7 @@
         gem.position.y + unit * 0.22 * scale,
         gem.position.y - unit * 0.22 * scale
       );
+      addGemEditorPickVolume(actor, x, z, gem.userData.editorPick);
       gem.castShadow = renderContextCastsShadows();
       gem.receiveShadow = false;
       scene.add(gem);

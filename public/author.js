@@ -1475,6 +1475,7 @@
     if (
       !target ||
       target.kind === "levelSwitch" ||
+      state.selectedToken === eraserToken ||
       state.selectedToken === noopToken ||
       target.face !== "top"
     ) {
