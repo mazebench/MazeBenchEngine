@@ -57,6 +57,7 @@
     const groupLabelTextureCache = new Map();
     const groupLabelMaterialCache = new Map();
     const polycubeFaceCellsCache = new Map();
+    const playerLiftMarkerMeshes = new Set();
     let polycubeComponentNeighborOffsetCache = null;
     let polycubeEdgeContactOffsetCache = null;
 
@@ -2852,6 +2853,31 @@
       return geometry;
     }
 
+    function playerLiftMarkerCameraYaw() {
+      return isPalettePreviewRenderMode() ? 0 : debugCameraYaw;
+    }
+
+    function syncPlayerLiftMarkerRotation(marker) {
+      const baseRotation = marker.userData.playerLiftArrowImage && marker.userData.playerLiftDirection > 0
+        ? Math.PI
+        : 0;
+
+      marker.rotation.y = baseRotation + playerLiftMarkerCameraYaw();
+    }
+
+    function syncPlayerLiftMarkerRotations() {
+      playerLiftMarkerMeshes.forEach((marker) => {
+        syncPlayerLiftMarkerRotation(marker);
+      });
+    }
+
+    function trackPlayerLiftMarker(marker, direction, usesArrowImage) {
+      marker.userData.playerLiftDirection = direction;
+      marker.userData.playerLiftArrowImage = usesArrowImage;
+      syncPlayerLiftMarkerRotation(marker);
+      playerLiftMarkerMeshes.add(marker);
+    }
+
     function addPlayerLiftTriangle(center, topY, direction, opacity) {
       const markerOpacity = clamp01(opacity);
 
@@ -2875,7 +2901,7 @@
         const arrow = new THREE.Mesh(geometryCache.get(geometryKey), arrowMaterial);
 
         arrow.position.set(center.x, topY + Math.max(0.75, unit * 0.012), center.z);
-        arrow.rotation.y = direction > 0 ? Math.PI : 0;
+        trackPlayerLiftMarker(arrow, direction, true);
         arrow.castShadow = false;
         arrow.receiveShadow = false;
         scene.add(arrow);
@@ -2888,6 +2914,7 @@
       );
 
       triangle.position.set(center.x, topY + Math.max(0.75, unit * 0.012), center.z);
+      trackPlayerLiftMarker(triangle, direction, false);
       triangle.castShadow = false;
       triangle.receiveShadow = false;
       scene.add(triangle);
@@ -4020,6 +4047,7 @@
     function disposeScene() {
       disposeSceneChildren(scene);
       disposeSceneChildren(edgeScene);
+      playerLiftMarkerMeshes.clear();
     }
 
     function geometryCacheHas(geometry) {
@@ -5091,6 +5119,7 @@
     }
 
     function renderSceneToComposite(shouldUpdateShadowMap) {
+      syncPlayerLiftMarkerRotations();
       renderer.setClearColor("#050608", 1);
       renderer.clear(true, true, true);
       renderer.shadowMap.needsUpdate = shouldUpdateShadowMap;
