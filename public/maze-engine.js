@@ -1245,15 +1245,14 @@
         return false;
       }
 
-      const terrainHeight = terrainSurfaceHeightAt(
+      return !terrainBlocksElevation(
         state,
         targetX,
         targetY,
+        actorElevation(state, member),
         gateState,
         orangeButtonsPressed
       );
-
-      return terrainHeight === null || terrainHeight <= actorElevation(state, member);
     }
 
     function canMoveWeightlessGroup(state, members, dx, dy, occupied, gateState, orangeButtonsPressed) {
