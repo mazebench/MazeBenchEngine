@@ -255,6 +255,7 @@ function createMazeLevelService({
 
     return (
       type === "wall" ||
+      type === "ice_block" ||
       type === "tree" ||
       type === "orange_wall" ||
       (type === "player_lift" && definition?.initialRaised === true)
@@ -325,8 +326,9 @@ function createMazeLevelService({
     });
 
     const wallLayer = terrainLayers.find((layer) => layer.type === "wall") || null;
+    const iceBlockLayer = terrainLayers.find((layer) => layer.type === "ice_block") || null;
     const treeLayer = terrainLayers.find((layer) => layer.type === "tree") || null;
-    const raisedBlockLayer = wallLayer || treeLayer;
+    const raisedBlockLayer = wallLayer || iceBlockLayer || treeLayer;
     const exitLayer = terrainLayers.find((layer) => layer.type === "exit") || null;
     const topLayer =
       terrainLayers.length > 0

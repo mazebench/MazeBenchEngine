@@ -37,6 +37,8 @@ function getContentType(filePath) {
       return "image/svg+xml";
     case ".dae":
       return "model/vnd.collada+xml; charset=utf-8";
+    case ".glb":
+      return "model/gltf-binary";
     default:
       return "application/octet-stream";
   }

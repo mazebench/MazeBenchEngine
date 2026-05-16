@@ -42,7 +42,8 @@
     const floorDrop = Math.max(3, Math.round(unit * 0.055));
     const actorVisualLift = 0;
     const edgeDepthBias = Math.max(1.25, unit * 0.024);
-    const treeVisualScaleMultiplier = 3;
+    const treeReferenceHeightInModelUnits = 5.516;
+    const treeModelWorldScale = (unit * 6) / treeReferenceHeightInModelUnits;
     const debugCameraTopTilt = 0;
     const debugCameraSideTilt = Math.PI / 2;
     const debugCameraTiltHoldDurationMs = 500;
@@ -1021,6 +1022,324 @@
       };
     }
 
+    function modelUrlIsGlb(url) {
+      return /\.glb(?:[?#]|$)/i.test(String(url || ""));
+    }
+
+    function parseGlbChunks(arrayBuffer) {
+      if (!(arrayBuffer instanceof ArrayBuffer) || arrayBuffer.byteLength < 20) {
+        return null;
+      }
+
+      const view = new DataView(arrayBuffer);
+      const glbMagic = 0x46546c67;
+      const jsonChunkType = 0x4e4f534a;
+      const binChunkType = 0x004e4942;
+
+      if (view.getUint32(0, true) !== glbMagic || view.getUint32(4, true) !== 2) {
+        return null;
+      }
+
+      const declaredLength = view.getUint32(8, true);
+      const length = Math.min(declaredLength, arrayBuffer.byteLength);
+      let offset = 12;
+      let json = null;
+      let bin = null;
+
+      while (offset + 8 <= length) {
+        const chunkLength = view.getUint32(offset, true);
+        const chunkType = view.getUint32(offset + 4, true);
+        const chunkOffset = offset + 8;
+        const chunkEnd = chunkOffset + chunkLength;
+
+        if (chunkEnd > length) {
+          return null;
+        }
+
+        if (chunkType === jsonChunkType) {
+          const text = new TextDecoder().decode(
+            new Uint8Array(arrayBuffer, chunkOffset, chunkLength)
+          );
+          json = JSON.parse(text.trim());
+        } else if (chunkType === binChunkType) {
+          bin = arrayBuffer.slice(chunkOffset, chunkEnd);
+        }
+
+        offset = chunkEnd;
+      }
+
+      return json && bin ? { bin, json } : null;
+    }
+
+    function gltfComponentInfo(componentType) {
+      switch (componentType) {
+        case 5120:
+          return { byteSize: 1, read: (view, offset) => view.getInt8(offset) };
+        case 5121:
+          return { byteSize: 1, read: (view, offset) => view.getUint8(offset) };
+        case 5122:
+          return { byteSize: 2, read: (view, offset) => view.getInt16(offset, true) };
+        case 5123:
+          return { byteSize: 2, read: (view, offset) => view.getUint16(offset, true) };
+        case 5125:
+          return { byteSize: 4, read: (view, offset) => view.getUint32(offset, true) };
+        case 5126:
+          return { byteSize: 4, read: (view, offset) => view.getFloat32(offset, true) };
+        default:
+          return null;
+      }
+    }
+
+    function gltfAccessorItemSize(type) {
+      return {
+        SCALAR: 1,
+        VEC2: 2,
+        VEC3: 3,
+        VEC4: 4,
+        MAT2: 4,
+        MAT3: 9,
+        MAT4: 16
+      }[type] || 1;
+    }
+
+    function normalizeGltfComponent(value, componentType) {
+      switch (componentType) {
+        case 5120:
+          return Math.max(value / 127, -1);
+        case 5121:
+          return value / 255;
+        case 5122:
+          return Math.max(value / 32767, -1);
+        case 5123:
+          return value / 65535;
+        default:
+          return value;
+      }
+    }
+
+    function gltfAccessorReader(gltf, binBuffer, accessorIndex) {
+      const accessor = gltf.accessors?.[accessorIndex];
+      const bufferView = gltf.bufferViews?.[accessor?.bufferView];
+      const component = gltfComponentInfo(accessor?.componentType);
+
+      if (!accessor || !bufferView || !component) {
+        return null;
+      }
+
+      const itemSize = gltfAccessorItemSize(accessor.type);
+      const view = new DataView(binBuffer);
+      const byteOffset = (bufferView.byteOffset || 0) + (accessor.byteOffset || 0);
+      const byteStride = bufferView.byteStride || component.byteSize * itemSize;
+      const normalized = accessor.normalized === true;
+
+      return {
+        count: accessor.count || 0,
+        itemSize,
+        get(index, componentIndex = 0) {
+          const offset = byteOffset + index * byteStride + componentIndex * component.byteSize;
+
+          if (offset < 0 || offset + component.byteSize > binBuffer.byteLength) {
+            return 0;
+          }
+
+          const value = component.read(view, offset);
+          return normalized ? normalizeGltfComponent(value, accessor.componentType) : value;
+        }
+      };
+    }
+
+    function gltfMaterialColor(gltf, primitive) {
+      const material = gltf.materials?.[primitive?.material];
+      const color = material?.pbrMetallicRoughness?.baseColorFactor;
+
+      return colorHexFromFloats(color, terrainColor("tree"));
+    }
+
+    function gltfNodeMatrix(node) {
+      if (Array.isArray(node?.matrix) && node.matrix.length === 16) {
+        return new THREE.Matrix4().fromArray(node.matrix);
+      }
+
+      const translation = Array.isArray(node?.translation) ? node.translation : [0, 0, 0];
+      const rotation = Array.isArray(node?.rotation) ? node.rotation : [0, 0, 0, 1];
+      const scale = Array.isArray(node?.scale) ? node.scale : [1, 1, 1];
+
+      return new THREE.Matrix4().compose(
+        new THREE.Vector3(translation[0] || 0, translation[1] || 0, translation[2] || 0),
+        new THREE.Quaternion(
+          rotation[0] || 0,
+          rotation[1] || 0,
+          rotation[2] || 0,
+          rotation[3] === undefined ? 1 : rotation[3]
+        ),
+        new THREE.Vector3(
+          scale[0] === undefined ? 1 : scale[0],
+          scale[1] === undefined ? 1 : scale[1],
+          scale[2] === undefined ? 1 : scale[2]
+        )
+      );
+    }
+
+    function transformedGltfPrimitivePart(gltf, binBuffer, primitive, matrix) {
+      if (!primitive || (primitive.mode ?? 4) !== 4) {
+        return null;
+      }
+
+      const positionReader = gltfAccessorReader(gltf, binBuffer, primitive.attributes?.POSITION);
+      const normalReader = gltfAccessorReader(gltf, binBuffer, primitive.attributes?.NORMAL);
+      const indexReader = primitive.indices === undefined
+        ? null
+        : gltfAccessorReader(gltf, binBuffer, primitive.indices);
+
+      if (!positionReader) {
+        return null;
+      }
+
+      const vertexCount = indexReader?.count || positionReader.count;
+      const normalMatrix = new THREE.Matrix3().getNormalMatrix(matrix);
+      const position = new THREE.Vector3();
+      const normal = new THREE.Vector3();
+      const positions = [];
+      const normals = [];
+
+      for (let index = 0; index < vertexCount; index += 1) {
+        const vertexIndex = indexReader ? indexReader.get(index, 0) : index;
+
+        position
+          .set(
+            positionReader.get(vertexIndex, 0),
+            positionReader.get(vertexIndex, 1),
+            positionReader.get(vertexIndex, 2)
+          )
+          .applyMatrix4(matrix);
+        positions.push(position.x, position.y, position.z);
+
+        if (normalReader) {
+          normal
+            .set(
+              normalReader.get(vertexIndex, 0),
+              normalReader.get(vertexIndex, 1),
+              normalReader.get(vertexIndex, 2)
+            )
+            .applyMatrix3(normalMatrix)
+            .normalize();
+          normals.push(normal.x, normal.y, normal.z);
+        }
+      }
+
+      if (positions.length < 9) {
+        return null;
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.userData.persistentGeometry = true;
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+
+      if (normals.length === positions.length) {
+        geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+      } else {
+        geometry.computeVertexNormals();
+      }
+
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+      return {
+        color: gltfMaterialColor(gltf, primitive),
+        geometry
+      };
+    }
+
+    function parseGlbModel(arrayBuffer) {
+      const chunks = parseGlbChunks(arrayBuffer);
+
+      if (!chunks) {
+        return null;
+      }
+
+      const { bin, json: gltf } = chunks;
+      const parts = [];
+
+      function addMeshParts(meshIndex, matrix) {
+        const mesh = gltf.meshes?.[meshIndex];
+
+        if (!mesh || !Array.isArray(mesh.primitives)) {
+          return;
+        }
+
+        mesh.primitives.forEach((primitive) => {
+          const part = transformedGltfPrimitivePart(gltf, bin, primitive, matrix);
+
+          if (part) {
+            parts.push(part);
+          }
+        });
+      }
+
+      function visitNode(nodeIndex, parentMatrix) {
+        const node = gltf.nodes?.[nodeIndex];
+
+        if (!node) {
+          return;
+        }
+
+        const matrix = parentMatrix.clone().multiply(gltfNodeMatrix(node));
+
+        if (node.mesh !== undefined) {
+          addMeshParts(node.mesh, matrix);
+        }
+
+        if (Array.isArray(node.children)) {
+          node.children.forEach((childIndex) => visitNode(childIndex, matrix));
+        }
+      }
+
+      const scene = gltf.scenes?.[gltf.scene ?? 0];
+      const rootNodes = Array.isArray(scene?.nodes) ? scene.nodes : [];
+
+      if (rootNodes.length > 0) {
+        rootNodes.forEach((nodeIndex) => visitNode(nodeIndex, new THREE.Matrix4()));
+      } else if (Array.isArray(gltf.nodes)) {
+        gltf.nodes.forEach((node, index) => {
+          if (node?.mesh !== undefined) {
+            visitNode(index, new THREE.Matrix4());
+          }
+        });
+      } else if (Array.isArray(gltf.meshes)) {
+        gltf.meshes.forEach((mesh, index) => addMeshParts(index, new THREE.Matrix4()));
+      }
+
+      if (parts.length === 0) {
+        return null;
+      }
+
+      const bounds = new THREE.Box3();
+      parts.forEach((part) => {
+        if (part.geometry.boundingBox) {
+          bounds.union(part.geometry.boundingBox);
+        }
+      });
+
+      return {
+        bounds,
+        parts
+      };
+    }
+
+    function parseModelAsset(url, data) {
+      if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+        const arrayBuffer = data instanceof ArrayBuffer
+          ? data
+          : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+        return parseGlbModel(arrayBuffer);
+      }
+
+      if (typeof data === "string" && !modelUrlIsGlb(url)) {
+        return parseColladaModel(data);
+      }
+
+      return null;
+    }
+
     function requestModelAsset(url) {
       if (!url || !THREE) {
         return null;
@@ -1036,27 +1355,33 @@
         return null;
       }
 
-      const cachedText = app.modelTextCache?.get(url);
+      const cachedData = app.modelTextCache?.get(url);
 
-      if (typeof cachedText === "string") {
-        const model = parseColladaModel(cachedText);
+      if (cachedData instanceof ArrayBuffer || ArrayBuffer.isView(cachedData) || typeof cachedData === "string") {
+        const model = parseModelAsset(url, cachedData);
         modelAssetCache.set(url, model ? { status: "ready", model } : { status: "failed" });
         return model;
       }
 
-      if (cachedText === null) {
+      if (cachedData === null) {
         modelAssetCache.set(url, { status: "failed" });
         return null;
       }
 
       const promise = fetch(url)
-        .then((response) => (response.ok ? response.text() : null))
-        .then((text) => {
-          if (app.modelTextCache) {
-            app.modelTextCache.set(url, text);
+        .then((response) => {
+          if (!response.ok) {
+            return null;
           }
 
-          const model = parseColladaModel(text);
+          return modelUrlIsGlb(url) ? response.arrayBuffer() : response.text();
+        })
+        .then((data) => {
+          if (app.modelTextCache) {
+            app.modelTextCache.set(url, data);
+          }
+
+          const model = parseModelAsset(url, data);
           modelAssetCache.set(url, model ? { status: "ready", model } : { status: "failed" });
 
           if (typeof app.render === "function") {
@@ -2564,7 +2889,7 @@
         return "#2f7d3f";
       }
 
-      if (type === "ice") {
+      if (type === "ice" || type === "ice_block") {
         return "#a9d6f4";
       }
 
@@ -3101,7 +3426,7 @@
         return null;
       }
 
-      if (layer.type === "wall") {
+      if (layer.type === "wall" || layer.type === "ice_block") {
         return elevation + 1;
       }
 
@@ -3511,6 +3836,7 @@
       return (
         (
           descriptor.type === "wall" ||
+          descriptor.type === "ice_block" ||
           descriptor.type === "orange_wall" ||
           descriptor.type === "floor" ||
           descriptor.type === "ice"
@@ -3616,14 +3942,8 @@
     }
 
     function treeModelPlacement(model, cell, descriptor) {
-      const size = model.bounds.getSize(new THREE.Vector3());
       const center = model.bounds.getCenter(new THREE.Vector3());
-      const footprint = Math.max(size.x, size.z, 0.001);
-      const height = Math.max(size.y, 0.001);
-      const targetFootprint = unit * 0.82;
-      const targetHeight = Math.max(unit, descriptor.blockHeight * 0.92);
-      const scale = Math.min(targetFootprint / footprint, targetHeight / height) *
-        treeVisualScaleMultiplier;
+      const scale = treeModelWorldScale;
       const centerX = (cell.left + cell.right) / 2 + renderOffsetX();
       const centerZ = (cell.top + cell.bottom) / 2 + renderOffsetZ();
 

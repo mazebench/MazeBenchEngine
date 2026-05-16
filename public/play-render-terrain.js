@@ -522,7 +522,7 @@
     function groundFaceColor(cell) {
       const groundCell = groundSurfaceCell(cell);
 
-      if (groundCell.type === "ice") {
+      if (groundCell.type === "ice" || groundCell.type === "ice_block") {
         return "#7fb6db";
       }
 
@@ -586,6 +586,8 @@
       const right = left + TILE_SIZE;
       const bottom = top + TILE_SIZE;
       const image = cell.imageUrl ? imageCache.get(cell.imageUrl) : null;
+      const topColor = cell.type === "ice_block" ? "#a9d6f4" : "#23262c";
+      const faceColor = cell.type === "ice_block" ? "#7fb6db" : "#4f5560";
       const openTop = !isTerrainWall(x, y - 1);
       const openRight = !isTerrainWallAcrossHorizontalWorldEdge(x + 1, y);
       const openBottom = !isTerrainWall(x, y + 1);
@@ -646,7 +648,7 @@
       roundRectPath(sceneCtx, left, wallTop, TILE_SIZE, wallHeight, radii);
       sceneCtx.save();
       sceneCtx.clip();
-      sceneCtx.fillStyle = "#23262c";
+      sceneCtx.fillStyle = topColor;
       sceneCtx.fillRect(left, wallTop, TILE_SIZE, wallHeight);
 
       if (y < state.height - 1 && !isTerrainWall(x, y + 1)) {
@@ -658,7 +660,7 @@
         const rightNeighborHasShine =
           isTerrainWallAcrossHorizontalWorldEdge(x + 1, y) &&
           !isTerrainWallAcrossHorizontalWorldEdge(x + 1, y + 1);
-        sceneCtx.fillStyle = "#4f5560";
+        sceneCtx.fillStyle = faceColor;
         sceneCtx.fillRect(left, shineTop, TILE_SIZE, faceHeight);
         sceneCtx.lineWidth = shineBorderWidth;
         sceneCtx.strokeStyle = "#000000";
@@ -1028,7 +1030,7 @@
           const playerLift = cell.type === "player_lift" ? playerLiftAt(x, y, now) : 0;
           const orangeWallLift = cell.type === "orange_wall" ? orangeWallLiftAt(x, y, now) : 0;
 
-          if (cell.type === "wall") {
+          if (cell.type === "wall" || cell.type === "ice_block") {
             continue;
           }
 
@@ -1072,7 +1074,7 @@
       for (let y = 0; y < state.height; y += 1) {
         for (let x = 0; x < state.width; x += 1) {
           const cell = terrainAt(x, y);
-          if (cell.type === "wall") {
+          if (cell.type === "wall" || cell.type === "ice_block") {
             paintWallTile(x, y, cell);
           }
         }

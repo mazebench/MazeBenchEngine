@@ -12,11 +12,12 @@ const authorData = {
   palette: [
     { imageUrl: null, label: "Floor", name: "floor", token: "." },
     { imageUrl: null, label: "Ice", name: "ice", token: "i", type: "ice" },
+    { imageUrl: null, label: "Ice Block", name: "ice_block", token: "I", type: "ice_block" },
     { imageUrl: null, label: "Wall", name: "wall", token: "W" },
     {
       imageUrl: null,
       label: "Tree 1",
-      modelUrl: "/assets/maze/assets_3d/t1.dae",
+      modelUrl: "/assets/maze/assets_3d/t1.glb",
       name: "tree_1",
       token: "t1",
       type: "tree"
@@ -85,6 +86,7 @@ assert.equal(adapter.normalizeCellValue("++"), "+");
 assert.equal(adapter.normalizeCellValue("++W"), "++W");
 assert.equal(adapter.setCellElevationToken(".", "W", 1), ".++W");
 assert.equal(adapter.setCellElevationToken(".", "W", 0, { preserveBaseSurface: true }), ".+W");
+assert.equal(adapter.setCellElevationToken(".", "I", 0, { preserveBaseSurface: true }), ".+I");
 assert.equal(adapter.setCellElevationToken(".+W", "O", 0, { preserveBaseSurface: true }), ".+O");
 assert.equal(adapter.setCellElevationToken("+", ".", 0), ".");
 assert.equal(adapter.setCellElevationToken("+", "W", 0), "W");
@@ -200,6 +202,26 @@ assert.deepEqual(
   ]
 );
 
+const iceBlockPlayData = adapter.buildPlayData({
+  cells: [["I+P", "I+I"]],
+  height: 1,
+  width: 2
+});
+
+assert.equal(iceBlockPlayData.terrain[0][0].type, "ice_block");
+assert.equal(iceBlockPlayData.terrain[0][0].underlay.type, "floor");
+assert.deepEqual(
+  iceBlockPlayData.terrain[0][1].layers.map((layer) => [layer.type, layer.elevation]),
+  [
+    ["ice_block", 0],
+    ["ice_block", 1]
+  ]
+);
+assert.deepEqual(
+  iceBlockPlayData.actors.map((actor) => [actor.type, actor.elevation]),
+  [["player", 1]]
+);
+
 const treePlayData = adapter.buildPlayData({
   cells: [["t1+P", "t1+t1"]],
   height: 1,
@@ -207,12 +229,12 @@ const treePlayData = adapter.buildPlayData({
 });
 
 assert.equal(treePlayData.terrain[0][0].type, "tree");
-assert.equal(treePlayData.terrain[0][0].modelUrl, "/assets/maze/assets_3d/t1.dae");
+assert.equal(treePlayData.terrain[0][0].modelUrl, "/assets/maze/assets_3d/t1.glb");
 assert.deepEqual(
   treePlayData.terrain[0][1].layers.map((layer) => [layer.type, layer.elevation, layer.modelUrl]),
   [
-    ["tree", 0, "/assets/maze/assets_3d/t1.dae"],
-    ["tree", 3, "/assets/maze/assets_3d/t1.dae"]
+    ["tree", 0, "/assets/maze/assets_3d/t1.glb"],
+    ["tree", 3, "/assets/maze/assets_3d/t1.glb"]
   ]
 );
 assert.deepEqual(

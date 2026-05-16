@@ -10,7 +10,8 @@
     player_lift: 7,
     orange_wall: 8,
     orange_button: 9,
-    tree: 10
+    tree: 10,
+    ice_block: 11
   };
   const fallbackTerrainCell = {
     type: "empty",
@@ -459,7 +460,7 @@
         return null;
       }
 
-      if (layer.type === terrainTypes.wall) {
+      if (layer.type === terrainTypes.wall || layer.type === terrainTypes.ice_block) {
         return layer.elevation + 1;
       }
 
@@ -584,6 +585,15 @@
           x,
           y,
           terrainTypes.ice,
+          elevation,
+          gateState,
+          orangeButtonsPressed
+        ) ||
+        terrainLayerOfTypeAtElevation(
+          state,
+          x,
+          y,
+          terrainTypes.ice_block,
           elevation,
           gateState,
           orangeButtonsPressed
@@ -713,7 +723,10 @@
       }
 
       return terrainLayersForCell(state, cellIndex(x, y)).some(
-        (layer) => layer.type === terrainTypes.wall || layer.type === terrainTypes.tree
+        (layer) =>
+          layer.type === terrainTypes.wall ||
+          layer.type === terrainTypes.ice_block ||
+          layer.type === terrainTypes.tree
       );
     }
 
@@ -733,7 +746,7 @@
     ) {
       const layerElevation = layer.elevation ?? 0;
 
-      if (layer.type === terrainTypes.wall) {
+      if (layer.type === terrainTypes.wall || layer.type === terrainTypes.ice_block) {
         return layerElevation === elevation;
       }
 
@@ -2011,10 +2024,7 @@
           nextX = targetX;
           nextY = targetY;
 
-          if (
-            fromElevation !== 0 ||
-            !isIce(state, nextX, nextY, fromElevation, raisedPlayerGates, orangeButtonsPressed)
-          ) {
+          if (!isIce(state, nextX, nextY, fromElevation, raisedPlayerGates, orangeButtonsPressed)) {
             break;
           }
         }

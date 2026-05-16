@@ -876,10 +876,18 @@
         return Promise.resolve();
       }
 
+      const isBinaryModel = /\.glb(?:[?#]|$)/i.test(url);
+
       return fetch(url)
-        .then((response) => (response.ok ? response.text() : null))
-        .then((text) => {
-          app.modelTextCache.set(url, text);
+        .then((response) => {
+          if (!response.ok) {
+            return null;
+          }
+
+          return isBinaryModel ? response.arrayBuffer() : response.text();
+        })
+        .then((data) => {
+          app.modelTextCache.set(url, data);
         })
         .catch(() => {
           app.modelTextCache.set(url, null);
@@ -1274,7 +1282,10 @@
     }
 
     function groundSurfaceCell(cell) {
-      if ((cell?.type === "wall" || cell?.type === "tree") && cell.underlay) {
+      if (
+        (cell?.type === "wall" || cell?.type === "ice_block" || cell?.type === "tree") &&
+        cell.underlay
+      ) {
         return cell.underlay;
       }
 
@@ -1316,7 +1327,7 @@
         return null;
       }
 
-      if (layer.type === "wall") {
+      if (layer.type === "wall" || layer.type === "ice_block") {
         return elevation + 1;
       }
 
@@ -1634,6 +1645,7 @@
 
     function isTerrainWall(x, y) {
       return terrainLayersOfType(x, y, "wall").length > 0 ||
+        terrainLayersOfType(x, y, "ice_block").length > 0 ||
         terrainLayersOfType(x, y, "tree").length > 0;
     }
 
@@ -1670,7 +1682,7 @@
     function isTerrainWallAcrossHorizontalWorldEdge(x, y) {
       const cell = terrainCellAcrossHorizontalWorldEdge(x, y);
 
-      return cell?.type === "wall" || cell?.type === "tree";
+      return cell?.type === "wall" || cell?.type === "ice_block" || cell?.type === "tree";
     }
 
     function isWall(
@@ -1817,7 +1829,10 @@
     }
 
     function isIce(x, y, elevation = 0) {
-      return terrainLayerOfTypeAtElevation(x, y, "ice", elevation);
+      return (
+        terrainLayerOfTypeAtElevation(x, y, "ice", elevation) ||
+        terrainLayerOfTypeAtElevation(x, y, "ice_block", elevation)
+      );
     }
 
     function isHole(x, y, elevation = 0) {
@@ -1830,7 +1845,12 @@
 
     function isGroundCell(cell) {
       const groundCell = groundSurfaceCell(cell);
-      return groundCell.type !== "wall" && groundCell.type !== "hole" && groundCell.type !== "empty";
+      return (
+        groundCell.type !== "wall" &&
+        groundCell.type !== "ice_block" &&
+        groundCell.type !== "hole" &&
+        groundCell.type !== "empty"
+      );
     }
 
     function hasVisibleFloatingFloorActors() {

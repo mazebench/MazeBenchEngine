@@ -11,25 +11,25 @@
       "token": "t1",
       "label": "Tree 1",
       "type": "tree",
-      "model": "assets_3d/t1.dae"
+      "model": "assets_3d/t1.glb"
     },
     "tree_2": {
       "token": "t2",
       "label": "Tree 2",
       "type": "tree",
-      "model": "assets_3d/t2.dae"
+      "model": "assets_3d/t2.glb"
     },
     "tree_3": {
       "token": "t3",
       "label": "Tree 3",
       "type": "tree",
-      "model": "assets_3d/t3.dae"
+      "model": "assets_3d/t3.glb"
     },
     "tree_4": {
       "token": "t4",
       "label": "Tree 4",
       "type": "tree",
-      "model": "assets_3d/t4.dae"
+      "model": "assets_3d/t4.glb"
     },
     "player": {
       "token": "p"
@@ -78,6 +78,10 @@
     },
     "ice": {
       "token": "i"
+    },
+    "ice_block": {
+      "token": "I",
+      "label": "Ice Block"
     },
     "hole": {
       "token": "h"

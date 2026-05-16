@@ -148,6 +148,44 @@ function createState(playData) {
 }
 
 {
+  const terrain = floorTerrain(2, 1);
+  terrain[0][1] = { type: "ice_block" };
+  const { engine, state } = createState({
+    width: 2,
+    height: 1,
+    terrain,
+    actors: [{ type: "player", x: 0, y: 0, removed: false }]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, false);
+  assert.deepEqual([state.actorX[0], state.actorY[0]], [0, 0]);
+}
+
+{
+  const iceBlock = {
+    type: "ice_block",
+    layers: [{ type: "ice_block", elevation: 0 }]
+  };
+  const { engine, state } = createState({
+    width: 3,
+    height: 1,
+    terrain: [[iceBlock, iceBlock, iceBlock]],
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 1, removed: false },
+      { type: "gem", x: 2, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorY[0]], [2, 0]);
+  assert.equal(engine.isSolved(state), true);
+}
+
+{
   const { engine, state } = createState({
     width: 3,
     height: 2,
