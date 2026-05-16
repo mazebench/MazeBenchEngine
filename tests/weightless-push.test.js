@@ -30,6 +30,16 @@ function createTerrain(width, height, type = "floor") {
   );
 }
 
+function stackedWall(height) {
+  return {
+    type: "wall",
+    layers: Array.from({ length: height }, (_, elevation) => ({
+      type: "wall",
+      elevation
+    }))
+  };
+}
+
 function createGameplayApp(actors, options = {}) {
   const defaultTerrain = Array.from({ length: options.height || 8 }, () =>
     Array.from({ length: options.width || 8 }, () => ({ type: "floor" }))
@@ -477,6 +487,19 @@ asyncTests.push(
 }
 
 {
+  const edgePlayer = { type: "player", x: 7, y: 3, elevation: 3, removed: false };
+  const terrain = createTerrain(8, 8);
+  terrain[3][7] = stackedWall(3);
+  const app = createGameplayApp([edgePlayer], { terrain });
+  const transition = app.edgeTransitionForMove(1, 0);
+
+  assert.equal(transition?.nextLevelId, "level_BxA");
+  assert.deepEqual([transition?.targetX, transition?.targetY], [0, 3]);
+  assert.equal(transition?.sourceType, "wall");
+  assert.equal(transition?.sourceElevation, 3);
+}
+
+{
   const edgePlayer = { type: "player", x: 7, y: 3, elevation: 0, removed: false };
   const terrain = createTerrain(8, 8);
   terrain[3][7] = { type: "wall" };
@@ -589,6 +612,83 @@ asyncTests.push(
     assert.equal(app.currentLevelId, "level_BxA");
     assert.deepEqual([incomingPlayer.x, incomingPlayer.y], [0, 2]);
     assert.equal(incomingPlayer.elevation, 1);
+  })()
+);
+
+asyncTests.push(
+  (async () => {
+    const edgePlayer = { type: "player", x: 7, y: 2, elevation: 3, removed: false };
+    const terrain = createTerrain(8, 8);
+    terrain[2][7] = stackedWall(3);
+    const nextTerrain = createTerrain(8, 8);
+    nextTerrain[2][0] = stackedWall(3);
+    const app = createGameplayApp([edgePlayer], {
+      currentLevelId: "level_AxA",
+      terrain,
+      loadLevelState: async (levelId) => ({
+        levelId,
+        levelLabel: levelId,
+        width: 8,
+        height: 8,
+        terrain: nextTerrain,
+        actors: []
+      })
+    });
+
+    const didTransition = await app.transitionToAdjacentLevel({
+      player: edgePlayer,
+      nextLevelId: "level_BxA",
+      sourceType: "wall",
+      sourceElevation: 3,
+      dx: 1,
+      dy: 0,
+      targetX: 0,
+      targetY: 2
+    });
+    const incomingPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.equal(didTransition, true);
+    assert.equal(app.currentLevelId, "level_BxA");
+    assert.deepEqual([incomingPlayer.x, incomingPlayer.y], [0, 2]);
+    assert.equal(incomingPlayer.elevation, 3);
+  })()
+);
+
+asyncTests.push(
+  (async () => {
+    const edgePlayer = { type: "player", x: 7, y: 2, elevation: 3, removed: false };
+    const terrain = createTerrain(8, 8);
+    terrain[2][7] = stackedWall(3);
+    const nextTerrain = createTerrain(8, 8);
+    nextTerrain[2][0] = stackedWall(2);
+    const app = createGameplayApp([edgePlayer], {
+      currentLevelId: "level_AxA",
+      terrain,
+      loadLevelState: async (levelId) => ({
+        levelId,
+        levelLabel: levelId,
+        width: 8,
+        height: 8,
+        terrain: nextTerrain,
+        actors: []
+      })
+    });
+
+    const didTransition = await app.transitionToAdjacentLevel({
+      player: edgePlayer,
+      nextLevelId: "level_BxA",
+      sourceType: "wall",
+      sourceElevation: 3,
+      dx: 1,
+      dy: 0,
+      targetX: 0,
+      targetY: 2
+    });
+
+    assert.equal(didTransition, false);
+    assert.equal(app.currentLevelId, "level_AxA");
+    assert.equal(app.moveHistory.length, 0);
+    assert.equal(app.isTransitioningLevel, false);
   })()
 );
 

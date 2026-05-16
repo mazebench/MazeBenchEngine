@@ -1875,15 +1875,60 @@
       return descriptors;
     }
 
-    function sameRoomBoundaryDescriptor(leftDescriptor, rightDescriptor) {
+    function descriptorCoversBoundaryYSpan(descriptor, minY, maxY) {
+      const tolerance = Math.max(0.001, unit * 0.0001);
+
       return (
-        leftDescriptor?.type === "wall" &&
-        rightDescriptor?.type === "wall" &&
-        leftDescriptor.key === rightDescriptor.key
+        descriptor.bottomY <= minY + tolerance &&
+        descriptor.topY >= maxY - tolerance
       );
     }
 
-    function sharedRoomBoundaryAtSample(coordinate, boundary, options) {
+    function descriptorsShareHorizontalBoundaryY(leftDescriptor, rightDescriptor, y) {
+      const tolerance = Math.max(0.001, unit * 0.0001);
+      const shareTop =
+        nearlyEqual(leftDescriptor.topY, y) &&
+        nearlyEqual(rightDescriptor.topY, y) &&
+        leftDescriptor.bottomY < y - tolerance &&
+        rightDescriptor.bottomY < y - tolerance;
+      const shareBottom =
+        nearlyEqual(leftDescriptor.bottomY, y) &&
+        nearlyEqual(rightDescriptor.bottomY, y) &&
+        leftDescriptor.topY > y + tolerance &&
+        rightDescriptor.topY > y + tolerance;
+
+      return shareTop || shareBottom;
+    }
+
+    function sameRoomBoundaryDescriptor(leftDescriptor, rightDescriptor, a = null, b = null) {
+      if (
+        leftDescriptor?.type !== "wall" ||
+        rightDescriptor?.type !== "wall"
+      ) {
+        return false;
+      }
+
+      if (!a || !b) {
+        return (
+          nearlyEqual(leftDescriptor.bottomY, rightDescriptor.bottomY) &&
+          nearlyEqual(leftDescriptor.topY, rightDescriptor.topY)
+        );
+      }
+
+      const minY = Math.min(a.y, b.y);
+      const maxY = Math.max(a.y, b.y);
+
+      if (maxY - minY <= Math.max(0.001, unit * 0.0001)) {
+        return descriptorsShareHorizontalBoundaryY(leftDescriptor, rightDescriptor, minY);
+      }
+
+      return (
+        descriptorCoversBoundaryYSpan(leftDescriptor, minY, maxY) &&
+        descriptorCoversBoundaryYSpan(rightDescriptor, minY, maxY)
+      );
+    }
+
+    function sharedRoomBoundaryAtSample(coordinate, boundary, options, a, b) {
       const bounds = boundary.bounds;
       const state = renderState();
       const neighborState = neighborLevelStateForBoundary(boundary.dx, boundary.dy);
@@ -1922,21 +1967,19 @@
         return false;
       }
 
-      if (options?.descriptor?.type === "wall") {
-        return terrainPieceDescriptorsForState(neighborState, neighborX, neighborY, options.now)
-          .some((descriptor) => sameRoomBoundaryDescriptor(options.descriptor, descriptor));
-      }
-
-      const localDescriptor =
-        activeRenderContext?.terrainDescriptors?.[y]?.[x] || terrainDescriptorAt(x, y, options.now);
-      const neighborDescriptor = terrainDescriptorForState(
+      const localDescriptors = terrainPieceDescriptorsAt(x, y, options.now);
+      const neighborDescriptors = terrainPieceDescriptorsForState(
         neighborState,
         neighborX,
         neighborY,
         options.now
       );
 
-      return sameRoomBoundaryDescriptor(localDescriptor, neighborDescriptor);
+      return localDescriptors.some((localDescriptor) =>
+        neighborDescriptors.some((neighborDescriptor) =>
+          sameRoomBoundaryDescriptor(localDescriptor, neighborDescriptor, a, b)
+        )
+      );
     }
 
     function sharedRoomBoundaryEdgeSegment(a, b, options) {
@@ -1958,12 +2001,12 @@
 
       if (nearlyEqual(a.x, b.x) && nearlyEqual(a.z, b.z)) {
         return samples.some((coordinate) =>
-          sharedRoomBoundaryAtSample(coordinate, boundary, options)
+          sharedRoomBoundaryAtSample(coordinate, boundary, options, a, b)
         );
       }
 
       return samples.every((coordinate) =>
-        sharedRoomBoundaryAtSample(coordinate, boundary, options)
+        sharedRoomBoundaryAtSample(coordinate, boundary, options, a, b)
       );
     }
 
@@ -2232,21 +2275,14 @@
         return polycubeComponentNeighborOffsetCache;
       }
 
-      const offsets = [];
-
-      for (let x = -1; x <= 1; x += 1) {
-        for (let y = -1; y <= 1; y += 1) {
-          for (let z = -1; z <= 1; z += 1) {
-            const nonZeroAxes = [x, y, z].filter((value) => value !== 0).length;
-
-            if (nonZeroAxes > 0 && nonZeroAxes <= 2) {
-              offsets.push({ x, y, z });
-            }
-          }
-        }
-      }
-
-      polycubeComponentNeighborOffsetCache = offsets;
+      polycubeComponentNeighborOffsetCache = [
+        { x: -1, y: 0, z: 0 },
+        { x: 1, y: 0, z: 0 },
+        { x: 0, y: -1, z: 0 },
+        { x: 0, y: 1, z: 0 },
+        { x: 0, y: 0, z: -1 },
+        { x: 0, y: 0, z: 1 }
+      ];
       return polycubeComponentNeighborOffsetCache;
     }
 
@@ -2255,17 +2291,7 @@
         return polycubeEdgeContactOffsetCache;
       }
 
-      polycubeEdgeContactOffsetCache = polycubeComponentNeighborOffsets().filter((offset) => {
-        const nonZeroAxes = [offset.x, offset.y, offset.z]
-          .filter((value) => value !== 0)
-          .length;
-
-        return (
-          nonZeroAxes === 2 &&
-          offset.z !== 0 &&
-          (offset.x > 0 || (offset.x === 0 && offset.y > 0))
-        );
-      });
+      polycubeEdgeContactOffsetCache = [];
 
       return polycubeEdgeContactOffsetCache;
     }
