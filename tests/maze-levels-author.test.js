@@ -22,7 +22,15 @@ const game = {
     objects: {
       floor: { token: "." },
       wall: { token: "#" },
-      ice: { token: "i" }
+      ice: { token: "i" },
+      puncher: {
+        label: "Puncher",
+        type: "puncher",
+        tokens: [
+          { token: "pr", direction: "right" },
+          { token: "pd", direction: "down", selectable: false }
+        ]
+      }
     }
   },
   worldMap: {
@@ -86,6 +94,26 @@ const sanitized = service.sanitizeEditorPayload(game, {
 
 assert.deepEqual(sanitized.cells[0], ["+", ".", "+++#"]);
 assert.equal(sanitized.rawText, "+ . +++#");
+
+const puncherSanitized = service.sanitizeEditorPayload(game, {
+  cells: [["#+pd", ".+pr", "+"]],
+  height: 1,
+  width: 3
+});
+
+assert.deepEqual(puncherSanitized.cells[0], ["#+pd", ".+pr", "+"]);
+
+fs.writeFileSync(path.join(levelDir, "test-empty.txt"), puncherSanitized.rawText + "\n", "utf8");
+
+const puncherPlayState = service.getLevelState(game, game.worldMap.byPosition.get("level_AxA"));
+
+assert.deepEqual(
+  puncherPlayState.actors.map((actor) => [actor.type, actor.x, actor.y, actor.elevation, actor.direction]),
+  [
+    ["puncher", 0, 0, 1, "down"],
+    ["puncher", 1, 0, 0, "right"]
+  ]
+);
 
 fs.rmSync(tempRoot, { recursive: true, force: true });
 

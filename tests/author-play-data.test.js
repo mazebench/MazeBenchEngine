@@ -42,6 +42,8 @@ const authorData = {
     { imageUrl: null, initialRaised: true, label: "Raised Player Lift", name: "player_lift", token: "L", type: "player_lift" },
     { imageUrl: null, label: "Orange Wall", name: "orange_wall", token: "O", type: "orange_wall" },
     { imageUrl: null, label: "Orange Button", name: "orange_button", token: "o", type: "orange_button" },
+    { direction: "right", imageUrl: null, label: "Puncher", name: "puncher", token: "pr", type: "puncher" },
+    { direction: "left", imageUrl: null, label: "Puncher Left", name: "puncher", token: "pl", type: "puncher" },
     { imageUrl: null, label: "Player", name: "player", token: "P" },
     {
       imageUrl: "/assets/maze/images/gem.png",
@@ -162,6 +164,20 @@ assert.equal(orangePlayData.terrain[0][1].type, "orange_button");
 assert.deepEqual(
   orangePlayData.actors.map((actor) => [actor.type, actor.x, actor.y]),
   [["weightless_box", 1, 0]]
+);
+
+const puncherPlayData = adapter.buildPlayData({
+  cells: [["W+pr", ".++pl"]],
+  height: 1,
+  width: 2
+});
+
+assert.deepEqual(
+  puncherPlayData.actors.map((actor) => [actor.type, actor.x, actor.y, actor.elevation, actor.direction]),
+  [
+    ["puncher", 0, 0, 1, "right"],
+    ["puncher", 1, 0, 1, "left"]
+  ]
 );
 
 const stackedPlayData = adapter.buildPlayData({

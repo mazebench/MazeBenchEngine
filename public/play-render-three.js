@@ -47,6 +47,9 @@
     const shrubModelScaleMultiplier = 0.5;
     const gemModelWorldSize = unit * 0.87;
     const gemSpinPeriodMs = 7200;
+    const puncherRadius = unit * 0.34;
+    const puncherDepth = unit * 0.13;
+    const puncherArmThickness = unit * 0.18;
     const debugCameraTopTilt = 0;
     const debugCameraSideTilt = Math.PI / 2;
     const debugCameraTiltHoldDurationMs = 500;
@@ -1588,6 +1591,25 @@
       return geometry;
     }
 
+    function boxGeometry(width, height, depth) {
+      const key = [
+        "box",
+        Math.round(width * 100),
+        Math.round(height * 100),
+        Math.round(depth * 100)
+      ].join(":");
+
+      if (geometryCache.has(key)) {
+        return geometryCache.get(key);
+      }
+
+      const geometry = new THREE.BoxGeometry(width, height, depth);
+
+      geometry.computeVertexNormals();
+      geometryCache.set(key, geometry);
+      return geometry;
+    }
+
     function pointKey(point) {
       return `${Math.round(point.x * 1000)},${Math.round(point.z * 1000)}`;
     }
@@ -3040,6 +3062,10 @@
 
       if (actor.type === "gem") {
         return "#6cd7ff";
+      }
+
+      if (actor.type === "puncher") {
+        return "#ef4444";
       }
 
       return "#2a2d33";
@@ -4932,6 +4958,217 @@
       });
     }
 
+    function normalizePuncherDirection(direction) {
+      const value = String(direction || "").toLowerCase();
+
+      if (value === "left" || value === "l") {
+        return "left";
+      }
+
+      if (value === "up" || value === "u") {
+        return "up";
+      }
+
+      if (value === "down" || value === "d") {
+        return "down";
+      }
+
+      return "right";
+    }
+
+    function puncherDirectionVector(actor) {
+      const direction = normalizePuncherDirection(actor?.direction || actor?.facing);
+
+      if (direction === "left") {
+        return { x: -1, z: 0 };
+      }
+
+      if (direction === "up") {
+        return { x: 0, z: -1 };
+      }
+
+      if (direction === "down") {
+        return { x: 0, z: 1 };
+      }
+
+      return { x: 1, z: 0 };
+    }
+
+    function puncherRotationForDirection(direction) {
+      const rotation = new THREE.Euler(0, 0, 0);
+
+      if (direction.x > 0) {
+        rotation.z = -Math.PI / 2;
+      } else if (direction.x < 0) {
+        rotation.z = Math.PI / 2;
+      } else if (direction.z > 0) {
+        rotation.x = Math.PI / 2;
+      } else {
+        rotation.x = -Math.PI / 2;
+      }
+
+      return rotation;
+    }
+
+    function addOrientedEdgeLines(geometry, position, rotation, opacity, threshold = 18) {
+      if (!edgeOutlinesEnabled()) {
+        return;
+      }
+
+      const lineOpacity = opacity * renderContextOpacity();
+
+      if (lineOpacity <= 0.015) {
+        return;
+      }
+
+      const edges = new THREE.LineSegments(
+        edgeGeometryFor(geometry, threshold),
+        lineMaterial("#000000", lineOpacity)
+      );
+
+      edges.position.copy(position);
+      edges.rotation.copy(rotation);
+      edges.userData.edgeBasePosition = position.clone();
+      edgeScene.add(edges);
+    }
+
+    function puncherEditorPick(actor, center, topY, bottomY) {
+      const renderX = actor.renderX ?? actor.x;
+      const renderY = actor.renderY ?? actor.y;
+
+      return editorPickForRenderContext({
+        kind: "actor",
+        cells: [
+          {
+            gridX: actor.x,
+            gridY: actor.y,
+            left: renderX * unit + renderOffsetX(),
+            right: (renderX + 1) * unit + renderOffsetX(),
+            top: renderY * unit + renderOffsetZ(),
+            bottom: (renderY + 1) * unit + renderOffsetZ()
+          }
+        ],
+        topY,
+        bottomY
+      });
+    }
+
+    function puncherAnchoredCenter(center, direction, depth) {
+      const backOffset = unit / 2 - depth / 2;
+
+      return {
+        x: center.x - direction.x * backOffset,
+        z: center.z - direction.z * backOffset
+      };
+    }
+
+    function addPuncherArm(actor, center, direction, depth, elevation, sink, opacity, edgeOpacity) {
+      const renderX = actor.renderX ?? actor.x;
+      const renderY = actor.renderY ?? actor.y;
+      const movedDistance = Math.abs(renderX - actor.x) + Math.abs(renderY - actor.y);
+
+      if (actor.renderPunchEffect !== true || movedDistance <= 0.001) {
+        return;
+      }
+
+      const start = puncherAnchoredCenter(cellCenter(actor.x, actor.y), direction, depth);
+      const end = center;
+      const lengthX = Math.abs(end.x - start.x);
+      const lengthZ = Math.abs(end.z - start.z);
+      const horizontal = lengthX >= lengthZ;
+      const width = Math.max(puncherArmThickness, lengthX + unit * 0.18);
+      const armDepth = Math.max(puncherArmThickness, lengthZ + unit * 0.18);
+      const height = unit * 0.16;
+      const geometry = boxGeometry(
+        horizontal ? width : puncherArmThickness,
+        height,
+        horizontal ? puncherArmThickness : armDepth
+      );
+      const mesh = new THREE.Mesh(geometry, material("#9ca3af", opacity));
+      const position = new THREE.Vector3(
+        (start.x + end.x) / 2,
+        elevation * elevationUnit - sink + actorVisualLift + unit * 0.5,
+        (start.z + end.z) / 2
+      );
+
+      mesh.position.copy(position);
+      mesh.castShadow = renderContextCastsShadows();
+      mesh.receiveShadow = false;
+      scene.add(mesh);
+      addEdgeLines(geometry, position, 18, edgeOpacity * 0.84);
+    }
+
+    function addPuncherCylinderPart(actor, geometry, color, center, y, direction, rotation, offset, opacity, editorPick) {
+      const position = new THREE.Vector3(
+        center.x + direction.x * offset,
+        y,
+        center.z + direction.z * offset
+      );
+      const mesh = new THREE.Mesh(geometry, material(color, opacity));
+
+      mesh.position.copy(position);
+      mesh.rotation.copy(rotation);
+      mesh.castShadow = renderContextCastsShadows();
+      mesh.receiveShadow = false;
+      mesh.userData.editorPick = editorPick;
+      scene.add(mesh);
+      addOrientedEdgeLines(geometry, position, rotation, opacity, 18);
+    }
+
+    function addPuncher(actor, center, elevation, scale, sink, fade, opacity, visibility) {
+      const direction = puncherDirectionVector(actor);
+      const rotation = puncherRotationForDirection(direction);
+      const radius = puncherRadius * scale;
+      const depth = puncherDepth * scale;
+      const anchoredCenter = puncherAnchoredCenter(center, direction, depth);
+      const centerY = elevation * elevationUnit - sink + actorVisualLift + unit * 0.54 * scale;
+      const bottomY = centerY - radius;
+      const topY = centerY + radius;
+      const editorPick = puncherEditorPick(actor, anchoredCenter, topY, bottomY);
+      const edgeOpacity = fade * visibility;
+      const backGeometry = cylinderGeometry(radius, depth, 40);
+      const middleGeometry = cylinderGeometry(radius * 0.66, depth * 0.45, 40);
+      const bullseyeGeometry = cylinderGeometry(radius * 0.34, depth * 0.5, 40);
+
+      addPuncherArm(actor, anchoredCenter, direction, depth, elevation, sink, opacity, edgeOpacity);
+      addPuncherCylinderPart(
+        actor,
+        backGeometry,
+        "#ef4444",
+        anchoredCenter,
+        centerY,
+        direction,
+        rotation,
+        0,
+        opacity,
+        editorPick
+      );
+      addPuncherCylinderPart(
+        actor,
+        middleGeometry,
+        "#f8fafc",
+        anchoredCenter,
+        centerY,
+        direction,
+        rotation,
+        depth * 0.58,
+        opacity,
+        editorPick
+      );
+      addPuncherCylinderPart(
+        actor,
+        bullseyeGeometry,
+        "#b91c1c",
+        anchoredCenter,
+        centerY,
+        direction,
+        rotation,
+        depth * 0.72,
+        opacity,
+        editorPick
+      );
+    }
+
     function addActor(actor, now = performance.now()) {
       if (!actorIsVisible(actor)) {
         return;
@@ -4959,6 +5196,11 @@
 
       if (actor.type === "floating_floor") {
         addFloatingFloor(actor, center, elevation, scale, sink, fade, opacity, visibility, now);
+        return;
+      }
+
+      if (actor.type === "puncher") {
+        addPuncher(actor, center, elevation, scale, sink, fade, opacity, visibility);
         return;
       }
 
@@ -5334,6 +5576,7 @@
         actor.type,
         actor.groupId || "",
         actor.modelUrl || "",
+        actor.direction || actor.facing || "",
         actor.removed ? 1 : 0,
         actor.x,
         actor.y,
@@ -5344,7 +5587,8 @@
         Math.round((actor.renderScale ?? 1) * 1000),
         Math.round((actor.renderAlpha ?? 1) * 1000),
         Math.round((actor.renderSink ?? 0) * 1000),
-        actor.renderInHole ? 1 : 0
+        actor.renderInHole ? 1 : 0,
+        actor.renderPunchEffect ? 1 : 0
       ].join(":");
     }
 

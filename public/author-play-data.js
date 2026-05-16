@@ -6,6 +6,7 @@
     "box",
     "gem",
     "floating_floor",
+    "puncher",
     "weightless_box"
   ]);
   const supportActorNames = new Set([
@@ -314,6 +315,7 @@
         label: tool?.label || titleCaseName(type),
         imageUrl: tool?.imageUrl || null,
         modelUrl: tool?.modelUrl || null,
+        direction: tool?.direction || null,
         elevation,
         raised: type === "player_lift" ? tool?.initialRaised === true : false
       };
@@ -576,6 +578,7 @@
               label: tool.label,
               imageUrl: tool.imageUrl || null,
               modelUrl: tool.modelUrl || null,
+              direction: tool.direction || null,
               elevation,
               x,
               y

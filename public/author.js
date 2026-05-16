@@ -1305,6 +1305,62 @@
     return type === "floor" || type === "ice";
   }
 
+  function toolTypeForToken(token) {
+    const tool = toolByToken.get(token);
+    return tool?.type || tool?.name || "";
+  }
+
+  function isPuncherToken(token) {
+    return toolTypeForToken(token) === "puncher";
+  }
+
+  function directionForPaintTarget(target) {
+    const dx = Math.sign(Number(target?.dx) || 0);
+    const dy = Math.sign(Number(target?.dy) || 0);
+
+    if (dx > 0) {
+      return "right";
+    }
+
+    if (dx < 0) {
+      return "left";
+    }
+
+    if (dy > 0) {
+      return "down";
+    }
+
+    if (dy < 0) {
+      return "up";
+    }
+
+    return "";
+  }
+
+  function puncherTokenForDirection(direction) {
+    for (const [token, tool] of toolByToken.entries()) {
+      if ((tool.type || tool.name) === "puncher" && tool.direction === direction) {
+        return token;
+      }
+    }
+
+    return "";
+  }
+
+  function targetHasPuncherSupport(target) {
+    if (!target || target.kind === "levelSwitch") {
+      return false;
+    }
+
+    if (!directionForPaintTarget(target)) {
+      return false;
+    }
+
+    const sideHeight = Math.max(0, (target.topY ?? 0) - (target.bottomY ?? 0));
+
+    return sideHeight >= 32;
+  }
+
   function adjustedPaintLayerForTarget(target) {
     if (!target || state.selectedToken === eraserToken || state.selectedToken === noopToken) {
       return target?.paintLayer;
@@ -1315,6 +1371,31 @@
     }
 
     return target.paintLayer;
+  }
+
+  function paintPuncherTarget(target) {
+    if (!targetHasPuncherSupport(target)) {
+      return false;
+    }
+
+    if (!isInsideEditorCell(target.paintX, target.paintY)) {
+      return false;
+    }
+
+    const directionToken = puncherTokenForDirection(directionForPaintTarget(target));
+
+    if (!directionToken) {
+      return false;
+    }
+
+    const paintLayer = Math.max(0, Math.floor(Number(target.sourceLayer) || 0));
+    const currentValue = state.cells[target.paintY][target.paintX];
+    const nextValue = setCellElevationToken(currentValue, directionToken, paintLayer, {
+      preserveBaseSurface: true
+    });
+
+    updateCellValue(target.paintX, target.paintY, nextValue);
+    return true;
   }
 
   function paintFaceTarget(target) {
@@ -1346,6 +1427,10 @@
           : eraseCellElevationValue(state.cells[target.sourceY][target.sourceX], target.sourceLayer)
       );
       return true;
+    }
+
+    if (isPuncherToken(state.selectedToken)) {
+      return paintPuncherTarget(target);
     }
 
     if (!isInsideEditorCell(target.paintX, target.paintY)) {

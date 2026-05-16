@@ -22,6 +22,7 @@
     function engineActorFromRuntime(actor) {
       return {
         elevation: actor.elevation ?? 0,
+        direction: actor.direction || actor.facing || null,
         groupId: actor.groupId,
         removed: Boolean(actor.removed),
         type: actor.type,
@@ -190,20 +191,25 @@
           actor,
           toX,
           toY,
+          toElevation = actor.elevation ?? 0,
+          finalX = toX,
+          finalY = toY,
+          finalElevation = toElevation,
+          visualOnly = false,
           toRemoved = false,
-          skipHoleFall = false,
-          toElevation = actor.elevation ?? 0
+          skipHoleFall = false
         }) => {
-          actor.x = toX;
-          actor.y = toY;
-          actor.renderX = toX;
-          actor.renderY = toY;
-          actor.elevation = toElevation;
-          actor.renderElevation = toElevation;
+          actor.x = visualOnly ? finalX : toX;
+          actor.y = visualOnly ? finalY : toY;
+          actor.renderX = actor.x;
+          actor.renderY = actor.y;
+          actor.elevation = visualOnly ? finalElevation : toElevation;
+          actor.renderElevation = actor.elevation;
           actor.renderScale = toRemoved ? 0 : 1;
           actor.renderAlpha = toRemoved ? 0 : 1;
           actor.renderSink = toRemoved && !skipHoleFall ? HOLE_SINK_DISTANCE : 0;
           actor.renderInHole = false;
+          actor.renderPunchEffect = false;
           actor.removed = Boolean(toRemoved);
         }
       );
@@ -218,7 +224,11 @@
     }
 
     function applyMoveLogicalPositions(moves) {
-      moves.forEach(({ actor, toX, toY }) => {
+      moves.forEach(({ actor, toX, toY, visualOnly = false }) => {
+        if (visualOnly) {
+          return;
+        }
+
         actor.x = toX;
         actor.y = toY;
       });

@@ -1132,7 +1132,7 @@
     function buildOccupiedSet(excludedActor = null) {
       const occupied = new Set(
         app.state.actors
-          .filter((actor) => !actor.removed && !isCollectibleActor(actor))
+          .filter((actor) => !actor.removed && !isNonBlockingActor(actor))
           .map((actor) => posKey(actor.x, actor.y))
       );
 
@@ -1183,6 +1183,10 @@
 
     function isCollectibleActor(actor) {
       return actor?.type === "gem";
+    }
+
+    function isNonBlockingActor(actor) {
+      return isCollectibleActor(actor) || actor?.type === "puncher";
     }
 
     function pushWeight(actor) {
@@ -1405,7 +1409,7 @@
       return actors.some(
         (actor) =>
           !actor.removed &&
-          !isCollectibleActor(actor) &&
+          !isNonBlockingActor(actor) &&
           actorElevation(actor) === elevation &&
           actor.x === x &&
           actor.y === y
@@ -1610,7 +1614,7 @@
             if (
               activeActors.some(
                 (actor) =>
-                  !isCollectibleActor(actor) &&
+                  !isNonBlockingActor(actor) &&
                   actorElevation(actor) === gateElevation &&
                   actor.x === x &&
                   actor.y === y

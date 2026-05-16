@@ -138,7 +138,9 @@ function createMazeLevelService({
       return [
         {
           initialRaised: config.initial_raised === true,
+          direction: typeof config.direction === "string" ? config.direction : null,
           label: typeof config.label === "string" ? config.label : null,
+          selectable: typeof config.selectable === "boolean" ? config.selectable : null,
           token: config.token
         }
       ];
@@ -153,14 +155,18 @@ function createMazeLevelService({
         if (typeof entry === "string") {
           return {
             initialRaised: false,
+            direction: null,
             label: null,
+            selectable: null,
             token: entry
           };
         }
 
         return {
           initialRaised: entry?.initial_raised === true,
+          direction: typeof entry?.direction === "string" ? entry.direction : null,
           label: typeof entry?.label === "string" ? entry.label : null,
+          selectable: typeof entry?.selectable === "boolean" ? entry.selectable : null,
           token: entry?.token
         };
       })
@@ -195,8 +201,10 @@ function createMazeLevelService({
               entry.token,
               {
                 ...definition,
+                direction: entry.direction,
                 initialRaised: definition.initialRaised || entry.initialRaised,
                 label: entry.label || definition.label,
+                selectable: entry.selectable,
                 token: entry.token
               }
             ])
@@ -208,6 +216,7 @@ function createMazeLevelService({
   function buildTerrainCell(type, definition = null, options = {}) {
     return {
       type,
+      direction: definition?.direction || null,
       label: definition?.label || titleCase(type),
       imageUrl: definition?.imageUrl || null,
       modelUrl: definition?.modelUrl || null,
@@ -230,6 +239,7 @@ function createMazeLevelService({
       type === "box" ||
       type === "gem" ||
       type === "floating_floor" ||
+      type === "puncher" ||
       type === "weightless_box"
     );
   }
@@ -275,6 +285,7 @@ function createMazeLevelService({
       label: definition?.label || titleCase(type),
       imageUrl: definition?.imageUrl || null,
       modelUrl: definition?.modelUrl || null,
+      direction: definition?.direction || null,
       elevation,
       raised: type === "player_lift" ? definition?.initialRaised === true : false
     };
@@ -440,6 +451,7 @@ function createMazeLevelService({
             label: definition.label,
             imageUrl: definition.imageUrl,
             modelUrl: definition.modelUrl,
+            direction: definition.direction || null,
             elevation,
             x: index,
             y
@@ -597,11 +609,13 @@ function createMazeLevelService({
           name,
           selectable:
             config?.selectable !== false &&
+            entry.selectable !== false &&
             name !== "circle_player" &&
             name !== "exit" &&
             name !== "hole",
           token: entry.token,
-          type: definition.type
+          type: definition.type,
+          direction: entry.direction || null
         });
       });
     });

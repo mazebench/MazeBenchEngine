@@ -49,6 +49,34 @@
       "token": "o",
       "label": "Orange Button"
     },
+    "puncher": {
+      "tokens": [
+        {
+          "token": "pr",
+          "label": "Puncher",
+          "direction": "right"
+        },
+        {
+          "token": "pl",
+          "label": "Puncher Left",
+          "direction": "left",
+          "selectable": false
+        },
+        {
+          "token": "pu",
+          "label": "Puncher Up",
+          "direction": "up",
+          "selectable": false
+        },
+        {
+          "token": "pd",
+          "label": "Puncher Down",
+          "direction": "down",
+          "selectable": false
+        }
+      ],
+      "label": "Puncher"
+    },
     "box": {
       "token": "b",
       "image": "images/crate.png",
