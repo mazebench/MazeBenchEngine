@@ -3942,7 +3942,6 @@
     }
 
     function treeModelPlacement(model, cell, descriptor) {
-      const center = model.bounds.getCenter(new THREE.Vector3());
       const scale = treeModelWorldScale;
       const centerX = (cell.left + cell.right) / 2 + renderOffsetX();
       const centerZ = (cell.top + cell.bottom) / 2 + renderOffsetZ();
@@ -3950,9 +3949,9 @@
       return {
         scale,
         position: new THREE.Vector3(
-          centerX - center.x * scale,
+          centerX,
           descriptor.bottomY - model.bounds.min.y * scale,
-          centerZ - center.z * scale
+          centerZ
         )
       };
     }
