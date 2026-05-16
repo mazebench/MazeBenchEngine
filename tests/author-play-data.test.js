@@ -22,6 +22,22 @@ const authorData = {
       token: "t1",
       type: "tree"
     },
+    {
+      imageUrl: null,
+      label: "Small Tree 1",
+      modelUrl: "/assets/maze/assets_3d/st1.glb",
+      name: "small_tree_1",
+      token: "st1",
+      type: "tree"
+    },
+    {
+      imageUrl: null,
+      label: "Shrub",
+      modelUrl: "/assets/maze/assets_3d/sh.glb",
+      name: "shrub",
+      token: "sh",
+      type: "shrub"
+    },
     { imageUrl: null, initialRaised: false, label: "Player Lift l", name: "player_lift", token: "l", type: "player_lift" },
     { imageUrl: null, initialRaised: true, label: "Raised Player Lift", name: "player_lift", token: "L", type: "player_lift" },
     { imageUrl: null, label: "Orange Wall", name: "orange_wall", token: "O", type: "orange_wall" },
@@ -87,6 +103,7 @@ assert.equal(adapter.normalizeCellValue("++W"), "++W");
 assert.equal(adapter.setCellElevationToken(".", "W", 1), ".++W");
 assert.equal(adapter.setCellElevationToken(".", "W", 0, { preserveBaseSurface: true }), ".+W");
 assert.equal(adapter.setCellElevationToken(".", "I", 0, { preserveBaseSurface: true }), ".+I");
+assert.equal(adapter.setCellElevationToken(".", "sh", 0, { preserveBaseSurface: true }), ".+sh");
 assert.equal(adapter.setCellElevationToken(".+W", "O", 0, { preserveBaseSurface: true }), ".+O");
 assert.equal(adapter.setCellElevationToken("+", ".", 0), ".");
 assert.equal(adapter.setCellElevationToken("+", "W", 0), "W");
@@ -240,6 +257,28 @@ assert.deepEqual(
 assert.deepEqual(
   treePlayData.actors.map((actor) => [actor.type, actor.elevation]),
   [["player", 3]]
+);
+
+const shrubPlayData = adapter.buildPlayData({
+  cells: [["sh+P", "sh+sh", "st1"]],
+  height: 1,
+  width: 3
+});
+
+assert.equal(shrubPlayData.terrain[0][0].type, "shrub");
+assert.equal(shrubPlayData.terrain[0][0].modelUrl, "/assets/maze/assets_3d/sh.glb");
+assert.deepEqual(
+  shrubPlayData.terrain[0][1].layers.map((layer) => [layer.type, layer.elevation, layer.modelUrl]),
+  [
+    ["shrub", 0, "/assets/maze/assets_3d/sh.glb"],
+    ["shrub", 1, "/assets/maze/assets_3d/sh.glb"]
+  ]
+);
+assert.equal(shrubPlayData.terrain[0][2].type, "tree");
+assert.equal(shrubPlayData.terrain[0][2].modelUrl, "/assets/maze/assets_3d/st1.glb");
+assert.deepEqual(
+  shrubPlayData.actors.map((actor) => [actor.type, actor.elevation]),
+  [["player", 1]]
 );
 
 console.log("author play data tests passed");

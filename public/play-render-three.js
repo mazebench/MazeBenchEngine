@@ -2915,6 +2915,10 @@
         return "#2f7d3f";
       }
 
+      if (type === "shrub") {
+        return "#476b35";
+      }
+
       if (type === "ice" || type === "ice_block") {
         return "#a9d6f4";
       }
@@ -3452,7 +3456,7 @@
         return null;
       }
 
-      if (layer.type === "wall" || layer.type === "ice_block") {
+      if (layer.type === "wall" || layer.type === "ice_block" || layer.type === "shrub") {
         return elevation + 1;
       }
 
@@ -3803,6 +3807,7 @@
       return (
         lower.type === upper.type &&
         lower.type !== "tree" &&
+        lower.type !== "shrub" &&
         !lower.isSunkenFloor &&
         !upper.isSunkenFloor &&
         Math.abs(lower.topY - upper.bottomY) <= 0.001
@@ -4040,7 +4045,7 @@
     }
 
     function addTreeFallbackCell(cell, descriptor, visibility, now) {
-      addComponent([cell], descriptor.blockHeight, terrainColor("tree"), descriptor.topY, {
+      addComponent([cell], descriptor.blockHeight, terrainColor(descriptor.type), descriptor.topY, {
         outline: true,
         rounded: false,
         castShadow: renderContextCastsShadows(),
@@ -4073,6 +4078,10 @@
       });
     }
 
+    function isModelTerrainType(type) {
+      return type === "tree" || type === "shrub";
+    }
+
     function addTreeComponent(cells, descriptor, now) {
       const visibility = transitionPieceProgressForCells(cells);
 
@@ -4096,7 +4105,7 @@
         return;
       }
 
-      if (descriptor.type === "tree") {
+      if (isModelTerrainType(descriptor.type)) {
         addTreeComponent(cells, descriptor, now);
         return;
       }

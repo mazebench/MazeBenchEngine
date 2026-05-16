@@ -117,7 +117,7 @@
         return null;
       }
 
-      if (layer?.type === "wall" || layer?.type === "ice_block") {
+      if (layer?.type === "wall" || layer?.type === "ice_block" || layer?.type === "shrub") {
         return elevation + 1;
       }
 
@@ -153,6 +153,10 @@
 
       if (layer?.type === "tree") {
         return elevation >= layerElevation && elevation < layerElevation + 3;
+      }
+
+      if (layer?.type === "shrub") {
+        return elevation >= layerElevation && elevation <= layerElevation + 1;
       }
 
       if (layer?.type === "player_gate") {

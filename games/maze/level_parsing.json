@@ -4,32 +4,18 @@
     "block_adder": "+"
   },
   "objects": {
+    "floor": {
+      "token": "."
+    },
+    "ice": {
+      "token": "i"
+    },
     "wall": {
       "token": "#"
     },
-    "tree_1": {
-      "token": "t1",
-      "label": "Tree 1",
-      "type": "tree",
-      "model": "assets_3d/t1.glb"
-    },
-    "tree_2": {
-      "token": "t2",
-      "label": "Tree 2",
-      "type": "tree",
-      "model": "assets_3d/t2.glb"
-    },
-    "tree_3": {
-      "token": "t3",
-      "label": "Tree 3",
-      "type": "tree",
-      "model": "assets_3d/t3.glb"
-    },
-    "tree_4": {
-      "token": "t4",
-      "label": "Tree 4",
-      "type": "tree",
-      "model": "assets_3d/t4.glb"
+    "ice_block": {
+      "token": "I",
+      "label": "Ice Block"
     },
     "player": {
       "token": "p"
@@ -73,21 +59,59 @@
     "weightless_box": {
       "tokens": ["M0", "M1", "M2", "M3", "M4"]
     },
+    "tree_1": {
+      "token": "t1",
+      "label": "Tree 1",
+      "type": "tree",
+      "model": "assets_3d/t1.glb"
+    },
+    "tree_2": {
+      "token": "t2",
+      "label": "Tree 2",
+      "type": "tree",
+      "model": "assets_3d/t2.glb"
+    },
+    "tree_3": {
+      "token": "t3",
+      "label": "Tree 3",
+      "type": "tree",
+      "model": "assets_3d/t3.glb"
+    },
+    "tree_4": {
+      "token": "t4",
+      "label": "Tree 4",
+      "type": "tree",
+      "model": "assets_3d/t4.glb"
+    },
+    "small_tree_1": {
+      "token": "st1",
+      "label": "Small Tree 1",
+      "type": "tree",
+      "model": "assets_3d/st1.glb"
+    },
+    "small_tree_3": {
+      "token": "st3",
+      "label": "Small Tree 3",
+      "type": "tree",
+      "model": "assets_3d/st3.glb"
+    },
+    "small_tree_4": {
+      "token": "st4",
+      "label": "Small Tree 4",
+      "type": "tree",
+      "model": "assets_3d/st4.glb"
+    },
+    "shrub": {
+      "token": "sh",
+      "label": "Shrub",
+      "type": "shrub",
+      "model": "assets_3d/sh.glb"
+    },
     "exit": {
       "token": "e"
     },
-    "ice": {
-      "token": "i"
-    },
-    "ice_block": {
-      "token": "I",
-      "label": "Ice Block"
-    },
     "hole": {
       "token": "h"
-    },
-    "floor": {
-      "token": "."
     }
   }
 }

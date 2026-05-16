@@ -11,7 +11,8 @@
     orange_wall: 8,
     orange_button: 9,
     tree: 10,
-    ice_block: 11
+    ice_block: 11,
+    shrub: 12
   };
   const fallbackTerrainCell = {
     type: "empty",
@@ -460,7 +461,11 @@
         return null;
       }
 
-      if (layer.type === terrainTypes.wall || layer.type === terrainTypes.ice_block) {
+      if (
+        layer.type === terrainTypes.wall ||
+        layer.type === terrainTypes.ice_block ||
+        layer.type === terrainTypes.shrub
+      ) {
         return layer.elevation + 1;
       }
 
@@ -726,7 +731,8 @@
         (layer) =>
           layer.type === terrainTypes.wall ||
           layer.type === terrainTypes.ice_block ||
-          layer.type === terrainTypes.tree
+          layer.type === terrainTypes.tree ||
+          layer.type === terrainTypes.shrub
       );
     }
 
@@ -748,6 +754,10 @@
 
       if (layer.type === terrainTypes.wall || layer.type === terrainTypes.ice_block) {
         return layerElevation === elevation;
+      }
+
+      if (layer.type === terrainTypes.shrub) {
+        return elevation >= layerElevation && elevation <= layerElevation + 1;
       }
 
       if (layer.type === terrainTypes.tree) {

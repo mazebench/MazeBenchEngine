@@ -1283,7 +1283,12 @@
 
     function groundSurfaceCell(cell) {
       if (
-        (cell?.type === "wall" || cell?.type === "ice_block" || cell?.type === "tree") &&
+        (
+          cell?.type === "wall" ||
+          cell?.type === "ice_block" ||
+          cell?.type === "tree" ||
+          cell?.type === "shrub"
+        ) &&
         cell.underlay
       ) {
         return cell.underlay;
@@ -1327,7 +1332,7 @@
         return null;
       }
 
-      if (layer.type === "wall" || layer.type === "ice_block") {
+      if (layer.type === "wall" || layer.type === "ice_block" || layer.type === "shrub") {
         return elevation + 1;
       }
 
@@ -1646,7 +1651,8 @@
     function isTerrainWall(x, y) {
       return terrainLayersOfType(x, y, "wall").length > 0 ||
         terrainLayersOfType(x, y, "ice_block").length > 0 ||
-        terrainLayersOfType(x, y, "tree").length > 0;
+        terrainLayersOfType(x, y, "tree").length > 0 ||
+        terrainLayersOfType(x, y, "shrub").length > 0;
     }
 
     function terrainCellAcrossHorizontalWorldEdge(x, y) {
@@ -1682,7 +1688,12 @@
     function isTerrainWallAcrossHorizontalWorldEdge(x, y) {
       const cell = terrainCellAcrossHorizontalWorldEdge(x, y);
 
-      return cell?.type === "wall" || cell?.type === "ice_block" || cell?.type === "tree";
+      return (
+        cell?.type === "wall" ||
+        cell?.type === "ice_block" ||
+        cell?.type === "tree" ||
+        cell?.type === "shrub"
+      );
     }
 
     function isWall(
@@ -1848,6 +1859,7 @@
       return (
         groundCell.type !== "wall" &&
         groundCell.type !== "ice_block" &&
+        groundCell.type !== "shrub" &&
         groundCell.type !== "hole" &&
         groundCell.type !== "empty"
       );
