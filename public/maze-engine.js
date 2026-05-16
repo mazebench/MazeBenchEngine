@@ -9,7 +9,8 @@
     player_gate: 6,
     player_lift: 7,
     orange_wall: 8,
-    orange_button: 9
+    orange_button: 9,
+    tree: 10
   };
   const fallbackTerrainCell = {
     type: "empty",
@@ -462,6 +463,10 @@
         return layer.elevation + 1;
       }
 
+      if (layer.type === terrainTypes.tree) {
+        return layer.elevation + 3;
+      }
+
       if (layer.type === terrainTypes.player_gate) {
         return gateState.has(cell) ? layer.elevation + 1 : layer.elevation;
       }
@@ -708,7 +713,7 @@
       }
 
       return terrainLayersForCell(state, cellIndex(x, y)).some(
-        (layer) => layer.type === terrainTypes.wall
+        (layer) => layer.type === terrainTypes.wall || layer.type === terrainTypes.tree
       );
     }
 
@@ -730,6 +735,10 @@
 
       if (layer.type === terrainTypes.wall) {
         return layerElevation === elevation;
+      }
+
+      if (layer.type === terrainTypes.tree) {
+        return elevation >= layerElevation && elevation < layerElevation + 3;
       }
 
       if (layer.type === terrainTypes.player_gate) {

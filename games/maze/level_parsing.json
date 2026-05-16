@@ -7,6 +7,30 @@
     "wall": {
       "token": "#"
     },
+    "tree_1": {
+      "token": "t1",
+      "label": "Tree 1",
+      "type": "tree",
+      "model": "assets_3d/t1.dae"
+    },
+    "tree_2": {
+      "token": "t2",
+      "label": "Tree 2",
+      "type": "tree",
+      "model": "assets_3d/t2.dae"
+    },
+    "tree_3": {
+      "token": "t3",
+      "label": "Tree 3",
+      "type": "tree",
+      "model": "assets_3d/t3.dae"
+    },
+    "tree_4": {
+      "token": "t4",
+      "label": "Tree 4",
+      "type": "tree",
+      "model": "assets_3d/t4.dae"
+    },
     "player": {
       "token": "p"
     },

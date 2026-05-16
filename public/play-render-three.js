@@ -42,6 +42,7 @@
     const floorDrop = Math.max(3, Math.round(unit * 0.055));
     const actorVisualLift = 0;
     const edgeDepthBias = Math.max(1.25, unit * 0.024);
+    const treeVisualScaleMultiplier = 3;
     const debugCameraTopTilt = 0;
     const debugCameraSideTilt = Math.PI / 2;
     const debugCameraTiltHoldDurationMs = 500;
@@ -52,6 +53,7 @@
     const lineMaterialCache = new Map();
     const textureCache = new Map();
     const imageMaterialCache = new Map();
+    const modelAssetCache = new Map();
     const outlineOffsetCache = new Map();
     const levelStateSignatureCache = new WeakMap();
     const groupLabelTextureCache = new Map();
@@ -700,6 +702,376 @@
       }
 
       return imageMaterialCache.get(key);
+    }
+
+    function xmlElements(parent, tagName) {
+      if (!parent || typeof parent.getElementsByTagNameNS !== "function") {
+        return [];
+      }
+
+      return Array.from(parent.getElementsByTagNameNS("*", tagName));
+    }
+
+    function firstXmlElement(parent, tagName) {
+      return xmlElements(parent, tagName)[0] || null;
+    }
+
+    function childXmlElements(parent, tagName) {
+      if (!parent?.children) {
+        return [];
+      }
+
+      return Array.from(parent.children).filter((child) => child.localName === tagName);
+    }
+
+    function parseFloatList(text) {
+      const normalizedText = String(text || "").trim();
+
+      if (!normalizedText) {
+        return [];
+      }
+
+      return normalizedText
+        .split(/\s+/)
+        .map(Number)
+        .filter((value) => Number.isFinite(value));
+    }
+
+    function stripColladaRef(value) {
+      return String(value || "").replace(/^#/, "");
+    }
+
+    function colorHexFromFloats(values, fallback = "#2f7d3f") {
+      if (!Array.isArray(values) || values.length < 3) {
+        return fallback;
+      }
+
+      return `#${values
+        .slice(0, 3)
+        .map((value) => Math.round(clamp01(value) * 255).toString(16).padStart(2, "0"))
+        .join("")}`;
+    }
+
+    function colladaMaterialColors(doc) {
+      const effectColors = new Map();
+
+      xmlElements(doc, "effect").forEach((effect) => {
+        const id = effect.getAttribute("id");
+        const diffuse = firstXmlElement(effect, "diffuse");
+        const color = firstXmlElement(diffuse, "color");
+
+        if (id && color) {
+          effectColors.set(id, colorHexFromFloats(parseFloatList(color.textContent)));
+        }
+      });
+
+      const materialColors = new Map();
+
+      xmlElements(doc, "material").forEach((materialElement) => {
+        const id = materialElement.getAttribute("id");
+        const instanceEffect = firstXmlElement(materialElement, "instance_effect");
+        const effectId = stripColladaRef(instanceEffect?.getAttribute("url"));
+
+        if (id) {
+          materialColors.set(id, effectColors.get(effectId) || "#2f7d3f");
+        }
+      });
+
+      return materialColors;
+    }
+
+    function colladaSourceArrays(meshElement) {
+      const sources = new Map();
+
+      xmlElements(meshElement, "source").forEach((source) => {
+        const id = source.getAttribute("id");
+        const floatArray = firstXmlElement(source, "float_array");
+        const accessor = firstXmlElement(source, "accessor");
+
+        if (!id || !floatArray) {
+          return;
+        }
+
+        sources.set(id, {
+          values: parseFloatList(floatArray.textContent),
+          stride: Math.max(1, Number(accessor?.getAttribute("stride")) || 3)
+        });
+      });
+
+      return sources;
+    }
+
+    function colladaVertexSources(meshElement) {
+      const vertices = new Map();
+
+      xmlElements(meshElement, "vertices").forEach((vertexElement) => {
+        const id = vertexElement.getAttribute("id");
+        const positionInput = childXmlElements(vertexElement, "input").find(
+          (input) => input.getAttribute("semantic") === "POSITION"
+        );
+
+        if (id && positionInput) {
+          vertices.set(id, stripColladaRef(positionInput.getAttribute("source")));
+        }
+      });
+
+      return vertices;
+    }
+
+    function colladaInputInfo(primitive, vertexSources) {
+      const inputs = childXmlElements(primitive, "input").map((input) => ({
+        offset: Math.max(0, Number(input.getAttribute("offset")) || 0),
+        semantic: input.getAttribute("semantic"),
+        source: stripColladaRef(input.getAttribute("source"))
+      }));
+      const stride = inputs.reduce((max, input) => Math.max(max, input.offset + 1), 1);
+      const vertexInput = inputs.find((input) => input.semantic === "VERTEX");
+      const positionInput = inputs.find((input) => input.semantic === "POSITION");
+      const normalInput = inputs.find((input) => input.semantic === "NORMAL");
+
+      return {
+        normalInput,
+        positionInput: positionInput || (vertexInput
+          ? { ...vertexInput, source: vertexSources.get(vertexInput.source) }
+          : null),
+        stride
+      };
+    }
+
+    function colladaVectorFromSource(source, index) {
+      if (!source) {
+        return null;
+      }
+
+      const offset = index * source.stride;
+
+      if (offset + 2 >= source.values.length) {
+        return null;
+      }
+
+      return [
+        source.values[offset],
+        source.values[offset + 1],
+        source.values[offset + 2]
+      ];
+    }
+
+    function parseColladaRawGeometryParts(doc, materialColors) {
+      const geometryParts = new Map();
+
+      xmlElements(doc, "geometry").forEach((geometryElement) => {
+        const geometryId = geometryElement.getAttribute("id");
+        const meshElement = firstXmlElement(geometryElement, "mesh");
+
+        if (!geometryId || !meshElement) {
+          return;
+        }
+
+        const sources = colladaSourceArrays(meshElement);
+        const vertexSources = colladaVertexSources(meshElement);
+        const parts = [];
+
+        xmlElements(meshElement, "triangles").forEach((triangles) => {
+          const { normalInput, positionInput, stride } = colladaInputInfo(triangles, vertexSources);
+          const positionSource = sources.get(positionInput?.source);
+          const normalSource = sources.get(normalInput?.source);
+          const indices = parseFloatList(firstXmlElement(triangles, "p")?.textContent).map((value) => value | 0);
+
+          if (!positionInput || !positionSource || indices.length < stride * 3) {
+            return;
+          }
+
+          const positions = [];
+          const normals = [];
+
+          for (let index = 0; index < indices.length; index += stride) {
+            const positionIndex = indices[index + positionInput.offset];
+            const position = colladaVectorFromSource(positionSource, positionIndex);
+
+            if (!position) {
+              continue;
+            }
+
+            positions.push(...position);
+
+            if (normalInput && normalSource) {
+              const normalIndex = indices[index + normalInput.offset];
+              const normal = colladaVectorFromSource(normalSource, normalIndex);
+
+              if (normal) {
+                normals.push(...normal);
+              }
+            }
+          }
+
+          if (positions.length > 0) {
+            parts.push({
+              color: materialColors.get(triangles.getAttribute("material")) || "#2f7d3f",
+              normals: normals.length === positions.length ? normals : null,
+              positions
+            });
+          }
+        });
+
+        geometryParts.set(geometryId, parts);
+      });
+
+      return geometryParts;
+    }
+
+    function colladaNodeMatrix(nodeElement) {
+      const matrixElement = firstXmlElement(nodeElement, "matrix");
+      const values = parseFloatList(matrixElement?.textContent);
+
+      if (values.length !== 16) {
+        return new THREE.Matrix4();
+      }
+
+      return new THREE.Matrix4().set(
+        values[0], values[1], values[2], values[3],
+        values[4], values[5], values[6], values[7],
+        values[8], values[9], values[10], values[11],
+        values[12], values[13], values[14], values[15]
+      );
+    }
+
+    function transformedColladaPart(rawPart, matrix) {
+      const normalMatrix = new THREE.Matrix3().getNormalMatrix(matrix);
+      const position = new THREE.Vector3();
+      const normal = new THREE.Vector3();
+      const positions = [];
+      const normals = [];
+
+      for (let index = 0; index < rawPart.positions.length; index += 3) {
+        position
+          .set(rawPart.positions[index], rawPart.positions[index + 1], rawPart.positions[index + 2])
+          .applyMatrix4(matrix);
+        positions.push(position.x, position.z, -position.y);
+
+        if (rawPart.normals) {
+          normal
+            .set(rawPart.normals[index], rawPart.normals[index + 1], rawPart.normals[index + 2])
+            .applyMatrix3(normalMatrix)
+            .normalize();
+          normals.push(normal.x, normal.z, -normal.y);
+        }
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.userData.persistentGeometry = true;
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+
+      if (normals.length === positions.length) {
+        geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+      } else {
+        geometry.computeVertexNormals();
+      }
+
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+      return {
+        color: rawPart.color,
+        geometry
+      };
+    }
+
+    function parseColladaModel(text) {
+      if (typeof DOMParser !== "function" || typeof text !== "string" || !text.trim()) {
+        return null;
+      }
+
+      const doc = new DOMParser().parseFromString(text, "application/xml");
+      const materialColors = colladaMaterialColors(doc);
+      const rawGeometryParts = parseColladaRawGeometryParts(doc, materialColors);
+      const parts = [];
+      const instances = xmlElements(doc, "instance_geometry");
+
+      instances.forEach((instance) => {
+        const geometryId = stripColladaRef(instance.getAttribute("url"));
+        const rawParts = rawGeometryParts.get(geometryId) || [];
+        const matrix = colladaNodeMatrix(instance.parentElement);
+
+        rawParts.forEach((rawPart) => {
+          parts.push(transformedColladaPart(rawPart, matrix));
+        });
+      });
+
+      if (parts.length === 0) {
+        rawGeometryParts.forEach((rawParts) => {
+          rawParts.forEach((rawPart) => {
+            parts.push(transformedColladaPart(rawPart, new THREE.Matrix4()));
+          });
+        });
+      }
+
+      if (parts.length === 0) {
+        return null;
+      }
+
+      const bounds = new THREE.Box3();
+      parts.forEach((part) => {
+        if (part.geometry.boundingBox) {
+          bounds.union(part.geometry.boundingBox);
+        }
+      });
+
+      return {
+        bounds,
+        parts
+      };
+    }
+
+    function requestModelAsset(url) {
+      if (!url || !THREE) {
+        return null;
+      }
+
+      const cached = modelAssetCache.get(url);
+
+      if (cached?.status === "ready") {
+        return cached.model;
+      }
+
+      if (cached?.status === "loading" || cached?.status === "failed") {
+        return null;
+      }
+
+      const cachedText = app.modelTextCache?.get(url);
+
+      if (typeof cachedText === "string") {
+        const model = parseColladaModel(cachedText);
+        modelAssetCache.set(url, model ? { status: "ready", model } : { status: "failed" });
+        return model;
+      }
+
+      if (cachedText === null) {
+        modelAssetCache.set(url, { status: "failed" });
+        return null;
+      }
+
+      const promise = fetch(url)
+        .then((response) => (response.ok ? response.text() : null))
+        .then((text) => {
+          if (app.modelTextCache) {
+            app.modelTextCache.set(url, text);
+          }
+
+          const model = parseColladaModel(text);
+          modelAssetCache.set(url, model ? { status: "ready", model } : { status: "failed" });
+
+          if (typeof app.render === "function") {
+            window.requestAnimationFrame(() => app.render());
+          }
+        })
+        .catch(() => {
+          if (app.modelTextCache) {
+            app.modelTextCache.set(url, null);
+          }
+          modelAssetCache.set(url, { status: "failed" });
+        });
+
+      modelAssetCache.set(url, { status: "loading", promise });
+      return null;
     }
 
     function weightlessGroupLabel(groupId) {
@@ -2188,6 +2560,10 @@
         return "#23262c";
       }
 
+      if (type === "tree") {
+        return "#2f7d3f";
+      }
+
       if (type === "ice") {
         return "#a9d6f4";
       }
@@ -2260,6 +2636,7 @@
           type: "empty",
           label: "Empty",
           imageUrl: null,
+          modelUrl: null,
           underlay: null,
           raised: false
         }
@@ -2279,6 +2656,7 @@
             {
               type: cell.type,
               elevation: 0,
+              modelUrl: cell.modelUrl || null,
               raised: cell.raised === true
             }
           ];
@@ -2727,6 +3105,10 @@
         return elevation + 1;
       }
 
+      if (layer.type === "tree") {
+        return elevation + 3;
+      }
+
       const surfaceLiftValue = activeRenderContext?.surfaceLiftValues?.get(`${layer.type}:${key}`);
 
       if (typeof surfaceLiftValue === "number") {
@@ -2997,6 +3379,7 @@
           terrainHeight === null ? "null" : terrainHeight,
           Math.round(blockHeight * 100) / 100,
           Math.round(topY * 100) / 100,
+          layer.modelUrl || "",
           type === "player_lift" ? `${x},${y}` : ""
         ].join(":"),
         layer,
@@ -3015,6 +3398,7 @@
         Math.round(descriptor.blockHeight * 100) / 100,
         Math.round(descriptor.topY * 100) / 100,
         Math.round(descriptor.bottomY * 100) / 100,
+        descriptor.layer?.modelUrl || "",
         descriptor.type === "player_lift" ? `${x},${y}` : ""
       ].join(":");
     }
@@ -3067,6 +3451,7 @@
     function canMergeStackedTerrainPieces(lower, upper) {
       return (
         lower.type === upper.type &&
+        lower.type !== "tree" &&
         !lower.isSunkenFloor &&
         !upper.isSunkenFloor &&
         Math.abs(lower.topY - upper.bottomY) <= 0.001
@@ -3230,8 +3615,144 @@
       });
     }
 
+    function treeModelPlacement(model, cell, descriptor) {
+      const size = model.bounds.getSize(new THREE.Vector3());
+      const center = model.bounds.getCenter(new THREE.Vector3());
+      const footprint = Math.max(size.x, size.z, 0.001);
+      const height = Math.max(size.y, 0.001);
+      const targetFootprint = unit * 0.82;
+      const targetHeight = Math.max(unit, descriptor.blockHeight * 0.92);
+      const scale = Math.min(targetFootprint / footprint, targetHeight / height) *
+        treeVisualScaleMultiplier;
+      const centerX = (cell.left + cell.right) / 2 + renderOffsetX();
+      const centerZ = (cell.top + cell.bottom) / 2 + renderOffsetZ();
+
+      return {
+        scale,
+        position: new THREE.Vector3(
+          centerX - center.x * scale,
+          descriptor.bottomY - model.bounds.min.y * scale,
+          centerZ - center.z * scale
+        )
+      };
+    }
+
+    function treeEditorPickForCell(cell, descriptor) {
+      return editorPickForRenderContext({
+        kind: "terrain",
+        cells: [
+          {
+            gridX: cell.gridX,
+            gridY: cell.gridY,
+            left: cell.left + renderOffsetX(),
+            right: cell.right + renderOffsetX(),
+            top: cell.top + renderOffsetZ(),
+            bottom: cell.bottom + renderOffsetZ()
+          }
+        ],
+        topY: descriptor.topY,
+        bottomY: descriptor.bottomY,
+        sourceLayer: descriptor.elevation ?? 0
+      });
+    }
+
+    function addTreeModelCell(cell, descriptor, model, visibility) {
+      const placement = treeModelPlacement(model, cell, descriptor);
+      const editorPick = treeEditorPickForCell(cell, descriptor);
+      const opacity = visibility;
+      const castsShadows = renderContextCastsShadows();
+
+      model.parts.forEach((part) => {
+        const mesh = new THREE.Mesh(part.geometry, material(part.color, opacity));
+
+        mesh.position.copy(placement.position);
+        mesh.scale.setScalar(placement.scale);
+        mesh.castShadow = castsShadows;
+        mesh.receiveShadow = false;
+        mesh.userData.editorPick = editorPick;
+        scene.add(mesh);
+
+        if (!edgeOutlinesEnabled()) {
+          return;
+        }
+
+        const edgeOpacity = opacity * renderContextOpacity();
+
+        if (edgeOpacity <= 0.015) {
+          return;
+        }
+
+        const edges = new THREE.LineSegments(
+          edgeGeometryFor(part.geometry, 28),
+          lineMaterial("#000000", edgeOpacity)
+        );
+
+        edges.position.copy(placement.position);
+        edges.scale.setScalar(placement.scale);
+        edges.userData.edgeBasePosition = placement.position.clone();
+        edgeScene.add(edges);
+      });
+    }
+
+    function addTreeFallbackCell(cell, descriptor, visibility, now) {
+      addComponent([cell], descriptor.blockHeight, terrainColor("tree"), descriptor.topY, {
+        outline: true,
+        rounded: false,
+        castShadow: renderContextCastsShadows(),
+        receiveShadow: false,
+        opacity: visibility,
+        editorPick: {
+          kind: "terrain",
+          cells: [
+            {
+              gridX: cell.gridX,
+              gridY: cell.gridY,
+              left: cell.left + renderOffsetX(),
+              right: cell.right + renderOffsetX(),
+              top: cell.top + renderOffsetZ(),
+              bottom: cell.bottom + renderOffsetZ()
+            }
+          ],
+          topY: descriptor.topY,
+          bottomY: descriptor.bottomY,
+          sourceLayer: descriptor.elevation ?? 0
+        },
+        edgeOptions: {
+          descriptor,
+          now,
+          offsetX: renderOffsetX(),
+          offsetZ: renderOffsetZ()
+        },
+        offsetX: renderOffsetX(),
+        offsetZ: renderOffsetZ()
+      });
+    }
+
+    function addTreeComponent(cells, descriptor, now) {
+      const visibility = transitionPieceProgressForCells(cells);
+
+      if (visibility <= 0.015) {
+        return;
+      }
+
+      const model = requestModelAsset(descriptor.layer?.modelUrl);
+
+      cells.forEach((cell) => {
+        if (model) {
+          addTreeModelCell(cell, descriptor, model, visibility);
+        } else {
+          addTreeFallbackCell(cell, descriptor, visibility, now);
+        }
+      });
+    }
+
     function addTerrainComponent(cells, descriptor, now) {
       if (descriptor.isVoid) {
+        return;
+      }
+
+      if (descriptor.type === "tree") {
+        addTreeComponent(cells, descriptor, now);
         return;
       }
 
@@ -4051,6 +4572,10 @@
     }
 
     function geometryCacheHas(geometry) {
+      if (geometry?.userData?.persistentGeometry) {
+        return true;
+      }
+
       for (const cached of geometryCache.values()) {
         if (cached === geometry) {
           return true;
@@ -4315,7 +4840,7 @@
     }
 
     function layerSignature(layer) {
-      return `${layer.type}:${layer.elevation ?? 0}:${layer.raised ? 1 : 0}`;
+      return `${layer.type}:${layer.elevation ?? 0}:${layer.raised ? 1 : 0}:${layer.modelUrl || ""}`;
     }
 
     function cameraFitSignature() {

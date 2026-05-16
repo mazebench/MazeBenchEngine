@@ -15,7 +15,7 @@
     "floating_floor",
     "weightless_box"
   ]);
-  const raisedTerrainNames = new Set(["wall", "orange_wall"]);
+  const raisedTerrainNames = new Set(["wall", "tree", "orange_wall"]);
   const baseSurfaceNames = new Set(["floor", "ice"]);
 
   function titleCaseName(name) {
@@ -113,6 +113,7 @@
         }
 
         const isRaisedTerrain = isRaisedTerrainTool(tool);
+        const stackHeight = terrainToolStackHeight(tool);
         let elevation = Math.max(0, surfaceHeight ?? 0);
 
         if (!isRaisedTerrain && previousSurfaceTerrain && surfaceHeight !== null) {
@@ -120,7 +121,7 @@
         }
 
         entries.push({ elevation, index, isAir: false, token, tool });
-        surfaceHeight = elevation + (isRaisedTerrain ? 1 : 0);
+        surfaceHeight = elevation + stackHeight;
         previousSurfaceTerrain = !isRaisedTerrain;
       });
 
@@ -285,6 +286,10 @@
       );
     }
 
+    function terrainToolStackHeight(tool) {
+      return toolType(tool) === "tree" ? 3 : isRaisedTerrainTool(tool) ? 1 : 0;
+    }
+
     function isBaseSurfaceTool(tool) {
       return baseSurfaceNames.has(toolType(tool));
     }
@@ -294,6 +299,7 @@
         type,
         label: tool?.label || titleCaseName(type),
         imageUrl: tool?.imageUrl || null,
+        modelUrl: tool?.modelUrl || null,
         layers: Array.isArray(options.layers) ? options.layers : null,
         underlay: options.underlay || null,
         raised: options.raised === true
@@ -307,6 +313,7 @@
         type,
         label: tool?.label || titleCaseName(type),
         imageUrl: tool?.imageUrl || null,
+        modelUrl: tool?.modelUrl || null,
         elevation,
         raised: type === "player_lift" ? tool?.initialRaised === true : false
       };
@@ -345,8 +352,8 @@
           return;
         }
 
-        const terrainType = toolType(tool);
         const isRaisedTerrain = isRaisedTerrainTool(tool);
+        const stackHeight = terrainToolStackHeight(tool);
         let elevation = Math.max(0, surfaceHeight ?? 0);
 
         if (!isRaisedTerrain && previousSurfaceTerrain && surfaceHeight !== null) {
@@ -354,11 +361,13 @@
         }
 
         terrainLayers.push(buildTerrainLayer(tool, elevation));
-        surfaceHeight = elevation + (isRaisedTerrain ? 1 : 0);
+        surfaceHeight = elevation + stackHeight;
         previousSurfaceTerrain = !isRaisedTerrain;
       });
 
       const wallLayer = terrainLayers.find((layer) => layer.type === "wall") || null;
+      const treeLayer = terrainLayers.find((layer) => layer.type === "tree") || null;
+      const raisedBlockLayer = wallLayer || treeLayer;
       const exitLayer = terrainLayers.find((layer) => layer.type === "exit") || null;
       const topLayer =
         terrainLayers.length > 0
@@ -366,17 +375,18 @@
               layer.elevation >= highest.elevation ? layer : highest
             )
           : null;
-      const terrainLayer = wallLayer || exitLayer || topLayer || null;
+      const terrainLayer = raisedBlockLayer || exitLayer || topLayer || null;
       const terrainLayerTool = terrainLayer || null;
       const layers = terrainLayers.map((layer) => ({ ...layer }));
 
-      if (wallLayer) {
-        const underlayLayer = terrainLayers.find((layer) => layer.type !== "wall") || null;
+      if (raisedBlockLayer) {
+        const underlayLayer =
+          terrainLayers.find((layer) => layer.type !== raisedBlockLayer.type) || null;
         const underlayTool = underlayLayer || floorTool;
 
         return {
           actors,
-          terrain: buildTerrainCell("wall", terrainLayerTool || wallLayer, {
+          terrain: buildTerrainCell(raisedBlockLayer.type, raisedBlockLayer, {
             layers,
             underlay: buildTerrainCell(
               underlayLayer?.type || toolType(underlayTool) || "floor",
@@ -563,6 +573,7 @@
               groupId: toolType(tool) === "weightless_box" ? tool.token : null,
               label: tool.label,
               imageUrl: tool.imageUrl || null,
+              modelUrl: tool.modelUrl || null,
               elevation,
               x,
               y

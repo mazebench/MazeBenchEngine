@@ -176,10 +176,12 @@
         }
       },
       imageUrls: new Set(),
+      modelUrls: new Set(),
       sceneCanvas: document.createElement("canvas"),
       viewCanvas: document.createElement("canvas"),
       weightlessGroupCanvas: document.createElement("canvas"),
       imageCache: new Map(),
+      modelTextCache: new Map(),
       moveHistory: [],
       animationFrameId: null,
       isAnimating: false,
@@ -398,11 +400,33 @@
       }
     }
 
+    function registerModelUrl(url) {
+      if (typeof url === "string" && url.length > 0) {
+        app.modelUrls.add(url);
+      }
+    }
+
+    function registerTerrainAssetUrlsForCell(cell) {
+      if (!cell) {
+        return;
+      }
+
+      registerImageUrl(cell?.imageUrl || null);
+      registerModelUrl(cell?.modelUrl || null);
+      registerTerrainAssetUrlsForCell(cell?.underlay || null);
+
+      if (Array.isArray(cell?.layers)) {
+        cell.layers.forEach((layer) => {
+          registerImageUrl(layer?.imageUrl || null);
+          registerModelUrl(layer?.modelUrl || null);
+        });
+      }
+    }
+
     function registerTerrainImageUrls(terrain) {
       terrain.forEach((row) => {
         row.forEach((cell) => {
-          registerImageUrl(cell?.imageUrl || null);
-          registerImageUrl(cell?.underlay?.imageUrl || null);
+          registerTerrainAssetUrlsForCell(cell);
         });
       });
     }
@@ -792,6 +816,7 @@
         groupId: actor.groupId ?? null,
         label: actor.label,
         imageUrl: actor.imageUrl || null,
+        modelUrl: actor.modelUrl || null,
         x: actor.x,
         y: actor.y,
         removed: Boolean(actor.removed),
@@ -840,18 +865,61 @@
       });
     }
 
+    function preloadModelUrl(url) {
+      if (typeof url !== "string" || url.length === 0) {
+        return Promise.resolve();
+      }
+
+      registerModelUrl(url);
+
+      if (app.modelTextCache.has(url)) {
+        return Promise.resolve();
+      }
+
+      return fetch(url)
+        .then((response) => (response.ok ? response.text() : null))
+        .then((text) => {
+          app.modelTextCache.set(url, text);
+        })
+        .catch(() => {
+          app.modelTextCache.set(url, null);
+        });
+    }
+
+    function collectTerrainAssetUrls(cell, urls, modelUrls) {
+      if (!cell) {
+        return;
+      }
+
+      if (cell.imageUrl) {
+        urls.add(cell.imageUrl);
+      }
+      if (cell.modelUrl) {
+        modelUrls.add(cell.modelUrl);
+      }
+
+      collectTerrainAssetUrls(cell.underlay, urls, modelUrls);
+
+      if (Array.isArray(cell.layers)) {
+        cell.layers.forEach((layer) => {
+          if (layer?.imageUrl) {
+            urls.add(layer.imageUrl);
+          }
+          if (layer?.modelUrl) {
+            modelUrls.add(layer.modelUrl);
+          }
+        });
+      }
+    }
+
     function preloadImagesForLevelState(levelState) {
       const urls = new Set([app.PLAYER_LIFT_ARROW_URL]);
+      const modelUrls = new Set();
       registerImageUrl(app.PLAYER_LIFT_ARROW_URL);
 
       (levelState?.terrain || []).forEach((row) => {
         row.forEach((cell) => {
-          if (cell?.imageUrl) {
-            urls.add(cell.imageUrl);
-          }
-          if (cell?.underlay?.imageUrl) {
-            urls.add(cell.underlay.imageUrl);
-          }
+          collectTerrainAssetUrls(cell, urls, modelUrls);
         });
       });
 
@@ -859,9 +927,15 @@
         if (actor?.imageUrl) {
           urls.add(actor.imageUrl);
         }
+        if (actor?.modelUrl) {
+          modelUrls.add(actor.modelUrl);
+        }
       });
 
-      return Promise.all(Array.from(urls).map((url) => preloadImageUrl(url)));
+      return Promise.all([
+        ...Array.from(urls).map((url) => preloadImageUrl(url)),
+        ...Array.from(modelUrls).map((url) => preloadModelUrl(url))
+      ]);
     }
 
     function restoreTerrainState(terrain) {
@@ -1200,7 +1274,7 @@
     }
 
     function groundSurfaceCell(cell) {
-      if (cell?.type === "wall" && cell.underlay) {
+      if ((cell?.type === "wall" || cell?.type === "tree") && cell.underlay) {
         return cell.underlay;
       }
 
@@ -1244,6 +1318,10 @@
 
       if (layer.type === "wall") {
         return elevation + 1;
+      }
+
+      if (layer.type === "tree") {
+        return elevation + 3;
       }
 
       if (layer.type === "player_gate") {
@@ -1555,7 +1633,8 @@
     }
 
     function isTerrainWall(x, y) {
-      return terrainLayersOfType(x, y, "wall").length > 0;
+      return terrainLayersOfType(x, y, "wall").length > 0 ||
+        terrainLayersOfType(x, y, "tree").length > 0;
     }
 
     function terrainCellAcrossHorizontalWorldEdge(x, y) {
@@ -1589,7 +1668,9 @@
     }
 
     function isTerrainWallAcrossHorizontalWorldEdge(x, y) {
-      return terrainCellAcrossHorizontalWorldEdge(x, y)?.type === "wall";
+      const cell = terrainCellAcrossHorizontalWorldEdge(x, y);
+
+      return cell?.type === "wall" || cell?.type === "tree";
     }
 
     function isWall(
@@ -2360,7 +2441,10 @@
     }
 
     function preloadImages() {
-      return Promise.all(Array.from(app.imageUrls).map((url) => preloadImageUrl(url)));
+      return Promise.all([
+        ...Array.from(app.imageUrls).map((url) => preloadImageUrl(url)),
+        ...Array.from(app.modelUrls).map((url) => preloadModelUrl(url))
+      ]);
     }
 
     Object.assign(app, {

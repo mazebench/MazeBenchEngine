@@ -13,6 +13,14 @@ const authorData = {
     { imageUrl: null, label: "Floor", name: "floor", token: "." },
     { imageUrl: null, label: "Ice", name: "ice", token: "i", type: "ice" },
     { imageUrl: null, label: "Wall", name: "wall", token: "W" },
+    {
+      imageUrl: null,
+      label: "Tree 1",
+      modelUrl: "/assets/maze/assets_3d/t1.dae",
+      name: "tree_1",
+      token: "t1",
+      type: "tree"
+    },
     { imageUrl: null, initialRaised: false, label: "Player Lift l", name: "player_lift", token: "l", type: "player_lift" },
     { imageUrl: null, initialRaised: true, label: "Raised Player Lift", name: "player_lift", token: "L", type: "player_lift" },
     { imageUrl: null, label: "Orange Wall", name: "orange_wall", token: "O", type: "orange_wall" },
@@ -84,6 +92,7 @@ assert.equal(adapter.setCellElevationToken(".", ".", 0, { stackBaseSurface: true
 assert.equal(adapter.setCellElevationToken(".+.", ".", 1, { stackBaseSurface: true }), ".");
 assert.equal(adapter.setCellElevationToken("W", ".", 0), ".+W");
 assert.equal(adapter.setCellElevationToken("W", "i", 2), "i+W");
+assert.equal(adapter.setCellElevationToken(".", "t1", 0, { preserveBaseSurface: true }), ".+t1");
 assert.equal(adapter.appendCellToken("+", "W"), "W");
 assert.equal(adapter.appendCellToken(".", "W"), ".+W");
 assert.equal(adapter.appendCellToken("W", "B"), "W+B");
@@ -189,6 +198,26 @@ assert.deepEqual(
     ["floor", 0],
     ["floor", 1]
   ]
+);
+
+const treePlayData = adapter.buildPlayData({
+  cells: [["t1+P", "t1+t1"]],
+  height: 1,
+  width: 2
+});
+
+assert.equal(treePlayData.terrain[0][0].type, "tree");
+assert.equal(treePlayData.terrain[0][0].modelUrl, "/assets/maze/assets_3d/t1.dae");
+assert.deepEqual(
+  treePlayData.terrain[0][1].layers.map((layer) => [layer.type, layer.elevation, layer.modelUrl]),
+  [
+    ["tree", 0, "/assets/maze/assets_3d/t1.dae"],
+    ["tree", 3, "/assets/maze/assets_3d/t1.dae"]
+  ]
+);
+assert.deepEqual(
+  treePlayData.actors.map((actor) => [actor.type, actor.elevation]),
+  [["player", 3]]
 );
 
 console.log("author play data tests passed");

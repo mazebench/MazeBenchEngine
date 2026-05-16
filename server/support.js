@@ -35,6 +35,8 @@ function getContentType(filePath) {
       return "image/webp";
     case ".svg":
       return "image/svg+xml";
+    case ".dae":
+      return "model/vnd.collada+xml; charset=utf-8";
     default:
       return "application/octet-stream";
   }

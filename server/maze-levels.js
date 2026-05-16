@@ -171,6 +171,8 @@ function createMazeLevelService({
     const definitions = Object.entries(game.parser?.objects || {}).map(([name, config]) => {
       const relativeImagePath = typeof config?.image === "string" ? config.image : null;
       const assetPath = relativeImagePath ? resolveGameAssetPath(game.id, relativeImagePath) : null;
+      const relativeModelPath = typeof config?.model === "string" ? config.model : null;
+      const modelPath = relativeModelPath ? resolveGameAssetPath(game.id, relativeModelPath) : null;
 
       return {
         initialRaised: config?.initial_raised === true,
@@ -178,6 +180,7 @@ function createMazeLevelService({
         tokens: getDefinitionTokens(config),
         tokenEntries: getDefinitionTokenEntries(config),
         imageUrl: assetPath ? buildGameAssetUrl(game.id, relativeImagePath) : null,
+        modelUrl: modelPath ? buildGameAssetUrl(game.id, relativeModelPath) : null,
         label: typeof config?.label === "string" ? config.label : titleCase(name),
         type: typeof config?.type === "string" ? config.type : name
       };
@@ -207,6 +210,7 @@ function createMazeLevelService({
       type,
       label: definition?.label || titleCase(type),
       imageUrl: definition?.imageUrl || null,
+      modelUrl: definition?.modelUrl || null,
       layers: Array.isArray(options.layers) ? options.layers : null,
       underlay: options.underlay || null,
       raised: Boolean(options.raised)
@@ -251,9 +255,14 @@ function createMazeLevelService({
 
     return (
       type === "wall" ||
+      type === "tree" ||
       type === "orange_wall" ||
       (type === "player_lift" && definition?.initialRaised === true)
     );
+  }
+
+  function terrainDefinitionStackHeight(definition) {
+    return definitionType(definition) === "tree" ? 3 : isRaisedTerrainDefinition(definition) ? 1 : 0;
   }
 
   function buildTerrainLayer(definition, elevation) {
@@ -263,6 +272,7 @@ function createMazeLevelService({
       type,
       label: definition?.label || titleCase(type),
       imageUrl: definition?.imageUrl || null,
+      modelUrl: definition?.modelUrl || null,
       elevation,
       raised: type === "player_lift" ? definition?.initialRaised === true : false
     };
@@ -302,6 +312,7 @@ function createMazeLevelService({
       }
 
       const isRaisedTerrain = isRaisedTerrainDefinition(definition);
+      const stackHeight = terrainDefinitionStackHeight(definition);
       let elevation = Math.max(0, surfaceHeight ?? 0);
 
       if (!isRaisedTerrain && previousSurfaceTerrain && surfaceHeight !== null) {
@@ -309,11 +320,13 @@ function createMazeLevelService({
       }
 
       terrainLayers.push(buildTerrainLayer(definition, elevation));
-      surfaceHeight = elevation + (isRaisedTerrain ? 1 : 0);
+      surfaceHeight = elevation + stackHeight;
       previousSurfaceTerrain = !isRaisedTerrain;
     });
 
     const wallLayer = terrainLayers.find((layer) => layer.type === "wall") || null;
+    const treeLayer = terrainLayers.find((layer) => layer.type === "tree") || null;
+    const raisedBlockLayer = wallLayer || treeLayer;
     const exitLayer = terrainLayers.find((layer) => layer.type === "exit") || null;
     const topLayer =
       terrainLayers.length > 0
@@ -321,16 +334,17 @@ function createMazeLevelService({
             layer.elevation >= highest.elevation ? layer : highest
           )
         : null;
-    const terrainLayer = wallLayer || exitLayer || topLayer || null;
+    const terrainLayer = raisedBlockLayer || exitLayer || topLayer || null;
     const layers = terrainLayers.map((layer) => ({ ...layer }));
 
-    if (wallLayer) {
-      const underlayLayer = terrainLayers.find((layer) => layer.type !== "wall") || null;
+    if (raisedBlockLayer) {
+      const underlayLayer =
+        terrainLayers.find((layer) => layer.type !== raisedBlockLayer.type) || null;
       const underlayDefinition = underlayLayer || floorDefinition || null;
 
       return {
         actors,
-        terrain: buildTerrainCell("wall", terrainLayer || wallLayer, {
+        terrain: buildTerrainCell(raisedBlockLayer.type, raisedBlockLayer, {
           layers,
           underlay: buildTerrainCell(
             underlayLayer?.type || definitionType(underlayDefinition) || "floor",
@@ -421,6 +435,7 @@ function createMazeLevelService({
             groupId: definitionType(definition) === "weightless_box" ? definition.token : null,
             label: definition.label,
             imageUrl: definition.imageUrl,
+            modelUrl: definition.modelUrl,
             elevation,
             x: index,
             y
@@ -568,6 +583,7 @@ function createMazeLevelService({
       definition.tokenEntries.forEach((entry) => {
         palette.push({
           imageUrl: definition?.imageUrl || null,
+          modelUrl: definition?.modelUrl || null,
           label:
             entry.label ||
             (definition.tokenEntries.length > 1
