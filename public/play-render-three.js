@@ -4027,12 +4027,30 @@
         : treeModelWorldScale;
     }
 
+    function seededTerrainModelRotation(cell, descriptor) {
+      const seed = [
+        cell.gridX,
+        cell.gridY,
+        Math.floor(Number(descriptor.elevation) || 0),
+        descriptor.layer?.modelUrl || descriptor.type || ""
+      ].join(":");
+      let hash = 2166136261;
+
+      for (let index = 0; index < seed.length; index += 1) {
+        hash ^= seed.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+
+      return ((hash >>> 0) / 4294967296) * Math.PI * 2;
+    }
+
     function treeModelPlacement(model, cell, descriptor) {
       const scale = terrainModelWorldScale(descriptor);
       const centerX = (cell.left + cell.right) / 2 + renderOffsetX();
       const centerZ = (cell.top + cell.bottom) / 2 + renderOffsetZ();
 
       return {
+        rotationY: seededTerrainModelRotation(cell, descriptor),
         scale,
         position: new THREE.Vector3(
           centerX,
@@ -4072,6 +4090,7 @@
 
         mesh.position.copy(placement.position);
         mesh.scale.setScalar(placement.scale);
+        mesh.rotation.y = placement.rotationY;
         mesh.castShadow = castsShadows;
         mesh.receiveShadow = false;
         mesh.userData.editorPick = editorPick;
@@ -4094,6 +4113,7 @@
 
         edges.position.copy(placement.position);
         edges.scale.setScalar(placement.scale);
+        edges.rotation.y = placement.rotationY;
         edges.userData.edgeBasePosition = placement.position.clone();
         edgeScene.add(edges);
       });
