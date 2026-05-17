@@ -767,7 +767,8 @@
           elevation,
           occupied,
           gateState,
-          orangeButtonsPressed
+          orangeButtonsPressed,
+          options
         );
 
         if (!traversal && typeof options.pushSlopeBlocker === "function") {
@@ -794,7 +795,8 @@
               elevation,
               occupied,
               gateState,
-              orangeButtonsPressed
+              orangeButtonsPressed,
+              options
             );
           }
         }
@@ -1536,7 +1538,8 @@
       elevation,
       occupied,
       gateState,
-      orangeButtonsPressed
+      orangeButtonsPressed,
+      options = {}
     ) {
       let traversal = iceSlopeTraversalForEntry(state, slopeX, slopeY, dx, dy, elevation);
       const path = traversal ? iceSlopeTraversalPathPoints(traversal) : [];
@@ -1564,7 +1567,8 @@
             traversal.exitElevation,
             occupied,
             gateState,
-            orangeButtonsPressed
+            orangeButtonsPressed,
+            options
           );
 
           if (fallTraversal) {
@@ -1761,27 +1765,65 @@
       fromElevation,
       occupied,
       gateState,
-      orangeButtonsPressed
+      orangeButtonsPressed,
+      options = {}
     ) {
-      return iceSlopeLayersAt(state, slopeX, slopeY)
+      const layers = iceSlopeLayersAt(state, slopeX, slopeY)
         .filter((layer) => layer.elevation + 1 < fromElevation)
-        .sort((left, right) => right.elevation - left.elevation)
-        .map((layer) => {
-          const uphill = puncherDirectionVector(layer.direction);
+        .sort((left, right) => right.elevation - left.elevation);
 
-          return resolveIceSlopeTraversal(
+      for (const layer of layers) {
+        const uphill = puncherDirectionVector(layer.direction);
+        const downhill = { dx: -uphill.dx, dy: -uphill.dy };
+        let traversal = resolveIceSlopeTraversal(
+          state,
+          slopeX,
+          slopeY,
+          downhill.dx,
+          downhill.dy,
+          layer.elevation + 1,
+          occupied,
+          gateState,
+          orangeButtonsPressed,
+          options
+        );
+
+        if (!traversal && typeof options.pushSlopeBlocker === "function") {
+          const blockedSlope = blockedIceSlopePushForEntry(
             state,
             slopeX,
             slopeY,
-            -uphill.dx,
-            -uphill.dy,
+            downhill.dx,
+            downhill.dy,
             layer.elevation + 1,
             occupied,
             gateState,
-            orangeButtonsPressed
+            orangeButtonsPressed,
+            options.ignoredActors || new Set()
           );
-        })
-        .find(Boolean) || null;
+
+          if (blockedSlope && options.pushSlopeBlocker(blockedSlope.blocker, downhill.dx, downhill.dy)) {
+            traversal = resolveIceSlopeTraversal(
+              state,
+              slopeX,
+              slopeY,
+              downhill.dx,
+              downhill.dy,
+              layer.elevation + 1,
+              occupied,
+              gateState,
+              orangeButtonsPressed,
+              options
+            );
+          }
+        }
+
+        if (traversal) {
+          return traversal;
+        }
+      }
+
+      return null;
     }
 
     function resolveIceSlopeFallTraversalForLanding(
@@ -1791,7 +1833,8 @@
       elevation,
       occupied,
       gateState,
-      orangeButtonsPressed
+      orangeButtonsPressed,
+      options = {}
     ) {
       const traversal = iceSlopeFallTraversal(
         state,
@@ -1800,7 +1843,8 @@
         elevation,
         occupied,
         gateState,
-        orangeButtonsPressed
+        orangeButtonsPressed,
+        options
       );
 
       if (!traversal) {
@@ -1843,7 +1887,8 @@
           nextElevation,
           occupied,
           gateState,
-          orangeButtonsPressed
+          orangeButtonsPressed,
+          options
         );
 
         if (!slopeTraversal && typeof options.pushSlopeBlocker === "function") {
@@ -1870,7 +1915,8 @@
               nextElevation,
               occupied,
               gateState,
-              orangeButtonsPressed
+              orangeButtonsPressed,
+              options
             );
           }
         }
@@ -1883,7 +1929,8 @@
             nextElevation,
             occupied,
             gateState,
-            orangeButtonsPressed
+            orangeButtonsPressed,
+            options
           );
         }
 
@@ -2234,7 +2281,8 @@
           elevation,
           occupied,
           gateState,
-          orangeButtonsPressed
+          orangeButtonsPressed,
+          options
         );
 
         if (!traversal && typeof options.pushSlopeBlocker === "function") {
@@ -2261,7 +2309,8 @@
               elevation,
               occupied,
               gateState,
-              orangeButtonsPressed
+              orangeButtonsPressed,
+              options
             );
           }
         }
@@ -2274,7 +2323,8 @@
             elevation,
             occupied,
             gateState,
-            orangeButtonsPressed
+            orangeButtonsPressed,
+            options
           );
         }
 
@@ -3853,11 +3903,52 @@
         let travelElevation = fromElevation;
         const travelPath = [{ x: fromX, y: fromY, elevation: fromElevation }];
         let iceSlipLanding = null;
+        const ignoredPlayerSet = new Set([player]);
 
         while (true) {
           const targetX = nextX + dx;
           const targetY = nextY + dy;
           const isInitialStep = nextX === fromX && nextY === fromY;
+          const pushSlopeBlocker = (blocker, pushDx = dx, pushDy = dy) => {
+            const attemptSnapshot = attemptSnapshotBuffer || cloneState(state);
+            const occupiedSnapshot = occupiedSnapshotBuffer || new Set(occupied);
+            const moveCount = moves.length;
+            const pushBudget = countSupportingPlayers(state, player, pushDx, pushDy);
+
+            if (attemptSnapshotBuffer) {
+              copyStateInto(attemptSnapshotBuffer, state);
+            }
+
+            if (occupiedSnapshotBuffer) {
+              occupiedSnapshotBuffer.clear();
+              occupied.forEach((key) => occupiedSnapshotBuffer.add(key));
+            }
+
+            const result = attemptPushActor(
+              state,
+              blocker,
+              pushDx,
+              pushDy,
+              occupied,
+              moves,
+              pushBudget,
+              new Set(),
+              raisedPlayerGates,
+              orangeButtonsPressed,
+              ignoredPlayerSet,
+              searchMode
+            );
+
+            if (result !== null) {
+              return true;
+            }
+
+            copyStateInto(state, attemptSnapshot);
+            occupied.clear();
+            occupiedSnapshot.forEach((key) => occupied.add(key));
+            moves.length = moveCount;
+            return false;
+          };
           let slopeTraversal = resolveIceSlopeTraversal(
             state,
             targetX,
@@ -3867,7 +3958,11 @@
             travelElevation,
             occupied,
             raisedPlayerGates,
-            orangeButtonsPressed
+            orangeButtonsPressed,
+            {
+              ignoredActors: ignoredPlayerSet,
+              pushSlopeBlocker
+            }
           );
 
           if (!slopeTraversal) {
@@ -3885,35 +3980,7 @@
             );
 
             if (blockedSlope) {
-              const attemptSnapshot = attemptSnapshotBuffer || cloneState(state);
-              const occupiedSnapshot = occupiedSnapshotBuffer || new Set(occupied);
-              const moveCount = moves.length;
-
-              if (attemptSnapshotBuffer) {
-                copyStateInto(attemptSnapshotBuffer, state);
-              }
-
-              if (occupiedSnapshotBuffer) {
-                occupiedSnapshotBuffer.clear();
-                occupied.forEach((key) => occupiedSnapshotBuffer.add(key));
-              }
-
-              const result = attemptPushActor(
-                state,
-                blockedSlope.blocker,
-                dx,
-                dy,
-                occupied,
-                moves,
-                1,
-                new Set(),
-                raisedPlayerGates,
-                orangeButtonsPressed,
-                new Set([player]),
-                searchMode
-              );
-
-              if (result !== null) {
+              if (pushSlopeBlocker(blockedSlope.blocker)) {
                 slopeTraversal = resolveIceSlopeTraversal(
                   state,
                   targetX,
@@ -3923,15 +3990,12 @@
                   travelElevation,
                   occupied,
                   raisedPlayerGates,
-                  orangeButtonsPressed
+                  orangeButtonsPressed,
+                  {
+                    ignoredActors: ignoredPlayerSet,
+                    pushSlopeBlocker
+                  }
                 );
-              }
-
-              if (!slopeTraversal) {
-                copyStateInto(state, attemptSnapshot);
-                occupied.clear();
-                occupiedSnapshot.forEach((key) => occupied.add(key));
-                moves.length = moveCount;
               }
             }
           }

@@ -730,6 +730,36 @@ function createState(playData) {
 }
 
 {
+  const { engine, state } = createState({
+    width: 5,
+    height: 1,
+    terrain: [[iceBlockLayer(0), iceSlopeLayer("right", 1), iceSlopeLayer("left", 0), { type: "floor" }, { type: "floor" }]],
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 1, removed: false },
+      { type: "box", x: 3, y: 0, elevation: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  const boxMove = result.moves.find((move) => move.actorIndex === 1);
+  const playerMove = result.moves.find((move) => move.actorIndex === 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorY[0]], [3, 0]);
+  assert.equal(state.actorElevation[0], 0);
+  assert.deepEqual([state.actorX[1], state.actorY[1]], [4, 0]);
+  assert.equal(state.actorElevation[1], 0);
+  assert.deepEqual([boxMove.fromX, boxMove.toX], [3, 4]);
+  assert.deepEqual(playerMove.path, [
+    { x: 0, y: 0, elevation: 1 },
+    { x: 1, y: 0, elevation: 2 },
+    { x: 2, y: 0, elevation: 2 },
+    { x: 2, y: 0, elevation: 1 },
+    { x: 3, y: 0, elevation: 0 }
+  ]);
+}
+
+{
   const tower = {
     type: "wall",
     layers: [
