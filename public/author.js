@@ -130,6 +130,21 @@
     token: eraserToken,
     type: "eraser"
   };
+  const iceSlopeTools = authorData.palette.filter((tool) => isIceSlopeTool(tool));
+  const canonicalIceSlopeToken = iceSlopeTools[0]?.token || null;
+  const iceSlopeTokenByDirection = new Map(
+    iceSlopeTools
+      .filter((tool) => typeof tool.direction === "string" && tool.direction)
+      .map((tool) => [tool.direction, tool.token])
+  );
+  const iceSlopePaletteTool = canonicalIceSlopeToken
+    ? {
+        ...iceSlopeTools[0],
+        displayToken: "S",
+        label: "Ice Slope",
+        token: canonicalIceSlopeToken
+      }
+    : null;
   const worldColumns =
     Array.isArray(authorData.worldColumns) && authorData.worldColumns.length > 0
       ? authorData.worldColumns
@@ -692,15 +707,33 @@
   }
 
   function selectablePaletteTools() {
-    return [noopTool, eraserTool].concat(
-      authorData.palette.filter(
-        (tool) =>
-          tool.selectable !== false &&
-          tool.name !== "hole" &&
-          tool.name !== "box" &&
-          tool.token !== "b"
-      )
-    );
+    const tools = [noopTool, eraserTool];
+    let hasAddedIceSlope = false;
+
+    authorData.palette.forEach((tool) => {
+      if (
+        tool.selectable === false ||
+        tool.name === "hole" ||
+        tool.name === "box" ||
+        tool.token === "b"
+      ) {
+        return;
+      }
+
+      if (isIceSlopeTool(tool)) {
+        if (hasAddedIceSlope || !iceSlopePaletteTool) {
+          return;
+        }
+
+        hasAddedIceSlope = true;
+        tools.push(iceSlopePaletteTool);
+        return;
+      }
+
+      tools.push(tool);
+    });
+
+    return tools;
   }
 
   function renderPalette() {
@@ -713,12 +746,17 @@
             : previewUrl
               ? '<img src="' + escapeHtml(previewUrl) + '" alt="">'
               : '<span class="palette__swatch-placeholder" aria-hidden="true"></span>';
+        const accessibleToken = tool.displayToken || tool.token;
         const accessibleLabel =
           tool.token === noopToken
             ? tool.label
-            : tool.label + " (" + tool.token + ")";
+            : tool.label + " (" + accessibleToken + ")";
         const tokenLabel =
-          tool.token === noopToken ? "Select" : tool.token === eraserToken ? "Erase" : tool.token;
+          tool.token === noopToken
+            ? "Select"
+            : tool.token === eraserToken
+              ? "Erase"
+              : tool.displayToken || tool.token;
 
         return (
           '<button class="tool-button palette__button' +
@@ -884,14 +922,17 @@
     const tool = toolByToken.get(state.selectedToken);
     const isNoop = state.selectedToken === noopToken;
     const isEraser = state.selectedToken === eraserToken;
+    const isIceSlope = isIceSlopeToken(state.selectedToken);
 
     elements.selectedToolLabel.textContent =
-      isNoop ? "Select" : isEraser ? "Erase" : state.selectedToken;
+      isNoop ? "Select" : isEraser ? "Erase" : isIceSlope ? "S" : state.selectedToken;
     elements.selectedToolLabel.title =
       isNoop
         ? noopTool.label
         : isEraser
           ? eraserTool.label
+          : isIceSlope
+            ? "Ice Slope"
         : tool
           ? tool.label
           : state.selectedToken;
@@ -1282,12 +1323,13 @@
     }
 
     const isEraser = state.selectedToken === eraserToken;
+    const paintToken = isEraser ? state.selectedToken : effectivePaintToken();
     const x = isEraser ? target.sourceX : target.paintX;
     const y = isEraser ? target.sourceY : target.paintY;
     const paintLayer = adjustedPaintLayerForTarget(target);
 
     return [
-      state.selectedToken,
+      paintToken,
       x,
       y,
       paintLayer ?? "top",
@@ -1303,6 +1345,14 @@
     const type = tool?.type || tool?.name;
 
     return type === "floor" || type === "ice";
+  }
+
+  function isIceSlopeTool(tool) {
+    return (tool?.type || tool?.name) === "ice_slope";
+  }
+
+  function isIceSlopeToken(token) {
+    return isIceSlopeTool(toolByToken.get(token));
   }
 
   function toolTypeForToken(token) {
@@ -1335,6 +1385,25 @@
     }
 
     return "";
+  }
+
+  function cameraFarDirection() {
+    const [dx, dy] =
+      typeof editorRenderer.app?.mapCameraRelativeDirection === "function"
+        ? editorRenderer.app.mapCameraRelativeDirection(0, -1)
+        : [0, -1];
+
+    return directionForPaintTarget({ dx, dy });
+  }
+
+  function cameraFacingIceSlopeToken() {
+    const direction = cameraFarDirection();
+
+    return iceSlopeTokenByDirection.get(direction) || canonicalIceSlopeToken || state.selectedToken;
+  }
+
+  function effectivePaintToken() {
+    return isIceSlopeToken(state.selectedToken) ? cameraFacingIceSlopeToken() : state.selectedToken;
   }
 
   function puncherTokenForDirection(direction) {
@@ -1437,12 +1506,13 @@
       return false;
     }
 
+    const paintToken = effectivePaintToken();
     const paintLayer = adjustedPaintLayerForTarget(target);
     const currentValue = state.cells[target.paintY][target.paintX];
     const nextValue =
       paintLayer === null || paintLayer === undefined
-        ? appendTokenToCellValue(currentValue, state.selectedToken)
-        : setCellElevationToken(currentValue, state.selectedToken, paintLayer, {
+        ? appendTokenToCellValue(currentValue, paintToken)
+        : setCellElevationToken(currentValue, paintToken, paintLayer, {
             preserveBaseSurface: true
           });
 

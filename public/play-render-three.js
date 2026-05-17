@@ -1644,6 +1644,24 @@
       return "right";
     }
 
+    function cardinalGridVector(direction) {
+      const normalized = normalizeCardinalDirection(direction);
+
+      if (normalized === "left") {
+        return { dx: -1, dy: 0 };
+      }
+
+      if (normalized === "up") {
+        return { dx: 0, dy: -1 };
+      }
+
+      if (normalized === "down") {
+        return { dx: 0, dy: 1 };
+      }
+
+      return { dx: 1, dy: 0 };
+    }
+
     function iceSlopeGeometry(direction) {
       const normalized = normalizeCardinalDirection(direction);
       const key = `ice-slope:${normalized}:${Math.round(unit * 100)}:${Math.round(elevationUnit * 100)}`;
@@ -1693,6 +1711,88 @@
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
       geometry.computeVertexNormals();
       geometryCache.set(key, geometry);
+      return geometry;
+    }
+
+    function iceSlopeEdgeGeometry(direction, options = {}) {
+      const normalized = normalizeCardinalDirection(direction);
+      const suppressHighSide = options.suppressHighSide === true;
+      const key = [
+        "ice-slope-edges",
+        normalized,
+        suppressHighSide ? "joined-high" : "open",
+        Math.round(unit * 100),
+        Math.round(elevationUnit * 100)
+      ].join(":");
+
+      if (edgeGeometryCache.has(key)) {
+        return edgeGeometryCache.get(key);
+      }
+
+      const x0 = -unit / 2;
+      const x1 = unit / 2;
+      const z0 = -unit / 2;
+      const z1 = unit / 2;
+      const y0 = 0;
+      const y1 = elevationUnit;
+      const segments = [];
+      const add = (from, to, highSide = false) => segments.push({ from, to, highSide });
+
+      if (normalized === "left") {
+        add([x1, y0, z0], [x1, y0, z1]);
+        add([x1, y0, z0], [x0, y1, z0]);
+        add([x1, y0, z1], [x0, y1, z1]);
+        add([x1, y0, z0], [x0, y0, z0]);
+        add([x1, y0, z1], [x0, y0, z1]);
+        add([x0, y1, z0], [x0, y1, z1], true);
+        add([x0, y0, z0], [x0, y0, z1], true);
+        add([x0, y0, z0], [x0, y1, z0], true);
+        add([x0, y0, z1], [x0, y1, z1], true);
+      } else if (normalized === "down") {
+        add([x0, y0, z0], [x1, y0, z0]);
+        add([x0, y0, z0], [x0, y1, z1]);
+        add([x1, y0, z0], [x1, y1, z1]);
+        add([x0, y0, z0], [x0, y0, z1]);
+        add([x1, y0, z0], [x1, y0, z1]);
+        add([x0, y1, z1], [x1, y1, z1], true);
+        add([x0, y0, z1], [x1, y0, z1], true);
+        add([x0, y0, z1], [x0, y1, z1], true);
+        add([x1, y0, z1], [x1, y1, z1], true);
+      } else if (normalized === "up") {
+        add([x0, y0, z1], [x1, y0, z1]);
+        add([x0, y0, z1], [x0, y1, z0]);
+        add([x1, y0, z1], [x1, y1, z0]);
+        add([x0, y0, z1], [x0, y0, z0]);
+        add([x1, y0, z1], [x1, y0, z0]);
+        add([x0, y1, z0], [x1, y1, z0], true);
+        add([x0, y0, z0], [x1, y0, z0], true);
+        add([x0, y0, z0], [x0, y1, z0], true);
+        add([x1, y0, z0], [x1, y1, z0], true);
+      } else {
+        add([x0, y0, z0], [x0, y0, z1]);
+        add([x0, y0, z0], [x1, y1, z0]);
+        add([x0, y0, z1], [x1, y1, z1]);
+        add([x0, y0, z0], [x1, y0, z0]);
+        add([x0, y0, z1], [x1, y0, z1]);
+        add([x1, y1, z0], [x1, y1, z1], true);
+        add([x1, y0, z0], [x1, y0, z1], true);
+        add([x1, y0, z0], [x1, y1, z0], true);
+        add([x1, y0, z1], [x1, y1, z1], true);
+      }
+
+      const positions = [];
+
+      segments.forEach((segment) => {
+        if (suppressHighSide && segment.highSide) {
+          return;
+        }
+
+        positions.push(...segment.from, ...segment.to);
+      });
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      edgeGeometryCache.set(key, geometry);
       return geometry;
     }
 
@@ -2749,6 +2849,96 @@
       );
     }
 
+    function addPolycubeFaceContactEdges(suppressedEdges, voxel, kind) {
+      const isXFace = kind === "xplus" || kind === "xminus";
+      const plane =
+        kind === "xplus"
+          ? voxel.x + 1
+          : kind === "xminus"
+            ? voxel.x
+            : kind === "zplus"
+              ? voxel.y + 1
+              : voxel.y;
+      const a = isXFace ? voxel.y : voxel.x;
+      const b = voxel.z;
+      const corners = [
+        polycubePointForFace(kind, plane, a, b),
+        polycubePointForFace(kind, plane, a, b + 1),
+        polycubePointForFace(kind, plane, a + 1, b + 1),
+        polycubePointForFace(kind, plane, a + 1, b)
+      ];
+
+      addPolycubeSuppressedEdge(suppressedEdges, corners[0], corners[1]);
+      addPolycubeSuppressedEdge(suppressedEdges, corners[1], corners[2]);
+      addPolycubeSuppressedEdge(suppressedEdges, corners[2], corners[3]);
+      addPolycubeSuppressedEdge(suppressedEdges, corners[3], corners[0]);
+    }
+
+    function iceSlopeDescriptorContactsVoxel(slopeX, slopeY, direction, voxelLevel, now) {
+      if (!renderIsInsideBoard(slopeX, slopeY)) {
+        return false;
+      }
+
+      return terrainPieceDescriptorsAt(slopeX, slopeY, now).some((descriptor) => {
+        if (
+          descriptor.type !== "ice_slope" ||
+          normalizeCardinalDirection(descriptor.layer?.direction) !== direction
+        ) {
+          return false;
+        }
+
+        return (
+          terrainPolycubeLevel(descriptor.bottomY) === voxelLevel &&
+          terrainPolycubeLevel(descriptor.topY) === voxelLevel + 1
+        );
+      });
+    }
+
+    function iceSlopeHighSideContactsForVoxel(voxel, now) {
+      const contacts = [];
+      const candidates = [
+        { dx: -1, dy: 0, direction: "right", face: "xminus" },
+        { dx: 1, dy: 0, direction: "left", face: "xplus" },
+        { dx: 0, dy: -1, direction: "down", face: "zminus" },
+        { dx: 0, dy: 1, direction: "up", face: "zplus" }
+      ];
+
+      candidates.forEach((candidate) => {
+        if (
+          iceSlopeDescriptorContactsVoxel(
+            voxel.x + candidate.dx,
+            voxel.y + candidate.dy,
+            candidate.direction,
+            voxel.z,
+            now
+          )
+        ) {
+          contacts.push(candidate.face);
+        }
+      });
+
+      return contacts;
+    }
+
+    function iceSlopeContactSignatureForVoxels(voxels, now) {
+      return voxels
+        .flatMap((voxel) =>
+          iceSlopeHighSideContactsForVoxel(voxel, now).map(
+            (face) => `${voxel.x},${voxel.y},${voxel.z}:${face}`
+          )
+        )
+        .sort()
+        .join("|");
+    }
+
+    function addIceSlopeContactSuppressedEdges(suppressedEdges, voxels, now) {
+      voxels.forEach((voxel) => {
+        iceSlopeHighSideContactsForVoxel(voxel, now).forEach((face) => {
+          addPolycubeFaceContactEdges(suppressedEdges, voxel, face);
+        });
+      });
+    }
+
     function polycubeContactEdgeKeys(voxels) {
       const voxelKeys = new Set(voxels.map((voxel) => polycubeVoxelKey(voxel.x, voxel.y, voxel.z)));
       const suppressedEdges = new Set();
@@ -2882,11 +3072,15 @@
     }
 
     function polycubeEdgeGeometry(voxels, options = {}) {
+      const iceSlopeContactSignature = options?.suppressIceSlopeContacts
+        ? iceSlopeContactSignatureForVoxels(voxels, options.now)
+        : "";
       const cacheKey = [
         "polycube-edges",
         Math.round(renderOffsetX() * 100),
         Math.round(renderOffsetZ() * 100),
         options?.suppressSharedRoomEdges ? "shared" : "normal",
+        iceSlopeContactSignature,
         options?.descriptor?.key || "",
         activeRenderContext?.state?.levelId || "",
         polycubeVoxelSignature(voxels)
@@ -2899,6 +3093,10 @@
       const positions = [];
       const seenSegments = new Set();
       const suppressedEdges = polycubeContactEdgeKeys(voxels);
+
+      if (options?.suppressIceSlopeContacts) {
+        addIceSlopeContactSuppressedEdges(suppressedEdges, voxels, options.now);
+      }
 
       collectPolycubeFaceCells(voxels).forEach((faceGroup) => {
         addPolycubeFaceBoundaryEdges(positions, seenSegments, faceGroup, suppressedEdges, options);
@@ -4066,6 +4264,7 @@
           edgeGeometry: polycubeEdgeGeometry(voxels, {
             descriptor,
             now,
+            suppressIceSlopeContacts: descriptor.type === "ice_block",
             suppressSharedRoomEdges: descriptor.type === "wall"
           }),
           edgeThreshold: 18,
@@ -4283,10 +4482,35 @@
       });
     }
 
-    function addIceSlopeCell(cell, descriptor, visibility) {
+    function iceSlopeHighSideHasIceBlockContact(cell, descriptor, now) {
+      const direction = normalizeCardinalDirection(descriptor.layer?.direction);
+      const vector = cardinalGridVector(direction);
+      const neighborX = cell.gridX + vector.dx;
+      const neighborY = cell.gridY + vector.dy;
+
+      if (!renderIsInsideBoard(neighborX, neighborY)) {
+        return false;
+      }
+
+      const slopeLevel = terrainPolycubeLevel(descriptor.bottomY ?? 0);
+
+      return terrainPieceDescriptorsAt(neighborX, neighborY, now).some((neighbor) => {
+        if (neighbor.type !== "ice_block" || !canRenderTerrainPolycube(neighbor)) {
+          return false;
+        }
+
+        return (
+          terrainPolycubeLevel(neighbor.bottomY) <= slopeLevel &&
+          terrainPolycubeLevel(neighbor.topY) > slopeLevel
+        );
+      });
+    }
+
+    function addIceSlopeCell(cell, descriptor, visibility, now) {
       const centerX = (cell.left + cell.right) / 2 + renderOffsetX();
       const centerZ = (cell.top + cell.bottom) / 2 + renderOffsetZ();
       const bottomY = descriptor.bottomY ?? descriptor.topY - descriptor.blockHeight;
+      const suppressHighSide = iceSlopeHighSideHasIceBlockContact(cell, descriptor, now);
 
       addOutlinedMesh(
         iceSlopeGeometry(descriptor.layer?.direction),
@@ -4297,6 +4521,9 @@
           z: centerZ
         },
         {
+          edgeGeometry: iceSlopeEdgeGeometry(descriptor.layer?.direction, {
+            suppressHighSide
+          }),
           edgeThreshold: 18,
           opacity: visibility,
           doubleSide: true,
@@ -4339,7 +4566,7 @@
       }
 
       if (descriptor.type === "ice_slope") {
-        cells.forEach((cell) => addIceSlopeCell(cell, descriptor, visibility));
+        cells.forEach((cell) => addIceSlopeCell(cell, descriptor, visibility, now));
         return;
       }
 
