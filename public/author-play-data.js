@@ -214,7 +214,13 @@
 
       if (tokens.length === 0) {
         tokens.push(normalizedToken);
-      } else if (isAirToken(tokens[0]) || isBaseSurfaceToken(tokens[0])) {
+      } else if (isAirToken(tokens[0])) {
+        tokens[0] = normalizedToken;
+
+        if (tokens.some((candidate, index) => index > 0 && !isAirToken(candidate))) {
+          tokens.splice(1, 0, "");
+        }
+      } else if (isBaseSurfaceToken(tokens[0])) {
         tokens[0] = normalizedToken;
       } else {
         tokens.unshift(normalizedToken);

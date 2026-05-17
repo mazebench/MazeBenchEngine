@@ -124,6 +124,7 @@ assert.equal(adapter.setCellElevationToken(".", "sh", 0, { preserveBaseSurface: 
 assert.equal(adapter.setCellElevationToken(".+W", "O", 0, { preserveBaseSurface: true }), ".+O");
 assert.equal(adapter.setCellElevationToken("+", ".", 0), ".");
 assert.equal(adapter.setCellElevationToken("+", "W", 0), "W");
+assert.equal(adapter.setCellElevationToken("++++W", ".", 0), ".+++++W");
 assert.equal(adapter.setCellElevationToken(".", ".", 0, { stackBaseSurface: true }), ".");
 assert.equal(adapter.setCellElevationToken(".+.", ".", 1, { stackBaseSurface: true }), ".");
 assert.equal(adapter.setCellElevationToken("W", ".", 0), ".+W");
@@ -139,6 +140,7 @@ assert.equal(adapter.setCellElevationToken("", "W", 3), "+++W");
 assert.equal(adapter.eraseCellElevationValue("W++W", 0), "++W");
 assert.equal(adapter.eraseCellElevationValue("W++W", 2), "W");
 assert.equal(adapter.eraseCellElevationValue(".++W", 0), "+W");
+assert.equal(adapter.eraseCellElevationValue(".+++++W", 0), "++++W");
 assert.equal(adapter.eraseCellElevationValue(".+W", 0), ".");
 assert.equal(adapter.eraseCellElevationValue(".", 0), "+");
 assert.equal(adapter.eraseCellElevationValue("B++B", 0), "++B");
@@ -247,6 +249,20 @@ assert.deepEqual(
   [
     ["floor", 0],
     ["floor", 1]
+  ]
+);
+
+const elevatedBaseSurfacePlayData = adapter.buildPlayData({
+  cells: [[adapter.setCellElevationToken("++++W", ".", 0)]],
+  height: 1,
+  width: 1
+});
+
+assert.deepEqual(
+  elevatedBaseSurfacePlayData.terrain[0][0].layers.map((layer) => [layer.type, layer.elevation]),
+  [
+    ["floor", 0],
+    ["wall", 4]
   ]
 );
 
