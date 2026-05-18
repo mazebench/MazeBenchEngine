@@ -402,6 +402,334 @@ function createUShapeActors(extraActors = []) {
 }
 
 {
+  const box = { type: "box", x: 0, y: 0, elevation: 0, removed: false };
+  const app = createGameplayApp([box], { height: 1, moveDurationMs: 100, width: 5 });
+  const originalRequestAnimationFrame = window.requestAnimationFrame;
+  const renderSamples = [];
+
+  window.requestAnimationFrame = (callback) => {
+    const elapsedMs = renderSamples.length === 0 ? 60 : 1000;
+
+    callback(performance.now() + elapsedMs);
+    return 1;
+  };
+
+  app.render = () => {
+    renderSamples.push({
+      elevation: box.renderElevation,
+      x: box.renderX
+    });
+  };
+
+  app.animateMoves([
+    {
+      actor: box,
+      actorIndex: 0,
+      actorType: "box",
+      fromElevation: 0,
+      fromX: 0,
+      fromY: 0,
+      iceSlide: true,
+      path: [
+        { x: 0, y: 0, elevation: 0 },
+        { x: 1, y: 0, elevation: 1 },
+        { x: 2, y: 0, elevation: 1 }
+      ],
+      pathControlsElevation: true,
+      pathEndElevation: 1,
+      punchSlide: true,
+      punchStartElevation: 1,
+      punchStartIceSlide: true,
+      punchStartX: 2,
+      punchStartY: 0,
+      toElevation: 1,
+      toX: 4,
+      toY: 0
+    }
+  ]);
+
+  window.requestAnimationFrame = originalRequestAnimationFrame;
+
+  assert.ok(renderSamples[0].x > 0 && renderSamples[0].x < 2);
+  assert.ok(renderSamples[0].elevation > 0 && renderSamples[0].elevation < 1);
+}
+
+{
+  const player = { type: "player", x: 0, y: 0, elevation: 1, removed: false };
+  const box = { type: "box", x: 1, y: 0, elevation: 1, removed: false };
+  const terrain = [[
+    iceBlockCell(0),
+    iceBlockCell(0),
+    iceBlockCell(0),
+    iceSlopeCell("right", 1),
+    iceBlockCell(1)
+  ]];
+  const app = createGameplayApp([player, box], {
+    height: 1,
+    moveDurationMs: 100,
+    terrain,
+    width: 5
+  });
+  const originalRequestAnimationFrame = window.requestAnimationFrame;
+  const renderSamples = [];
+  let frame = 0;
+
+  window.requestAnimationFrame = (callback) => {
+    frame += 1;
+    callback(performance.now() + frame * 60);
+    return frame;
+  };
+
+  app.render = () => {
+    renderSamples.push({
+      elevation: box.renderElevation,
+      x: box.renderX
+    });
+  };
+
+  app.movePlayers(1, 0);
+  window.requestAnimationFrame = originalRequestAnimationFrame;
+
+  assert.deepEqual([box.x, box.y], [4, 0]);
+  assert.equal(box.elevation, 2);
+  assert.ok(renderSamples.some((sample) => sample.x > 1 && sample.x < 2.9));
+  assert.ok(
+    renderSamples.some(
+      (sample) => sample.x > 2 && sample.x < 3.2 && sample.elevation > 1 && sample.elevation < 2
+    )
+  );
+}
+
+{
+  const player = { type: "player", x: 0, y: 0, elevation: 1, removed: false };
+  const box = { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 1, removed: false };
+  const terrain = [[
+    iceBlockCell(0),
+    iceBlockCell(0),
+    iceBlockCell(0),
+    iceSlopeCell("right", 1),
+    iceBlockCell(1)
+  ]];
+  const app = createGameplayApp([player, box], {
+    height: 1,
+    moveDurationMs: 100,
+    terrain,
+    width: 5
+  });
+  const originalRequestAnimationFrame = window.requestAnimationFrame;
+  const renderSamples = [];
+  let frame = 0;
+
+  window.requestAnimationFrame = (callback) => {
+    frame += 1;
+    callback(performance.now() + frame * 60);
+    return frame;
+  };
+
+  app.render = () => {
+    renderSamples.push({
+      elevation: box.renderElevation,
+      x: box.renderX
+    });
+  };
+
+  app.movePlayers(1, 0);
+  window.requestAnimationFrame = originalRequestAnimationFrame;
+
+  assert.deepEqual([box.x, box.y], [4, 0]);
+  assert.equal(box.elevation, 2);
+  assert.ok(renderSamples.some((sample) => sample.x > 1 && sample.x < 2.9));
+  assert.ok(
+    renderSamples.some(
+      (sample) => sample.x > 2 && sample.x < 3.2 && sample.elevation > 1 && sample.elevation < 2
+    )
+  );
+}
+
+{
+  const player = { type: "player", x: 0, y: 0, elevation: 1, removed: false };
+  const box = { type: "box", x: 1, y: 0, elevation: 1, removed: false };
+  const terrain = [[
+    iceBlockCell(0),
+    iceBlockCell(0),
+    iceBlockCell(0),
+    iceSlopeCell("right", 1),
+    iceBlockCell(1)
+  ]];
+  const app = createGameplayApp([player, box], {
+    height: 1,
+    moveDurationMs: 100,
+    terrain,
+    width: 5
+  });
+  const originalRequestAnimationFrame = window.requestAnimationFrame;
+  const renderSamples = [];
+  let frame = 0;
+
+  window.requestAnimationFrame = (callback) => {
+    frame += 1;
+    callback(performance.now() + (frame === 1 ? 260 : 1000));
+    return frame;
+  };
+
+  app.render = () => {
+    renderSamples.push({
+      elevation: box.renderElevation,
+      x: box.renderX
+    });
+  };
+
+  app.movePlayers(1, 0);
+  window.requestAnimationFrame = originalRequestAnimationFrame;
+
+  assert.ok(renderSamples[0].x > 1 && renderSamples[0].x < 4);
+  assert.ok(renderSamples[0].x < 2);
+  assert.ok(renderSamples[0].elevation >= 1 && renderSamples[0].elevation < 2);
+}
+
+{
+  const player = { type: "player", x: 0, y: 0, elevation: 1, removed: false };
+  const box = { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 1, removed: false };
+  const terrain = [[
+    iceBlockCell(0),
+    iceBlockCell(0),
+    iceBlockCell(0),
+    iceSlopeCell("right", 1),
+    iceBlockCell(1)
+  ]];
+  const app = createGameplayApp([player, box], {
+    height: 1,
+    moveDurationMs: 100,
+    terrain,
+    width: 5
+  });
+  const originalRequestAnimationFrame = window.requestAnimationFrame;
+  const renderSamples = [];
+  let frame = 0;
+
+  window.requestAnimationFrame = (callback) => {
+    frame += 1;
+    callback(performance.now() + (frame === 1 ? 260 : 1000));
+    return frame;
+  };
+
+  app.render = () => {
+    renderSamples.push({
+      elevation: box.renderElevation,
+      x: box.renderX
+    });
+  };
+
+  app.movePlayers(1, 0);
+  window.requestAnimationFrame = originalRequestAnimationFrame;
+
+  assert.ok(renderSamples[0].x > 1 && renderSamples[0].x < 2);
+  assert.ok(renderSamples[0].elevation >= 1 && renderSamples[0].elevation < 2);
+}
+
+{
+  const player = { type: "player", x: 0, y: 0, elevation: 1, removed: false };
+  const box = { type: "box", x: 1, y: 0, elevation: 1, removed: false };
+  const terrain = [[
+    iceBlockCell(0),
+    iceBlockCell(0),
+    iceSlopeCell("right", 1),
+    iceSlopeCell("left", 0),
+    { type: "floor" },
+    { type: "floor" }
+  ]];
+  const app = createGameplayApp([player, box], {
+    height: 1,
+    moveDurationMs: 100,
+    terrain,
+    width: 6
+  });
+  const originalRequestAnimationFrame = window.requestAnimationFrame;
+  const renderSamples = [];
+  let frame = 0;
+
+  window.requestAnimationFrame = (callback) => {
+    frame += 1;
+    callback(performance.now() + frame * 60);
+    return frame;
+  };
+
+  app.render = () => {
+    renderSamples.push({
+      elevation: box.renderElevation,
+      x: box.renderX
+    });
+  };
+
+  const result = app.movement.performPlayerMove(1, 0, {
+    animate: true,
+    recordHistory: false
+  });
+  window.requestAnimationFrame = originalRequestAnimationFrame;
+
+  const boxMoves = result.moves.filter((move) => move.actor === box && !move.visualOnly);
+
+  assert.equal(boxMoves.length, 1);
+  assert.deepEqual([box.x, box.y], [5, 0]);
+  assert.equal(box.elevation, 0);
+  assert.ok(renderSamples[0].x > 1 && renderSamples[0].x < 2);
+  assert.ok(renderSamples[0].elevation >= 1 && renderSamples[0].elevation < 2);
+  assert.ok(renderSamples.some((sample) => sample.x > 2.1 && sample.elevation > 1.1));
+  assert.ok(renderSamples.some((sample) => sample.x > 3.1 && sample.elevation < 1.9));
+}
+
+{
+  const player = { type: "player", x: 0, y: 0, elevation: 1, removed: false };
+  const box = { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 1, removed: false };
+  const terrain = [[
+    iceBlockCell(0),
+    iceBlockCell(0),
+    iceSlopeCell("right", 1),
+    iceSlopeCell("left", 0),
+    { type: "floor" },
+    { type: "floor" }
+  ]];
+  const app = createGameplayApp([player, box], {
+    height: 1,
+    moveDurationMs: 100,
+    terrain,
+    width: 6
+  });
+  const originalRequestAnimationFrame = window.requestAnimationFrame;
+  const renderSamples = [];
+  let frame = 0;
+
+  window.requestAnimationFrame = (callback) => {
+    frame += 1;
+    callback(performance.now() + frame * 60);
+    return frame;
+  };
+
+  app.render = () => {
+    renderSamples.push({
+      elevation: box.renderElevation,
+      x: box.renderX
+    });
+  };
+
+  const result = app.movement.performPlayerMove(1, 0, {
+    animate: true,
+    recordHistory: false
+  });
+  window.requestAnimationFrame = originalRequestAnimationFrame;
+
+  const boxMoves = result.moves.filter((move) => move.actor === box && !move.visualOnly);
+
+  assert.equal(boxMoves.length, 1);
+  assert.deepEqual([box.x, box.y], [5, 0]);
+  assert.equal(box.elevation, 0);
+  assert.ok(renderSamples[0].x > 1 && renderSamples[0].x < 2);
+  assert.ok(renderSamples[0].elevation >= 1 && renderSamples[0].elevation < 2);
+  assert.ok(renderSamples.some((sample) => sample.x > 2.1 && sample.elevation > 1.1));
+  assert.ok(renderSamples.some((sample) => sample.x > 3.1 && sample.elevation < 1.9));
+}
+
+{
   const player = { type: "player", x: 0, y: 0, elevation: 0, removed: false };
   const terrain = createTerrain(8, 8);
   terrain[0][1] = { type: "ice" };

@@ -461,6 +461,150 @@ function createState(playData) {
 }
 
 {
+  const threeHighWall = {
+    type: "wall",
+    layers: [
+      { type: "wall", elevation: 0 },
+      { type: "wall", elevation: 1 },
+      { type: "wall", elevation: 2 }
+    ]
+  };
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain: [[iceBlockLayer(0), iceBlockLayer(0), iceSlopeLayer("right", 1), threeHighWall]],
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 1, removed: false },
+      { type: "box", x: 1, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  const boxMove = result.moves.find((move) => move.actorIndex === 1);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorY[0]], [1, 0]);
+  assert.equal(state.actorElevation[0], 1);
+  assert.deepEqual([state.actorX[1], state.actorY[1]], [0, 0]);
+  assert.equal(state.actorElevation[1], 1);
+  assert.equal(boxMove.iceSlide, true);
+  assert.deepEqual(boxMove.path, [
+    { x: 1, y: 0, elevation: 1 },
+    { x: 2, y: 0, elevation: 2 },
+    { x: 1, y: 0, elevation: 1 },
+    { x: 0, y: 0, elevation: 1 }
+  ]);
+}
+
+{
+  const threeHighWall = {
+    type: "wall",
+    layers: [
+      { type: "wall", elevation: 0 },
+      { type: "wall", elevation: 1 },
+      { type: "wall", elevation: 2 }
+    ]
+  };
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain: [[iceBlockLayer(0), iceBlockLayer(0), iceSlopeLayer("right", 1), threeHighWall]],
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 1, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  const boxMove = result.moves.find((move) => move.actorIndex === 1);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorY[0]], [1, 0]);
+  assert.equal(state.actorElevation[0], 1);
+  assert.deepEqual([state.actorX[1], state.actorY[1]], [0, 0]);
+  assert.equal(state.actorElevation[1], 1);
+  assert.equal(boxMove.iceSlide, true);
+  assert.deepEqual(boxMove.path, [
+    { x: 1, y: 0, elevation: 1 },
+    { x: 2, y: 0, elevation: 2 },
+    { x: 1, y: 0, elevation: 1 },
+    { x: 0, y: 0, elevation: 1 }
+  ]);
+}
+
+{
+  const terrain = [[
+    iceBlockLayer(0),
+    iceBlockLayer(0),
+    iceSlopeLayer("right", 1),
+    iceSlopeLayer("left", 0),
+    { type: "floor" },
+    { type: "floor" }
+  ]];
+  const { engine, state } = createState({
+    width: 6,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 1, removed: false },
+      { type: "box", x: 1, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  const boxMoves = result.moves.filter((move) => move.actorIndex === 1);
+
+  assert.equal(result.moved, true);
+  assert.equal(boxMoves.length, 1);
+  assert.deepEqual([state.actorX[1], state.actorY[1]], [5, 0]);
+  assert.equal(state.actorElevation[1], 0);
+  assert.deepEqual(boxMoves[0].path, [
+    { x: 1, y: 0, elevation: 1 },
+    { x: 2, y: 0, elevation: 2 },
+    { x: 3, y: 0, elevation: 2 },
+    { x: 3, y: 0, elevation: 1 },
+    { x: 4, y: 0, elevation: 0 },
+    { x: 5, y: 0, elevation: 0 }
+  ]);
+}
+
+{
+  const terrain = [[
+    iceBlockLayer(0),
+    iceBlockLayer(0),
+    iceSlopeLayer("right", 1),
+    iceSlopeLayer("left", 0),
+    { type: "floor" },
+    { type: "floor" }
+  ]];
+  const { engine, state } = createState({
+    width: 6,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 1, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  const boxMoves = result.moves.filter((move) => move.actorIndex === 1);
+
+  assert.equal(result.moved, true);
+  assert.equal(boxMoves.length, 1);
+  assert.deepEqual([state.actorX[1], state.actorY[1]], [5, 0]);
+  assert.equal(state.actorElevation[1], 0);
+  assert.deepEqual(boxMoves[0].path, [
+    { x: 1, y: 0, elevation: 1 },
+    { x: 2, y: 0, elevation: 2 },
+    { x: 3, y: 0, elevation: 2 },
+    { x: 3, y: 0, elevation: 1 },
+    { x: 4, y: 0, elevation: 0 },
+    { x: 5, y: 0, elevation: 0 }
+  ]);
+}
+
+{
   const { engine, state } = createState({
     width: 4,
     height: 1,

@@ -25,9 +25,39 @@
       applyLevelState
     } = app;
     let movement = null;
+    const ANIMATION_STARTUP_GRACE_MS = 1000 / 60;
+    const MAX_ANIMATION_FRAME_STEP_MS = 1000 / 30;
+    const SYNTHETIC_FRAME_DELTA_EPSILON_MS = 0.5;
     const HOLE_FADE_START_PROGRESS = 0.42;
     const HOLE_PRE_FADE_SINK_DISTANCE = Math.max(HOLE_SINK_DISTANCE * 0.62, app.TILE_SIZE * 2);
     const HOLE_FADE_SINK_DISTANCE = Math.max(HOLE_SINK_DISTANCE * 0.72, app.TILE_SIZE * 2);
+
+    function createAnimationElapsedTracker() {
+      const requestedAt = performance.now();
+      let elapsedMs = 0;
+      let previousNow = null;
+
+      return function animationElapsed(now) {
+        if (previousNow === null) {
+          elapsedMs = Math.min(
+            Math.max(0, now - requestedAt),
+            ANIMATION_STARTUP_GRACE_MS
+          );
+          previousNow = now;
+          return elapsedMs;
+        }
+
+        let deltaMs = now - previousNow;
+
+        if (deltaMs < SYNTHETIC_FRAME_DELTA_EPSILON_MS) {
+          deltaMs = MAX_ANIMATION_FRAME_STEP_MS;
+        }
+
+        elapsedMs += Math.min(Math.max(0, deltaMs), MAX_ANIMATION_FRAME_STEP_MS);
+        previousNow = now;
+        return elapsedMs;
+      };
+    }
 
     function localAnimationProgress(progress, start, duration) {
       return Math.max(0, Math.min(1, (progress - start) / Math.max(0.0001, duration)));
@@ -268,6 +298,24 @@
       return 1 - forwardIceSlideProgress(Math.max(0, duration - elapsedMs), distance);
     }
 
+    function iceSlideProgressForDuration(elapsedMs, distance, durationMs, reverse = false) {
+      const nativeDurationMs = iceSlideDuration(distance);
+
+      if (
+        nativeDurationMs <= 0 ||
+        !Number.isFinite(durationMs) ||
+        durationMs <= nativeDurationMs
+      ) {
+        return iceSlideProgress(elapsedMs, distance, reverse);
+      }
+
+      return iceSlideProgress(
+        (Math.max(0, elapsedMs) / durationMs) * nativeDurationMs,
+        distance,
+        reverse
+      );
+    }
+
     function moveDurationFor(move) {
       const distance = Array.isArray(move.path) ? pathDistanceFor(move) : moveDistance(move);
 
@@ -301,6 +349,10 @@
     function punchPhaseOneDistance(move) {
       if (isPunchVisualMove(move)) {
         return 0;
+      }
+
+      if (hasPunchStart(move) && Array.isArray(move.path) && move.path.length > 1) {
+        return pathDistanceFor(move);
       }
 
       if (hasPunchStart(move)) {
@@ -359,7 +411,7 @@
       }
 
       if (iceSlide) {
-        return iceSlideProgress(elapsedMs, distance, reverse);
+        return iceSlideProgressForDuration(elapsedMs, distance, durationMs, reverse);
       }
 
       const progress = durationMs <= 0 ? 1 : Math.min(1, elapsedMs / durationMs);
@@ -518,10 +570,11 @@
 
         const activeLiftMoveSet = new Set(activeLiftMoves);
         const commitElevationAtEnd = options.commitElevationAtEnd === true;
-        const liftStartTime = performance.now();
-        syncSurfaceAnimationTargets(liftStartTime);
+        const elapsedForLift = createAnimationElapsedTracker();
+        syncSurfaceAnimationTargets(performance.now());
 
         function stepLift(now) {
+          const elapsedMs = elapsedForLift(now);
           let hasActiveLift = false;
 
           moves.forEach((move) => {
@@ -570,7 +623,7 @@
               toElevation > liftFromElevation
                 ? PLAYER_LIFT_RISE_DURATION_MS
                 : PLAYER_LIFT_FALL_DURATION_MS;
-            const progress = Math.min(1, (now - liftStartTime) / duration);
+            const progress = Math.min(1, elapsedMs / duration);
             actor.renderElevation = liftRenderElevation(liftFromElevation, toElevation, progress);
             actor.renderAlpha = fadeOut && toRemoved ? 0 : 1;
 
@@ -621,10 +674,10 @@
       }
 
       function startMovePhase(useToElevation = false) {
-        const moveStartTime = performance.now();
+        const elapsedForMove = createAnimationElapsedTracker();
 
         function step(now) {
-          const elapsedMs = now - moveStartTime;
+          const elapsedMs = elapsedForMove(now);
           const progress = moveDuration <= 0 ? 1 : Math.min(1, elapsedMs / moveDuration);
           const eased = easeInOutQuad(progress);
 
@@ -655,13 +708,15 @@
               const usesPath = Array.isArray(move.path) && move.path.length > 1;
               const pathDistance = usesPath ? pathDistanceFor(move) : 0;
               let positionProgress = useIceSlideTiming && iceSlide
-                ? iceSlideProgress(
+                ? iceSlideProgressForDuration(
                     elapsedMs,
                     usesPath ? pathDistance : moveDistance({ fromX, fromY, toX, toY }),
+                    moveDuration,
                     reverseIceSlide
                   )
                 : eased;
               let renderPunchEffect = punchEffect === true;
+              let pathPointOverride = null;
 
               if (hasPunchPhase && useIceSlideTiming) {
                 const punchPhaseTwoStart = punchPhaseOneDuration;
@@ -718,8 +773,6 @@
                     const distance = punchPhaseOneDistance(move);
                     const duration = punchPhaseOneDurationFor(move);
 
-                    renderToX = move.punchStartX;
-                    renderToY = move.punchStartY;
                     positionProgress = segmentProgress(
                       elapsedMs,
                       distance,
@@ -727,6 +780,13 @@
                       move.punchStartIceSlide === true,
                       reverseIceSlide
                     );
+
+                    if (usesPath) {
+                      pathPointOverride = pointAlongPath(move, positionProgress);
+                    } else {
+                      renderToX = move.punchStartX;
+                      renderToY = move.punchStartY;
+                    }
                   }
                 } else if (inPunchPhase) {
                   renderFromX = toX;
@@ -741,7 +801,11 @@
                 }
               }
 
-              if (usesPath && !hasPunchStart(move) && !isPunchVisualMove(move)) {
+              if (pathPointOverride) {
+                actor.renderX = pathPointOverride.x;
+                actor.renderY = pathPointOverride.y;
+                actor.renderElevation = pathPointOverride.elevation;
+              } else if (usesPath && !hasPunchStart(move) && !isPunchVisualMove(move)) {
                 const pathPoint = pointAlongPath(move, positionProgress);
 
                 actor.renderX = pathPoint.x;
@@ -810,10 +874,11 @@
           });
         }
 
-        const fallStartTime = performance.now();
+        const elapsedForFall = createAnimationElapsedTracker();
 
         function stepFall(now) {
-          const progress = Math.min(1, (now - fallStartTime) / HOLE_FALL_DURATION_MS);
+          const elapsedMs = elapsedForFall(now);
+          const progress = Math.min(1, elapsedMs / HOLE_FALL_DURATION_MS);
           const eased = easeInOutQuad(progress);
 
           moves.forEach(
