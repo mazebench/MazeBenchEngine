@@ -519,6 +519,20 @@
       return terrainLayers[cell] || [];
     }
 
+    function hasOrangeWallLayerAtElevation(state, cell, elevation) {
+      return terrainLayersForCell(state, cell).some(
+        (candidate) =>
+          candidate.type === terrainTypes.orange_wall &&
+          (candidate.elevation ?? 0) === elevation
+      );
+    }
+
+    function hasOrangeWallLayerBelow(state, cell, layer) {
+      const elevation = layer.elevation ?? 0;
+
+      return elevation > 0 && hasOrangeWallLayerAtElevation(state, cell, elevation - 1);
+    }
+
     function terrainLayerSurfaceHeight(state, cell, layer, gateState, orangeButtonsPressed) {
       if (
         layer.type === terrainTypes.empty ||
@@ -1106,7 +1120,11 @@
       }
 
       if (layer.type === terrainTypes.orange_wall) {
-        return !orangeButtonsPressed && layerElevation === elevation;
+        if (!orangeButtonsPressed) {
+          return layerElevation === elevation;
+        }
+
+        return hasOrangeWallLayerBelow(state, cell, layer) && layerElevation - 1 === elevation;
       }
 
       return false;

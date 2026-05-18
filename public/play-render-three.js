@@ -3921,14 +3921,47 @@
       }
 
       if (layer.type === "orange_wall") {
-        if (activeRenderContext?.raisedOrangeWalls) {
-          return elevation + (activeRenderContext.raisedOrangeWalls.has(key) ? 1 : 0);
-        }
-
-        return elevation + (isLiveState ? app.orangeWallLiftAt(x, y, now) : layer.raised === true ? 1 : 0);
+        return elevation + renderOrangeWallLiftValue(x, y, layer, now);
       }
 
       return elevation;
+    }
+
+    function renderOrangeWallLiftValue(x, y, layer, now = performance.now()) {
+      const key = `${x},${y}`;
+      const surfaceLiftValue = activeRenderContext?.surfaceLiftValues?.get(`orange_wall:${key}`);
+
+      if (typeof surfaceLiftValue === "number") {
+        return clamp01(surfaceLiftValue);
+      }
+
+      if (activeRenderContext?.raisedOrangeWalls) {
+        return activeRenderContext.raisedOrangeWalls.has(key) ? 1 : 0;
+      }
+
+      return renderState() === app.state
+        ? app.orangeWallLiftAt(x, y, now)
+        : layer.raised === true ? 1 : 0;
+    }
+
+    function renderCellHasOrangeWallLayerAtElevation(x, y, elevation) {
+      return renderTerrainLayersAt(x, y).some(
+        (candidate) =>
+          candidate.type === "orange_wall" &&
+          (candidate.elevation ?? 0) === elevation
+      );
+    }
+
+    function renderOrangeWallHasLayerBelow(layer, x, y) {
+      const elevation = layer.elevation ?? 0;
+
+      return elevation > 0 && renderCellHasOrangeWallLayerAtElevation(x, y, elevation - 1);
+    }
+
+    function renderOrangeWallHasLayerAbove(layer, x, y) {
+      const elevation = layer.elevation ?? 0;
+
+      return renderCellHasOrangeWallLayerAtElevation(x, y, elevation + 1);
     }
 
     function renderTerrainLayerLiftValue(layer, x, y, now = performance.now()) {
@@ -4268,15 +4301,48 @@
       const type = layer.type || "floor";
       const topHeight = Math.max(0, terrainHeight) * elevationUnit;
       const baseHeight = Math.max(0, elevation) * elevationUnit;
+      const isOrangeWall = type === "orange_wall";
+      const orangeWallLift = isOrangeWall ? renderOrangeWallLiftValue(x, y, layer, now) : null;
+      const orangeWallHasBelow = isOrangeWall && renderOrangeWallHasLayerBelow(layer, x, y);
+      const orangeWallHasAbove = isOrangeWall && renderOrangeWallHasLayerAbove(layer, x, y);
+      const isLoweredOrangeSurface =
+        isOrangeWall && !orangeWallHasBelow && orangeWallLift <= 0.001;
+
+      if (isOrangeWall && orangeWallHasBelow) {
+        const topY = (elevation + orangeWallLift) * elevationUnit;
+        const blockHeight = elevationUnit;
+        const descriptor = {
+          blockHeight,
+          bottomY: topY - blockHeight,
+          elevation,
+          isLoweredPlayerLift: false,
+          isVoid: false,
+          layer,
+          terrainHeight,
+          isSunkenFloor: false,
+          topY,
+          type
+        };
+
+        descriptor.key = terrainPieceDescriptorKey(descriptor, x, y);
+        return descriptor;
+      }
+
+      if (isOrangeWall && orangeWallHasAbove && orangeWallLift <= 0.001) {
+        return null;
+      }
+
       const isRaisedPiece = terrainHeight > elevation;
       const isLoweredPlayerLift = type === "player_lift" && !isRaisedPiece;
       const isStackedFloorCube = !isRaisedPiece && elevation > 0 && isStackableFloorType(type);
       const isSunkenFloor = !isRaisedPiece && terrainHeight === 0 && isSunkenFloorType(type);
       const topY = isLoweredPlayerLift
         ? topHeight + playerLiftPlateOffset()
-        : isRaisedPiece || isStackedFloorCube
-          ? topHeight
-          : topHeight - (isSunkenFloor ? floorDrop : 0);
+        : isLoweredOrangeSurface
+          ? topHeight + playerLiftPlateOffset()
+          : isRaisedPiece || isStackedFloorCube
+            ? topHeight
+            : topHeight - (isSunkenFloor ? floorDrop : 0);
       const blockHeight = isRaisedPiece
         ? Math.max(1, topHeight - baseHeight)
         : isLoweredPlayerLift
@@ -4289,6 +4355,7 @@
         blockHeight,
         bottomY,
         elevation,
+        isLoweredOrangeSurface,
         isLoweredPlayerLift,
         isVoid: false,
         layer,
@@ -4860,7 +4927,7 @@
         return;
       }
 
-      if (descriptor.isLoweredPlayerLift) {
+      if (descriptor.isLoweredPlayerLift || descriptor.isLoweredOrangeSurface) {
         addOutlinedMesh(
           componentTopPlaneGeometry(cells),
           terrainColor(descriptor.type),
@@ -4869,7 +4936,7 @@
             edgeThreshold: 18,
             opacity: visibility,
             castShadow: false,
-            receiveShadow: false,
+            receiveShadow: !descriptor.isLoweredPlayerLift,
             editorPick: {
               kind: "terrain",
               cells: cells.map((cell) => ({

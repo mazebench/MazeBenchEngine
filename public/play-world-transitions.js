@@ -110,6 +110,27 @@
         : [];
     }
 
+    function transitionCellHasOrangeWallLayerAtElevation(cell, elevation) {
+      return terrainLayersForTransitionCell(cell).some(
+        (candidate) =>
+          candidate?.type === "orange_wall" &&
+          (candidate.elevation ?? 0) === elevation
+      );
+    }
+
+    function transitionLayerHasOrangeWallBelow(levelState, x, y, layer) {
+      const elevation = layer?.elevation ?? 0;
+
+      if (elevation <= 0) {
+        return false;
+      }
+
+      return transitionCellHasOrangeWallLayerAtElevation(
+        terrainCellInLevelState(levelState, x, y),
+        elevation - 1
+      );
+    }
+
     function transitionTerrainLayerSurfaceHeight(layer, x, y, options = {}) {
       const elevation = layer?.elevation ?? 0;
 
@@ -181,7 +202,12 @@
           ? options.raisedOrangeWalls.has(`${x},${y}`)
           : true;
 
-        return isRaised && layerElevation === elevation;
+        if (isRaised) {
+          return layerElevation === elevation;
+        }
+
+        return transitionLayerHasOrangeWallBelow(options.levelState, x, y, layer) &&
+          layerElevation - 1 === elevation;
       }
 
       return false;
@@ -195,7 +221,10 @@
       }
 
       return terrainLayersForTransitionCell(cell).some((layer) =>
-        transitionTerrainLayerBlocksElevation(layer, x, y, elevation, options)
+        transitionTerrainLayerBlocksElevation(layer, x, y, elevation, {
+          ...options,
+          levelState
+        })
       );
     }
 
