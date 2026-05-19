@@ -326,10 +326,7 @@
       return false;
     }
 
-    const toElevation = move.toElevation ?? 0;
-    const fromElevation = move.fromElevation ?? 0;
-
-    return toElevation === 0 || (fromElevation === 0 && engine.isPlayerLift(move.toX, move.toY));
+    return Number.isFinite(Number(move.toElevation ?? 0));
   }
 
   function recordGemPlacementCandidates(
@@ -345,11 +342,13 @@
         return;
       }
 
-      if (!canPlaceGemAt(move.toX, move.toY)) {
+      const elevation = Math.max(0, Math.floor(Number(move.toElevation ?? 0) || 0));
+
+      if (!canPlaceGemAt(move.toX, move.toY, elevation, move)) {
         return;
       }
 
-      const key = move.toX + "," + move.toY;
+      const key = move.toX + "," + move.toY + "," + elevation;
       const previousCandidate = bestCandidateByCell.get(key);
 
       if (previousCandidate && previousCandidate.moves <= cost) {
@@ -357,6 +356,7 @@
       }
 
       bestCandidateByCell.set(key, {
+        elevation,
         x: move.toX,
         y: move.toY,
         moves: cost,

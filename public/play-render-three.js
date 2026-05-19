@@ -5065,6 +5065,7 @@
     function addTerrainRegions(now = performance.now()) {
       const descriptors = [];
       const pieceMaps = [];
+      const pieceDescriptorRows = [];
       const pieceEntries = [];
       const polycubePieceEntries = [];
       const state = renderState();
@@ -5072,12 +5073,15 @@
       for (let y = 0; y < state.height; y += 1) {
         const descriptorRow = [];
         const pieceMapRow = [];
+        const pieceDescriptorRow = [];
 
         for (let x = 0; x < state.width; x += 1) {
           descriptorRow.push(terrainDescriptorAt(x, y, now));
 
           const pieceMap = new Map();
-          terrainPieceDescriptorsAt(x, y, now).forEach((descriptor) => {
+          const pieceDescriptors = terrainPieceDescriptorsAt(x, y, now);
+
+          pieceDescriptors.forEach((descriptor) => {
             if (canRenderTerrainPolycube(descriptor)) {
               polycubePieceEntries.push({ descriptor, x, y });
               return;
@@ -5086,11 +5090,13 @@
             pieceMap.set(descriptor.key, descriptor);
             pieceEntries.push({ descriptor, x, y });
           });
+          pieceDescriptorRow.push(pieceDescriptors);
           pieceMapRow.push(pieceMap);
         }
 
         descriptors.push(descriptorRow);
         pieceMaps.push(pieceMapRow);
+        pieceDescriptorRows.push(pieceDescriptorRow);
       }
 
       const previousTerrainDescriptors = activeRenderContext?.terrainDescriptors;
@@ -5169,7 +5175,17 @@
         for (let y = 0; y < state.height; y += 1) {
           for (let x = 0; x < state.width; x += 1) {
             const descriptor = descriptors[y][x];
-            addTileTopDetails(x, y, descriptor.layer, descriptor.topY, now);
+            const liftDescriptors = (pieceDescriptorRows[y]?.[x] || []).filter(
+              (pieceDescriptor) => pieceDescriptor.layer?.type === "player_lift"
+            );
+
+            liftDescriptors.forEach((liftDescriptor) => {
+              addTileTopDetails(x, y, liftDescriptor.layer, liftDescriptor.topY, now);
+            });
+
+            if (descriptor.layer?.type !== "player_lift") {
+              addTileTopDetails(x, y, descriptor.layer, descriptor.topY, now);
+            }
           }
         }
 

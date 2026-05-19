@@ -82,7 +82,6 @@
     getCellTokens,
     getCellTools,
     appendCellToken,
-    isActorTool,
     normalizeAuthoringCellValue,
     normalizeCellValue,
     setCellElevationToken,
@@ -353,10 +352,6 @@
     );
   }
 
-  function isSolverActorTool(tool) {
-    return isActorTool(tool);
-  }
-
   function levelHasGem() {
     return state.cells.some((row) =>
       row.some((cell) => getCellTools(cell).some((tool) => tool.name === "gem"))
@@ -371,25 +366,82 @@
     );
   }
 
-  function isTerrainOnlyGemPlacementCell(x, y) {
-    const tools = getCellTools(state.cells[y]?.[x]);
+  function gemPlacementSurfaceKey(x, y, elevation) {
+    return x + "," + y + "," + Math.max(0, Math.floor(Number(elevation) || 0));
+  }
 
-    if (tools.some((tool) => tool.name === "gem")) {
+  function gemTerrainSurfaceElevation(layer) {
+    const type = layer?.type || "";
+    const elevation = Math.max(0, Math.floor(Number(layer?.elevation) || 0));
+
+    if (!type || type === "empty" || type === "hole") {
+      return null;
+    }
+
+    if (type === "tree") {
+      return elevation + 3;
+    }
+
+    if (type === "player_lift") {
+      return elevation + (layer.raised === true ? 1 : 0);
+    }
+
+    if (["wall", "ice_block", "ice_slope", "shrub", "block_asset", "orange_wall"].includes(type)) {
+      return elevation + 1;
+    }
+
+    return elevation;
+  }
+
+  function gemPlacementSurfaceSets() {
+    const playData = buildEditorPlayData({ includeGems: false });
+    const blockedSurfaces = new Set();
+    const validSurfaces = new Set();
+
+    playData.terrain.forEach((row, y) => {
+      row.forEach((terrain, x) => {
+        const layers = Array.isArray(terrain?.layers) ? terrain.layers : [];
+
+        layers.forEach((layer) => {
+          const surfaceElevation = gemTerrainSurfaceElevation(layer);
+
+          if (surfaceElevation !== null) {
+            validSurfaces.add(gemPlacementSurfaceKey(x, y, surfaceElevation));
+          }
+        });
+      });
+    });
+
+    playData.actors.forEach((actor) => {
+      if (actor.type === "gem") {
+        return;
+      }
+
+      const elevation = Math.max(0, Math.floor(Number(actor.elevation) || 0));
+      blockedSurfaces.add(gemPlacementSurfaceKey(actor.x, actor.y, elevation));
+
+      if (["box", "floating_floor", "weightless_box"].includes(actor.type)) {
+        validSurfaces.add(gemPlacementSurfaceKey(actor.x, actor.y, elevation + 1));
+      }
+    });
+
+    return { blockedSurfaces, validSurfaces };
+  }
+
+  function canPlaceGemAtSurface(x, y, elevation, surfaceSets) {
+    if (!isInsideEditorCell(x, y)) {
       return false;
     }
 
-    return !tools.some((tool) => isSolverActorTool(tool));
+    const key = gemPlacementSurfaceKey(x, y, elevation);
+    return surfaceSets.validSurfaces.has(key) && !surfaceSets.blockedSurfaces.has(key);
   }
 
-  function gemPlacementValueForCell(x, y) {
+  function gemPlacementValueForCell(x, y, elevation = 0) {
     const gemToken = toolByName.get("gem")?.token || "G";
-    const tokens = getCellTokens(state.cells[y]?.[x]);
-
-    if (tokens.includes(gemToken)) {
-      return tokens.join(authorData.blockAdder);
-    }
-
-    return appendCellToken(state.cells[y]?.[x] ?? emptyCellToken, gemToken);
+    return setCellElevationToken(state.cells[y]?.[x] ?? emptyCellToken, gemToken, elevation, {
+      preserveBaseSurface: true
+    });
   }
 
   function stripGemFromCellValue(value) {
@@ -666,7 +718,7 @@
       : "Add a gem before running the solver.";
     elements.placeGem.disabled = !hasPlayer;
     elements.placeGem.title = hasPlayer
-      ? "Find the hardest empty terrain cell the player can reach."
+      ? "Find the hardest open surface the player can reach."
       : "Add a player before finding a gem placement.";
     elements.playSolution.disabled = !hasPlayableSolution();
     elements.playSolution.title = hasPlayableSolution()
@@ -1581,11 +1633,30 @@
       : adjustedPaintLayerForTarget(target);
   }
 
+  function canDragEraseFromTarget(target, layer) {
+    if (state.selectedToken !== eraserToken) {
+      return true;
+    }
+
+    if (
+      !target ||
+      target.face !== "top" ||
+      Math.max(0, Math.floor(Number(layer) || 0)) !== 0 ||
+      !isInsideEditorCell(target.sourceX, target.sourceY)
+    ) {
+      return false;
+    }
+
+    const bottomToken = String(getCellTokens(state.cells[target.sourceY][target.sourceX])?.[0] || "").trim();
+    const topY = Number(target.topY);
+
+    return isBaseSurfaceToken(bottomToken) && (!Number.isFinite(topY) || topY <= 0.05);
+  }
+
   function paintDragPlaneForTarget(target) {
     if (
       !target ||
       target.kind === "levelSwitch" ||
-      state.selectedToken === eraserToken ||
       state.selectedToken === noopToken ||
       target.face !== "top"
     ) {
@@ -1595,6 +1666,10 @@
     const layer = paintGestureLayerForTarget(target);
 
     if (layer === null || layer === undefined) {
+      return null;
+    }
+
+    if (!canDragEraseFromTarget(target, layer)) {
       return null;
     }
 
@@ -2083,7 +2158,7 @@
       }
     }
 
-    const placedValue = gemPlacementValueForCell(candidate.x, candidate.y);
+    const placedValue = gemPlacementValueForCell(candidate.x, candidate.y, candidate.elevation ?? 0);
     state.cells[candidate.y][candidate.x] = placedValue;
     clearSolverSolution();
     state.selectedCell = { x: candidate.x, y: candidate.y };
@@ -2113,8 +2188,10 @@
 
     try {
       const engine = createSolverEngine(buildEditorPlayData({ includeGems: false }));
+      const gemSurfaceSets = gemPlacementSurfaceSets();
       const result = await getMazeSolver().findHardestGemPlacement(engine, {
-        canPlaceGemAt: isTerrainOnlyGemPlacementCell,
+        canPlaceGemAt: (x, y, elevation) =>
+          canPlaceGemAtSurface(x, y, elevation, gemSurfaceSets),
         maxExpandedStates,
         onProgress: createSolverProgressReporter("Place Gem", maxExpandedStates),
         progressYieldStateInterval: solverProgressYieldStateInterval
@@ -2153,7 +2230,7 @@
       }
 
       setStatus(
-          "Place Gem: no reachable empty terrain cell found. Explored " +
+          "Place Gem: no reachable open surface found. Explored " +
           formatStateCount(result.expanded) +
           " state" +
           (result.expanded === 1 ? "" : "s") +

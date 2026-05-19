@@ -1,0 +1,16 @@
+.+# . . i i i i i i .+I . .+I . . . .
+.+# . .+L .+#+L .+#+#+L i+I i+I i i .+I+I l .+I .+I .+I .+# .
+.+# . . .+I+I+I+# .+I+I+#+L .+I+I+I+I+I i+I i i+I .+I+I .+L .+I .+I .+I .+# .
+.+#+# .+#+#++# .+#+#++I .+#+#++I .+I+I+I+# .+I+I+I+I+I .+I+I i++I .+I+I .+I+I+I+I .+I+I+I+I .+I+I+I+I .+I+I+I+I .+I .+I .
+.+I .+I .+I .+I+I+I+I .+I+l .+I+I .+I+I i++I .+I+I .+I+I+l .+I+I+I .+I+I+I .+I+I+I+I .+I .+I .
+.+I .+I .+I .+I+I+I+I .+I I l . l .+I+I+I+I .+I++I+I .+I+I+I .+I .+I .+I .+#+#
+. l .+I .+I++I+I .+I++# .+I .+I .+I .+I .+I .+I .+I++I .+I .+I .+# .+#+#
+.+#+# .+I+I .+I .+I++I+I .+I++I .+I .+I .+I+I .+I .+I .+I .+I+I+I i i i .+#+#
+.+#+# .+I .+I .+I++I+I .+I++I .+I++I .+I++I .+I++I .+I+I+I .+I++I .+I++I .+I+I+I+l i+I+I+I+I+I i i i
+.+#+# .+I .+I .+I++I+I .+I++I .+I .+I .+I .+I .+I .+I .+I+I+I+I i+I+I+I+I+I i i i
+.+#+# .+I .+I+++# .+I++I+I .+I++#+l .+I .+I .+I .+I .+I .+I .+I+I+I+I i i i i
+.+#+# .+#+# .+#+++# .+I+I+I+# .+I++I+I .+I+I+I+I .+I+I+I+# .+I .+I+++# .+I+I+I+I .+I+I+I+I .+I+I+I+# i .+#+G i i
+. . . . l++++# . .+I .+I .+I .+I . . . i+I i i
+. . . . . l .+I .+I .+I .+I .+L .+# . i+I i i
+. .+p . . . . .+L .+I .+I .+I .+I .+I i+I i+I i+I+I+I i
+. . . . . .+I+I+I .+I+I+I .+I+I+I .+I+I+I .+I+I .+I .+I i+I+I i+I+I i i

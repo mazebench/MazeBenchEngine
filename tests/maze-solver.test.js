@@ -72,6 +72,40 @@ function floorTerrain(width, height) {
     );
   }
 
+  {
+    const wallSurface = { type: "wall", layers: [{ type: "wall", elevation: 0 }] };
+    const engine = createEngine({
+      width: 2,
+      height: 1,
+      terrain: [[wallSurface, wallSurface]],
+      actors: [{ type: "player", x: 0, y: 0, elevation: 1, removed: false }]
+    });
+
+    const result = await findHardestGemPlacement(engine, {
+      canPlaceGemAt: (x, y, elevation) => x === 1 && y === 0 && elevation === 1,
+      maxExpandedStates: 100,
+      progressYieldStateInterval: 1
+    });
+
+    assert.equal(result.status, "found");
+    assert.deepEqual(
+      {
+        elevation: result.candidate.elevation,
+        x: result.candidate.x,
+        y: result.candidate.y,
+        moves: result.candidate.moves,
+        path: result.candidate.path
+      },
+      {
+        elevation: 1,
+        x: 1,
+        y: 0,
+        moves: 1,
+        path: "R"
+      }
+    );
+  }
+
   console.log("maze solver tests passed");
 })().catch((error) => {
   console.error(error);
