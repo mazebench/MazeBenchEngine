@@ -2461,6 +2461,32 @@
       );
     }
 
+    function weightlessClusterCanStartIceSlopeTransit(
+      state,
+      members,
+      dx,
+      dy,
+      occupied,
+      gateState,
+      orangeButtonsPressed
+    ) {
+      return members.some((member) =>
+        Boolean(
+          resolveIceSlopeTraversal(
+            state,
+            state.actorX[member] + dx,
+            state.actorY[member] + dy,
+            dx,
+            dy,
+            actorElevation(state, member),
+            occupied,
+            gateState,
+            orangeButtonsPressed
+          )
+        )
+      );
+    }
+
     function weightlessClusterShouldContinueSliding(
       state,
       members,
@@ -2511,6 +2537,17 @@
     ) {
       let slopeDelta = null;
       let slopePathOffsets = null;
+      const allowClusterIceSlopeTransit =
+        options.allowIceSlopeTransit === true ||
+        weightlessClusterCanStartIceSlopeTransit(
+          state,
+          members,
+          dx,
+          dy,
+          occupied,
+          gateState,
+          orangeButtonsPressed
+        );
 
       for (const member of members) {
         const elevation = actorElevation(state, member);
@@ -2559,7 +2596,7 @@
           }
         }
 
-        if (!traversal && options.allowIceSlopeTransit !== true) {
+        if (!traversal && !allowClusterIceSlopeTransit) {
           traversal = resolveIceSlopeFallTraversalForLanding(
             state,
             targetX,
@@ -2572,7 +2609,7 @@
           );
         }
 
-        if (!traversal && options.allowIceSlopeTransit !== true) {
+        if (!traversal && !allowClusterIceSlopeTransit) {
           traversal = resolveIceSlopeTopSlideTraversal(
             state,
             targetX,
@@ -2630,7 +2667,7 @@
           }
         : { dx, dy, elevation: 0, pathOffsets: [] };
       const allowIceSlopeTransit =
-        Boolean(slopeDelta) || options.allowIceSlopeTransit === true;
+        Boolean(slopeDelta) || allowClusterIceSlopeTransit;
 
       if (
         members.every((member) => {
@@ -2744,6 +2781,15 @@
 
         Array.from(clusterGroupIds).forEach((currentGroupId) => {
           const members = weightlessGroupMembers(state, currentGroupId);
+          const canStartIceSlopeTransit = weightlessClusterCanStartIceSlopeTransit(
+            state,
+            members,
+            dx,
+            dy,
+            occupied,
+            gateState,
+            orangeButtonsPressed
+          );
 
           for (const member of members) {
             const memberElevation = actorElevation(state, member);
@@ -2840,6 +2886,17 @@
                 memberElevation,
                 gateState,
                 orangeButtonsPressed
+              ) &&
+              !(
+                canStartIceSlopeTransit &&
+                terrainBlocksOnlyByIceSlope(
+                  state,
+                  targetX,
+                  targetY,
+                  memberElevation,
+                  gateState,
+                  orangeButtonsPressed
+                )
               )
             ) {
               blockers.push(null);

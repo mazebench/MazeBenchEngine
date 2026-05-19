@@ -19,6 +19,13 @@ function iceBlockLayer(elevation = 0) {
   };
 }
 
+function iceBlockStack(...elevations) {
+  return {
+    type: "ice_block",
+    layers: elevations.map((elevation) => ({ type: "ice_block", elevation }))
+  };
+}
+
 function iceSlopeLayer(direction = "right", elevation = 0) {
   return {
     type: "ice_slope",
@@ -687,13 +694,7 @@ function createState(playData) {
     iceBlockLayer(0),
     iceBlockLayer(0),
     iceSlopeOnIceBlockLayer("right", 1),
-    {
-      type: "ice_block",
-      layers: [
-        { type: "ice_block", elevation: 0 },
-        { type: "ice_block", elevation: 1 }
-      ]
-    },
+    iceBlockStack(0, 1),
     iceBlockLayer(0),
     iceBlockLayer(0),
     iceBlockLayer(0),
@@ -728,6 +729,49 @@ function createState(playData) {
     { x: 5, y: 0, elevation: 2 },
     { x: 6, y: 0, elevation: 2 },
     { x: 6, y: 0, elevation: 1 }
+  ]);
+  assert.equal(boxMoves[0].pathEndElevation, 2);
+}
+
+{
+  const terrain = [[
+    iceBlockLayer(0),
+    iceBlockLayer(0),
+    iceSlopeOnIceBlockLayer("right", 1),
+    iceBlockStack(0, 1),
+    iceBlockLayer(0),
+    iceBlockLayer(0),
+    iceBlockLayer(0),
+    iceBlockLayer(0),
+    iceBlockLayer(0)
+  ]];
+  const { engine, state } = createState({
+    width: 9,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 1, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 1, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 2, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 3, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  const boxMoves = result.moves.filter((move) => move.actorType === "weightless_box");
+
+  assert.equal(result.moved, true);
+  assert.deepEqual(boxMoves.map((move) => [move.toX, move.toElevation]), [
+    [4, 1],
+    [4, 2],
+    [4, 3]
+  ]);
+  assert.deepEqual(boxMoves[0].path, [
+    { x: 1, y: 0, elevation: 1 },
+    { x: 2, y: 0, elevation: 2 },
+    { x: 3, y: 0, elevation: 2 },
+    { x: 4, y: 0, elevation: 2 },
+    { x: 4, y: 0, elevation: 1 }
   ]);
   assert.equal(boxMoves[0].pathEndElevation, 2);
 }
