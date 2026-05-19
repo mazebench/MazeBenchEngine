@@ -19,8 +19,10 @@
     let hasRenderedScene = false;
     let debugCameraYaw = 0;
     let debugCameraTilt = 0.22;
+    let debugCameraZoom = 1;
     let debugCameraTargetYaw = debugCameraYaw;
     let debugCameraTargetTilt = debugCameraTilt;
+    let debugCameraTargetZoom = debugCameraZoom;
     let debugCameraAnimation = null;
     let debugCameraAnimationFrameId = 0;
     let debugCameraActive = false;
@@ -55,6 +57,9 @@
     const debugCameraTopTilt = 0;
     const debugCameraSideTilt = Math.PI / 2;
     const debugCameraTiltHoldDurationMs = 500;
+    const debugCameraMinZoom = 0.55;
+    const debugCameraMaxZoom = 2.4;
+    const debugCameraZoomStep = 1.14;
     const neighboringRoomBrightness = 0.62;
     const geometryCache = new Map();
     const edgeGeometryCache = new Map();
@@ -310,6 +315,8 @@
       debugCameraTargetYaw = 0;
       debugCameraTilt = debugCameraTopTilt;
       debugCameraTargetTilt = debugCameraTopTilt;
+      debugCameraZoom = 1;
+      debugCameraTargetZoom = 1;
 
       if (cameraMode !== "isometric" || !camera?.isOrthographicCamera) {
         cameraMode = "isometric";
@@ -328,7 +335,13 @@
         return `camera:${cameraMode}:default`;
       }
 
-      return `camera:${cameraMode}:${Math.round(debugCameraYaw * 1000)}:${Math.round(debugCameraTilt * 1000)}`;
+      return [
+        "camera",
+        cameraMode,
+        Math.round(debugCameraYaw * 1000),
+        Math.round(debugCameraTilt * 1000),
+        Math.round(debugCameraZoom * 1000)
+      ].join(":");
     }
 
     function normalizeQuarterTurns(yaw) {
@@ -359,6 +372,10 @@
 
     function clampDebugCameraTilt(tilt) {
       return Math.max(debugCameraTopTilt, Math.min(debugCameraSideTilt, tilt));
+    }
+
+    function clampDebugCameraZoom(zoom) {
+      return Math.max(debugCameraMinZoom, Math.min(debugCameraMaxZoom, zoom));
     }
 
     function cameraUpVectorFor(viewDirection, yaw) {
@@ -392,6 +409,13 @@
         debugCameraTargetTilt = debugCameraTilt;
       }
 
+      if (debugCameraAnimation.targetZoom !== null) {
+        debugCameraZoom =
+          debugCameraAnimation.startZoom +
+          (debugCameraAnimation.targetZoom - debugCameraAnimation.startZoom) * eased;
+        debugCameraTargetZoom = debugCameraZoom;
+      }
+
       lastSceneSignature = "";
 
       if (progress >= 1) {
@@ -400,6 +424,11 @@
         if (debugCameraAnimation.targetTilt !== null) {
           debugCameraTilt = debugCameraAnimation.targetTilt;
           debugCameraTargetTilt = debugCameraTilt;
+        }
+
+        if (debugCameraAnimation.targetZoom !== null) {
+          debugCameraZoom = debugCameraAnimation.targetZoom;
+          debugCameraTargetZoom = debugCameraZoom;
         }
 
         debugCameraAnimation = null;
@@ -430,14 +459,17 @@
 
     function animateDebugCameraToTarget(durationMs = 220, options = {}) {
       const animateTilt = options.animateTilt !== false;
+      const animateZoom = options.animateZoom !== false;
 
       debugCameraAnimation = {
         durationMs,
         startMs: performance.now(),
         startYaw: debugCameraYaw,
         startTilt: debugCameraTilt,
+        startZoom: debugCameraZoom,
         targetYaw: debugCameraTargetYaw,
-        targetTilt: animateTilt ? debugCameraTargetTilt : null
+        targetTilt: animateTilt ? debugCameraTargetTilt : null,
+        targetZoom: animateZoom ? debugCameraTargetZoom : null
       };
       scheduleDebugCameraAnimation();
     }
@@ -569,6 +601,12 @@
         }
         debugCameraTargetYaw += yawStep;
         durationMs = 260;
+      } else if (key === "q") {
+        debugCameraTargetZoom = clampDebugCameraZoom(debugCameraTargetZoom * debugCameraZoomStep);
+        durationMs = 140;
+      } else if (key === "e") {
+        debugCameraTargetZoom = clampDebugCameraZoom(debugCameraTargetZoom / debugCameraZoomStep);
+        durationMs = 140;
       } else {
         handled = false;
       }
@@ -6631,6 +6669,7 @@
       const isPalettePreview = isPalettePreviewRenderMode();
       const cameraYaw = isPalettePreview ? 0 : debugCameraYaw;
       const cameraTilt = clampDebugCameraTilt(isPalettePreview ? Math.PI * 0.18 : debugCameraTilt);
+      const cameraZoom = isPalettePreview ? 1 : debugCameraZoom;
       const horizontalTilt = Math.sin(cameraTilt);
       const verticalTilt = Math.cos(cameraTilt);
       const viewDirection = new THREE.Vector3(
@@ -6679,7 +6718,7 @@
         camera.zoom = Math.max(
           0.1,
           Math.min(canvasWidth / projectedWidth, canvasHeight / projectedHeight) * 1.025
-        );
+        ) * cameraZoom;
         camera.updateProjectionMatrix();
         return;
       }
@@ -6714,7 +6753,10 @@
         distance *= Math.max(0.35, Math.min(2.4, scale));
       }
 
+      camera.position.copy(center).addScaledVector(viewDirection, distance / cameraZoom);
+      camera.lookAt(center);
       camera.updateProjectionMatrix();
+      camera.updateMatrixWorld(true);
     }
 
     function editorSurroundingFitOptions() {
