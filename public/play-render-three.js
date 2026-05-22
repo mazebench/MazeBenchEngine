@@ -6019,7 +6019,9 @@
         height,
         horizontal ? puncherArmThickness : armDepth
       );
-      const mesh = new THREE.Mesh(geometry, material("#9ca3af", opacity));
+      const visibility = actorFadeVisibility(actor);
+      const armColor = actor.renderInHole ? dimHexColor("#9ca3af", visibility) : "#9ca3af";
+      const mesh = new THREE.Mesh(geometry, material(armColor, opacity));
       const position = new THREE.Vector3(
         (start.x + end.x) / 2,
         elevation * elevationUnit - sink + actorVisualLift + unit * 0.5,
@@ -6033,7 +6035,19 @@
       addEdgeLines(geometry, position, 18, edgeOpacity * 0.84);
     }
 
-    function addPuncherCylinderPart(actor, geometry, color, center, y, direction, rotation, offset, opacity, editorPick) {
+    function addPuncherCylinderPart(
+      actor,
+      geometry,
+      color,
+      center,
+      y,
+      direction,
+      rotation,
+      offset,
+      opacity,
+      editorPick,
+      edgeOpacity = opacity
+    ) {
       const position = new THREE.Vector3(
         center.x + direction.x * offset,
         y,
@@ -6047,7 +6061,7 @@
       mesh.receiveShadow = false;
       mesh.userData.editorPick = editorPick;
       scene.add(mesh);
-      addOrientedEdgeLines(geometry, position, rotation, opacity, 18);
+      addOrientedEdgeLines(geometry, position, rotation, edgeOpacity, 18);
     }
 
     function addPuncher(actor, center, elevation, scale, sink, fade, opacity, visibility) {
@@ -6064,43 +6078,47 @@
       const backGeometry = cylinderGeometry(radius, depth, 40);
       const middleGeometry = cylinderGeometry(radius * 0.66, depth * 0.45, 40);
       const bullseyeGeometry = cylinderGeometry(radius * 0.34, depth * 0.5, 40);
+      const partColor = (color) => actor.renderInHole ? dimHexColor(color, fade) : color;
 
       addPuncherArm(actor, anchoredCenter, direction, depth, elevation, sink, opacity, edgeOpacity);
       addPuncherCylinderPart(
         actor,
         backGeometry,
-        "#ef4444",
+        partColor("#ef4444"),
         anchoredCenter,
         centerY,
         direction,
         rotation,
         0,
         opacity,
-        editorPick
+        editorPick,
+        edgeOpacity
       );
       addPuncherCylinderPart(
         actor,
         middleGeometry,
-        "#f8fafc",
+        partColor("#f8fafc"),
         anchoredCenter,
         centerY,
         direction,
         rotation,
         depth * 0.58,
         opacity,
-        editorPick
+        editorPick,
+        edgeOpacity
       );
       addPuncherCylinderPart(
         actor,
         bullseyeGeometry,
-        "#b91c1c",
+        partColor("#b91c1c"),
         anchoredCenter,
         centerY,
         direction,
         rotation,
         depth * 0.72,
         opacity,
-        editorPick
+        editorPick,
+        edgeOpacity
       );
     }
 
