@@ -2537,6 +2537,7 @@
     ) {
       let slopeDelta = null;
       let slopePathOffsets = null;
+      const traversingSlopeMembers = new Set();
       const allowClusterIceSlopeTransit =
         options.allowIceSlopeTransit === true ||
         weightlessClusterCanStartIceSlopeTransit(
@@ -2626,6 +2627,7 @@
           continue;
         }
 
+        traversingSlopeMembers.add(member);
         const delta = {
           dx: traversal.exitX - state.actorX[member],
           dy: traversal.exitY - state.actorY[member],
@@ -2653,6 +2655,27 @@
 
         slopeDelta = delta;
         slopePathOffsets = pathOffsets;
+      }
+
+      if (slopeDelta?.elevation < 0) {
+        for (const member of members) {
+          if (traversingSlopeMembers.has(member)) {
+            continue;
+          }
+
+          if (
+            terrainBlocksOnlyByIceSlope(
+              state,
+              state.actorX[member] + dx,
+              state.actorY[member] + dy,
+              actorElevation(state, member),
+              gateState,
+              orangeButtonsPressed
+            )
+          ) {
+            return null;
+          }
+        }
       }
 
       const delaySlopeDescent =

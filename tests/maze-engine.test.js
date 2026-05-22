@@ -19,6 +19,13 @@ function iceBlockLayer(elevation = 0) {
   };
 }
 
+function iceFloorLayer(elevation = 0) {
+  return {
+    type: "ice",
+    layers: [{ type: "ice", elevation }]
+  };
+}
+
 function iceBlockStack(...elevations) {
   return {
     type: "ice_block",
@@ -2670,6 +2677,64 @@ function createState(playData) {
   assert.deepEqual([state.actorX[2], state.actorY[2], state.actorElevation[2]], [2, 0, 0]);
   assert.deepEqual([state.actorX[3], state.actorY[3], state.actorElevation[3]], [2, 1, 0]);
   assert.equal(result.moves.some((move) => move.actorIndex === 0 && move.iceSlipOff), true);
+}
+
+{
+  const terrain = [[
+    iceFloorLayer(0),
+    iceFloorLayer(0),
+    iceFloorLayer(0),
+    iceSlopeLayer("left", 0),
+    { type: "floor" }
+  ]];
+  const { engine, state } = createState({
+    width: 5,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorElevation[0]], [1, 0]);
+  assert.deepEqual([state.actorX[1], state.actorElevation[1]], [2, 0]);
+  assert.deepEqual([state.actorX[2], state.actorElevation[2]], [2, 1]);
+  assert.equal(
+    result.moves.some((move) => Array.isArray(move.path) && move.path.some((point) => point.elevation < 0)),
+    false
+  );
+}
+
+{
+  const terrain = [[
+    iceBlockLayer(0),
+    iceBlockLayer(0),
+    iceBlockLayer(0),
+    iceSlopeLayer("left", 1),
+    { type: "floor" }
+  ]];
+  const { engine, state } = createState({
+    width: 5,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 1, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 1, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 2, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorElevation[0]], [1, 1]);
+  assert.deepEqual([state.actorX[1], state.actorElevation[1]], [2, 1]);
+  assert.deepEqual([state.actorX[2], state.actorElevation[2]], [2, 2]);
 }
 
 console.log("maze-engine tests passed");
