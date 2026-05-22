@@ -3634,6 +3634,14 @@
         target.punchStartIceSlide = source.punchStartIceSlide;
       }
 
+      if (Array.isArray(source.punchSegments) && source.punchSegments.length > 0) {
+        const targetSegments = Array.isArray(target.punchSegments) ? target.punchSegments : [];
+
+        target.punchSegments = targetSegments.concat(
+          source.punchSegments.map((segment) => ({ ...segment }))
+        );
+      }
+
       if (
         targetPath.length > 2 ||
         targetPath.some((point) => point.elevation !== (target.fromElevation ?? 0))
@@ -3909,6 +3917,36 @@
       });
     }
 
+    function recordPunchSegments(state, moves, punchStarts, sequence, searchMode) {
+      if (searchMode) {
+        return;
+      }
+
+      punchStarts.forEach(({ actorIndex, elevation, iceSlide, x, y }) => {
+        const moveRecord = moves.find((move) => move.actorIndex === actorIndex && !move.visualOnly);
+
+        if (!moveRecord) {
+          return;
+        }
+
+        if (!Array.isArray(moveRecord.punchSegments)) {
+          moveRecord.punchSegments = [];
+        }
+
+        moveRecord.punchSegments.push({
+          sequence,
+          fromX: x,
+          fromY: y,
+          fromElevation: elevation,
+          toX: state.actorX[actorIndex],
+          toY: state.actorY[actorIndex],
+          toElevation: actorElevation(state, actorIndex),
+          startIceSlide: iceSlide === true,
+          punchSlide: true
+        });
+      });
+    }
+
     function addPuncherVisualMove(
       state,
       puncher,
@@ -3918,7 +3956,8 @@
       originalActorX,
       originalActorY,
       originalActorElevation,
-      searchMode
+      searchMode,
+      punchSequence = 0
     ) {
       if (searchMode || moves.some((move) => move.actorIndex === puncher)) {
         return;
@@ -3938,6 +3977,7 @@
         finalElevation: actorElevation(state, puncher),
         iceSlide: true,
         punchEffect: true,
+        punchSequence,
         visualOnly: true
       });
     }
@@ -4073,7 +4113,10 @@
             continue;
           }
 
+          const punchSequence = passCount - 1;
+
           markPunchStartOnMoves(moves, punchStarts);
+          recordPunchSegments(state, moves, punchStarts, punchSequence, searchMode);
           addPuncherVisualMove(
             state,
             puncher,
@@ -4083,7 +4126,8 @@
             originalActorX,
             originalActorY,
             originalActorElevation,
-            searchMode
+            searchMode,
+            punchSequence
           );
           triggeredThisPass = true;
         }

@@ -202,6 +202,97 @@
       return path[path.length - 1];
     }
 
+    function pointAlongPathDistance(move, traveledDistance) {
+      const path = normalizedMovePath(move);
+
+      if (path.length === 0) {
+        return {
+          x: move.toX,
+          y: move.toY,
+          elevation: move.toElevation ?? move.fromElevation ?? move.actor?.elevation ?? 0
+        };
+      }
+
+      if (path.length === 1) {
+        return path[0];
+      }
+
+      const totalDistance = pathDistanceFor(move);
+
+      if (totalDistance <= 0) {
+        return path[path.length - 1];
+      }
+
+      let remainingDistance = Math.max(0, Math.min(totalDistance, traveledDistance));
+
+      for (let index = 1; index < path.length; index += 1) {
+        const from = path[index - 1];
+        const to = path[index];
+        const segmentDistanceValue = pathSegmentDistance(from, to);
+
+        if (remainingDistance > segmentDistanceValue && index < path.length - 1) {
+          remainingDistance -= segmentDistanceValue;
+          continue;
+        }
+
+        const segmentProgress =
+          segmentDistanceValue <= 0 ? 1 : Math.max(0, Math.min(1, remainingDistance / segmentDistanceValue));
+
+        return {
+          x: from.x + (to.x - from.x) * segmentProgress,
+          y: from.y + (to.y - from.y) * segmentProgress,
+          elevation: from.elevation + (to.elevation - from.elevation) * segmentProgress
+        };
+      }
+
+      return path[path.length - 1];
+    }
+
+    function pathPointMatches(left, right) {
+      return (
+        Math.abs(left.x - right.x) < 0.0001 &&
+        Math.abs(left.y - right.y) < 0.0001 &&
+        Math.abs(left.elevation - right.elevation) < 0.0001
+      );
+    }
+
+    function pathDistanceToPoint(move, targetPoint) {
+      const path = normalizedMovePath(move);
+      let distance = 0;
+
+      if (path.length === 0) {
+        return null;
+      }
+
+      if (pathPointMatches(path[0], targetPoint)) {
+        return 0;
+      }
+
+      for (let index = 1; index < path.length; index += 1) {
+        const from = path[index - 1];
+        const to = path[index];
+        const segmentDistanceValue = pathSegmentDistance(from, to);
+
+        if (pathPointMatches(to, targetPoint)) {
+          return distance + segmentDistanceValue;
+        }
+
+        distance += segmentDistanceValue;
+      }
+
+      return null;
+    }
+
+    function pointAlongPathToPoint(move, targetPoint, progress) {
+      const targetDistance = pathDistanceToPoint(move, targetPoint);
+
+      if (targetDistance === null) {
+        return pointAlongPath(move, progress);
+      }
+
+      return pointAlongPathDistance(move, targetDistance * Math.max(0, Math.min(1, progress)));
+    }
+
     function iceSlideDuration(distance) {
       if (distance <= 0 || MOVE_DURATION_MS <= 0) {
         return 0;
@@ -345,6 +436,55 @@
       return move.visualOnly === true && move.punchEffect === true;
     }
 
+    function normalizedPunchSegments(move) {
+      if (!Array.isArray(move.punchSegments)) {
+        return [];
+      }
+
+      return move.punchSegments
+        .map((segment) => ({
+          sequence: Number(segment?.sequence),
+          fromX: Number(segment?.fromX),
+          fromY: Number(segment?.fromY),
+          fromElevation: Number(segment?.fromElevation),
+          toX: Number(segment?.toX),
+          toY: Number(segment?.toY),
+          toElevation: Number(segment?.toElevation),
+          startIceSlide: segment?.startIceSlide === true,
+          punchSlide: segment?.punchSlide === true
+        }))
+        .filter(
+          (segment) =>
+            Number.isFinite(segment.sequence) &&
+            Number.isFinite(segment.fromX) &&
+            Number.isFinite(segment.fromY) &&
+            Number.isFinite(segment.fromElevation) &&
+            Number.isFinite(segment.toX) &&
+            Number.isFinite(segment.toY) &&
+            Number.isFinite(segment.toElevation)
+        )
+        .sort((left, right) => left.sequence - right.sequence);
+    }
+
+    function firstPunchSegment(move) {
+      const segments = normalizedPunchSegments(move);
+      return segments.length > 0 ? segments[0] : null;
+    }
+
+    function punchSegmentDistance(segment) {
+      return pathSegmentDistance(
+        { x: segment.fromX, y: segment.fromY, elevation: segment.fromElevation },
+        { x: segment.toX, y: segment.toY, elevation: segment.toElevation }
+      );
+    }
+
+    function punchSegmentDurationFor(move, segment) {
+      return segmentDuration(
+        punchSegmentDistance(segment),
+        segment.punchSlide === true || move.punchSlide === true || move.iceSlide === true
+      );
+    }
+
     function segmentDistance(fromX, fromY, toX, toY) {
       return Math.abs(toX - fromX) + Math.abs(toY - fromY);
     }
@@ -362,6 +502,25 @@
         return 0;
       }
 
+      const firstSegment = firstPunchSegment(move);
+
+      if (firstSegment && Array.isArray(move.path) && move.path.length > 1) {
+        const distanceToPunch = pathDistanceToPoint(move, {
+          x: firstSegment.fromX,
+          y: firstSegment.fromY,
+          elevation: firstSegment.fromElevation
+        });
+
+        return distanceToPunch === null ? pathDistanceFor(move) : distanceToPunch;
+      }
+
+      if (firstSegment) {
+        return pathSegmentDistance(
+          { x: move.fromX, y: move.fromY, elevation: move.fromElevation ?? 0 },
+          { x: firstSegment.fromX, y: firstSegment.fromY, elevation: firstSegment.fromElevation }
+        );
+      }
+
       if (hasPunchStart(move) && Array.isArray(move.path) && move.path.length > 1) {
         return pathDistanceFor(move);
       }
@@ -376,6 +535,12 @@
     function punchPhaseTwoDistance(move) {
       if (isPunchVisualMove(move)) {
         return moveDistance(move);
+      }
+
+      const firstSegment = firstPunchSegment(move);
+
+      if (firstSegment) {
+        return punchSegmentDistance(firstSegment);
       }
 
       if (hasPunchStart(move)) {
@@ -414,6 +579,66 @@
 
     function punchRetractDurationFor(move) {
       return segmentDuration(punchRetractDistance(move), isPunchVisualMove(move));
+    }
+
+    function punchSequenceForVisualMove(move) {
+      const sequence = Number(move.punchSequence);
+      return Number.isFinite(sequence) ? sequence : 0;
+    }
+
+    function buildPunchSequenceTimings(moves, initialDuration, retractPunchDuringFall) {
+      const sequenceSet = new Set();
+
+      moves.forEach((move) => {
+        normalizedPunchSegments(move).forEach((segment) => {
+          sequenceSet.add(segment.sequence);
+        });
+
+        if (isPunchVisualMove(move)) {
+          sequenceSet.add(punchSequenceForVisualMove(move));
+        }
+      });
+
+      const sequences = Array.from(sequenceSet).sort((left, right) => left - right);
+      const timings = new Map();
+      let cursor = initialDuration;
+      let totalDuration = initialDuration;
+
+      sequences.forEach((sequence) => {
+        let punchDuration = MOVE_DURATION_MS;
+        let retractDuration = 0;
+
+        moves.forEach((move) => {
+          normalizedPunchSegments(move)
+            .filter((segment) => segment.sequence === sequence)
+            .forEach((segment) => {
+              punchDuration = Math.max(punchDuration, punchSegmentDurationFor(move, segment));
+            });
+
+          if (isPunchVisualMove(move) && punchSequenceForVisualMove(move) === sequence) {
+            punchDuration = Math.max(punchDuration, punchPhaseTwoDurationFor(move));
+
+            if (!retractPunchDuringFall) {
+              retractDuration = Math.max(retractDuration, punchRetractDurationFor(move));
+            }
+          }
+        });
+
+        const timing = {
+          sequence,
+          start: cursor,
+          punchDuration,
+          retractDuration,
+          punchEnd: cursor + punchDuration,
+          retractEnd: cursor + punchDuration + retractDuration
+        };
+
+        timings.set(sequence, timing);
+        cursor = timing.punchEnd;
+        totalDuration = Math.max(totalDuration, timing.retractEnd);
+      });
+
+      return { timings, totalDuration };
     }
 
     function segmentProgress(elapsedMs, distance, durationMs, iceSlide = false, reverse = false) {
@@ -552,10 +777,21 @@
       const hasPunchPhase = moves.some((move) => hasPunchStart(move) || isPunchVisualMove(move));
       const retractPunchDuringFall =
         hasPunchPhase && holeStateMoves.length > 0 && typeof durationMs !== "number";
+      const hasSequencedPunchPhase =
+        hasPunchPhase &&
+        typeof durationMs !== "number" &&
+        moves.some(
+          (move) =>
+            normalizedPunchSegments(move).some((segment) => segment.sequence > 0) ||
+            (isPunchVisualMove(move) && punchSequenceForVisualMove(move) > 0)
+        );
       const punchPhaseOneDuration =
         hasPunchPhase && typeof durationMs !== "number"
           ? Math.max(MOVE_DURATION_MS, ...moves.map(punchPhaseOneDurationFor))
           : 0;
+      const punchSequenceTimings = hasSequencedPunchPhase
+        ? buildPunchSequenceTimings(moves, punchPhaseOneDuration, retractPunchDuringFall)
+        : { timings: new Map(), totalDuration: 0 };
       const punchPhaseTwoDuration =
         hasPunchPhase && typeof durationMs !== "number"
           ? Math.max(MOVE_DURATION_MS, ...moves.map(punchPhaseTwoDurationFor))
@@ -568,7 +804,9 @@
         typeof durationMs === "number"
           ? durationMs
           : hasPunchPhase
-            ? punchPhaseOneDuration + punchPhaseTwoDuration + punchRetractDuration
+            ? hasSequencedPunchPhase
+              ? punchSequenceTimings.totalDuration
+              : punchPhaseOneDuration + punchPhaseTwoDuration + punchRetractDuration
             : Math.max(MOVE_DURATION_MS, ...moves.map(moveDurationFor));
       const useIceSlideTiming = typeof durationMs !== "number";
       const completedLiftMoves = new Set();
@@ -716,6 +954,8 @@
               let renderFromY = fromY;
               let renderToX = toX;
               let renderToY = toY;
+              let renderFromElevation = fromElevation;
+              let renderToElevation = useToElevation ? toElevation : fromElevation;
               const usesPath = Array.isArray(move.path) && move.path.length > 1;
               const pathDistance = usesPath ? pathDistanceFor(move) : 0;
               let positionProgress = useIceSlideTiming && iceSlide
@@ -729,7 +969,171 @@
               let renderPunchEffect = punchEffect === true;
               let pathPointOverride = null;
 
-              if (hasPunchPhase && useIceSlideTiming) {
+              if (hasSequencedPunchPhase && useIceSlideTiming) {
+                const punchSegments = normalizedPunchSegments(move);
+
+                if (isPunchVisualMove(move)) {
+                  const timing = punchSequenceTimings.timings.get(punchSequenceForVisualMove(move));
+
+                  if (!timing || elapsedMs < timing.start) {
+                    renderToX = fromX;
+                    renderToY = fromY;
+                    renderToElevation = fromElevation;
+                    positionProgress = 1;
+                    renderPunchEffect = false;
+                  } else if (elapsedMs < timing.punchEnd) {
+                    const distance = punchPhaseTwoDistance(move);
+                    const duration = punchPhaseTwoDurationFor(move);
+
+                    positionProgress = segmentProgress(elapsedMs - timing.start, distance, duration, true);
+                    renderPunchEffect = true;
+                  } else if (retractPunchDuringFall) {
+                    renderFromX = toX;
+                    renderFromY = toY;
+                    renderToX = toX;
+                    renderToY = toY;
+                    renderFromElevation = toElevation;
+                    renderToElevation = toElevation;
+                    positionProgress = 1;
+                    renderPunchEffect = true;
+                  } else if (elapsedMs < timing.retractEnd) {
+                    const finalX = typeof move.finalX === "number" ? move.finalX : fromX;
+                    const finalY = typeof move.finalY === "number" ? move.finalY : fromY;
+                    const finalElevation =
+                      typeof move.finalElevation === "number" ? move.finalElevation : fromElevation;
+                    const distance = punchRetractDistance(move);
+                    const duration = punchRetractDurationFor(move);
+
+                    renderFromX = toX;
+                    renderFromY = toY;
+                    renderToX = finalX;
+                    renderToY = finalY;
+                    renderFromElevation = toElevation;
+                    renderToElevation = finalElevation;
+                    positionProgress = segmentProgress(
+                      elapsedMs - timing.punchEnd,
+                      distance,
+                      duration,
+                      true
+                    );
+                    renderPunchEffect = true;
+                  } else {
+                    const finalX = typeof move.finalX === "number" ? move.finalX : fromX;
+                    const finalY = typeof move.finalY === "number" ? move.finalY : fromY;
+                    const finalElevation =
+                      typeof move.finalElevation === "number" ? move.finalElevation : fromElevation;
+
+                    renderFromX = finalX;
+                    renderFromY = finalY;
+                    renderToX = finalX;
+                    renderToY = finalY;
+                    renderFromElevation = finalElevation;
+                    renderToElevation = finalElevation;
+                    positionProgress = 1;
+                    renderPunchEffect = false;
+                  }
+                } else if (punchSegments.length > 0) {
+                  const firstSegment = punchSegments[0];
+
+                  if (elapsedMs < punchPhaseOneDuration) {
+                    const distance = punchPhaseOneDistance(move);
+                    const duration = punchPhaseOneDurationFor(move);
+
+                    positionProgress = segmentProgress(
+                      elapsedMs,
+                      distance,
+                      duration,
+                      firstSegment.startIceSlide === true,
+                      reverseIceSlide
+                    );
+
+                    if (usesPath) {
+                      pathPointOverride = pointAlongPathToPoint(
+                        move,
+                        {
+                          x: firstSegment.fromX,
+                          y: firstSegment.fromY,
+                          elevation: firstSegment.fromElevation
+                        },
+                        positionProgress
+                      );
+                    } else {
+                      renderToX = firstSegment.fromX;
+                      renderToY = firstSegment.fromY;
+                      renderToElevation = firstSegment.fromElevation;
+                    }
+                  } else {
+                    let activeSegment = null;
+                    let activeTiming = null;
+                    let lastCompletedSegment = null;
+
+                    for (let index = 0; index < punchSegments.length; index += 1) {
+                      const segment = punchSegments[index];
+                      const timing = punchSequenceTimings.timings.get(segment.sequence);
+
+                      if (!timing) {
+                        continue;
+                      }
+
+                      if (elapsedMs < timing.start) {
+                        break;
+                      }
+
+                      if (elapsedMs < timing.punchEnd) {
+                        activeSegment = segment;
+                        activeTiming = timing;
+                        break;
+                      }
+
+                      lastCompletedSegment = segment;
+                    }
+
+                    const renderSegment = activeSegment || lastCompletedSegment || firstSegment;
+
+                    if (activeSegment && activeTiming) {
+                      const distance = punchSegmentDistance(activeSegment);
+                      const duration = punchSegmentDurationFor(move, activeSegment);
+
+                      renderFromX = activeSegment.fromX;
+                      renderFromY = activeSegment.fromY;
+                      renderToX = activeSegment.toX;
+                      renderToY = activeSegment.toY;
+                      renderFromElevation = activeSegment.fromElevation;
+                      renderToElevation = activeSegment.toElevation;
+                      positionProgress = segmentProgress(
+                        elapsedMs - activeTiming.start,
+                        distance,
+                        duration,
+                        activeSegment.punchSlide === true ||
+                          move.punchSlide === true ||
+                          iceSlide === true
+                      );
+                    } else {
+                      renderFromX = renderSegment.toX;
+                      renderFromY = renderSegment.toY;
+                      renderToX = renderSegment.toX;
+                      renderToY = renderSegment.toY;
+                      renderFromElevation = renderSegment.toElevation;
+                      renderToElevation = renderSegment.toElevation;
+                      positionProgress = 1;
+                    }
+                  }
+                } else if (elapsedMs >= punchPhaseOneDuration) {
+                  renderFromX = toX;
+                  renderFromY = toY;
+                  renderToX = toX;
+                  renderToY = toY;
+                  renderFromElevation = toElevation;
+                  renderToElevation = toElevation;
+                  positionProgress = 1;
+                  renderPunchEffect = false;
+                } else {
+                  const distance = punchPhaseOneDistance(move);
+                  const duration = punchPhaseOneDurationFor(move);
+
+                  positionProgress = segmentProgress(elapsedMs, distance, duration, iceSlide, reverseIceSlide);
+                }
+              } else if (hasPunchPhase && useIceSlideTiming) {
                 const punchPhaseTwoStart = punchPhaseOneDuration;
                 const punchRetractStart = punchPhaseOneDuration + punchPhaseTwoDuration;
                 const inPunchPhase = elapsedMs >= punchPhaseTwoStart;
@@ -825,7 +1229,8 @@
               } else {
                 actor.renderX = renderFromX + (renderToX - renderFromX) * positionProgress;
                 actor.renderY = renderFromY + (renderToY - renderFromY) * positionProgress;
-                actor.renderElevation = useToElevation ? toElevation : fromElevation;
+                actor.renderElevation =
+                  renderFromElevation + (renderToElevation - renderFromElevation) * positionProgress;
               }
               actor.renderInHole = false;
               actor.renderPunchEffect = renderPunchEffect;

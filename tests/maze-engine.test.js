@@ -1915,6 +1915,19 @@ function createState(playData) {
       fromY: 0,
       iceSlide: true,
       punchSlide: true,
+      punchSegments: [
+        {
+          fromElevation: 0,
+          fromX: 1,
+          fromY: 0,
+          punchSlide: true,
+          sequence: 0,
+          startIceSlide: false,
+          toElevation: 0,
+          toX: 3,
+          toY: 0
+        }
+      ],
       punchStartElevation: 0,
       punchStartIceSlide: false,
       punchStartX: 1,
@@ -1926,6 +1939,69 @@ function createState(playData) {
     }
   );
   assert.equal(result.moves.some((move) => move.actorType === "puncher" && move.visualOnly), true);
+}
+
+{
+  const terrain = floorTerrain(5, 4);
+  terrain[0][4] = { type: "wall" };
+  terrain[3][3] = { type: "wall" };
+  const { engine, state } = createState({
+    width: 5,
+    height: 4,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "puncher", direction: "right", x: 1, y: 0, elevation: 0, removed: false },
+      { type: "puncher", direction: "down", x: 3, y: 0, elevation: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  const playerMove = result.moves.find((move) => move.actorIndex === 0 && !move.visualOnly);
+  const puncherMoves = result.moves.filter((move) => move.actorType === "puncher" && move.visualOnly);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorY[0]], [3, 2]);
+  assert.deepEqual(
+    playerMove.punchSegments.map(
+      ({ sequence, fromX, fromY, fromElevation, toX, toY, toElevation, startIceSlide }) => ({
+        sequence,
+        fromX,
+        fromY,
+        fromElevation,
+        toX,
+        toY,
+        toElevation,
+        startIceSlide
+      })
+    ),
+    [
+      {
+        sequence: 0,
+        fromX: 1,
+        fromY: 0,
+        fromElevation: 0,
+        toX: 3,
+        toY: 0,
+        toElevation: 0,
+        startIceSlide: false
+      },
+      {
+        sequence: 1,
+        fromX: 3,
+        fromY: 0,
+        fromElevation: 0,
+        toX: 3,
+        toY: 2,
+        toElevation: 0,
+        startIceSlide: true
+      }
+    ]
+  );
+  assert.deepEqual(
+    puncherMoves.map((move) => move.punchSequence).sort(),
+    [0, 1]
+  );
 }
 
 {
