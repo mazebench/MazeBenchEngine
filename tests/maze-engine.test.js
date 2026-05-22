@@ -2622,4 +2622,28 @@ function createState(playData) {
   );
 }
 
+{
+  const terrain = floorTerrain(5, 1);
+  terrain[0][0] = wallStack(1);
+  terrain[0][1] = wallStack(1);
+  terrain[0][2] = wallStack(1);
+  const { engine, state } = createState({
+    width: 5,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 2, y: 0, elevation: 1, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 3, y: 0, elevation: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 3, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, false);
+  assert.deepEqual([state.actorX[0], state.actorY[0], state.actorElevation[0]], [2, 0, 1]);
+  assert.deepEqual([state.actorX[1], state.actorY[1], state.actorElevation[1]], [3, 0, 0]);
+  assert.deepEqual([state.actorX[2], state.actorY[2], state.actorElevation[2]], [3, 0, 1]);
+}
+
 console.log("maze-engine tests passed");

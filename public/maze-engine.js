@@ -5257,6 +5257,7 @@
               const occupiedSnapshot = occupiedSnapshotBuffer || new Set(occupied);
               const moveCount = moves.length;
               const pushBudget = countSupportingPlayers(state, player, stepDx, stepDy);
+              const pushedActorMembers = pushActorMembers(state, blockingActor);
 
               if (attemptSnapshotBuffer) {
                 copyStateInto(attemptSnapshotBuffer, state);
@@ -5283,7 +5284,36 @@
               );
 
               if (result !== null) {
-                didMoveBlockingActor = true;
+                const ignoredPostPushSupports = new Set([player, ...pushedActorMembers]);
+                const targetBlockedAfterPush =
+                  blockingActorAtElevation(
+                    state,
+                    moveTargetX,
+                    moveTargetY,
+                    moveTargetElevation,
+                    player
+                  ) !== -1;
+                const canOccupyTargetAfterPush =
+                  !targetBlockedAfterPush &&
+                  (canEnterHole ||
+                    canPlayerStandAtElevation(
+                      state,
+                      moveTargetX,
+                      moveTargetY,
+                      moveTargetElevation,
+                      raisedPlayerGates,
+                      orangeButtonsPressed,
+                      ignoredPostPushSupports
+                    ));
+
+                if (canOccupyTargetAfterPush) {
+                  didMoveBlockingActor = true;
+                } else {
+                  copyStateInto(state, attemptSnapshot);
+                  occupied.clear();
+                  occupiedSnapshot.forEach((key) => occupied.add(key));
+                  moves.length = moveCount;
+                }
               } else {
                 copyStateInto(state, attemptSnapshot);
                 occupied.clear();
