@@ -4901,28 +4901,37 @@
       };
     }
 
-    function iceSlopeDescriptorsCanMergeAtContact(base, neighbor, contact) {
-      if (
-        neighbor.type !== "ice_slope" ||
-        normalizeCardinalDirection(neighbor.layer?.direction) !==
-          normalizeCardinalDirection(base.layer?.direction)
-      ) {
+    function iceSlopeDescriptorsCanMergeAtContact(base, neighbor, contact, neighborContact) {
+      if (neighbor.type !== "ice_slope") {
         return false;
       }
 
+      const baseDirection = normalizeCardinalDirection(base.layer?.direction);
+      const neighborDirection = normalizeCardinalDirection(neighbor.layer?.direction);
       const baseRange = iceSlopeLevelRange(base);
       const neighborRange = iceSlopeLevelRange(neighbor);
 
-      if (baseRange.bottom === neighborRange.bottom && baseRange.top === neighborRange.top) {
+      if (neighborDirection === baseDirection) {
+        if (baseRange.bottom === neighborRange.bottom && baseRange.top === neighborRange.top) {
+          return true;
+        }
+
+        if (contact === "high") {
+          return neighborRange.bottom === baseRange.top;
+        }
+
+        if (contact === "low") {
+          return neighborRange.top === baseRange.bottom;
+        }
+      }
+
+      if (
+        contact === "high" &&
+        neighborContact === "high" &&
+        baseRange.bottom === neighborRange.bottom &&
+        baseRange.top === neighborRange.top
+      ) {
         return true;
-      }
-
-      if (contact === "high") {
-        return neighborRange.bottom === baseRange.top;
-      }
-
-      if (contact === "low") {
-        return neighborRange.top === baseRange.bottom;
       }
 
       return false;
@@ -4956,9 +4965,20 @@
         const contact = iceSlopeContactForGridOffset(direction, dx, dy);
 
         if (
-          terrainPieceDescriptorsAt(neighborX, neighborY, now).some((neighbor) =>
-            iceSlopeDescriptorsCanMergeAtContact(descriptor, neighbor, contact)
-          )
+          terrainPieceDescriptorsAt(neighborX, neighborY, now).some((neighbor) => {
+            const neighborContact = iceSlopeContactForGridOffset(
+              neighbor.layer?.direction,
+              -dx,
+              -dy
+            );
+
+            return iceSlopeDescriptorsCanMergeAtContact(
+              descriptor,
+              neighbor,
+              contact,
+              neighborContact
+            );
+          })
         ) {
           contacts.add(contact);
         }
