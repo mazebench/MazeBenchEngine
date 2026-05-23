@@ -2,7 +2,7 @@
   const modules = window.PlayModules || (window.PlayModules = {});
 
   modules.registerGameplayFunctions = function registerGameplayFunctions(app) {
-    // Ice ramps smoothly to capped speed across this many tiles.
+    // Forced motion uses constant velocity; duration still scales with travel distance.
     const ICE_SLIDE_TOP_SPEED_MULTIPLIER = 2.67;
     const ICE_SLIDE_ACCELERATION_DISTANCE = 5;
     const ICE_SLIDE_STOP_DISTANCE = 1;
@@ -31,6 +31,7 @@
     const HOLE_FADE_START_PROGRESS = 0.42;
     const HOLE_PRE_FADE_SINK_DISTANCE = Math.max(HOLE_SINK_DISTANCE * 0.62, app.TILE_SIZE * 2);
     const HOLE_FADE_SINK_DISTANCE = Math.max(HOLE_SINK_DISTANCE * 0.72, app.TILE_SIZE * 2);
+    let nextUndoGroupId = 1;
 
     function createAnimationElapsedTracker() {
       const replayFrameStepMs = Number(app.replayAnimationFrameStepMs);
@@ -337,85 +338,30 @@
       );
     }
 
-    function iceSlideAccelerationEase(progress) {
-      return 1.5 * progress * progress - 0.5 * progress * progress * progress;
+    function linearMotionProgress(elapsedMs, durationMs) {
+      if (durationMs <= 0) {
+        return 1;
+      }
+
+      return Math.min(1, Math.max(0, elapsedMs / durationMs));
     }
 
-    function iceSlideShortEase(progress) {
-      return progress * progress * (3 - 2 * progress);
-    }
-
-    function iceSlideStopEase(progress) {
-      return 1 - Math.pow(1 - progress, 3);
-    }
-
-    function forwardIceSlideProgress(elapsedMs, distance) {
+    function iceSlideProgress(elapsedMs, distance, reverse = false) {
       if (distance <= 0 || MOVE_DURATION_MS <= 0) {
         return 1;
       }
 
-      const durationMs = iceSlideDuration(distance);
-      const timeProgress = Math.min(1, Math.max(0, elapsedMs / durationMs));
-
-      if (isShortIceSlide(distance)) {
-        return iceSlideShortEase(timeProgress);
-      }
-
-      let traveledDistance = 0;
-      const accelerationDurationMs = iceSlideAccelerationDuration();
-      const stopDurationMs = iceSlideStopDuration();
-      const cruiseDistance =
-        distance - ICE_SLIDE_ACCELERATION_DISTANCE - ICE_SLIDE_STOP_DISTANCE;
-      const cruiseDurationMs =
-        (cruiseDistance * MOVE_DURATION_MS) / ICE_SLIDE_TOP_SPEED_MULTIPLIER;
-
-      if (elapsedMs < accelerationDurationMs) {
-        const progress = Math.max(0, elapsedMs / accelerationDurationMs);
-        traveledDistance = ICE_SLIDE_ACCELERATION_DISTANCE * iceSlideAccelerationEase(progress);
-      } else if (elapsedMs < accelerationDurationMs + cruiseDurationMs) {
-        traveledDistance =
-          ICE_SLIDE_ACCELERATION_DISTANCE +
-          ((elapsedMs - accelerationDurationMs) * ICE_SLIDE_TOP_SPEED_MULTIPLIER) /
-            MOVE_DURATION_MS;
-      } else {
-        const stopProgress = Math.min(
-          1,
-          Math.max(0, (elapsedMs - accelerationDurationMs - cruiseDurationMs) / stopDurationMs)
-        );
-        traveledDistance =
-          ICE_SLIDE_ACCELERATION_DISTANCE +
-          cruiseDistance +
-          ICE_SLIDE_STOP_DISTANCE * iceSlideStopEase(stopProgress);
-      }
-
-      return Math.min(1, traveledDistance / distance);
-    }
-
-    function iceSlideProgress(elapsedMs, distance, reverse = false) {
-      if (!reverse) {
-        return forwardIceSlideProgress(elapsedMs, distance);
-      }
-
-      const duration = iceSlideDuration(distance);
-      return 1 - forwardIceSlideProgress(Math.max(0, duration - elapsedMs), distance);
+      return linearMotionProgress(elapsedMs, iceSlideDuration(distance));
     }
 
     function iceSlideProgressForDuration(elapsedMs, distance, durationMs, reverse = false) {
       const nativeDurationMs = iceSlideDuration(distance);
 
-      if (
-        nativeDurationMs <= 0 ||
-        !Number.isFinite(durationMs) ||
-        durationMs <= nativeDurationMs
-      ) {
+      if (nativeDurationMs <= 0 || !Number.isFinite(durationMs) || durationMs <= nativeDurationMs) {
         return iceSlideProgress(elapsedMs, distance, reverse);
       }
 
-      return iceSlideProgress(
-        (Math.max(0, elapsedMs) / durationMs) * nativeDurationMs,
-        distance,
-        reverse
-      );
+      return linearMotionProgress(elapsedMs, durationMs);
     }
 
     function moveDurationFor(move) {
@@ -759,6 +705,8 @@
       app.isAnimating = true;
       const startLiftPhaseCallback =
         typeof options.startLiftPhase === "function" ? options.startLiftPhase : null;
+      const moveFrameCallback =
+        typeof options.onMoveFrame === "function" ? options.onMoveFrame : null;
       const liftPhaseFirst = options.liftPhaseFirst === true;
       const holeStateMoves = moves.filter(
         ({
@@ -1457,6 +1405,15 @@
             }
           );
 
+          if (moveFrameCallback) {
+            moveFrameCallback({
+              elapsedMs,
+              moveDuration,
+              moves,
+              progress
+            });
+          }
+
           app.render(now);
 
           if (progress < 1) {
@@ -1693,9 +1650,786 @@
       });
     }
 
-    function movePlayers(dx, dy) {
-      if (app.isAnimating || app.isTransitioningLevel) {
+    function isSlideContinuationSurface(type) {
+      return type === "ice" || type === "ice_block" || type === "ice_slope";
+    }
+
+    function beginMoveUndoGroup() {
+      if (!app.activeUndoGroupId) {
+        app.activeUndoGroupId = `move-${nextUndoGroupId}`;
+        nextUndoGroupId += 1;
+      }
+
+      return app.activeUndoGroupId;
+    }
+
+    function finishMoveUndoGroup() {
+      app.activeUndoGroupId = null;
+    }
+
+    function playerSlideMoveForContinuation(moveResult) {
+      if (!moveResult?.moved || !Array.isArray(moveResult.moves)) {
+        return null;
+      }
+
+      return (
+        moveResult.moves.find(
+          (move) =>
+            move?.visualOnly !== true &&
+            move?.toRemoved !== true &&
+            app.isPlayerActor(move.actor) &&
+            (move.iceSlide === true || move.punchSlide === true)
+        ) || null
+      );
+    }
+
+    function playerLevelExitMoveForContinuation(moveResult, dx, dy) {
+      if (!moveResult?.moved || !Array.isArray(moveResult.moves)) {
+        return null;
+      }
+
+      return (
+        moveResult.moves.find(
+          (move) =>
+            move?.visualOnly !== true &&
+            move?.toRemoved !== true &&
+            move.levelExit === true &&
+            move.levelExitDx === dx &&
+            move.levelExitDy === dy &&
+            app.isPlayerActor(move.actor)
+        ) || null
+      );
+    }
+
+    function shouldContinuePlayerMoveAcrossEdge(moveResult, edgeTransition) {
+      const playerMove = playerSlideMoveForContinuation(moveResult);
+
+      if (!playerMove || !edgeTransition) {
+        return false;
+      }
+
+      if (playerMove.punchSlide === true) {
+        return true;
+      }
+
+      return isSlideContinuationSurface(edgeTransition.sourceType);
+    }
+
+    function levelExitTransitionForMove(moveResult, dx, dy) {
+      const playerMove = playerLevelExitMoveForContinuation(moveResult, dx, dy);
+
+      if (
+        !playerMove ||
+        typeof app.adjacentWorldLevelId !== "function" ||
+        !app.currentLevelId
+      ) {
+        return null;
+      }
+
+      const nextLevelId = app.adjacentWorldLevelId(app.currentLevelId, dx, dy);
+
+      if (!nextLevelId) {
+        return null;
+      }
+
+      return {
+        player: playerMove.actor,
+        nextLevelId,
+        sourceType: playerMove.levelExitSourceType || "ice_slope",
+        sourceElevation: playerMove.levelExitElevation ?? playerMove.toElevation ?? 0,
+        targetElevation: playerMove.levelExitElevation ?? playerMove.toElevation ?? 0,
+        dx,
+        dy,
+        targetX: dx < 0 ? state.width - 1 : dx > 0 ? 0 : playerMove.toX,
+        targetY: dy < 0 ? state.height - 1 : dy > 0 ? 0 : playerMove.toY,
+        continueFromCurrentSlope: true,
+        continueMove: true
+      };
+    }
+
+    function edgeTransitionForMoveResult(moveResult, dx, dy) {
+      const playerMove = playerSlideMoveForContinuation(moveResult);
+
+      if (
+        !playerMove ||
+        typeof app.edgeTransitionForPlayerMove !== "function"
+      ) {
+        return null;
+      }
+
+      const edgeTransition = app.edgeTransitionForPlayerMove(
+        playerMove.actor,
+        playerMove.toX,
+        playerMove.toY,
+        playerMove.toElevation ?? playerMove.fromElevation ?? playerMove.actor?.elevation ?? 0,
+        dx,
+        dy
+      );
+
+      if (!shouldContinuePlayerMoveAcrossEdge(moveResult, edgeTransition)) {
+        return null;
+      }
+
+      return edgeTransition;
+    }
+
+    function continuationTransitionForMoveResult(moveResult, dx, dy) {
+      return levelExitTransitionForMove(moveResult, dx, dy) ||
+        edgeTransitionForMoveResult(moveResult, dx, dy);
+    }
+
+    function transitionLeadMsForMove(moveDuration) {
+      const transitionDuration = app.LEVEL_TRANSITION_DURATION_MS || 1000;
+      const normalizedMoveDuration = Number.isFinite(moveDuration) ? Math.max(0, moveDuration) : 0;
+
+      return Math.max(
+        MOVE_DURATION_MS * 1.6,
+        Math.min(transitionDuration * 0.46, normalizedMoveDuration * 0.5)
+      );
+    }
+
+    function extendedTransitionDurationMs(moveDuration, leadMs) {
+      const transitionDuration = app.LEVEL_TRANSITION_DURATION_MS || 1000;
+      const normalizedMoveDuration = Number.isFinite(moveDuration) ? Math.max(0, moveDuration) : 0;
+
+      return Math.max(
+        transitionDuration * 0.48,
+        Math.min(
+          transitionDuration * 0.68,
+          transitionDuration * 0.42 + leadMs * 0.35 + normalizedMoveDuration * 0.05
+        )
+      );
+    }
+
+    function continuousRoomTransitionDurationMs(transition, moveDuration, leadMs) {
+      const transitionDuration = app.LEVEL_TRANSITION_DURATION_MS || 1000;
+      const roomDistance =
+        Number(transition?.dx) !== 0
+          ? Math.max(1, state.width || 1)
+          : Math.max(1, state.height || 1);
+      const roomSlideDuration = iceSlideDuration(roomDistance);
+
+      return Math.max(
+        transitionDuration * 0.5,
+        Math.min(
+          transitionDuration * 1.15,
+          Math.max(roomSlideDuration, extendedTransitionDurationMs(moveDuration, leadMs))
+        )
+      );
+    }
+
+    function continuePlayerMoveAcrossEdge(moveResult, dx, dy) {
+      if (
+        typeof app.edgeTransitionForMove !== "function" ||
+        typeof app.transitionToAdjacentLevel !== "function"
+      ) {
+        return false;
+      }
+
+      const levelExitTransition = levelExitTransitionForMove(moveResult, dx, dy);
+      const edgeTransition = levelExitTransition || app.edgeTransitionForMove(dx, dy);
+
+      if (!levelExitTransition && !shouldContinuePlayerMoveAcrossEdge(moveResult, edgeTransition)) {
+        return false;
+      }
+
+      Promise.resolve(
+        app.transitionToAdjacentLevel({
+          ...edgeTransition,
+          continueMove: true,
+          durationMs: continuousRoomTransitionDurationMs(
+            edgeTransition,
+            iceSlideDuration(Number(edgeTransition.dx) !== 0 ? state.width : state.height),
+            0
+          ),
+          steadyCamera: true,
+          replaceActiveTransition: true,
+          skipNeighborhoodPreload: true,
+          skipPrewarm: true,
+          warmupPromise:
+            typeof app.warmAdjacentLevelTransition === "function"
+              ? app.warmAdjacentLevelTransition(edgeTransition, { preloadNeighborhood: "queue" })
+              : null
+        })
+      ).then((didTransition) => {
+        if (didTransition !== false) {
+          return;
+        }
+
+        finishMoveUndoGroup();
+        runQueuedAction();
+      });
+      return true;
+    }
+
+    function collectUndoGroupEntries(latestEntry) {
+      const entries = [latestEntry];
+      const undoGroupId = latestEntry?.undoGroupId || null;
+
+      if (!undoGroupId) {
+        return entries;
+      }
+
+      while (moveHistory.at(-1)?.undoGroupId === undoGroupId) {
+        entries.push(moveHistory.pop());
+      }
+
+      return entries.reverse();
+    }
+
+    function restoreGroupedUndoEntry(firstEntry) {
+      if (firstEntry?.kind === "level-transition") {
+        applyLevelState(firstEntry.level, {
+          updateUrl: true,
+          immediateCamera: true
+        });
+        if (typeof app.restoreLevelEntryState === "function") {
+          app.restoreLevelEntryState(firstEntry.entry);
+        }
+      } else if (firstEntry?.levelSnapshot) {
+        applyLevelState(firstEntry.levelSnapshot, {
+          updateUrl: true,
+          immediateCamera: true
+        });
+        if (
+          firstEntry.levelEntrySnapshot &&
+          typeof app.restoreLevelEntryState === "function"
+        ) {
+          app.restoreLevelEntryState(firstEntry.levelEntrySnapshot);
+        }
+      } else {
+        restoreTerrainState(firstEntry.terrain);
+      }
+
+      app.gateRenderOverride = null;
+      app.orangeWallRenderOverride = null;
+      syncFloatingFloorTicker();
+      app.render();
+    }
+
+    function activeUndoGroupIncludesLevelTransition() {
+      const undoGroupId = app.activeUndoGroupId;
+
+      if (!undoGroupId) {
+        return false;
+      }
+
+      return moveHistory.some(
+        (entry) => entry?.undoGroupId === undoGroupId && entry.kind === "level-transition"
+      );
+    }
+
+    function rememberSettledEntryStateAfterContinuation() {
+      if (
+        activeUndoGroupIncludesLevelTransition() &&
+        typeof app.rememberCurrentLevelEntryState === "function"
+      ) {
+        app.rememberCurrentLevelEntryState();
+      }
+    }
+
+    function currentPlayerForWorldAction() {
+      const players = state.actors.filter((actor) => app.isPlayerActor(actor) && !actor.removed);
+
+      return players.length === 1 ? players[0] : null;
+    }
+
+    function worldActionLevelSnapshot() {
+      const snapshot = app.cloneLevelSnapshot?.();
+
+      if (!snapshot) {
+        return null;
+      }
+
+      snapshot.raisedPlayerGates = Array.from(computeRaisedPlayerGateSet());
+      snapshot.raisedOrangeWalls = Array.from(computeRaisedOrangeWallSet());
+
+      return snapshot;
+    }
+
+    function actionRoomOffsetAfterTransition(currentOffset, currentState, nextState, dx, dy) {
+      return {
+        x: dx < 0
+          ? currentOffset.x - nextState.width
+          : dx > 0
+            ? currentOffset.x + currentState.width
+            : currentOffset.x,
+        y: dy < 0
+          ? currentOffset.y - nextState.height
+          : dy > 0
+            ? currentOffset.y + currentState.height
+            : currentOffset.y
+      };
+    }
+
+    function appendWorldPathPoints(worldPath, localPath, roomOffset) {
+      localPath.forEach((point) => {
+        const worldPoint = {
+          x: point.x + roomOffset.x,
+          y: point.y + roomOffset.y,
+          elevation: point.elevation
+        };
+        const previous = worldPath[worldPath.length - 1];
+
+        if (previous && pathPointMatches(previous, worldPoint)) {
+          return;
+        }
+
+        worldPath.push(worldPoint);
+      });
+    }
+
+    function playerMovePathForWorldAction(move) {
+      return normalizedMovePath(move);
+    }
+
+    function supportsWorldActionMoveResult(moveResult) {
+      if (!moveResult?.moved || !Array.isArray(moveResult.moves)) {
+        return false;
+      }
+
+      return moveResult.moves.every((move) => {
+        if (move.visualOnly === true) {
+          return app.isPlayerActor(move.actor);
+        }
+
+        return app.isPlayerActor(move.actor);
+      });
+    }
+
+    function restorePlannedWorldActionStart(startSnapshot, startCollectedGemIds) {
+      if (startCollectedGemIds && app.collectedGemIds) {
+        app.collectedGemIds.clear();
+        startCollectedGemIds.forEach((id) => app.collectedGemIds.add(id));
+      }
+
+      applyLevelState(startSnapshot, {
+        deferRender: true,
+        immediateCamera: true,
+        skipTransientSideEffects: true,
+        updateUrl: false
+      });
+    }
+
+    function preloadForwardWorldActionLevels(dx, dy) {
+      if (
+        typeof app.loadHorizontalNeighborLevelState !== "function" ||
+        typeof app.adjacentWorldLevelId !== "function"
+      ) {
+        return;
+      }
+
+      const requested = new Set();
+      let levelId = app.currentLevelId;
+
+      for (let index = 0; index < 4; index += 1) {
+        levelId = app.adjacentWorldLevelId(levelId, dx, dy);
+
+        if (!levelId || requested.has(levelId)) {
+          return;
+        }
+
+        requested.add(levelId);
+        app.loadHorizontalNeighborLevelState(levelId).catch(() => null);
+      }
+    }
+
+    function queueWorldActionNeighborhood(rooms) {
+      if (
+        !Array.isArray(rooms) ||
+        typeof app.queueHorizontalNeighborLevelState !== "function" ||
+        typeof app.adjacentWorldLevelId !== "function"
+      ) {
+        return;
+      }
+
+      const requested = new Set();
+
+      rooms.forEach((room) => {
+        const levelId = room?.levelId || room?.levelState?.levelId;
+
+        if (!levelId) {
+          return;
+        }
+
+        for (let y = -1; y <= 1; y += 1) {
+          for (let x = -1; x <= 1; x += 1) {
+            if (x === 0 && y === 0) {
+              continue;
+            }
+
+            const neighborLevelId = app.adjacentWorldLevelId(levelId, x, y);
+
+            if (!neighborLevelId || requested.has(neighborLevelId)) {
+              continue;
+            }
+
+            requested.add(neighborLevelId);
+            app.queueHorizontalNeighborLevelState(neighborLevelId);
+          }
+        }
+      });
+    }
+
+    async function planContinuousWorldAction(dx, dy, options = {}) {
+      if (
+        !currentPlayerForWorldAction() ||
+        typeof app.prepareAdjacentLevelTransfer !== "function" ||
+        typeof app.adjacentWorldLevelId !== "function" ||
+        typeof app.cloneLevelSnapshot !== "function"
+      ) {
+        return null;
+      }
+
+      const startSnapshot = app.cloneLevelSnapshot();
+      const startEntrySnapshot =
+        typeof app.cloneStoredLevelSnapshot === "function"
+          ? app.cloneStoredLevelSnapshot(app.levelEntrySnapshot)
+          : null;
+      const startCollectedGemIds = app.collectedGemIds
+        ? new Set(app.collectedGemIds)
+        : null;
+      const rooms = [];
+      const worldPath = [];
+      let roomOffset = { x: 0, y: 0 };
+      let crossedLevel = false;
+      let startOnCurrentSlope = options.startOnCurrentSlope === true;
+
+      preloadForwardWorldActionLevels(dx, dy);
+
+      try {
+        for (let guard = 0; guard < 16; guard += 1) {
+          const roomState = worldActionLevelSnapshot();
+
+          if (!roomState) {
+            return null;
+          }
+
+          rooms.push({
+            levelId: roomState.levelId,
+            levelState: roomState,
+            offset: { ...roomOffset }
+          });
+          const moveResult = movement.performPlayerMove(dx, dy, {
+            animate: false,
+            recordHistory: false,
+            startOnCurrentSlope
+          });
+
+          if (!supportsWorldActionMoveResult(moveResult)) {
+            return null;
+          }
+
+          const playerMove =
+            playerLevelExitMoveForContinuation(moveResult, dx, dy) ||
+            playerSlideMoveForContinuation(moveResult);
+
+          if (!playerMove) {
+            return null;
+          }
+
+          appendWorldPathPoints(
+            worldPath,
+            playerMovePathForWorldAction(playerMove),
+            roomOffset
+          );
+
+          const levelExitTransition = levelExitTransitionForMove(moveResult, dx, dy);
+          const edgeTransition = levelExitTransition || app.edgeTransitionForMove?.(dx, dy);
+
+          if (
+            !levelExitTransition &&
+            !shouldContinuePlayerMoveAcrossEdge(moveResult, edgeTransition)
+          ) {
+            if (!crossedLevel) {
+              return null;
+            }
+
+            const finalSnapshot = app.cloneLevelSnapshot();
+            queueWorldActionNeighborhood(rooms);
+            return {
+              finalLevelState: finalSnapshot,
+              player: { ...playerMove.actor },
+              rooms,
+              startEntrySnapshot,
+              startLevelState: startSnapshot,
+              path: worldPath
+            };
+          }
+
+          const transfer = await app.prepareAdjacentLevelTransfer({
+            ...edgeTransition,
+            continueMove: true
+          });
+
+          if (!transfer?.nextLevelState || transfer.entersHole) {
+            return null;
+          }
+
+          crossedLevel = true;
+
+          const nextOffset = actionRoomOffsetAfterTransition(
+            roomOffset,
+            {
+              width: state.width,
+              height: state.height
+            },
+            transfer.nextLevelState,
+            dx,
+            dy
+          );
+          appendWorldPathPoints(
+            worldPath,
+            [
+              {
+                x: edgeTransition.targetX,
+                y: edgeTransition.targetY,
+                elevation: transfer.targetElevation
+              }
+            ],
+            nextOffset
+          );
+
+          applyLevelState(transfer.nextLevelState, {
+            deferRender: true,
+            immediateCamera: true,
+            resetLevelEntry: true,
+            skipTransientSideEffects: true,
+            updateUrl: false
+          });
+
+          roomOffset = nextOffset;
+          startOnCurrentSlope = edgeTransition.continueFromCurrentSlope === true;
+        }
+      } finally {
+        restorePlannedWorldActionStart(startSnapshot, startCollectedGemIds);
+      }
+
+      return null;
+    }
+
+    function worldActionPointAt(path, traveledDistance) {
+      return pointAlongPathDistance({ path }, traveledDistance);
+    }
+
+    function startContinuousWorldActionAnimation(plan) {
+      if (!plan || !Array.isArray(plan.path) || plan.path.length < 2) {
+        return false;
+      }
+
+      const distance = pathDistanceFor({ path: plan.path });
+      const durationMs = iceSlideDuration(distance);
+      const elapsedForFrame = createAnimationElapsedTracker();
+      const undoGroupId = beginMoveUndoGroup();
+      app.worldActionAnimation = {
+        currentPoint: plan.path[0],
+        progress: 0,
+        path: plan.path,
+        player: plan.player,
+        rooms: plan.rooms,
+        stableWidth: Math.max(1, plan.rooms[0]?.levelState?.width || state.width),
+        stableHeight: Math.max(1, plan.rooms[0]?.levelState?.height || state.height)
+      };
+      app.isAnimating = true;
+      moveHistory.push({
+        levelSnapshot: plan.startLevelState,
+        levelEntrySnapshot: plan.startEntrySnapshot,
+        undoGroupId
+      });
+
+      function finish() {
+        app.worldActionAnimation = null;
+        app.isAnimating = false;
+        app.animationFrameId = null;
+        applyLevelState(plan.finalLevelState, {
+          immediateCamera: true,
+          resetLevelEntry: true,
+          updateUrl: true
+        });
+        finishMoveUndoGroup();
+        runQueuedAction();
+      }
+
+      function step(now = performance.now()) {
+        const elapsedMs = elapsedForFrame(now);
+        const progress = linearMotionProgress(elapsedMs, durationMs);
+        app.worldActionAnimation.progress = progress;
+        app.worldActionAnimation.currentPoint = worldActionPointAt(
+          plan.path,
+          distance * progress
+        );
+        app.render(now);
+
+        if (progress >= 1) {
+          finish();
+          return;
+        }
+
+        app.animationFrameId = window.requestAnimationFrame(step);
+      }
+
+      app.animationFrameId = window.requestAnimationFrame(step);
+      return true;
+    }
+
+    function hasContinuousWorldActionCrossing(dx, dy, options = {}) {
+      const player = currentPlayerForWorldAction();
+
+      if (!player) {
+        return false;
+      }
+
+      const startSnapshot = app.cloneLevelSnapshot?.();
+      const startCollectedGemIds = app.collectedGemIds
+        ? new Set(app.collectedGemIds)
+        : null;
+
+      if (!startSnapshot) {
+        return false;
+      }
+
+      try {
+        const moveResult = movement.performPlayerMove(dx, dy, {
+          animate: false,
+          recordHistory: false,
+          startOnCurrentSlope: options.startOnCurrentSlope === true
+        });
+
+        if (!supportsWorldActionMoveResult(moveResult)) {
+          return false;
+        }
+
+        const levelExitTransition = levelExitTransitionForMove(moveResult, dx, dy);
+        const edgeTransition = levelExitTransition || app.edgeTransitionForMove?.(dx, dy);
+
+        return Boolean(
+          levelExitTransition ||
+            shouldContinuePlayerMoveAcrossEdge(moveResult, edgeTransition)
+        );
+      } finally {
+        restorePlannedWorldActionStart(startSnapshot, startCollectedGemIds);
+      }
+    }
+
+    function terrainCellHasContinuationSurface(cell) {
+      if (!cell) {
+        return false;
+      }
+
+      if (isSlideContinuationSurface(cell.type)) {
+        return true;
+      }
+
+      return Array.isArray(cell.layers) &&
+        cell.layers.some((layer) => isSlideContinuationSurface(layer.type));
+    }
+
+    function boundaryContinuationSurfaceCandidate(dx, dy) {
+      const player = currentPlayerForWorldAction();
+
+      if (!player) {
+        return false;
+      }
+
+      const boundaryX = dx < 0 ? 0 : dx > 0 ? state.width - 1 : player.x;
+      const boundaryY = dy < 0 ? 0 : dy > 0 ? state.height - 1 : player.y;
+
+      return terrainCellHasContinuationSurface(state.terrain[boundaryY]?.[boundaryX]);
+    }
+
+    function playerOnlyCorridorCandidate(dx, dy) {
+      const player = currentPlayerForWorldAction();
+
+      if (!player) {
+        return false;
+      }
+
+      return !state.actors.some((actor) => {
+        if (!actor || actor.removed || app.isPlayerActor(actor) || app.isCollectibleActor?.(actor)) {
+          return false;
+        }
+
+        if (dx !== 0) {
+          if (actor.y !== player.y) {
+            return false;
+          }
+
+          return dx > 0
+            ? actor.x > player.x
+            : actor.x < player.x;
+        }
+
+        if (actor.x !== player.x) {
+          return false;
+        }
+
+        return dy > 0
+          ? actor.y > player.y
+          : actor.y < player.y;
+      });
+    }
+
+    function maybeStartContinuousWorldAction(dx, dy, options = {}) {
+      if (
+        options.skipWorldAction === true ||
+        options.allowDuringTransition === true ||
+        app.isTransitioningLevel ||
+        app.isPlanningWorldAction === true
+      ) {
+        return false;
+      }
+
+      if (!boundaryContinuationSurfaceCandidate(dx, dy)) {
+        return false;
+      }
+
+      if (!playerOnlyCorridorCandidate(dx, dy)) {
+        return false;
+      }
+
+      if (!hasContinuousWorldActionCrossing(dx, dy, options)) {
+        return false;
+      }
+
+      app.isPlanningWorldAction = true;
+      Promise.resolve(planContinuousWorldAction(dx, dy, options))
+        .then((plan) => {
+          app.isPlanningWorldAction = false;
+
+          if (plan && startContinuousWorldActionAnimation(plan)) {
+            return;
+          }
+
+          movePlayers(dx, dy, {
+            ...options,
+            skipWorldAction: true
+          });
+        })
+        .catch((error) => {
+          app.isPlanningWorldAction = false;
+          console.error(error);
+          movePlayers(dx, dy, {
+            ...options,
+            skipWorldAction: true
+          });
+        });
+
+      return true;
+    }
+
+    function movePlayers(dx, dy, options = {}) {
+      const allowDuringTransition = options.allowDuringTransition === true;
+
+      if (
+        app.isPlanningWorldAction ||
+        app.isAnimating ||
+        (app.isTransitioningLevel && !allowDuringTransition)
+      ) {
         app.queuedAction = { type: "move", dx, dy };
+        return;
+      }
+
+      if (maybeStartContinuousWorldAction(dx, dy, options)) {
         return;
       }
 
@@ -1703,16 +2437,140 @@
         typeof app.edgeTransitionForMove === "function" ? app.edgeTransitionForMove(dx, dy) : null;
 
       if (edgeTransition) {
-        void app.transitionToAdjacentLevel(edgeTransition);
+        const shouldContinue = isSlideContinuationSurface(edgeTransition.sourceType);
+
+        if (shouldContinue) {
+          beginMoveUndoGroup();
+        }
+
+        Promise.resolve(
+          app.transitionToAdjacentLevel({
+            ...edgeTransition,
+            continueMove: shouldContinue,
+            durationMs: shouldContinue
+              ? continuousRoomTransitionDurationMs(
+                  edgeTransition,
+                  iceSlideDuration(Number(edgeTransition.dx) !== 0 ? state.width : state.height),
+                  0
+                )
+              : undefined,
+            steadyCamera: shouldContinue,
+            replaceActiveTransition: shouldContinue,
+            skipNeighborhoodPreload: shouldContinue,
+            skipPrewarm: shouldContinue,
+            warmupPromise:
+              shouldContinue && typeof app.warmAdjacentLevelTransition === "function"
+                ? app.warmAdjacentLevelTransition(edgeTransition, { preloadNeighborhood: "queue" })
+                : null,
+            undoGroupId: app.activeUndoGroupId || null
+          })
+        ).then((didTransition) => {
+          if (shouldContinue && didTransition === false) {
+            finishMoveUndoGroup();
+            runQueuedAction();
+          }
+        });
         return;
       }
 
-      movement.performPlayerMove(dx, dy, {
+      beginMoveUndoGroup();
+      let moveResult = null;
+      let earlyTransition = null;
+
+      const startEarlyTransition = (frame) => {
+        if (!earlyTransition || earlyTransition.started) {
+          return;
+        }
+
+        const moveDuration = Number.isFinite(frame?.moveDuration) ? frame.moveDuration : 0;
+        const leadMs = transitionLeadMsForMove(moveDuration);
+        const triggerMs = Math.max(0, moveDuration - leadMs);
+        const elapsedMs = Number.isFinite(frame?.elapsedMs) ? frame.elapsedMs : moveDuration;
+
+        if (elapsedMs < triggerMs) {
+          return;
+        }
+
+        earlyTransition.started = true;
+        earlyTransition.promise = Promise.resolve(
+          app.transitionToAdjacentLevel({
+            ...earlyTransition.transition,
+            continueMove: true,
+            durationMs: continuousRoomTransitionDurationMs(
+              earlyTransition.transition,
+              moveDuration,
+              leadMs
+            ),
+            followSourcePlayerBeforeContinuation: true,
+            steadyCamera: true,
+            replaceActiveTransition: true,
+            skipNeighborhoodPreload: true,
+            skipPrewarm: true,
+            warmupPromise: earlyTransition.warmupPromise,
+            undoGroupId: app.activeUndoGroupId || null
+          })
+        ).then((didTransition) => {
+          earlyTransition.didTransition = didTransition !== false;
+
+          if (didTransition !== false) {
+            return;
+          }
+
+          earlyTransition.failed = true;
+
+          if (earlyTransition.sourceFinished) {
+            finishMoveUndoGroup();
+            runQueuedAction();
+          }
+        });
+      };
+
+      const onFinish = () => {
+        Promise.resolve().then(() => {
+          if (earlyTransition?.started && !earlyTransition.failed) {
+            earlyTransition.sourceFinished = true;
+            return;
+          }
+
+          if (continuePlayerMoveAcrossEdge(moveResult, dx, dy)) {
+            return;
+          }
+
+          rememberSettledEntryStateAfterContinuation();
+          finishMoveUndoGroup();
+          runQueuedAction();
+        });
+      };
+
+      moveResult = movement.performPlayerMove(dx, dy, {
         animate: true,
         durationMs: Number.isFinite(app.replayMoveDurationMs)
           ? app.replayMoveDurationMs
           : null,
-        recordHistory: true
+        recordHistory: true,
+        startOnCurrentSlope: options.startOnCurrentSlope === true,
+        beforeAnimate: ({ moveResult: preparedMoveResult }) => {
+          const transition = continuationTransitionForMoveResult(preparedMoveResult, dx, dy);
+
+          if (!transition) {
+            return;
+          }
+
+          earlyTransition = {
+            didTransition: false,
+            failed: false,
+            promise: null,
+            sourceFinished: false,
+            started: false,
+            transition,
+            warmupPromise:
+              typeof app.warmAdjacentLevelTransition === "function"
+                ? app.warmAdjacentLevelTransition(transition, { preloadNeighborhood: "queue" })
+                : null
+          };
+        },
+        onMoveFrame: startEarlyTransition,
+        onFinish
       });
     }
 
@@ -1728,6 +2586,13 @@
         return;
       }
 
+      const undoEntries = collectUndoGroupEntries(previousState);
+
+      if (undoEntries.length > 1) {
+        restoreGroupedUndoEntry(undoEntries[0]);
+        return;
+      }
+
       if (previousState.kind === "level-transition") {
         applyLevelState(previousState.level, {
           updateUrl: true,
@@ -1735,6 +2600,22 @@
         });
         if (typeof app.restoreLevelEntryState === "function") {
           app.restoreLevelEntryState(previousState.entry);
+        }
+        syncFloatingFloorTicker();
+        app.render();
+        return;
+      }
+
+      if (previousState.levelSnapshot && !previousState.actors) {
+        applyLevelState(previousState.levelSnapshot, {
+          updateUrl: true,
+          immediateCamera: true
+        });
+        if (
+          previousState.levelEntrySnapshot &&
+          typeof app.restoreLevelEntryState === "function"
+        ) {
+          app.restoreLevelEntryState(previousState.levelEntrySnapshot);
         }
         syncFloatingFloorTicker();
         app.render();
@@ -1873,6 +2754,7 @@
       undoMove,
       resetPositions,
       runQueuedAction,
+      finishMoveUndoGroup,
       runAction,
       handleKeydown,
       preventScroll

@@ -34,6 +34,7 @@
     const {
       startLevelTransition
     } = renderCompositor;
+    const transitionWarmups = new Map();
 
     function cloneStoredLevelSnapshot(snapshot) {
       if (!snapshot) {
@@ -97,6 +98,89 @@
       return sourceType === targetType;
     }
 
+    function continuationMoveController(transition, transitionData) {
+      if (transition?.continueMove !== true || transition.entersHole === true) {
+        return null;
+      }
+
+      const dx = Number(transition.dx);
+      const dy = Number(transition.dy);
+
+      if (!Number.isInteger(dx) || !Number.isInteger(dy) || (dx === 0 && dy === 0)) {
+        return null;
+      }
+
+      let started = false;
+
+      function start(options = {}) {
+        if (started) {
+          return undefined;
+        }
+
+        if (app.isAnimating) {
+          return undefined;
+        }
+
+        started = true;
+
+        if (transitionData) {
+          transitionData.followIncomingPlayerDuringContinuation = true;
+          transitionData.continuationStartedAtMs = performance.now();
+          transitionData.continuationSourcePlayer = transitionData.liveSourcePlayer
+            ? { ...transitionData.liveSourcePlayer }
+            : { ...transitionData.sourcePlayer };
+        }
+
+        if (typeof app.movePlayers !== "function") {
+          return undefined;
+        }
+
+        app.movePlayers(dx, dy, {
+          allowDuringTransition: options.allowDuringTransition === true,
+          startOnCurrentSlope: transition.continueFromCurrentSlope === true
+        });
+        return false;
+      }
+
+      function schedule(durationMs) {
+        if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+          return;
+        }
+
+        const transitionState = app.levelTransition;
+        const transitionStartMs = transitionState?.startMs ?? performance.now();
+        const handoffMs = Math.max(
+          durationMs * 0.08,
+          Math.min(durationMs * 0.24, app.MOVE_DURATION_MS || 100)
+        );
+
+        function step(now = performance.now()) {
+          if (
+            started ||
+            app.levelTransition?.transitionData !== transitionData ||
+            !app.isTransitioningLevel
+          ) {
+            return;
+          }
+
+          if (app.isAnimating || now - transitionStartMs < handoffMs) {
+            window.requestAnimationFrame(step);
+            return;
+          }
+
+          start({ allowDuringTransition: true });
+        }
+
+        window.requestAnimationFrame(step);
+      }
+
+      return {
+        isStarted: () => started,
+        schedule,
+        start
+      };
+    }
+
     function terrainLayersForTransitionCell(cell) {
       if (Array.isArray(cell?.layers)) {
         return cell.layers;
@@ -111,6 +195,47 @@
             }
           ]
         : [];
+    }
+
+    function directionVector(direction) {
+      if (direction === "left") {
+        return { dx: -1, dy: 0 };
+      }
+
+      if (direction === "up") {
+        return { dx: 0, dy: -1 };
+      }
+
+      if (direction === "down") {
+        return { dx: 0, dy: 1 };
+      }
+
+      return { dx: 1, dy: 0 };
+    }
+
+    function transitionTerrainSlopeEntryAt(levelState, x, y, dx, dy, elevation) {
+      const cell = terrainCellInLevelState(levelState, x, y);
+
+      if (!cell) {
+        return null;
+      }
+
+      return (
+        terrainLayersForTransitionCell(cell).find((layer) => {
+          if (layer?.type !== "ice_slope") {
+            return false;
+          }
+
+          const layerElevation = layer.elevation ?? 0;
+          const uphill = directionVector(layer.direction);
+          const downhill = { dx: -uphill.dx, dy: -uphill.dy };
+
+          return (
+            (dx === uphill.dx && dy === uphill.dy && elevation === layerElevation) ||
+            (dx === downhill.dx && dy === downhill.dy && elevation === layerElevation + 1)
+          );
+        }) || null
+      );
     }
 
     function transitionCellHasOrangeWallLayerAtElevation(cell, elevation) {
@@ -465,6 +590,147 @@
       );
     }
 
+    function queueTransitionNeighborhood(outgoingLevelId, incomingLevelId) {
+      if (typeof app.queueHorizontalNeighborLevelState !== "function") {
+        return;
+      }
+
+      const levelIds = new Set();
+      const addNeighborhood = (levelId) => {
+        if (!levelId) {
+          return;
+        }
+
+        for (let dy = -1; dy <= 1; dy += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            if (dx === 0 && dy === 0) {
+              continue;
+            }
+
+            const neighborLevelId = adjacentWorldLevelId(levelId, dx, dy);
+
+            if (neighborLevelId) {
+              levelIds.add(neighborLevelId);
+            }
+          }
+        }
+      };
+
+      addNeighborhood(outgoingLevelId);
+      addNeighborhood(incomingLevelId);
+      levelIds.delete(outgoingLevelId);
+      levelIds.delete(incomingLevelId);
+      levelIds.forEach((levelId) => {
+        app.queueHorizontalNeighborLevelState(levelId);
+      });
+    }
+
+    function queueForwardContinuationLevel(incomingLevelId, dx, dy) {
+      if (
+        typeof app.queueHorizontalNeighborLevelState !== "function" ||
+        !incomingLevelId ||
+        (!dx && !dy)
+      ) {
+        return;
+      }
+
+      const forwardLevelId = adjacentWorldLevelId(incomingLevelId, dx, dy);
+
+      if (forwardLevelId) {
+        app.queueHorizontalNeighborLevelState(forwardLevelId);
+      }
+    }
+
+    function transitionWarmupKey(transition) {
+      if (!transition?.nextLevelId) {
+        return null;
+      }
+
+      return [
+        app.currentLevelId || "",
+        transition.nextLevelId,
+        transition.dx,
+        transition.dy,
+        transition.targetX,
+        transition.targetY,
+        transition.sourceElevation ?? "",
+        transition.targetElevation ?? ""
+      ].join("->");
+    }
+
+    function warmAdjacentLevelTransition(transition, options = {}) {
+      const key = transitionWarmupKey(transition);
+
+      if (!key) {
+        return null;
+      }
+
+      const cachedWarmup = transitionWarmups.get(key);
+
+      if (cachedWarmup) {
+        return cachedWarmup;
+      }
+
+      const outgoingLevelId = app.currentLevelId;
+      const warmup = (async () => {
+        const nextLevelState = await loadTransitionLevelState(transition.nextLevelId);
+
+        if (options.preloadNeighborhood === "queue") {
+          queueForwardContinuationLevel(
+            nextLevelState?.levelId,
+            Number(transition.dx) || 0,
+            Number(transition.dy) || 0
+          );
+          queueTransitionNeighborhood(outgoingLevelId, nextLevelState?.levelId);
+        } else if (
+          options.preloadNeighborhood !== false &&
+          typeof app.threeRenderer?.prewarmAdjacentLevelTransition === "function"
+        ) {
+          await preloadTransitionNeighborhood(outgoingLevelId, nextLevelState?.levelId);
+        }
+
+        return {
+          key,
+          nextLevelState,
+          neighborhoodPreloaded:
+            options.preloadNeighborhood !== false && options.preloadNeighborhood !== "queue"
+        };
+      })().catch((error) => {
+        transitionWarmups.delete(key);
+        throw error;
+      });
+
+      transitionWarmups.set(key, warmup);
+      return warmup;
+    }
+
+    async function consumeTransitionWarmup(transition) {
+      const key = transition?.warmupKey || transitionWarmupKey(transition);
+      const warmup =
+        transition?.warmupPromise ||
+        (key ? transitionWarmups.get(key) : null);
+
+      if (!warmup) {
+        return null;
+      }
+
+      try {
+        const result = await warmup;
+
+        if (key) {
+          transitionWarmups.delete(key);
+        }
+
+        return result;
+      } catch {
+        if (key) {
+          transitionWarmups.delete(key);
+        }
+
+        return null;
+      }
+    }
+
     function edgeTransitionForMove(dx, dy) {
       const players = state.actors.filter((actor) => isPlayerActor(actor) && !actor.removed);
 
@@ -518,8 +784,161 @@
       };
     }
 
+    function edgeTransitionForPlayerMove(player, x, y, elevation, dx, dy) {
+      if (!player || !Number.isInteger(x) || !Number.isInteger(y)) {
+        return null;
+      }
+
+      const sourceElevation = Number.isInteger(elevation) ? elevation : actorElevation(player);
+      const sourceSurface = transitionTerrainSurfaceAtElevation(
+        currentLevelTransitionState(),
+        x,
+        y,
+        sourceElevation,
+        {
+          raisedPlayerGates: computeRaisedPlayerGateSet(),
+          raisedOrangeWalls: computeRaisedOrangeWallSet()
+        }
+      );
+      const sourceType = sourceSurface?.type || "";
+
+      if (!sourceType) {
+        return null;
+      }
+
+      const onEdge =
+        (dx < 0 && x === 0) ||
+        (dx > 0 && x === state.width - 1) ||
+        (dy < 0 && y === 0) ||
+        (dy > 0 && y === state.height - 1);
+
+      if (!onEdge) {
+        return null;
+      }
+
+      const nextLevelId = adjacentWorldLevelId(app.currentLevelId, dx, dy);
+
+      if (!nextLevelId) {
+        return null;
+      }
+
+      return {
+        player,
+        nextLevelId,
+        sourceType,
+        sourceElevation,
+        dx,
+        dy,
+        targetX: dx < 0 ? state.width - 1 : dx > 0 ? 0 : x,
+        targetY: dy < 0 ? state.height - 1 : dy > 0 ? 0 : y
+      };
+    }
+
+    async function prepareAdjacentLevelTransfer(transition) {
+      if (!transition) {
+        return null;
+      }
+
+      const previousLevelSnapshot = attachRaisedSurfaceState(
+        cloneLevelSnapshot(),
+        computeRaisedPlayerGateSet(),
+        computeRaisedOrangeWallSet()
+      );
+      const warmupKey = transition?.warmupKey || transitionWarmupKey(transition);
+      const warmup =
+        transition?.warmupPromise || (warmupKey && transitionWarmups.has(warmupKey))
+          ? await consumeTransitionWarmup(transition)
+          : null;
+      const nextLevelState =
+        cloneStoredLevelSnapshot(warmup?.nextLevelState) ||
+        await loadTransitionLevelState(transition.nextLevelId);
+      const sourceElevation = Number.isInteger(transition.sourceElevation)
+        ? transition.sourceElevation
+        : actorElevation(transition.player);
+      const sourceSurface =
+        transition.sourceType
+          ? { type: transition.sourceType }
+          : transitionTerrainSurfaceAtElevation(
+              previousLevelSnapshot,
+              transition.player.x,
+              transition.player.y,
+              sourceElevation,
+              {
+                raisedPlayerGates: previousLevelSnapshot.raisedPlayerGates
+                  ? new Set(previousLevelSnapshot.raisedPlayerGates)
+                  : null,
+                raisedOrangeWalls: previousLevelSnapshot.raisedOrangeWalls
+                  ? new Set(previousLevelSnapshot.raisedOrangeWalls)
+                  : null
+              }
+            );
+      const sourceType = sourceSurface?.type || "empty";
+      const targetElevation = Number.isInteger(transition.targetElevation)
+        ? transition.targetElevation
+        : sourceElevation;
+      const targetSurface = transitionTerrainSurfaceAtElevation(
+        nextLevelState,
+        transition.targetX,
+        transition.targetY,
+        targetElevation
+      );
+      const targetHole = transitionTerrainHoleAtElevation(
+        nextLevelState,
+        transition.targetX,
+        transition.targetY,
+        targetElevation
+      );
+      const targetSlopeEntry = transitionTerrainSlopeEntryAt(
+        nextLevelState,
+        transition.targetX,
+        transition.targetY,
+        transition.dx,
+        transition.dy,
+        targetElevation
+      );
+      const targetType = targetSurface?.type || targetHole?.type || targetSlopeEntry?.type || "empty";
+
+      if (!isAllowedEdgeTransition(sourceType, targetType)) {
+        return null;
+      }
+
+      const transferredPlayer = {
+        type: transition.player.type,
+        groupId: transition.player.groupId ?? null,
+        label: transition.player.label,
+        imageUrl: transition.player.imageUrl || null,
+        x: transition.targetX,
+        y: transition.targetY,
+        removed: false,
+        elevation: targetElevation
+      };
+
+      nextLevelState.actors = [
+        ...(nextLevelState.actors || []).filter((actor) => !isPlayerActor(actor)),
+        transferredPlayer
+      ];
+
+      return {
+        entersHole: targetType === "hole",
+        nextLevelState,
+        previousLevelSnapshot,
+        sourceType,
+        targetElevation,
+        targetType,
+        transferredPlayer
+      };
+    }
+
     async function transitionToAdjacentLevel(transition) {
-      if (!transition || app.isTransitioningLevel) {
+      if (!transition) {
+        return false;
+      }
+
+      const canReplaceActiveTransition =
+        transition.replaceActiveTransition === true &&
+        app.levelTransition?.transitionData?.kind === "adjacent-scene";
+
+      if (app.isTransitioningLevel && !canReplaceActiveTransition) {
         return false;
       }
 
@@ -538,7 +957,10 @@
       }
 
       try {
-        const nextLevelState = await loadTransitionLevelState(transition.nextLevelId);
+        const warmup = await consumeTransitionWarmup(transition);
+        const nextLevelState =
+          cloneStoredLevelSnapshot(warmup?.nextLevelState) ||
+          await loadTransitionLevelState(transition.nextLevelId);
         const levelStartPlayer = playerStartForLevelState(nextLevelState, transition.player.type);
         const reviveStartPlayer = levelStartPlayer ? { ...levelStartPlayer } : null;
         const sourceElevation = Number.isInteger(transition.sourceElevation)
@@ -562,31 +984,45 @@
                 }
               );
         const sourceType = sourceSurface?.type || "empty";
+        const targetElevation = Number.isInteger(transition.targetElevation)
+          ? transition.targetElevation
+          : sourceElevation;
         const targetSurface = transitionTerrainSurfaceAtElevation(
           nextLevelState,
           transition.targetX,
           transition.targetY,
-          sourceElevation
+          targetElevation
         );
         const targetHole = transitionTerrainHoleAtElevation(
           nextLevelState,
           transition.targetX,
           transition.targetY,
-          sourceElevation
+          targetElevation
         );
-        const targetType = targetSurface?.type || targetHole?.type || "empty";
+        const targetSlopeEntry = transitionTerrainSlopeEntryAt(
+          nextLevelState,
+          transition.targetX,
+          transition.targetY,
+          transition.dx,
+          transition.dy,
+          targetElevation
+        );
+        const targetType = targetSurface?.type || targetHole?.type || targetSlopeEntry?.type || "empty";
 
         if (!isAllowedEdgeTransition(sourceType, targetType)) {
           app.isTransitioningLevel = false;
           return false;
         }
 
-        if (typeof app.threeRenderer?.prewarmAdjacentLevelTransition === "function") {
+        if (
+          typeof app.threeRenderer?.prewarmAdjacentLevelTransition === "function" &&
+          transition.skipNeighborhoodPreload !== true &&
+          warmup?.neighborhoodPreloaded !== true
+        ) {
           await preloadTransitionNeighborhood(previousLevelSnapshot.levelId, nextLevelState.levelId);
         }
 
         const entersHole = targetType === "hole";
-        const targetElevation = sourceElevation;
         const transferredPlayer = {
           type: transition.player.type,
           groupId: transition.player.groupId ?? null,
@@ -606,13 +1042,15 @@
         moveHistory.push({
           kind: "level-transition",
           level: previousLevelSnapshot,
-          entry: previousEntrySnapshot
+          entry: previousEntrySnapshot,
+          undoGroupId: transition.undoGroupId || app.activeUndoGroupId || null
         });
         applyLevelState(nextLevelState, {
           updateUrl: true,
           resetLevelEntry: true,
           immediateCamera: true,
-          deferRender: true
+          deferRender: true,
+          preserveAnimation: transition.followSourcePlayerBeforeContinuation === true
         });
 
         const incomingRaisedPlayerGates = computeRaisedPlayerGateSet();
@@ -625,7 +1063,9 @@
           incomingRaisedOrangeWalls
         );
         const incomingPlayer = state.actors.find((actor) => isPlayerActor(actor) && !actor.removed) || null;
-        const durationMs = app.LEVEL_TRANSITION_DURATION_MS || 1000;
+        const durationMs = Number.isFinite(transition.durationMs)
+          ? Math.max(1, transition.durationMs)
+          : app.LEVEL_TRANSITION_DURATION_MS || 1000;
         const transitionData = {
           kind: "adjacent-scene",
           dx: transition.dx,
@@ -636,19 +1076,43 @@
           incomingRaisedPlayerGates: incomingLevelSnapshot.raisedPlayerGates,
           incomingRaisedOrangeWalls: incomingLevelSnapshot.raisedOrangeWalls,
           sourcePlayer: { ...transition.player },
-          targetPlayer: incomingPlayer ? { ...incomingPlayer } : null
+          targetPlayer: incomingPlayer ? { ...incomingPlayer } : null,
+          followSourcePlayerBeforeContinuation:
+            transition.followSourcePlayerBeforeContinuation === true,
+          lightweightTransition: transition.lightweightTransition === true,
+          steadyCamera: transition.steadyCamera === true,
+          liveSourcePlayer:
+            transition.followSourcePlayerBeforeContinuation === true
+              ? transition.player
+              : null
         };
 
-        app.threeRenderer?.prewarmAdjacentLevelTransition?.(transitionData, durationMs);
+        if (transition.skipPrewarm !== true) {
+          app.threeRenderer?.prewarmAdjacentLevelTransition?.(transitionData, durationMs);
+        }
+        const continuationController = continuationMoveController({
+          ...transition,
+          entersHole
+        }, transitionData);
+        const holeFallAfterTransition =
+          entersHole && reviveStartPlayer
+            ? () => playEntryHoleFallAndRespawn(incomingPlayer, reviveStartPlayer)
+            : null;
+        const onComplete = () => {
+          if (continuationController && !continuationController.isStarted()) {
+            return continuationController.start();
+          }
+
+          return holeFallAfterTransition?.();
+        };
+
         startLevelTransition(null, null, transition.dx, transition.dy, null, null, null, {
           durationMs,
           renderImmediately: false,
           transitionData,
-          onComplete:
-            entersHole && reviveStartPlayer
-              ? () => playEntryHoleFallAndRespawn(incomingPlayer, reviveStartPlayer)
-              : null
+          onComplete
         });
+        continuationController?.schedule(durationMs);
 
         return true;
       } catch (error) {
@@ -664,6 +1128,9 @@
       restoreLevelEntryState,
       rememberCurrentLevelEntryState,
       edgeTransitionForMove,
+      edgeTransitionForPlayerMove,
+      prepareAdjacentLevelTransfer,
+      warmAdjacentLevelTransition,
       transitionToAdjacentLevel
     });
   };

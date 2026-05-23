@@ -6473,6 +6473,12 @@
     }
 
     function sceneLightBounds() {
+      const actionBounds = worldActionBounds();
+
+      if (actionBounds) {
+        return actionBounds;
+      }
+
       const transition = app.levelTransition?.transitionData;
 
       if (transition?.kind !== "adjacent-scene" || !transition.outgoingLevel) {
@@ -6488,13 +6494,15 @@
         transition.dy
       );
       const progress = transitionProgress();
-      const transitionViews = transitionSurroundingLevelViews(
-        transition,
-        outgoingState,
-        incomingState,
-        incomingOffset,
-        progress
-      );
+      const transitionViews = transition.lightweightTransition === true
+        ? []
+        : transitionSurroundingLevelViews(
+            transition,
+            outgoingState,
+            incomingState,
+            incomingOffset,
+            progress
+          );
       const bounds = surroundingLevelBounds(transitionViews);
 
       return {
@@ -6624,6 +6632,7 @@
     function hasActiveSceneAnimation() {
       return Boolean(
         app.isAnimating ||
+          app.worldActionAnimation ||
           app.levelTransition ||
           app.gateAnimationFrameId !== null ||
           app.orangeWallAnimationFrameId !== null ||
@@ -6634,6 +6643,7 @@
     function hasShadowAffectingAnimation() {
       return Boolean(
         app.isAnimating ||
+          app.worldActionAnimation ||
           app.levelTransition ||
           app.gateAnimationFrameId !== null ||
           app.orangeWallAnimationFrameId !== null ||
@@ -6651,6 +6661,7 @@
 
     function sceneContentSignature(now) {
       const transition = app.levelTransition?.transitionData;
+      const worldAction = app.worldActionAnimation;
       const surroundingViews = surroundingLevelViews();
       const parts = [
         app.state.width,
@@ -6670,6 +6681,14 @@
               Math.round(transitionProgress(now) * 1000)
             ].join(":")
           : "no-transition",
+        worldAction
+          ? [
+              "world-action",
+              Math.round((worldAction.currentPoint?.x || 0) * 1000),
+              Math.round((worldAction.currentPoint?.y || 0) * 1000),
+              Math.round((worldAction.currentPoint?.elevation || 0) * 1000)
+            ].join(":")
+          : "no-world-action",
         `neighbors:${surroundingViews
           .map((view) => `${view.dx},${view.dy},${view.levelId},${Math.round(view.brightness * 1000)}`)
           .join("|")}`
@@ -7008,6 +7027,38 @@
       return bounds;
     }
 
+    function worldActionBounds(action = app.worldActionAnimation) {
+      const rooms = Array.isArray(action?.rooms) ? action.rooms : [];
+
+      if (rooms.length === 0) {
+        return null;
+      }
+
+      const bounds = {
+        minX: Infinity,
+        maxX: -Infinity,
+        minZ: Infinity,
+        maxZ: -Infinity
+      };
+
+      rooms.forEach((room) => {
+        const levelState = room.levelState;
+
+        if (!levelState?.width || !levelState?.height) {
+          return;
+        }
+
+        const offsetX = Number(room.offset?.x || 0) * unit;
+        const offsetZ = Number(room.offset?.y || 0) * unit;
+        bounds.minX = Math.min(bounds.minX, offsetX);
+        bounds.maxX = Math.max(bounds.maxX, offsetX + levelState.width * unit);
+        bounds.minZ = Math.min(bounds.minZ, offsetZ);
+        bounds.maxZ = Math.max(bounds.maxZ, offsetZ + levelState.height * unit);
+      });
+
+      return Number.isFinite(bounds.minX) ? bounds : null;
+    }
+
     function renderSurroundingLevelViews(now, views) {
       views
         .slice()
@@ -7205,6 +7256,273 @@
       });
     }
 
+    function worldActionCameraFrame(action, rooms) {
+      const cameraProgress = clamp01(Number(action?.progress || 0));
+      const firstRoom = rooms[0];
+      const lastRoom = rooms[rooms.length - 1] || firstRoom;
+      const firstCenterX =
+        (Number(firstRoom?.offset?.x || 0) + Math.max(1, firstRoom?.levelState?.width || app.state.width) / 2) *
+        unit;
+      const firstCenterZ =
+        (Number(firstRoom?.offset?.y || 0) + Math.max(1, firstRoom?.levelState?.height || app.state.height) / 2) *
+        unit;
+      const lastCenterX =
+        (Number(lastRoom?.offset?.x || 0) + Math.max(1, lastRoom?.levelState?.width || app.state.width) / 2) *
+        unit;
+      const lastCenterZ =
+        (Number(lastRoom?.offset?.y || 0) + Math.max(1, lastRoom?.levelState?.height || app.state.height) / 2) *
+        unit;
+      const centerX = lerp(firstCenterX, lastCenterX, cameraProgress);
+      const centerZ = lerp(firstCenterZ, lastCenterZ, cameraProgress);
+      const firstWidth = Math.max(1, firstRoom?.levelState?.width || action?.stableWidth || app.state.width);
+      const firstHeight = Math.max(1, firstRoom?.levelState?.height || action?.stableHeight || app.state.height);
+      const lastWidth = Math.max(1, lastRoom?.levelState?.width || firstWidth);
+      const lastHeight = Math.max(1, lastRoom?.levelState?.height || firstHeight);
+      const focusWidth = lerp(firstWidth, lastWidth, cameraProgress) * unit;
+      const focusDepth = lerp(firstHeight, lastHeight, cameraProgress) * unit;
+
+      return {
+        centerX,
+        centerZ,
+        focusDepth,
+        focusWidth,
+        stableHeight: stableCameraWorldHeight()
+      };
+    }
+
+    function worldActionRoomKey(room) {
+      return [
+        Math.round(Number(room?.offset?.x || 0) * 1000),
+        Math.round(Number(room?.offset?.y || 0) * 1000)
+      ].join(",");
+    }
+
+    function worldActionNeighborOffset(room, dx, dy, levelState) {
+      const roomState = room?.levelState || {};
+
+      return {
+        x:
+          Number(room?.offset?.x || 0) +
+          (dx < 0 ? -levelState.width : dx > 0 ? Math.max(1, roomState.width || app.state.width) : 0),
+        y:
+          Number(room?.offset?.y || 0) +
+          (dy < 0 ? -levelState.height : dy > 0 ? Math.max(1, roomState.height || app.state.height) : 0)
+      };
+    }
+
+    function worldActionRoomDistanceFactor(view, frame, fadeStart, fadeDuration) {
+      const levelState = view?.levelState;
+
+      if (!levelState?.width || !levelState?.height) {
+        return 0;
+      }
+
+      const centerX = (Number(view.offset?.x || 0) + levelState.width / 2) * unit;
+      const centerZ = (Number(view.offset?.y || 0) + levelState.height / 2) * unit;
+      const normalizedDistance = Math.max(
+        Math.abs(centerX - frame.centerX) / Math.max(frame.focusWidth, unit),
+        Math.abs(centerZ - frame.centerZ) / Math.max(frame.focusDepth, unit)
+      );
+      const fade = 1 - localProgress(normalizedDistance, fadeStart, fadeDuration);
+
+      return app.easeInOutQuad ? app.easeInOutQuad(clamp01(fade)) : clamp01(fade);
+    }
+
+    function worldActionNeighborBrightness(view, frame) {
+      const easedFade = worldActionRoomVisibilityFactor(view, frame);
+
+      return neighboringRoomBrightness * easedFade;
+    }
+
+    function worldActionRoomVisibilityFactor(view, frame) {
+      return worldActionRoomDistanceFactor(view, frame, 1.22, 0.72);
+    }
+
+    function worldActionPathRoomBrightness(room, frame) {
+      const easedFade = worldActionRoomDistanceFactor(room, frame, 0.34, 0.92);
+
+      return lerp(neighboringRoomBrightness, 1, easedFade);
+    }
+
+    function worldActionPathRoomAlpha(room, frame) {
+      return worldActionRoomVisibilityFactor(room, frame);
+    }
+
+    function worldActionPathRoomView(room, frame) {
+      const levelState = room?.levelState;
+
+      if (!levelState?.width || !levelState?.height) {
+        return null;
+      }
+
+      const alpha = worldActionPathRoomAlpha(room, frame);
+
+      if (alpha <= 0.015) {
+        return null;
+      }
+
+      return {
+        alpha,
+        brightness: worldActionPathRoomBrightness(room, frame),
+        levelState,
+        offset: room.offset
+      };
+    }
+
+    function worldActionSurroundingLevelViews(action, frame) {
+      const rooms = Array.isArray(action?.rooms) ? action.rooms : [];
+
+      if (
+        rooms.length === 0 ||
+        typeof app.adjacentWorldLevelId !== "function" ||
+        typeof app.cachedHorizontalNeighborLevelState !== "function"
+      ) {
+        return [];
+      }
+
+      const pathRoomKeys = new Set(rooms.map((room) => worldActionRoomKey(room)));
+      const viewsByOffset = new Map();
+
+      rooms.forEach((room) => {
+        const baseLevelId = room?.levelId || room?.levelState?.levelId;
+
+        if (!baseLevelId) {
+          return;
+        }
+
+        for (let dy = -1; dy <= 1; dy += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            if (dx === 0 && dy === 0) {
+              continue;
+            }
+
+            const levelId = app.adjacentWorldLevelId(baseLevelId, dx, dy);
+            const levelState = app.cachedHorizontalNeighborLevelState(levelId);
+
+            if (!levelState?.width || !levelState?.height) {
+              continue;
+            }
+
+            const offset = worldActionNeighborOffset(room, dx, dy, levelState);
+            const offsetKey = [
+              Math.round(offset.x * 1000),
+              Math.round(offset.y * 1000)
+            ].join(",");
+
+            if (pathRoomKeys.has(offsetKey)) {
+              continue;
+            }
+
+            const view = {
+              distance: Math.hypot(
+                (offset.x + levelState.width / 2) * unit - frame.centerX,
+                (offset.y + levelState.height / 2) * unit - frame.centerZ
+              ),
+              levelId,
+              levelState,
+              offset
+            };
+            const brightness = worldActionNeighborBrightness(view, frame);
+
+            if (brightness <= 0.015) {
+              continue;
+            }
+
+            view.brightness = brightness;
+            const previous = viewsByOffset.get(offsetKey);
+
+            if (!previous || view.brightness > previous.brightness) {
+              viewsByOffset.set(offsetKey, view);
+            }
+          }
+        }
+      });
+
+      return Array.from(viewsByOffset.values());
+    }
+
+    function renderWorldActionAnimation(now) {
+      const action = app.worldActionAnimation;
+      const rooms = Array.isArray(action?.rooms) ? action.rooms : [];
+      const point = action?.currentPoint;
+
+      if (rooms.length === 0 || !point) {
+        addTerrainRegions(now);
+        renderActorsForCurrentContext(now);
+        fitCameraToScene();
+        return;
+      }
+
+      const cameraFrame = worldActionCameraFrame(action, rooms);
+      const pathRoomViews = rooms
+        .map((room) => worldActionPathRoomView(room, cameraFrame))
+        .filter(Boolean);
+      const surroundingViews = worldActionSurroundingLevelViews(action, cameraFrame);
+
+      surroundingViews
+        .slice()
+        .sort((a, b) => b.distance - a.distance)
+        .forEach((view) => {
+          renderLevelStateAt(
+            view.levelState,
+            {
+              x: Number(view.offset?.x || 0) * unit,
+              z: Number(view.offset?.y || 0) * unit
+            },
+            {
+              role: "neighbor",
+              brightness: view.brightness,
+              hidePlayers: true
+            },
+            now
+          );
+        });
+
+      pathRoomViews.forEach((view) => {
+        renderLevelStateAt(
+          view.levelState,
+          {
+            x: Number(view.offset?.x || 0) * unit,
+            z: Number(view.offset?.y || 0) * unit
+          },
+          {
+            role: "neighbor",
+            alpha: view.alpha,
+            brightness: view.brightness,
+            hidePlayers: true
+          },
+          now
+        );
+      });
+
+      const actor = {
+        ...(action.player || {}),
+        type: action.player?.type || "player",
+        removed: false,
+        renderX: point.x,
+        renderY: point.y,
+        renderElevation: point.elevation,
+        renderScale: 1,
+        renderAlpha: 1,
+        renderSink: 0,
+        renderInHole: false
+      };
+
+      withRenderContext({ state: renderState(), offsetX: 0, offsetZ: 0 }, () => {
+        addActor(actor, now);
+      });
+
+      fitCameraToScene({
+        minX: cameraFrame.centerX - cameraFrame.focusWidth / 2,
+        maxX: cameraFrame.centerX + cameraFrame.focusWidth / 2,
+        minZ: cameraFrame.centerZ - cameraFrame.focusDepth / 2,
+        maxZ: cameraFrame.centerZ + cameraFrame.focusDepth / 2,
+        centerX: cameraFrame.centerX,
+        centerZ: cameraFrame.centerZ,
+        stableHeight: cameraFrame.stableHeight
+      });
+    }
+
     function transitionPlayerCenter(player, offset) {
       if (!player) {
         return null;
@@ -7217,11 +7535,49 @@
       };
     }
 
+    function liveTransitionTargetPlayer(transition) {
+      const targetPlayer = transition?.targetPlayer || null;
+
+      if (!targetPlayer) {
+        return null;
+      }
+
+      return (
+        (renderState().actors || []).find((actor) => {
+          if (!app.isPlayerActor?.(actor) || actor.removed) {
+            return false;
+          }
+
+          if (targetPlayer.type && actor.type !== targetPlayer.type) {
+            return false;
+          }
+
+          return (
+            !targetPlayer.groupId ||
+            !actor.groupId ||
+            actor.groupId === targetPlayer.groupId
+          );
+        }) || null
+      );
+    }
+
     function addTransitionPlayer(transition, outgoingOffset, incomingOffset, progress, now) {
       const sourcePlayer = transition.sourcePlayer || null;
       const targetPlayer = transition.targetPlayer || sourcePlayer;
-      const from = transitionPlayerCenter(sourcePlayer, outgoingOffset);
-      const to = transitionPlayerCenter(targetPlayer, incomingOffset);
+      const liveTargetPlayer =
+        transition.followIncomingPlayerDuringContinuation === true
+          ? liveTransitionTargetPlayer(transition)
+          : null;
+      const liveSourcePlayer =
+        transition.followSourcePlayerBeforeContinuation === true
+          ? transition.liveSourcePlayer
+          : null;
+      const sourceForRender =
+        liveSourcePlayer && transition.followIncomingPlayerDuringContinuation !== true
+          ? liveSourcePlayer
+          : sourcePlayer;
+      const from = transitionPlayerCenter(sourceForRender, outgoingOffset);
+      const to = transitionPlayerCenter(liveTargetPlayer || targetPlayer, incomingOffset);
 
       if (!from || !to) {
         return;
@@ -7229,15 +7585,53 @@
 
       const transitionDuration = Math.max(1, app.levelTransition?.durationMs || app.LEVEL_TRANSITION_DURATION_MS || 500);
       const moveWindow = Math.max(0.08, Math.min(0.24, (app.MOVE_DURATION_MS || 100) / transitionDuration));
-      const moveProgress = app.easeInOutQuad
-        ? app.easeInOutQuad(localProgress(progress, 0, moveWindow))
+      const continuationStartedAtMs = Number(transition.continuationStartedAtMs);
+      const hasContinuationHandoff =
+        transition.followIncomingPlayerDuringContinuation === true &&
+        Number.isFinite(continuationStartedAtMs);
+      const handoffElapsedMs = hasContinuationHandoff
+        ? Math.max(0, now - continuationStartedAtMs)
+        : progress * transitionDuration;
+      const handoffProgress = hasContinuationHandoff
+        ? clamp01(handoffElapsedMs / Math.max(app.MOVE_DURATION_MS || 100, 1))
         : localProgress(progress, 0, moveWindow);
-      const worldX = from.x + (to.x - from.x) * moveProgress;
-      const worldZ = from.z + (to.z - from.z) * moveProgress;
-      const elevation = from.elevation + (to.elevation - from.elevation) * moveProgress;
+      const moveProgress = handoffProgress;
+      const followLiveTarget =
+        liveTargetPlayer &&
+        transition.followIncomingPlayerDuringContinuation === true;
+      const handoffSource = hasContinuationHandoff && transition.continuationSourcePlayer
+        ? transitionPlayerCenter(transition.continuationSourcePlayer, outgoingOffset)
+        : from;
+      const followLiveSource =
+        liveSourcePlayer &&
+        transition.followSourcePlayerBeforeContinuation === true &&
+        !hasContinuationHandoff;
+      const liveTargetEntryOffsetX =
+        followLiveTarget && hasContinuationHandoff
+          ? -Number(transition.dx || 0) * unit * (1 - handoffProgress)
+          : 0;
+      const liveTargetEntryOffsetZ =
+        followLiveTarget && hasContinuationHandoff
+          ? -Number(transition.dy || 0) * unit * (1 - handoffProgress)
+          : 0;
+      const worldX = followLiveSource
+        ? from.x
+        : followLiveTarget
+          ? to.x + liveTargetEntryOffsetX
+          : handoffSource.x + (to.x - handoffSource.x) * moveProgress;
+      const worldZ = followLiveSource
+        ? from.z
+        : followLiveTarget
+          ? to.z + liveTargetEntryOffsetZ
+          : handoffSource.z + (to.z - handoffSource.z) * moveProgress;
+      const elevation = followLiveSource
+        ? from.elevation
+        : followLiveTarget
+          ? to.elevation
+          : handoffSource.elevation + (to.elevation - handoffSource.elevation) * moveProgress;
       const actor = {
-        ...(targetPlayer || sourcePlayer),
-        type: targetPlayer?.type || sourcePlayer?.type || "player",
+        ...(liveTargetPlayer || liveSourcePlayer || targetPlayer || sourcePlayer),
+        type: liveTargetPlayer?.type || targetPlayer?.type || sourcePlayer?.type || "player",
         removed: false,
         renderX: worldX / unit - 0.5,
         renderY: worldZ / unit - 0.5,
@@ -7284,13 +7678,15 @@
         transition.dx,
         transition.dy
       );
-      const transitionViews = transitionSurroundingLevelViews(
-        transition,
-        outgoingState,
-        incomingState,
-        incomingOffset,
-        progress
-      );
+      const transitionViews = transition.lightweightTransition === true
+        ? []
+        : transitionSurroundingLevelViews(
+            transition,
+            outgoingState,
+            incomingState,
+            incomingOffset,
+            progress
+          );
       const outgoingOffset = { x: 0, z: 0 };
       const outgoingCenter = {
         x: outgoingOffset.x + (outgoingState.width * unit) / 2,
@@ -7300,7 +7696,8 @@
         x: incomingOffset.x + (incomingState.width * unit) / 2,
         z: incomingOffset.z + (incomingState.height * unit) / 2
       };
-      const cameraProgress = smootherStep(progress);
+      const cameraProgress =
+        transition.steadyCamera === true ? clamp01(progress) : smootherStep(progress);
       const centerX = outgoingCenter.x + (incomingCenter.x - outgoingCenter.x) * cameraProgress;
       const centerZ = outgoingCenter.z + (incomingCenter.z - outgoingCenter.z) * cameraProgress;
       const focusWidth = Math.max(outgoingState.width, incomingState.width) * unit;
@@ -7443,7 +7840,9 @@
 
       resetScene();
 
-      if (app.levelTransition?.transitionData?.kind === "adjacent-scene") {
+      if (app.worldActionAnimation) {
+        renderWorldActionAnimation(now);
+      } else if (app.levelTransition?.transitionData?.kind === "adjacent-scene") {
         renderAdjacentLevelTransition(now);
       } else {
         const surroundingViews = surroundingLevelViews();

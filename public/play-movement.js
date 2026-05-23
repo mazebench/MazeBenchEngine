@@ -301,6 +301,10 @@
       const animate = options.animate !== false;
       const recordHistory = options.recordHistory !== false;
       const onFinish = typeof options.onFinish === "function" ? options.onFinish : null;
+      const beforeAnimate =
+        typeof options.beforeAnimate === "function" ? options.beforeAnimate : null;
+      const onMoveFrame =
+        typeof options.onMoveFrame === "function" ? options.onMoveFrame : null;
       const durationMs = Number.isFinite(options.durationMs)
         ? Math.max(0, options.durationMs)
         : null;
@@ -308,11 +312,20 @@
       const engineState = engine.cloneState(engine.initialState);
       const previousState = {
         actors: cloneActorPositions(),
-        terrain: cloneTerrainState(state.terrain)
+        terrain: cloneTerrainState(state.terrain),
+        levelSnapshot:
+          typeof app.cloneLevelSnapshot === "function" ? app.cloneLevelSnapshot() : null,
+        levelEntrySnapshot:
+          typeof app.cloneStoredLevelSnapshot === "function"
+            ? app.cloneStoredLevelSnapshot(app.levelEntrySnapshot)
+            : null,
+        undoGroupId: app.activeUndoGroupId || null
       };
       const raisedPlayerGates = computeRaisedPlayerGateSet();
       const raisedOrangeWalls = computeRaisedOrangeWallSet();
-      const moveResult = engine.move(engineState, dx, dy);
+      const moveResult = engine.move(engineState, dx, dy, {
+        startOnCurrentSlope: options.startOnCurrentSlope === true
+      });
       const moves = moveResult.moves.map(moveFromEngineRecord).filter(Boolean);
       app.recordCollectedGemsFromMoves?.(moves);
       const liftToggles = Array.isArray(moveResult.liftToggles) ? moveResult.liftToggles : [];
@@ -327,6 +340,17 @@
       const hasLogicalMoves = moves.some((move) => move.visualOnly !== true);
 
       if (moves.length > 0) {
+        if (beforeAnimate) {
+          beforeAnimate({
+            moveResult: {
+              ...moveResult,
+              moves
+            },
+            moves,
+            previousState
+          });
+        }
+
         if (recordHistory && hasLogicalMoves) {
           previousState.iceSlideMoves = iceSlideMoveMetadata(moves);
           moveHistory.push(previousState);
@@ -344,7 +368,8 @@
                 setPlayerLiftRaised(x, y, raised);
               });
               app.orangeWallRenderOverride = null;
-            }
+            },
+            onMoveFrame
           });
         } else {
           liftToggles.forEach(({ x, y, raised }) => {

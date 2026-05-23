@@ -26,6 +26,7 @@
     "0,1": "D",
     "1,0": "R"
   };
+  const ICE_SLOPE_VISUAL_CLEARANCE = 0.08;
 
   function actorType(actor) {
     return typeof actor?.type === "string" ? actor.type : "";
@@ -763,6 +764,14 @@
         x: traversal.exitX,
         y: traversal.exitY,
         elevation: traversal.exitElevation
+      };
+    }
+
+    function iceSlopeSharedEdgePoint(traversal, dx, dy) {
+      return {
+        x: traversal.exitX - dx * 0.5,
+        y: traversal.exitY - dy * 0.5,
+        elevation: traversal.exitElevation + ICE_SLOPE_VISUAL_CLEARANCE
       };
     }
 
@@ -1667,6 +1676,32 @@
       while (traversal && guard > 0) {
         guard -= 1;
 
+        if (!isInsideBoard(traversal.exitX, traversal.exitY)) {
+          if (options.allowLevelExit !== true) {
+            return null;
+          }
+
+          const resultPath = path.map((point) => ({ ...point }));
+          const pathEnd = resultPath[resultPath.length - 1] || {
+            x: traversal.slopeX,
+            y: traversal.slopeY,
+            elevation: traversal.entryElevation
+          };
+
+          return {
+            ...traversal,
+            exitX: traversal.slopeX,
+            exitY: traversal.slopeY,
+            exitElevation: pathEnd.elevation,
+            levelExit: true,
+            levelExitDx: dx,
+            levelExitDy: dy,
+            levelExitElevation: traversal.exitElevation,
+            levelExitSourceType: "ice_slope",
+            path: resultPath
+          };
+        }
+
         if (
           canTravelThroughSpace(
             state,
@@ -1720,6 +1755,12 @@
           return null;
         }
 
+        if (
+          traversal.exitElevation < traversal.entryElevation &&
+          nextTraversal.exitElevation > nextTraversal.entryElevation
+        ) {
+          appendPathPoints(path, [iceSlopeSharedEdgePoint(traversal, dx, dy)]);
+        }
         traversal = nextTraversal;
         appendPathPoints(path, iceSlopeTraversalPathPoints(traversal));
       }
@@ -5061,8 +5102,52 @@
         let stepDx = dx;
         let stepDy = dy;
         let reversedAfterSlopeBounce = false;
+        let levelExit = null;
+        let stopAfterStartSlope = false;
+
+        if (options.startOnCurrentSlope === true) {
+          const startSlopeTraversal = resolveIceSlopeTraversal(
+            state,
+            nextX,
+            nextY,
+            stepDx,
+            stepDy,
+            travelElevation,
+            occupied,
+            raisedPlayerGates,
+            orangeButtonsPressed,
+            {
+              allowLevelExit: true,
+              ignoredActors: ignoredPlayerSet
+            }
+          );
+
+          if (startSlopeTraversal) {
+            nextX = startSlopeTraversal.exitX;
+            nextY = startSlopeTraversal.exitY;
+            travelElevation = startSlopeTraversal.exitElevation;
+            appendPathPoints(travelPath, startSlopeTraversal.path);
+
+            if (startSlopeTraversal.levelExit === true) {
+              levelExit = {
+                dx: startSlopeTraversal.levelExitDx,
+                dy: startSlopeTraversal.levelExitDy,
+                elevation: startSlopeTraversal.levelExitElevation,
+                sourceType: startSlopeTraversal.levelExitSourceType
+              };
+            } else if (
+              !isIce(state, nextX, nextY, travelElevation, raisedPlayerGates, orangeButtonsPressed)
+            ) {
+              stopAfterStartSlope = true;
+            }
+          }
+        }
 
         while (true) {
+          if (levelExit || stopAfterStartSlope) {
+            break;
+          }
+
           const targetX = nextX + stepDx;
           const targetY = nextY + stepDy;
           const isInitialStep =
@@ -5118,6 +5203,7 @@
             raisedPlayerGates,
             orangeButtonsPressed,
             {
+              allowLevelExit: true,
               ignoredActors: ignoredPlayerSet,
               pushSlopeBlocker
             }
@@ -5150,6 +5236,7 @@
                   raisedPlayerGates,
                   orangeButtonsPressed,
                   {
+                    allowLevelExit: true,
                     ignoredActors: ignoredPlayerSet,
                     pushSlopeBlocker
                   }
@@ -5383,6 +5470,14 @@
 
           if (canTraverseSlope) {
             travelPath.push(...slopeTraversal.path);
+            if (slopeTraversal.levelExit === true) {
+              levelExit = {
+                dx: slopeTraversal.levelExitDx,
+                dy: slopeTraversal.levelExitDy,
+                elevation: slopeTraversal.levelExitElevation,
+                sourceType: slopeTraversal.levelExitSourceType
+              };
+            }
           } else {
             travelPath.push({
               x: nextX,
@@ -5401,6 +5496,10 @@
               nextY = slipLanding.toY;
             }
             travelElevation = slipLanding.toElevation;
+            break;
+          }
+
+          if (levelExit) {
             break;
           }
 
@@ -5485,6 +5584,14 @@
               iceSlipLanding !== null ||
               travelPath.length > 2 ||
               pathControlsElevation;
+
+            if (levelExit) {
+              moveRecord.levelExit = true;
+              moveRecord.levelExitDx = levelExit.dx;
+              moveRecord.levelExitDy = levelExit.dy;
+              moveRecord.levelExitElevation = levelExit.elevation;
+              moveRecord.levelExitSourceType = levelExit.sourceType;
+            }
 
             if (
               iceSlipLanding ||

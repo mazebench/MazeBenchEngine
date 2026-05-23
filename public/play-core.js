@@ -353,7 +353,11 @@
 
       loadHorizontalNeighborLevelState(levelId)
         .then(() => {
-          if (!app.isTransitioningLevel && typeof app.render === "function") {
+          if (
+            !app.isTransitioningLevel &&
+            !app.worldActionAnimation &&
+            typeof app.render === "function"
+          ) {
             app.render();
           }
         })
@@ -1235,10 +1239,12 @@
         resetHistory = false,
         resetLevelEntry = false,
         immediateCamera = true,
-        deferRender = false
+        deferRender = false,
+        preserveAnimation = false,
+        skipTransientSideEffects = false
       } = options;
 
-      if (app.animationFrameId !== null) {
+      if (app.animationFrameId !== null && !preserveAnimation) {
         window.cancelAnimationFrame(app.animationFrameId);
         app.animationFrameId = null;
       }
@@ -1263,7 +1269,9 @@
         app.levelTransitionFrameId = null;
       }
 
-      app.isAnimating = false;
+      if (!preserveAnimation) {
+        app.isAnimating = false;
+      }
       app.isTransitioningLevel = false;
       app.levelTransition = null;
       app.gateRenderOverride = null;
@@ -1288,9 +1296,6 @@
       app.state.actors = (levelState.actors || []).map((actor, index) =>
         createRuntimeActor(actor, index, levelState.levelId || app.currentLevelId)
       );
-      registerTerrainImageUrls(app.state.terrain);
-      registerActorImageUrls(app.state.actors);
-      updateBoardMetrics(app.state.width, app.state.height);
       app.gateAnimations.clear();
       app.gateAnimationsInitialized = false;
       app.orangeWallAnimations.clear();
@@ -1298,12 +1303,18 @@
       app.playerLiftAnimations.clear();
       app.playerLiftAnimationsInitialized = false;
       initializeActorElevations();
-      setupCanvas();
-      syncDocumentLevelState();
-      rememberHorizontalNeighborLevelState(levelState);
-      syncHorizontalNeighborLevelStates();
-      syncCameraTarget(immediateCamera);
-      syncFloatingFloorTicker();
+
+      if (!skipTransientSideEffects) {
+        registerTerrainImageUrls(app.state.terrain);
+        registerActorImageUrls(app.state.actors);
+        updateBoardMetrics(app.state.width, app.state.height);
+        setupCanvas();
+        syncDocumentLevelState();
+        rememberHorizontalNeighborLevelState(levelState);
+        syncHorizontalNeighborLevelStates();
+        syncCameraTarget(immediateCamera);
+        syncFloatingFloorTicker();
+      }
 
       if (resetHistory) {
         app.moveHistory.length = 0;

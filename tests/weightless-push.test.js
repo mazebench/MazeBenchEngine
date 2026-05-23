@@ -30,6 +30,12 @@ function createTerrain(width, height, type = "floor") {
   );
 }
 
+async function flushAsyncTurns(count = 8) {
+  for (let index = 0; index < count; index += 1) {
+    await Promise.resolve();
+  }
+}
+
 function iceBlockCell(elevation = 0) {
   return {
     type: "ice_block",
@@ -209,6 +215,20 @@ function createGameplayApp(actors, options = {}) {
       };
     },
     applyLevelState(levelState, applyOptions = {}) {
+      if (app.animationFrameId !== null && applyOptions.preserveAnimation !== true) {
+        window.cancelAnimationFrame(app.animationFrameId);
+        app.animationFrameId = null;
+      }
+
+      if (applyOptions.preserveAnimation !== true) {
+        app.isAnimating = false;
+      }
+
+      app.isTransitioningLevel = false;
+      app.levelTransition = null;
+      if (typeof options.onApplyLevelState === "function") {
+        options.onApplyLevelState(applyOptions);
+      }
       app.currentLevelId = levelState.levelId || app.currentLevelId;
       app.currentLevelLabel = levelState.levelLabel || app.currentLevelId;
       app.state.width = levelState.width;
@@ -237,6 +257,10 @@ function createGameplayApp(actors, options = {}) {
     captureViewportSnapshot: () => null,
     viewportPositionForActor: (actor) => ({ left: actor.x * 64, top: actor.y * 64 }),
     startLevelTransition(...args) {
+      if (typeof options.startLevelTransition === "function") {
+        return options.startLevelTransition.call(app, ...args);
+      }
+
       const transitionOptions = args[7] || {};
       app.isTransitioningLevel = false;
       if (typeof transitionOptions.onComplete === "function") {
@@ -351,6 +375,32 @@ function createUShapeActors(extraActors = []) {
 }
 
 {
+  const player = { type: "player", x: 0, y: 0, elevation: 0, removed: false };
+  const terrain = createTerrain(6, 1);
+  terrain[0][1] = iceSlopeCell("right", 0);
+  terrain[0][2] = iceSlopeCell("left", 0);
+  terrain[0][3] = iceSlopeCell("right", 0);
+  terrain[0][4] = iceSlopeCell("left", 0);
+  const app = createGameplayApp([player], { height: 1, terrain, width: 6 });
+
+  app.movePlayers(1, 0);
+
+  assert.deepEqual([player.x, player.y], [5, 0]);
+  assert.equal(player.elevation, 0);
+
+  const previousState = app.moveHistory.at(-1);
+  assert.deepEqual(previousState.iceSlideMoves[0].path, [
+    { x: 0, y: 0, elevation: 0 },
+    { x: 1, y: 0, elevation: 1 },
+    { x: 2, y: 0, elevation: 1 },
+    { x: 2.5, y: 0, elevation: 0.08 },
+    { x: 3, y: 0, elevation: 1 },
+    { x: 4, y: 0, elevation: 1 },
+    { x: 5, y: 0, elevation: 0 }
+  ]);
+}
+
+{
   const gem = { type: "gem", x: 1, y: 0, removed: false };
   const player = { type: "player", x: 0, y: 0, elevation: 0, removed: false };
   const terrain = createTerrain(8, 8);
@@ -452,6 +502,94 @@ function createUShapeActors(extraActors = []) {
 
   assert.ok(renderSamples[0].x > 0 && renderSamples[0].x < 2);
   assert.ok(renderSamples[0].elevation > 0 && renderSamples[0].elevation < 1);
+}
+
+{
+  const originalRequestAnimationFrame = window.requestAnimationFrame;
+  const queuedFrames = [];
+  const distance = 4;
+  const slideDuration = Math.max(100, (distance * 1.5 * 100) / 2.67);
+  const box = { type: "box", x: 0, y: 0, elevation: 0, removed: false };
+  const app = createGameplayApp([box], { height: 1, moveDurationMs: 100, width: 6 });
+  const renderSamples = [];
+
+  window.requestAnimationFrame = (callback) => {
+    queuedFrames.push(callback);
+    return queuedFrames.length;
+  };
+  app.replayAnimationFrameStepMs = slideDuration / 4;
+  app.render = () => {
+    renderSamples.push(box.renderX);
+  };
+
+  try {
+    app.animateMoves([
+      {
+        actor: box,
+        actorIndex: 0,
+        actorType: "box",
+        fromElevation: 0,
+        fromX: 0,
+        fromY: 0,
+        iceSlide: true,
+        toElevation: 0,
+        toX: distance,
+        toY: 0
+      }
+    ]);
+
+    queuedFrames.shift()(performance.now());
+  } finally {
+    window.requestAnimationFrame = originalRequestAnimationFrame;
+  }
+
+  assert.ok(Math.abs(renderSamples[0] - 1) < 0.0001);
+}
+
+{
+  const originalRequestAnimationFrame = window.requestAnimationFrame;
+  const queuedFrames = [];
+  const distance = 4;
+  const slideDuration = Math.max(100, (distance * 1.5 * 100) / 2.67);
+  const punchWindupDuration = 100;
+  const box = { type: "box", x: 0, y: 0, elevation: 0, removed: false };
+  const app = createGameplayApp([box], { height: 1, moveDurationMs: 100, width: 6 });
+  const renderSamples = [];
+
+  window.requestAnimationFrame = (callback) => {
+    queuedFrames.push(callback);
+    return queuedFrames.length;
+  };
+  app.replayAnimationFrameStepMs = punchWindupDuration + slideDuration / 4;
+  app.render = () => {
+    renderSamples.push(box.renderX);
+  };
+
+  try {
+    app.animateMoves([
+      {
+        actor: box,
+        actorIndex: 0,
+        actorType: "box",
+        fromElevation: 0,
+        fromX: 0,
+        fromY: 0,
+        punchSlide: true,
+        punchStartElevation: 0,
+        punchStartX: 0,
+        punchStartY: 0,
+        toElevation: 0,
+        toX: distance,
+        toY: 0
+      }
+    ]);
+
+    queuedFrames.shift()(performance.now());
+  } finally {
+    window.requestAnimationFrame = originalRequestAnimationFrame;
+  }
+
+  assert.ok(Math.abs(renderSamples[0] - 1) < 0.0001);
 }
 
 {
@@ -940,8 +1078,7 @@ asyncTests.push(
     });
 
     app.movePlayers(1, 0);
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushAsyncTurns();
 
     const incomingPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
 
@@ -949,6 +1086,426 @@ asyncTests.push(
     assert.equal(app.currentLevelId, "level_BxA");
     assert.deepEqual([incomingPlayer.x, incomingPlayer.y], [0, 2]);
     assert.equal(app.moveHistory.at(-1)?.kind, "level-transition");
+  })()
+);
+
+asyncTests.push(
+  (async () => {
+    const player = { type: "player", x: 0, y: 0, elevation: 0, removed: false };
+    const terrain = createTerrain(4, 1);
+    terrain[0][1] = { type: "ice" };
+    terrain[0][2] = { type: "ice" };
+    terrain[0][3] = { type: "ice" };
+    const nextTerrain = createTerrain(4, 1);
+    nextTerrain[0][0] = { type: "ice" };
+    nextTerrain[0][1] = { type: "ice" };
+    let loadedLevelId = null;
+    const app = createGameplayApp([player], {
+      currentLevelId: "level_AxA",
+      height: 1,
+      width: 4,
+      terrain,
+      loadLevelState: async (levelId) => {
+        loadedLevelId = levelId;
+        return {
+          levelId,
+          levelLabel: levelId,
+          width: 4,
+          height: 1,
+          terrain: nextTerrain,
+          actors: []
+        };
+      }
+    });
+
+    app.movePlayers(1, 0);
+    await flushAsyncTurns();
+
+    const incomingPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.equal(loadedLevelId, "level_BxA");
+    assert.equal(app.currentLevelId, "level_BxA");
+    assert.deepEqual([incomingPlayer.x, incomingPlayer.y], [2, 0]);
+
+    app.undoMove();
+
+    const restoredPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.equal(app.currentLevelId, "level_AxA");
+    assert.deepEqual([restoredPlayer.x, restoredPlayer.y], [0, 0]);
+  })()
+);
+
+asyncTests.push(
+  (async () => {
+    const player = { type: "player", x: 0, y: 0, elevation: 0, removed: false };
+    const terrain = createTerrain(4, 1);
+    terrain[0][1] = { type: "ice" };
+    terrain[0][2] = { type: "ice" };
+    terrain[0][3] = { type: "ice" };
+    const nextTerrain = createTerrain(4, 1);
+    nextTerrain[0][0] = { type: "ice" };
+    nextTerrain[0][1] = { type: "ice" };
+    const app = createGameplayApp([player], {
+      currentLevelId: "level_AxA",
+      height: 1,
+      width: 4,
+      terrain,
+      loadLevelState: async (levelId) => ({
+        levelId,
+        levelLabel: levelId,
+        width: 4,
+        height: 1,
+        terrain: nextTerrain,
+        actors: []
+      })
+    });
+
+    app.movePlayers(1, 0);
+    await flushAsyncTurns();
+
+    const incomingPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.deepEqual([incomingPlayer.x, incomingPlayer.y], [2, 0]);
+    assert.deepEqual(
+      app.initialPositions.map(({ x, y, elevation }) => ({ x, y, elevation })),
+      [{ x: 2, y: 0, elevation: 0 }]
+    );
+
+    incomingPlayer.x = 3;
+    incomingPlayer.renderX = 3;
+    app.resetPositions();
+
+    assert.deepEqual([incomingPlayer.x, incomingPlayer.y], [2, 0]);
+  })()
+);
+
+asyncTests.push(
+  (async () => {
+    const player = { type: "player", x: 3, y: 0, elevation: 0, removed: false };
+    const terrain = createTerrain(4, 1);
+    terrain[0][3] = { type: "ice" };
+    const nextTerrain = createTerrain(4, 1);
+    nextTerrain[0][0] = { type: "ice" };
+    let loadedLevelId = null;
+    const app = createGameplayApp([player], {
+      currentLevelId: "level_AxA",
+      height: 1,
+      width: 4,
+      terrain,
+      loadLevelState: async (levelId) => {
+        loadedLevelId = levelId;
+        return {
+          levelId,
+          levelLabel: levelId,
+          width: 4,
+          height: 1,
+          terrain: nextTerrain,
+          actors: []
+        };
+      }
+    });
+
+    app.movePlayers(1, 0);
+    await flushAsyncTurns();
+
+    const incomingPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.equal(loadedLevelId, "level_BxA");
+    assert.equal(app.currentLevelId, "level_BxA");
+    assert.deepEqual([incomingPlayer.x, incomingPlayer.y], [1, 0]);
+
+    app.undoMove();
+
+    const restoredPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.equal(app.currentLevelId, "level_AxA");
+    assert.deepEqual([restoredPlayer.x, restoredPlayer.y], [3, 0]);
+  })()
+);
+
+asyncTests.push(
+  (async () => {
+    const player = { type: "player", x: 3, y: 0, elevation: 0, removed: false };
+    const terrain = createTerrain(4, 1);
+    terrain[0][3] = { type: "ice" };
+    const nextTerrain = createTerrain(4, 1);
+    nextTerrain[0][0] = { type: "ice" };
+    nextTerrain[0][1] = { type: "ice" };
+    let transitionData = null;
+    const app = createGameplayApp([player], {
+      currentLevelId: "level_AxA",
+      height: 1,
+      width: 4,
+      terrain,
+      loadLevelState: async (levelId) => ({
+        levelId,
+        levelLabel: levelId,
+        width: 4,
+        height: 1,
+        terrain: nextTerrain,
+        actors: []
+      }),
+      startLevelTransition(...args) {
+        const transitionOptions = args[7] || {};
+        transitionData = transitionOptions.transitionData;
+        app.levelTransition = {
+          transitionData,
+          startMs: performance.now(),
+          durationMs: transitionOptions.durationMs || app.LEVEL_TRANSITION_DURATION_MS,
+          onComplete: transitionOptions.onComplete || null
+        };
+        app.isTransitioningLevel = true;
+      }
+    });
+
+    app.movePlayers(1, 0);
+    await flushAsyncTurns();
+
+    const incomingPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.equal(app.isTransitioningLevel, true);
+    assert.equal(transitionData.followIncomingPlayerDuringContinuation, true);
+    assert.notEqual(transitionData.lightweightTransition, true);
+    assert.equal(transitionData.steadyCamera, true);
+    assert.deepEqual([incomingPlayer.x, incomingPlayer.y], [2, 0]);
+  })()
+);
+
+asyncTests.push(
+  (async () => {
+    const player = { type: "player", x: 3, y: 0, elevation: 0, removed: false };
+    const terrain = createTerrain(4, 1);
+    terrain[0][3] = { type: "ice" };
+    const nextTerrain = createTerrain(4, 1);
+    nextTerrain[0][0] = { type: "ice" };
+    let preserveAnimation = null;
+    const app = createGameplayApp([player], {
+      currentLevelId: "level_AxA",
+      height: 1,
+      width: 4,
+      terrain,
+      loadLevelState: async (levelId) => ({
+        levelId,
+        levelLabel: levelId,
+        width: 4,
+        height: 1,
+        terrain: nextTerrain,
+        actors: []
+      }),
+      onApplyLevelState: (options) => {
+        preserveAnimation = options.preserveAnimation;
+      }
+    });
+
+    await app.transitionToAdjacentLevel({
+      player,
+      nextLevelId: "level_BxA",
+      dx: 1,
+      dy: 0,
+      sourceType: "ice",
+      targetX: 0,
+      targetY: 0,
+      followSourcePlayerBeforeContinuation: true
+    });
+
+    assert.equal(preserveAnimation, true);
+  })()
+);
+
+asyncTests.push(
+  (async () => {
+    const player = { type: "player", x: 3, y: 0, elevation: 0, removed: false };
+    const terrain = createTerrain(4, 1);
+    terrain[0][3] = { type: "ice" };
+    const nextTerrain = createTerrain(4, 1);
+    nextTerrain[0][0] = { type: "ice" };
+    let transitionStarted = false;
+    const app = createGameplayApp([player], {
+      currentLevelId: "level_AxA",
+      height: 1,
+      width: 4,
+      terrain,
+      loadLevelState: async (levelId) => ({
+        levelId,
+        levelLabel: levelId,
+        width: 4,
+        height: 1,
+        terrain: nextTerrain,
+        actors: []
+      }),
+      startLevelTransition(...args) {
+        transitionStarted = true;
+        const transitionOptions = args[7] || {};
+        app.levelTransition = {
+          transitionData: transitionOptions.transitionData,
+          startMs: performance.now(),
+          durationMs: transitionOptions.durationMs || app.LEVEL_TRANSITION_DURATION_MS,
+          onComplete: transitionOptions.onComplete || null
+        };
+        app.isTransitioningLevel = true;
+      }
+    });
+
+    app.isTransitioningLevel = true;
+    app.levelTransition = {
+      transitionData: { kind: "adjacent-scene" },
+      startMs: performance.now(),
+      durationMs: 1000
+    };
+
+    const didTransition = await app.transitionToAdjacentLevel({
+      player,
+      nextLevelId: "level_BxA",
+      sourceType: "ice",
+      dx: 1,
+      dy: 0,
+      targetX: 0,
+      targetY: 0,
+      replaceActiveTransition: true
+    });
+
+    assert.equal(didTransition, true);
+    assert.equal(transitionStarted, true);
+    assert.equal(app.currentLevelId, "level_BxA");
+  })()
+);
+
+{
+    const player = { type: "player", x: 0, y: 0, elevation: 0, removed: false };
+    const terrain = createTerrain(30, 1);
+
+    for (let x = 0; x < 30; x += 1) {
+      terrain[0][x] = { type: "ice" };
+    }
+
+    const originalRequestAnimationFrame = window.requestAnimationFrame;
+    const frameCallbacks = [];
+    let loadStarted = false;
+    let transitionRequestedRenderX = null;
+
+    window.requestAnimationFrame = (callback) => {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    };
+
+    const app = createGameplayApp([player], {
+      currentLevelId: "level_AxA",
+      height: 1,
+      moveDurationMs: 100,
+      width: 30,
+      terrain,
+      loadLevelState: async () => {
+        loadStarted = true;
+        return new Promise(() => {});
+      }
+    });
+
+    const frameStart = performance.now();
+
+    app.movePlayers(1, 0);
+    assert.equal(loadStarted, true);
+    assert.equal(app.isPlanningWorldAction, true);
+    assert.equal(app.isTransitioningLevel, false);
+
+    window.requestAnimationFrame = originalRequestAnimationFrame;
+}
+
+asyncTests.push(
+  (async () => {
+    const player = { type: "player", x: 0, y: 0, elevation: 0, removed: false };
+    const terrain = createTerrain(4, 1);
+    terrain[0][1] = { type: "ice" };
+    terrain[0][2] = { type: "ice" };
+    terrain[0][3] = { type: "ice" };
+    const nextTerrain = createTerrain(4, 1);
+    nextTerrain[0][0] = { type: "ice" };
+    nextTerrain[0][1] = iceSlopeCell("right", 0);
+    nextTerrain[0][2] = { type: "wall" };
+    let loadedLevelId = null;
+    const app = createGameplayApp([player], {
+      currentLevelId: "level_AxA",
+      height: 1,
+      width: 4,
+      terrain,
+      loadLevelState: async (levelId) => {
+        loadedLevelId = levelId;
+        return {
+          levelId,
+          levelLabel: levelId,
+          width: 4,
+          height: 1,
+          terrain: nextTerrain,
+          actors: []
+        };
+      }
+    });
+
+    app.movePlayers(1, 0);
+    await flushAsyncTurns();
+
+    const incomingPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.equal(loadedLevelId, "level_BxA");
+    assert.equal(app.currentLevelId, "level_BxA");
+    assert.deepEqual([incomingPlayer.x, incomingPlayer.y], [2, 0]);
+    assert.equal(incomingPlayer.elevation, 1);
+
+    app.undoMove();
+
+    const restoredPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.equal(app.currentLevelId, "level_AxA");
+    assert.deepEqual([restoredPlayer.x, restoredPlayer.y], [0, 0]);
+    assert.equal(restoredPlayer.elevation, 0);
+  })()
+);
+
+asyncTests.push(
+  (async () => {
+    const player = { type: "player", x: 0, y: 0, elevation: 0, removed: false };
+    const terrain = createTerrain(3, 1);
+    terrain[0][1] = iceSlopeCell("right", 0);
+    terrain[0][2] = iceSlopeCell("left", 0);
+    const nextTerrain = createTerrain(4, 1);
+    nextTerrain[0][0] = iceSlopeCell("right", 0);
+    nextTerrain[0][1] = iceSlopeCell("left", 0);
+    let loadedLevelId = null;
+    const app = createGameplayApp([player], {
+      currentLevelId: "level_AxA",
+      height: 1,
+      width: 3,
+      terrain,
+      loadLevelState: async (levelId) => {
+        loadedLevelId = levelId;
+        return {
+          levelId,
+          levelLabel: levelId,
+          width: 4,
+          height: 1,
+          terrain: nextTerrain,
+          actors: []
+        };
+      }
+    });
+
+    app.movePlayers(1, 0);
+    await flushAsyncTurns();
+
+    const incomingPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.equal(loadedLevelId, "level_BxA");
+    assert.equal(app.currentLevelId, "level_BxA");
+    assert.deepEqual([incomingPlayer.x, incomingPlayer.y], [2, 0]);
+    assert.equal(incomingPlayer.elevation, 0);
+
+    app.undoMove();
+
+    const restoredPlayer = app.state.actors.find((actor) => app.isPlayerActor(actor));
+
+    assert.equal(app.currentLevelId, "level_AxA");
+    assert.deepEqual([restoredPlayer.x, restoredPlayer.y], [0, 0]);
+    assert.equal(restoredPlayer.elevation, 0);
   })()
 );
 
