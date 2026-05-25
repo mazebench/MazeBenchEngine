@@ -152,7 +152,7 @@ class Ice(MazeSprite):
 
 
 class Hole(MazeSprite):
-    token = "h"
+    token = "+"
 
     def __init__(self, x: int, y: int) -> None:
         super().__init__(x, y, name="hole")
@@ -394,6 +394,12 @@ class MazeWorld(GridWorld):
     def tile_has_name(self, x: int, y: int, name: str) -> bool:
         return any(sprite.name == name for sprite in self.tiles.get((x, y), []))
 
+    def tile_is_void(self, x: int, y: int) -> bool:
+        return self.in_bounds(x, y) and not self.tiles.get((x, y))
+
+    def tile_is_hole_or_void(self, x: int, y: int) -> bool:
+        return self.tile_has_name(x, y, "hole") or self.tile_is_void(x, y)
+
     def pushable_at(self, x: int, y: int) -> Box | FloatingFloor | WeightlessBox | None:
         for sprite in self.tiles.get((x, y), []):
             if isinstance(sprite, (Box, FloatingFloor, WeightlessBox)):
@@ -455,7 +461,7 @@ class MazeWorld(GridWorld):
         ):
             return 1
 
-        if self.tile_has_name(x, y, "hole"):
+        if self.tile_is_hole_or_void(x, y):
             return None
 
         return 0
@@ -656,17 +662,17 @@ class MazeWorld(GridWorld):
 
             moved = True
 
-            if all(self.tile_has_name(member.x, member.y, "hole") for member in members):
+            if all(self.tile_is_hole_or_void(member.x, member.y) for member in members):
                 break
 
             if not all(
                 self.tile_has_name(member.x, member.y, "ice")
-                or self.tile_has_name(member.x, member.y, "hole")
+                or self.tile_is_hole_or_void(member.x, member.y)
                 for member in members
             ):
                 break
 
-        if moved and all(self.tile_has_name(member.x, member.y, "hole") for member in members):
+        if moved and all(self.tile_is_hole_or_void(member.x, member.y) for member in members):
             for member in list(members):
                 self.remove_sprite(member)
 
@@ -764,7 +770,7 @@ class MazeWorld(GridWorld):
             else:
                 sprite.elevation = 1 if self.player_surface_height(sprite.x, sprite.y) == 1 else 0
 
-        if self.tile_has_name(sprite.x, sprite.y, "hole"):
+        if self.tile_is_hole_or_void(sprite.x, sprite.y):
             if isinstance(sprite, FloatingFloor):
                 self.fill_hole_with_floor(sprite.x, sprite.y)
 
@@ -801,7 +807,7 @@ class MazeWorld(GridWorld):
 
         if isinstance(sprite, Player):
             current_elevation = self.player_elevation(sprite)
-            can_enter_hole = current_elevation == 0 and self.tile_has_name(x, y, "hole")
+            can_enter_hole = current_elevation == 0 and self.tile_is_hole_or_void(x, y)
             target_surface_height = (
                 self.player_surface_height(x, y)
                 if current_elevation == 1

@@ -55,6 +55,7 @@ const game = {
 };
 
 fs.writeFileSync(path.join(levelDir, "test-empty.txt"), "+ . +++#\n", "utf8");
+fs.writeFileSync(path.join(levelDir, "legacy_hole.txt"), "h h+# #+h+#\n", "utf8");
 
 const service = createMazeLevelService({
   buildGameAssetUrl: () => "",
@@ -91,6 +92,27 @@ const service = createMazeLevelService({
 const editorState = service.getLevelEditorState(game, game.worldMap.byPosition.get("level_AxA"));
 
 assert.deepEqual(editorState.cells[0].slice(0, 3), ["+", ".", "+++#"]);
+
+const legacyHoleEditorState = service.getLevelEditorState(
+  game,
+  { id: "legacy_hole", fileName: "legacy_hole.txt", label: "Legacy Hole" }
+);
+
+assert.deepEqual(legacyHoleEditorState.cells[0].slice(0, 3), ["+", "+#", "#++#"]);
+
+const legacyHolePlayState = service.getLevelState(
+  game,
+  { id: "legacy_hole", fileName: "legacy_hole.txt", label: "Legacy Hole" }
+);
+
+assert.equal(legacyHolePlayState.terrain[0][0].type, "empty");
+assert.deepEqual(
+  legacyHolePlayState.terrain[0][2].layers.map((layer) => [layer.type, layer.elevation]),
+  [
+    ["wall", 0],
+    ["wall", 2]
+  ]
+);
 assert.equal(editorState.rawText, "+ . +++#");
 
 const sanitized = service.sanitizeEditorPayload(game, {
@@ -101,6 +123,15 @@ const sanitized = service.sanitizeEditorPayload(game, {
 
 assert.deepEqual(sanitized.cells[0], ["+", ".", "+++#"]);
 assert.equal(sanitized.rawText, "+ . +++#");
+
+const legacySanitized = service.sanitizeEditorPayload(game, {
+  width: 3,
+  height: 1,
+  cells: [["h", "h+#", "#+h+#"]]
+});
+
+assert.deepEqual(legacySanitized.cells[0], ["+", "+#", "#++#"]);
+assert.equal(legacySanitized.rawText, "+ +# #++#");
 
 const puncherSanitized = service.sanitizeEditorPayload(game, {
   cells: [["#+pd", ".+pr", "+"]],

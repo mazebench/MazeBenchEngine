@@ -51,6 +51,11 @@
       return tool?.type || tool?.name;
     }
 
+    function normalizeLegacyToken(token) {
+      const trimmedToken = String(token ?? "").trim();
+      return trimmedToken === "h" ? "" : trimmedToken;
+    }
+
     function normalizeCellValue(value) {
       const trimmedValue = String(value ?? "").trim();
 
@@ -58,7 +63,7 @@
         return emptyCellToken;
       }
 
-      const tokens = trimmedValue.split(blockAdder).map((token) => token.trim());
+      const tokens = trimmedValue.split(blockAdder).map(normalizeLegacyToken);
 
       if (tokens.length === 0 || tokens.every((token) => token.length === 0)) {
         return emptyCellToken;
@@ -76,7 +81,7 @@
     function getCellTokens(value) {
       return String(value || "")
         .split(blockAdder)
-        .map((token) => token.trim());
+        .map(normalizeLegacyToken);
     }
 
     function getCellTools(value) {

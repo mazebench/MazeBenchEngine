@@ -240,6 +240,31 @@ function createState(playData) {
 }
 
 {
+  const terrain = floorTerrain(3, 1);
+  terrain[0][2] = { type: "empty", layers: [] };
+  const { engine, state } = createState({
+    width: 3,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "floating_floor", x: 1, y: 0, removed: false }
+    ]
+  });
+  const result = engine.moveForSearch(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.equal(state.actorRemoved[1], 1);
+  assert.equal(state.terrain[engine.cellIndex(2, 0)], terrainTypes.floor);
+
+  engine.undoMove(state, result);
+
+  assert.equal(state.terrain[engine.cellIndex(2, 0)], terrainTypes.empty);
+  assert.equal(state.actorRemoved[1], 0);
+  assert.deepEqual([state.actorX[1], state.actorY[1]], [1, 0]);
+}
+
+{
   const terrain = floorTerrain(4, 1);
   terrain[0][1] = { type: "ice" };
   terrain[0][2] = { type: "ice" };

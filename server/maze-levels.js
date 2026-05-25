@@ -113,10 +113,16 @@ function createMazeLevelService({
 
     if (typeof blockAdder === "string" && blockAdder.length > 0) {
       return String(cell)
-        .split(blockAdder);
+        .split(blockAdder)
+        .map(normalizeLegacyMazeToken);
     }
 
-    return cell ? [cell] : [];
+    return cell ? [normalizeLegacyMazeToken(cell)] : [];
+  }
+
+  function normalizeLegacyMazeToken(token) {
+    const trimmedToken = String(token ?? "").trim();
+    return trimmedToken === "h" ? "" : trimmedToken;
   }
 
   function getDefinitionTokens(config) {

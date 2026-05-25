@@ -2141,6 +2141,10 @@
       });
     }
 
+    function isEmptyVoidAtElevation(x, y, elevation = 0) {
+      return elevation === 0 && isInsideBoard(x, y) && terrainLayersAt(x, y).length === 0;
+    }
+
     function isIce(x, y, elevation = 0) {
       return (
         terrainLayerOfTypeAtElevation(x, y, "ice", elevation) ||
@@ -2149,7 +2153,10 @@
     }
 
     function isHole(x, y, elevation = 0) {
-      return terrainLayerOfTypeAtElevation(x, y, "hole", elevation);
+      return (
+        isEmptyVoidAtElevation(x, y, elevation) ||
+        terrainLayerOfTypeAtElevation(x, y, "hole", elevation)
+      );
     }
 
     function isIceOrHole(x, y, elevation = 0) {

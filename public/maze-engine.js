@@ -659,6 +659,18 @@
       );
     }
 
+    function isEmptyVoidAtElevation(state, x, y, elevation = 0) {
+      if (!isInsideBoard(x, y) || elevation !== 0) {
+        return false;
+      }
+
+      const cell = cellIndex(x, y);
+      return (
+        state.terrain[cell] === terrainTypes.empty &&
+        terrainLayersForCell(state, cell).length === 0
+      );
+    }
+
     function terrainLayersOfType(x, y, type) {
       if (!isInsideBoard(x, y)) {
         return [];
@@ -919,15 +931,18 @@
     }
 
     function isHole(state, x, y, elevation = 0) {
-      return Boolean(
-        terrainLayerOfTypeAtElevation(
-          state,
-          x,
-          y,
-          terrainTypes.hole,
-          elevation,
-          new Set(),
-          false
+      return (
+        isEmptyVoidAtElevation(state, x, y, elevation) ||
+        Boolean(
+          terrainLayerOfTypeAtElevation(
+            state,
+            x,
+            y,
+            terrainTypes.hole,
+            elevation,
+            new Set(),
+            false
+          )
         )
       );
     }
@@ -3700,6 +3715,8 @@
         target.fillsHole = true;
         target.fillHoleX = source.fillHoleX ?? target.fillHoleX;
         target.fillHoleY = source.fillHoleY ?? target.fillHoleY;
+        target.fillHolePreviousTerrain =
+          source.fillHolePreviousTerrain ?? target.fillHolePreviousTerrain;
       }
 
       if (typeof source.punchStartX === "number" && typeof target.punchStartX !== "number") {
@@ -4764,6 +4781,8 @@
           move.fillsHole = true;
           move.fillHoleX = state.actorX[move.actorIndex];
           move.fillHoleY = state.actorY[move.actorIndex];
+          move.fillHolePreviousTerrain =
+            state.terrain[cellIndex(move.fillHoleX, move.fillHoleY)];
           return;
         }
 
@@ -5866,7 +5885,9 @@
           typeof moveRecord.fillHoleY === "number"
         ) {
           state.terrain[cellIndex(moveRecord.fillHoleX, moveRecord.fillHoleY)] =
-            terrainTypes.hole;
+            Number.isInteger(moveRecord.fillHolePreviousTerrain)
+              ? moveRecord.fillHolePreviousTerrain
+              : terrainTypes.empty;
         }
       }
 

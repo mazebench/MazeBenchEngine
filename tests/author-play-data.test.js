@@ -120,6 +120,9 @@ assert.equal(adapter.normalizeCellValue(""), "+");
 assert.equal(adapter.normalizeCellValue("+"), "+");
 assert.equal(adapter.normalizeCellValue("++"), "+");
 assert.equal(adapter.normalizeCellValue("++W"), "++W");
+assert.equal(adapter.normalizeCellValue("h"), "+");
+assert.equal(adapter.normalizeCellValue("W+h+W"), "W++W");
+assert.deepEqual(adapter.getCellTokens("h+W"), ["", "W"]);
 assert.equal(adapter.setCellElevationToken(".", "W", 1), ".++W");
 assert.equal(adapter.setCellElevationToken(".", "W", 0, { preserveBaseSurface: true }), ".+W");
 assert.equal(adapter.setCellElevationToken(".", "I", 0, { preserveBaseSurface: true }), ".+I");
@@ -281,6 +284,21 @@ assert.deepEqual(
   [
     ["floor", 0],
     ["wall", 4]
+  ]
+);
+
+const legacyHolePlayData = adapter.buildPlayData({
+  cells: [["h", "W+h+W"]],
+  height: 1,
+  width: 2
+});
+
+assert.equal(legacyHolePlayData.terrain[0][0].type, "empty");
+assert.deepEqual(
+  legacyHolePlayData.terrain[0][1].layers.map((layer) => [layer.type, layer.elevation]),
+  [
+    ["wall", 0],
+    ["wall", 2]
   ]
 );
 

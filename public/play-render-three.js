@@ -2219,6 +2219,44 @@
       return descriptors;
     }
 
+    function terrainPieceDescriptorsAtGridOrNeighbor(x, y, now) {
+      const state = renderState();
+
+      if (x >= 0 && y >= 0 && x < state.width && y < state.height) {
+        return terrainPieceDescriptorsAt(x, y, now);
+      }
+
+      let dx = 0;
+      let dy = 0;
+
+      if (x < 0) {
+        dx = -1;
+      } else if (x >= state.width) {
+        dx = 1;
+      }
+
+      if (y < 0) {
+        dy = -1;
+      } else if (y >= state.height) {
+        dy = 1;
+      }
+
+      if (Math.abs(dx) + Math.abs(dy) !== 1) {
+        return [];
+      }
+
+      const neighborState = neighborLevelStateForBoundary(dx, dy);
+
+      if (!neighborState) {
+        return [];
+      }
+
+      const neighborX = dx < 0 ? neighborState.width - 1 : dx > 0 ? 0 : x;
+      const neighborY = dy < 0 ? neighborState.height - 1 : dy > 0 ? 0 : y;
+
+      return terrainPieceDescriptorsForState(neighborState, neighborX, neighborY, now);
+    }
+
     function descriptorCoversBoundaryYSpan(descriptor, minY, maxY) {
       const tolerance = Math.max(0.001, unit * 0.0001);
 
@@ -2245,7 +2283,7 @@
     }
 
     function suppressibleSharedBoundaryType(type) {
-      return type === "wall" || type === "block_asset";
+      return type === "wall" || type === "block_asset" || type === "ice_block";
     }
 
     function sameRoomBoundaryDescriptor(leftDescriptor, rightDescriptor, a = null, b = null) {
@@ -3005,11 +3043,7 @@
     }
 
     function iceSlopeDescriptorContactsVoxel(slopeX, slopeY, direction, voxelLevel, now) {
-      if (!renderIsInsideBoard(slopeX, slopeY)) {
-        return false;
-      }
-
-      return terrainPieceDescriptorsAt(slopeX, slopeY, now).some((descriptor) => {
+      return terrainPieceDescriptorsAtGridOrNeighbor(slopeX, slopeY, now).some((descriptor) => {
         if (
           descriptor.type !== "ice_slope" ||
           normalizeCardinalDirection(descriptor.layer?.direction) !== direction
@@ -4624,7 +4658,8 @@
             now,
             suppressIceSlopeContacts: descriptor.type === "ice_block",
             suppressIceSlopeTopContacts: true,
-            suppressSharedRoomEdges: descriptor.type === "wall"
+            suppressSharedRoomEdges:
+              descriptor.type === "wall" || descriptor.type === "ice_block"
           }),
           edgeThreshold: 18,
           opacity: visibility,
@@ -4846,14 +4881,9 @@
       const vector = cardinalGridVector(direction);
       const neighborX = cell.gridX + vector.dx;
       const neighborY = cell.gridY + vector.dy;
-
-      if (!renderIsInsideBoard(neighborX, neighborY)) {
-        return false;
-      }
-
       const slopeLevel = terrainPolycubeLevel(descriptor.bottomY ?? 0);
 
-      return terrainPieceDescriptorsAt(neighborX, neighborY, now).some((neighbor) => {
+      return terrainPieceDescriptorsAtGridOrNeighbor(neighborX, neighborY, now).some((neighbor) => {
         if (neighbor.type !== "ice_block" || !canRenderTerrainPolycube(neighbor)) {
           return false;
         }
@@ -4968,15 +4998,10 @@
       ].forEach(({ dx, dy }) => {
         const neighborX = cell.gridX + dx;
         const neighborY = cell.gridY + dy;
-
-        if (!renderIsInsideBoard(neighborX, neighborY)) {
-          return;
-        }
-
         const contact = iceSlopeContactForGridOffset(direction, dx, dy);
 
         if (
-          terrainPieceDescriptorsAt(neighborX, neighborY, now).some((neighbor) => {
+          terrainPieceDescriptorsAtGridOrNeighbor(neighborX, neighborY, now).some((neighbor) => {
             const neighborContact = iceSlopeContactForGridOffset(
               neighbor.layer?.direction,
               -dx,

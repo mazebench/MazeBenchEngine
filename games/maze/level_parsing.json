@@ -187,9 +187,6 @@
     },
     "exit": {
       "token": "e"
-    },
-    "hole": {
-      "token": "h"
     }
   }
 }

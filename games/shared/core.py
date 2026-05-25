@@ -36,9 +36,18 @@ class GridWorld:
         block_adder = self.parser.get("rules", {}).get("block_adder", "")
 
         if isinstance(block_adder, str) and block_adder:
-            return [token for token in str(cell).split(block_adder) if token]
+            return [
+                normalized
+                for token in str(cell).split(block_adder)
+                if (normalized := self.normalize_legacy_token(token))
+            ]
 
-        return [cell] if cell else []
+        normalized = self.normalize_legacy_token(cell)
+        return [normalized] if normalized else []
+
+    def normalize_legacy_token(self, token: object) -> str:
+        normalized = str(token).strip()
+        return "" if normalized == "h" else normalized
 
     def load_level(self, raw_level: str) -> list[list[str]]:
         self.raw_level = raw_level

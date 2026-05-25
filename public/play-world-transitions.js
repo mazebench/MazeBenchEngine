@@ -417,6 +417,10 @@
         return null;
       }
 
+      if (elevation === 0 && terrainLayersForTransitionCell(cell).length === 0) {
+        return { type: "hole", elevation: 0 };
+      }
+
       return (
         terrainLayersForTransitionCell(cell).find(
           (layer) => layer.type === "hole" && (layer.elevation ?? 0) === elevation
