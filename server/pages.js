@@ -276,7 +276,7 @@ function createPageRenderer({
             </details>
             <details class="author-panel author-disclosure">
               <summary class="author-disclosure__summary">
-                <span>Transform</span>
+                <span>Transformer</span>
               </summary>
               <div class="author-disclosure__body">
                 <div class="author-control-row">
@@ -297,14 +297,30 @@ function createPageRenderer({
                     <span>Flip V</span>
                   </button>
                 </div>
+              </div>
+            </details>
+            <details class="author-panel author-disclosure">
+              <summary class="author-disclosure__summary">
+                <span>Solver</span>
+              </summary>
+              <div class="author-disclosure__body">
                 <div class="author-control-row">
                   <label class="field">
                     <span>Search states</span>
                     <input id="solver-max-states" type="number" min="1" step="1" value="1000000" inputmode="numeric" aria-label="Solver search state limit">
                   </label>
+                  <label class="field">
+                    <span>Algorithm</span>
+                    <select id="solver-algorithm" aria-label="Solver algorithm">
+                      <option value="astar" selected>A*</option>
+                      <option value="weighted_astar">Weighted A*</option>
+                      <option value="bfs">BFS</option>
+                    </select>
+                  </label>
                 </div>
                 <div class="author-control-row">
                   <button id="place-gem" class="tool-button" type="button">Place Gem</button>
+                  <button id="hill-climb" class="tool-button" type="button">Hill-Climb</button>
                   <button id="solve-level" class="tool-button" type="button">Solver</button>
                   <button id="play-solution" class="tool-button" type="button">
                     <span class="tool-button__icon" aria-hidden="true">&#9654;</span>

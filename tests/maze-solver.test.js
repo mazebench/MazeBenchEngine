@@ -46,6 +46,28 @@ function floorTerrain(width, height) {
       width: 3,
       height: 1,
       terrain: floorTerrain(3, 1),
+      actors: [
+        { type: "player", x: 0, y: 0, removed: false },
+        { type: "gem", x: 2, y: 0, removed: false }
+      ]
+    });
+
+    const result = await solveWithAStar(engine, {
+      algorithm: "bfs",
+      maxExpandedStates: 100,
+      progressYieldStateInterval: 1
+    });
+
+    assert.equal(result.status, "solved");
+    assert.equal(result.moves, 2);
+    assert.equal(result.path, "RR");
+  }
+
+  {
+    const engine = createEngine({
+      width: 3,
+      height: 1,
+      terrain: floorTerrain(3, 1),
       actors: [{ type: "player", x: 0, y: 0, removed: false }]
     });
 

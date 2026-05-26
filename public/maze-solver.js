@@ -153,6 +153,14 @@
     return Number.isFinite(value) && value > 0 ? value : fallback;
   }
 
+  function solverAlgorithmOption(value) {
+    if (value === "bfs") {
+      return "bfs";
+    }
+
+    return value === "weighted_astar" || value === "weighted" ? "weighted_astar" : "astar";
+  }
+
   function solverNonPlayerMoveReward(engine, moveResult, rewardCap) {
     if (Number.isFinite(moveResult?.nonPlayerMoveCount)) {
       return Math.min(rewardCap, moveResult.nonPlayerMoveCount);
@@ -195,6 +203,7 @@
   }
 
   async function solveWithAStar(engine, options = {}) {
+    const algorithm = solverAlgorithmOption(options.algorithm);
     const directions = Array.isArray(options.directions) ? options.directions : defaultDirections;
     const maxExpandedStates = numericOption(
       options.maxExpandedStates,
@@ -208,6 +217,11 @@
       options.nonPlayerMoveRewardCap,
       defaultNonPlayerMoveRewardCap
     );
+    const heuristicWeight =
+      algorithm === "bfs"
+        ? 0
+        : 1;
+    const useSearchReward = algorithm === "weighted_astar";
     const open = new SolverHeap();
     const bestCostByKey = new Map();
     const statePool = new SolverStatePool(engine);
@@ -226,7 +240,7 @@
       cost: 0,
       searchReward: 0,
       path: "",
-      priority: engine.heuristic(initialState),
+      priority: heuristicWeight * engine.heuristic(initialState),
       order: order
     }));
     order += 1;
@@ -282,8 +296,10 @@
 
         const nextCost = current.cost + 1;
         const nextSearchReward =
-          current.searchReward +
-          solverNonPlayerMoveReward(engine, moveResult, nonPlayerMoveRewardCap);
+          useSearchReward
+            ? current.searchReward +
+              solverNonPlayerMoveReward(engine, moveResult, nonPlayerMoveRewardCap)
+            : 0;
         const nextKey = engine.stateKey(current.state);
         const bestKnownCost = bestCostByKey.get(nextKey);
 
@@ -301,7 +317,7 @@
           cost: nextCost,
           searchReward: nextSearchReward,
           path: current.path + direction.label,
-          priority: nextCost + engine.heuristic(nextState) - nextSearchReward,
+          priority: nextCost + heuristicWeight * engine.heuristic(nextState) - nextSearchReward,
           order
         }));
         order += 1;

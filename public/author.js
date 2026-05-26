@@ -24,6 +24,7 @@
     grid: document.getElementById("author-grid"),
     gridShell: document.querySelector(".author-grid-shell"),
     hitGrid: document.getElementById("author-hit-grid"),
+    hillClimb: document.getElementById("hill-climb"),
     levelNeighbors: document.getElementById("level-neighbors"),
     levelColumn: document.getElementById("level-column"),
     levelRow: document.getElementById("level-row"),
@@ -40,6 +41,7 @@
     selectedToolLabel: document.getElementById("selected-tool-label"),
     sidebar: document.querySelector(".author-sidebar"),
     solveLevel: document.getElementById("solve-level"),
+    solverAlgorithm: document.getElementById("solver-algorithm"),
     solverProgress: document.getElementById("solver-progress"),
     solverProgressBar: document.getElementById("solver-progress-bar"),
     solverProgressText: document.getElementById("solver-progress-text"),
@@ -54,8 +56,10 @@
     "currentFileName",
     "currentLevelName",
     "existingLevels",
+    "hillClimb",
     "levelColumn",
     "levelRow",
+    "solverAlgorithm",
     "solverProgress",
     "solverProgressBar",
     "solverProgressText",
@@ -353,13 +357,17 @@
   }
 
   function levelHasGem() {
-    return state.cells.some((row) =>
+    const cells = arguments.length > 0 ? arguments[0] : state.cells;
+
+    return cells.some((row) =>
       row.some((cell) => getCellTools(cell).some((tool) => tool.name === "gem"))
     );
   }
 
   function levelHasPlayer() {
-    return state.cells.some((row) =>
+    const cells = arguments.length > 0 ? arguments[0] : state.cells;
+
+    return cells.some((row) =>
       row.some((cell) =>
         getCellTools(cell).some((tool) => tool.name === "player" || tool.name === "circle_player")
       )
@@ -393,8 +401,8 @@
     return elevation;
   }
 
-  function gemPlacementSurfaceSets() {
-    const playData = buildEditorPlayData({ includeGems: false });
+  function gemPlacementSurfaceSets(cells = state.cells) {
+    const playData = buildEditorPlayData({ cells, includeGems: false });
     const blockedSurfaces = new Set();
     const validSurfaces = new Set();
 
@@ -438,8 +446,12 @@
   }
 
   function gemPlacementValueForCell(x, y, elevation = 0) {
+    return gemPlacementValueForCells(state.cells, x, y, elevation);
+  }
+
+  function gemPlacementValueForCells(cells, x, y, elevation = 0) {
     const gemToken = toolByName.get("gem")?.token || "G";
-    return setCellElevationToken(state.cells[y]?.[x] ?? emptyCellToken, gemToken, elevation, {
+    return setCellElevationToken(cells[y]?.[x] ?? emptyCellToken, gemToken, elevation, {
       preserveBaseSurface: true
     });
   }
@@ -458,7 +470,7 @@
   function buildEditorPlayData(options = {}) {
     return buildPlayData({
       cameraView: options.cameraView || null,
-      cells: state.cells,
+      cells: options.cells || state.cells,
       editorRender: options.editorRender === true,
       gameId: authorData.game.id,
       height: state.height,
@@ -520,6 +532,22 @@
     elements.solverMaxStates.value = String(maxExpandedStates);
 
     return maxExpandedStates;
+  }
+
+  function getSolverAlgorithm() {
+    if (elements.solverAlgorithm?.value === "bfs") {
+      return "bfs";
+    }
+
+    return elements.solverAlgorithm?.value === "weighted_astar" ? "weighted_astar" : "astar";
+  }
+
+  function solverAlgorithmLabel(algorithm = getSolverAlgorithm()) {
+    if (algorithm === "bfs") {
+      return "BFS";
+    }
+
+    return algorithm === "weighted_astar" ? "Weighted A*" : "A*";
   }
 
   function nextSolverProgressFrame() {
@@ -706,20 +734,36 @@
       elements.solveLevel.title = state.isSolverBusy ? "Search is running." : "Solution is playing.";
       elements.placeGem.disabled = true;
       elements.placeGem.title = elements.solveLevel.title;
+      if (elements.hillClimb) {
+        elements.hillClimb.disabled = true;
+        elements.hillClimb.title = elements.solveLevel.title;
+      }
       elements.playSolution.disabled = true;
       elements.playSolution.title = elements.solveLevel.title;
+      if (elements.solverAlgorithm) {
+        elements.solverAlgorithm.disabled = true;
+      }
       syncUndoButtonState();
       return;
     }
 
+    if (elements.solverAlgorithm) {
+      elements.solverAlgorithm.disabled = false;
+    }
     elements.solveLevel.disabled = !hasGem;
     elements.solveLevel.title = hasGem
-      ? "Run A* from the current editor grid."
+      ? "Run " + solverAlgorithmLabel() + " from the current editor grid."
       : "Add a gem before running the solver.";
     elements.placeGem.disabled = !hasPlayer;
     elements.placeGem.title = hasPlayer
       ? "Find the hardest open surface the player can reach."
       : "Add a player before finding a gem placement.";
+    if (elements.hillClimb) {
+      elements.hillClimb.disabled = !hasPlayer;
+      elements.hillClimb.title = hasPlayer
+        ? "Try one added wall per tile and keep the longest Place Gem result."
+        : "Add a player before hill-climbing wall placement.";
+    }
     elements.playSolution.disabled = !hasPlayableSolution();
     elements.playSolution.title = hasPlayableSolution()
       ? "Animate the last solver solution."
@@ -2171,6 +2215,221 @@
     return placedValue;
   }
 
+  function canHillClimbPlaceWallAtCell(value) {
+    const tokens = getCellTokens(value).filter((token) => token.length > 0);
+
+    return tokens.every((token) => {
+      const tool = toolByToken.get(token);
+      const type = tool?.type || tool?.name || "";
+
+      return type === "floor" || type === "ice";
+    });
+  }
+
+  function hillClimbBaseCells() {
+    return cloneCells(state.cells).map((row) => row.map(stripGemFromCellValue));
+  }
+
+  function hillClimbWallCandidateCells(baseCells, x, y, wallToken) {
+    const currentValue = baseCells[y]?.[x] ?? emptyCellToken;
+
+    if (!canHillClimbPlaceWallAtCell(currentValue)) {
+      return null;
+    }
+
+    const nextValue = setCellElevationToken(currentValue, wallToken, 0, {
+      preserveBaseSurface: true
+    });
+
+    if (nextValue === currentValue) {
+      return null;
+    }
+
+    const candidateCells = cloneCells(baseCells);
+    candidateCells[y][x] = nextValue;
+    return candidateCells;
+  }
+
+  function hillClimbCandidatePositions(baseCells, wallToken) {
+    const positions = [];
+
+    for (let y = 0; y < state.height; y += 1) {
+      for (let x = 0; x < state.width; x += 1) {
+        if (hillClimbWallCandidateCells(baseCells, x, y, wallToken)) {
+          positions.push({ x, y });
+        }
+      }
+    }
+
+    return positions;
+  }
+
+  function createHillClimbProgressReporter(candidateIndex, candidateCount, maxExpandedStates) {
+    let lastRenderAt = 0;
+    const safeCandidateCount = Math.max(1, candidateCount);
+    const safeMaxExpandedStates = Math.max(1, maxExpandedStates);
+    const totalMax = safeCandidateCount * safeMaxExpandedStates;
+    const baseExpanded = candidateIndex * safeMaxExpandedStates;
+    const label = "Hill-Climb " + (candidateIndex + 1) + "/" + safeCandidateCount;
+
+    return async function reportHillClimbProgress(progress, force = false) {
+      const expanded = Math.max(0, progress?.expanded ?? 0);
+      const now =
+        window.performance && typeof window.performance.now === "function"
+          ? window.performance.now()
+          : Date.now();
+
+      if (!force && now - lastRenderAt < solverProgressRenderIntervalMs) {
+        return;
+      }
+
+      lastRenderAt = now;
+      renderSolverProgress(
+        label,
+        Math.min(totalMax, baseExpanded + expanded),
+        totalMax
+      );
+      await nextSolverProgressFrame();
+    };
+  }
+
+  function applyHillClimbResult(best) {
+    pushUndoSnapshot();
+    state.cells = cloneCells(best.cells);
+    clearSolverSolution();
+    state.selectedCell = { x: best.candidate.x, y: best.candidate.y };
+    state.isDirty = true;
+    renderGrid();
+    renderSelectedCell();
+    renderRawOutput();
+    syncSolverButtonState();
+  }
+
+  async function hillClimb() {
+    if (!levelHasPlayer()) {
+      setStatus("Hill-Climb needs a player first.", "error");
+      syncSolverButtonState();
+      return;
+    }
+
+    const wallToken = toolByName.get("wall")?.token || "#";
+    const baseCells = hillClimbBaseCells();
+    const positions = hillClimbCandidatePositions(baseCells, wallToken);
+
+    if (positions.length === 0) {
+      setStatus("Hill-Climb found no empty floor or ice cells for a trial wall.", "warning");
+      syncSolverButtonState();
+      return;
+    }
+
+    setStatus("Hill-Climb trying wall placements...", "warning");
+    state.isSolverBusy = true;
+    syncSolverButtonState();
+    const maxExpandedStates = normalizeSolverMaxExpandedStatesInput();
+    renderSolverProgress("Hill-Climb", 0, Math.max(1, positions.length * maxExpandedStates));
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    let best = null;
+    let cappedCount = 0;
+
+    try {
+      const mazeSolver = getMazeSolver();
+
+      for (let index = 0; index < positions.length; index += 1) {
+        const position = positions[index];
+        const candidateCells = hillClimbWallCandidateCells(
+          baseCells,
+          position.x,
+          position.y,
+          wallToken
+        );
+
+        if (!candidateCells || !levelHasPlayer(candidateCells)) {
+          continue;
+        }
+
+        const engine = createSolverEngine(
+          buildEditorPlayData({ cells: candidateCells, includeGems: false })
+        );
+        const gemSurfaceSets = gemPlacementSurfaceSets(candidateCells);
+        const result = await mazeSolver.findHardestGemPlacement(engine, {
+          canPlaceGemAt: (x, y, elevation) =>
+            canPlaceGemAtSurface(x, y, elevation, gemSurfaceSets),
+          maxExpandedStates,
+          onProgress: createHillClimbProgressReporter(
+            index,
+            positions.length,
+            maxExpandedStates
+          ),
+          progressYieldStateInterval: solverProgressYieldStateInterval
+        });
+
+        if (result.status === "capped") {
+          cappedCount += 1;
+        }
+
+        if (result.candidate && (!best || result.candidate.moves > best.candidate.moves)) {
+          const cellsWithGem = cloneCells(candidateCells);
+          cellsWithGem[result.candidate.y][result.candidate.x] = gemPlacementValueForCells(
+            cellsWithGem,
+            result.candidate.x,
+            result.candidate.y,
+            result.candidate.elevation ?? 0
+          );
+          best = {
+            candidate: result.candidate,
+            cells: cellsWithGem,
+            resultStatus: result.status,
+            wallX: position.x,
+            wallY: position.y
+          };
+        }
+      }
+
+      if (!best) {
+        setStatus(
+          "Hill-Climb: no trial wall left a reachable gem placement after " +
+            positions.length +
+            " candidate" +
+            (positions.length === 1 ? "" : "s") +
+            ".",
+          "warning"
+        );
+        return;
+      }
+
+      applyHillClimbResult(best);
+      setStatus(
+        "Hill-Climb: kept wall at cell " +
+          (best.wallX + 1) +
+          ", " +
+          (best.wallY + 1) +
+          " and gem at cell " +
+          (best.candidate.x + 1) +
+          ", " +
+          (best.candidate.y + 1) +
+          " for " +
+          best.candidate.moves +
+          " move" +
+          (best.candidate.moves === 1 ? "" : "s") +
+          ". UDLR: " +
+          formatSolverPath(best.candidate.path) +
+          "." +
+          (cappedCount > 0
+            ? " " + cappedCount + " trial" + (cappedCount === 1 ? "" : "s") + " hit the cap."
+            : ""),
+        best.resultStatus === "capped" ? "warning" : "success"
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Hill-Climb failed.", "error");
+    } finally {
+      state.isSolverBusy = false;
+      hideSolverProgress();
+      syncSolverButtonState();
+    }
+  }
+
   async function placeGem() {
     if (!levelHasPlayer()) {
       setStatus("Place Gem needs a player first.", "error");
@@ -2261,19 +2520,23 @@
       return;
     }
 
-    setStatus("Solver running A*...", "warning");
+    const algorithm = getSolverAlgorithm();
+    const algorithmLabel = solverAlgorithmLabel(algorithm);
+
+    setStatus("Solver running " + algorithmLabel + "...", "warning");
     state.isSolverBusy = true;
     syncSolverButtonState();
     const maxExpandedStates = normalizeSolverMaxExpandedStatesInput();
-    renderSolverProgress("A*", 0, maxExpandedStates);
+    renderSolverProgress(algorithmLabel, 0, maxExpandedStates);
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     try {
       const engine = createSolverEngine(playData);
       const result = await getMazeSolver().solveWithAStar(engine, {
+        algorithm,
         maxExpandedStates,
-        onProgress: createSolverProgressReporter("A*", maxExpandedStates),
+        onProgress: createSolverProgressReporter(algorithmLabel, maxExpandedStates),
         progressYieldStateInterval: solverProgressYieldStateInterval
       });
 
@@ -2726,7 +2989,9 @@
     transformLevel("flip-vertical");
   });
   elements.placeGem.addEventListener("click", placeGem);
+  elements.hillClimb?.addEventListener("click", hillClimb);
   elements.playSolution.addEventListener("click", playSolution);
+  elements.solverAlgorithm?.addEventListener("change", syncSolverButtonState);
   elements.solverMaxStates.addEventListener("change", normalizeSolverMaxExpandedStatesInput);
   elements.applyCellValue.addEventListener("click", applySelectedCellValue);
   elements.cellValue.addEventListener("keydown", function (event) {
