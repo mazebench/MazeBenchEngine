@@ -68,8 +68,22 @@ function buildTerrain(width, height, wallPositions = []) {
   );
 }
 
-function createRenderApp({ terrain, actors, playData = {} }) {
+function buildPlayerGateTerrain(width, height, gateX, gateY, elevation = 0) {
+  const terrain = buildTerrain(width, height);
+  terrain[gateY][gateX] = {
+    type: "player_gate",
+    label: "Red Gate",
+    imageUrl: null,
+    underlay: null,
+    raised: false,
+    layers: [{ type: "player_gate", elevation }]
+  };
+  return terrain;
+}
+
+function createRenderApp({ terrain, actors, playData = {}, collectedGemIds = [] }) {
   const context = createStubContext();
+  const storedCollectedGemIds = JSON.stringify(collectedGemIds);
   global.performance = { now: () => 0 };
   global.document = {
     title: "",
@@ -97,6 +111,12 @@ function createRenderApp({ terrain, actors, playData = {} }) {
     setTimeout: (fn) => {
       fn();
       return 0;
+    },
+    localStorage: {
+      getItem() {
+        return storedCollectedGemIds;
+      },
+      setItem() {}
     },
     PlayModules: {}
   };
@@ -139,6 +159,66 @@ function createRenderApp({ terrain, actors, playData = {} }) {
 
   window.PlayModules.registerRenderFunctions(app);
   return app;
+}
+
+{
+  const app = createRenderApp({
+    terrain: buildPlayerGateTerrain(3, 3, 1, 1, 4),
+    actors: [{ type: "player", x: 1, y: 1, elevation: 0, removed: false }]
+  });
+
+  assert.equal(app.computeRaisedPlayerGateSet().has("1,1"), true);
+}
+
+{
+  const app = createRenderApp({
+    terrain: buildPlayerGateTerrain(3, 3, 1, 1, 4),
+    actors: [{ type: "player", x: 0, y: 1, elevation: 9, removed: false }]
+  });
+
+  assert.equal(app.computeRaisedPlayerGateSet().has("1,1"), true);
+}
+
+{
+  const app = createRenderApp({
+    terrain: buildPlayerGateTerrain(3, 3, 1, 1, 4),
+    actors: [{ type: "player", x: 0, y: 0, elevation: 4, removed: false }]
+  });
+
+  assert.equal(app.computeRaisedPlayerGateSet().has("1,1"), false);
+}
+
+{
+  const app = createRenderApp({
+    terrain: buildTerrain(1, 1),
+    actors: [{ type: "gem", x: 0, y: 0, removed: false, elevation: 0, imageUrl: null }],
+    playData: {
+      levelId: "level_AxA"
+    },
+    collectedGemIds: ["level_AxA:gem:0:0,0,0"]
+  });
+
+  assert.equal(app.state.actors[0].collected, true);
+  assert.equal(app.state.actors[0].removed, true);
+  assert.equal(app.state.actors[0].showCollectedGhost, true);
+  assert.equal(app.state.actors[0].renderAlpha, app.COLLECTED_GEM_ALPHA);
+}
+
+{
+  const app = createRenderApp({
+    terrain: buildTerrain(1, 1),
+    actors: [{ type: "gem", x: 0, y: 0, removed: false, elevation: 0, imageUrl: null }],
+    playData: {
+      editorRender: true,
+      levelId: "level_AxA"
+    },
+    collectedGemIds: ["level_AxA:gem:0:0,0,0"]
+  });
+
+  assert.equal(app.state.actors[0].collected, false);
+  assert.equal(app.state.actors[0].removed, false);
+  assert.equal(app.state.actors[0].showCollectedGhost, false);
+  assert.equal(app.state.actors[0].renderAlpha, 1);
 }
 
 {

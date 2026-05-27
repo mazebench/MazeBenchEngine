@@ -65,6 +65,49 @@ function floorTerrain(width, height) {
 
   {
     const engine = createEngine({
+      width: 16,
+      height: 16,
+      terrain: floorTerrain(16, 16),
+      actors: [
+        { type: "player", x: 0, y: 0, removed: false },
+        { type: "gem", x: 15, y: 0, removed: false }
+      ]
+    });
+
+    const result = await solveWithAStar(engine, {
+      algorithm: "astar",
+      maxExpandedStates: 1000,
+      progressYieldStateInterval: 1000
+    });
+
+    assert.equal(result.status, "solved");
+    assert.equal(result.moves, 15);
+    assert.equal(result.expanded <= 20, true);
+  }
+
+  {
+    const engine = createEngine({
+      width: 3,
+      height: 1,
+      terrain: floorTerrain(3, 1),
+      actors: [
+        { type: "player", x: 0, y: 0, removed: false },
+        { type: "gem", x: 2, y: 0, removed: false }
+      ]
+    });
+
+    await assert.rejects(
+      () =>
+        solveWithAStar(engine, {
+          maxExpandedStates: 100,
+          signal: { aborted: true }
+        }),
+      /Solver cancelled/
+    );
+  }
+
+  {
+    const engine = createEngine({
       width: 3,
       height: 1,
       terrain: floorTerrain(3, 1),

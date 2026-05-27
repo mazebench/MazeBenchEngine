@@ -25,6 +25,10 @@
     gridShell: document.querySelector(".author-grid-shell"),
     hitGrid: document.getElementById("author-hit-grid"),
     hillClimb: document.getElementById("hill-climb"),
+    hillClimbMode: document.getElementById("hill-climb-mode"),
+    hillClimbNext: document.getElementById("hill-climb-next"),
+    hillClimbPrev: document.getElementById("hill-climb-prev"),
+    hillClimbResultLabel: document.getElementById("hill-climb-result-label"),
     levelNeighbors: document.getElementById("level-neighbors"),
     levelColumn: document.getElementById("level-column"),
     levelRow: document.getElementById("level-row"),
@@ -42,6 +46,7 @@
     sidebar: document.querySelector(".author-sidebar"),
     solveLevel: document.getElementById("solve-level"),
     solverAlgorithm: document.getElementById("solver-algorithm"),
+    solverCancel: document.getElementById("solver-cancel"),
     solverProgress: document.getElementById("solver-progress"),
     solverProgressBar: document.getElementById("solver-progress-bar"),
     solverProgressText: document.getElementById("solver-progress-text"),
@@ -57,9 +62,14 @@
     "currentLevelName",
     "existingLevels",
     "hillClimb",
+    "hillClimbMode",
+    "hillClimbNext",
+    "hillClimbPrev",
+    "hillClimbResultLabel",
     "levelColumn",
     "levelRow",
     "solverAlgorithm",
+    "solverCancel",
     "solverProgress",
     "solverProgressBar",
     "solverProgressText",
@@ -175,6 +185,8 @@
       : "Fresh level. Paint something good.",
     messageTone: authorData.initialLevel.exists ? "success" : "warning",
     lastPaintTargetKey: null,
+    hillClimbResults: [],
+    hillClimbResultIndex: -1,
     paintDragPlane: null,
     paintPointerId: null,
     savedBoardSignature: boardSignature(
@@ -185,6 +197,7 @@
     selectedCell: { x: 0, y: 0 },
     selectedToken:
       authorData.defaultWallToken || authorData.palette[0]?.token || authorData.defaultFloorToken,
+    solverAbortController: null,
     solverSolutionCellsKey: null,
     solverSolutionPath: null,
     undoStack: [],
@@ -236,6 +249,12 @@
     syncUndoButtonState();
   }
 
+  function clearHillClimbResults() {
+    state.hillClimbResults = [];
+    state.hillClimbResultIndex = -1;
+    syncHillClimbResultControls();
+  }
+
   function clearUndoHistory() {
     state.undoStack = [];
     syncUndoButtonState();
@@ -252,6 +271,7 @@
     state.isDirty =
       boardSignature(state.width, state.height, state.cells) !== state.savedBoardSignature;
     clearSolverSolution();
+    clearHillClimbResults();
     renderAll();
   }
 
@@ -354,6 +374,68 @@
       typeof state.solverSolutionPath === "string" &&
       state.solverSolutionCellsKey === serializeCells()
     );
+  }
+
+  function currentHillClimbResult() {
+    if (
+      !Array.isArray(state.hillClimbResults) ||
+      state.hillClimbResultIndex < 0 ||
+      state.hillClimbResultIndex >= state.hillClimbResults.length
+    ) {
+      return null;
+    }
+
+    return state.hillClimbResults[state.hillClimbResultIndex];
+  }
+
+  function hillClimbResultSummary(result, index = state.hillClimbResultIndex, total = state.hillClimbResults.length) {
+    if (!result) {
+      return "";
+    }
+
+    return (
+      "Result " +
+      (index + 1) +
+      "/" +
+      total +
+      ": wall " +
+      (result.wallX + 1) +
+      ", " +
+      (result.wallY + 1) +
+      " - " +
+      result.moves +
+      " move" +
+      (result.moves === 1 ? "" : "s")
+    );
+  }
+
+  function syncHillClimbResultControls() {
+    const hasResults = Array.isArray(state.hillClimbResults) && state.hillClimbResults.length > 0;
+    const isLocked = state.isSolverBusy || state.isSolutionPlaying || state.isLevelSwitching;
+
+    if (elements.hillClimbPrev) {
+      elements.hillClimbPrev.disabled =
+        isLocked || !hasResults || state.hillClimbResultIndex <= 0;
+      elements.hillClimbPrev.title = hasResults
+        ? "Show the previous hill-climb result."
+        : "Run Hill-Climb before paging results.";
+    }
+
+    if (elements.hillClimbNext) {
+      elements.hillClimbNext.disabled =
+        isLocked ||
+        !hasResults ||
+        state.hillClimbResultIndex >= state.hillClimbResults.length - 1;
+      elements.hillClimbNext.title = hasResults
+        ? "Show the next hill-climb result."
+        : "Run Hill-Climb before paging results.";
+    }
+
+    if (elements.hillClimbResultLabel) {
+      elements.hillClimbResultLabel.textContent = hasResults
+        ? hillClimbResultSummary(currentHillClimbResult())
+        : "";
+    }
   }
 
   function levelHasGem() {
@@ -550,6 +632,57 @@
     return algorithm === "weighted_astar" ? "Weighted A*" : "A*";
   }
 
+  function getHillClimbMode() {
+    return elements.hillClimbMode?.value === "fixed_gem" ? "fixed_gem" : "place_gem";
+  }
+
+  function hillClimbModeLabel(mode = getHillClimbMode()) {
+    return mode === "fixed_gem" ? "Fixed Gem" : "Place Gem";
+  }
+
+  function createSolverAbortController() {
+    if (typeof window.AbortController === "function") {
+      return new window.AbortController();
+    }
+
+    const signal = { aborted: false };
+
+    return {
+      signal,
+      abort() {
+        signal.aborted = true;
+      }
+    };
+  }
+
+  function beginSolverRun() {
+    state.solverAbortController = createSolverAbortController();
+    state.isSolverBusy = true;
+    syncSolverButtonState();
+    return state.solverAbortController.signal;
+  }
+
+  function finishSolverRun() {
+    state.isSolverBusy = false;
+    state.solverAbortController = null;
+    hideSolverProgress();
+    syncSolverButtonState();
+  }
+
+  function isSolverCancelError(error) {
+    return Boolean(error && (error.name === "AbortError" || error.message === "Solver cancelled."));
+  }
+
+  function cancelSolverRun() {
+    if (!state.isSolverBusy || !state.solverAbortController) {
+      return;
+    }
+
+    state.solverAbortController.abort();
+    setStatus("Cancelling solver...", "warning");
+    syncSolverButtonState();
+  }
+
   function nextSolverProgressFrame() {
     return new Promise((resolve) => {
       if (typeof window.requestAnimationFrame === "function") {
@@ -743,12 +876,29 @@
       if (elements.solverAlgorithm) {
         elements.solverAlgorithm.disabled = true;
       }
+      if (elements.hillClimbMode) {
+        elements.hillClimbMode.disabled = true;
+      }
+      if (elements.solverCancel) {
+        elements.solverCancel.disabled = !state.isSolverBusy;
+        elements.solverCancel.title = state.isSolverBusy
+          ? "Cancel the running search."
+          : "No solver search is running.";
+      }
+      syncHillClimbResultControls();
       syncUndoButtonState();
       return;
     }
 
     if (elements.solverAlgorithm) {
       elements.solverAlgorithm.disabled = false;
+    }
+    if (elements.hillClimbMode) {
+      elements.hillClimbMode.disabled = false;
+    }
+    if (elements.solverCancel) {
+      elements.solverCancel.disabled = true;
+      elements.solverCancel.title = "No solver search is running.";
     }
     elements.solveLevel.disabled = !hasGem;
     elements.solveLevel.title = hasGem
@@ -759,15 +909,22 @@
       ? "Find the hardest open surface the player can reach."
       : "Add a player before finding a gem placement.";
     if (elements.hillClimb) {
-      elements.hillClimb.disabled = !hasPlayer;
-      elements.hillClimb.title = hasPlayer
-        ? "Try one added wall per tile and keep the longest Place Gem result."
-        : "Add a player before hill-climbing wall placement.";
+      const fixedGemMode = getHillClimbMode() === "fixed_gem";
+      const canHillClimb = hasPlayer && (!fixedGemMode || hasGem);
+      elements.hillClimb.disabled = !canHillClimb;
+      elements.hillClimb.title = !hasPlayer
+        ? "Add a player before hill-climbing wall placement."
+        : fixedGemMode && !hasGem
+          ? "Add a gem before hill-climbing with a fixed gem."
+          : fixedGemMode
+            ? "Try one added wall per tile and keep the longest solution to the current gem."
+            : "Try one added wall per tile and keep the longest Place Gem result.";
     }
     elements.playSolution.disabled = !hasPlayableSolution();
     elements.playSolution.title = hasPlayableSolution()
       ? "Animate the last solver solution."
       : "Run the solver successfully before playing a solution.";
+    syncHillClimbResultControls();
     syncUndoButtonState();
   }
 
@@ -1271,6 +1428,7 @@
 
   function markDirty() {
     clearSolverSolution();
+    clearHillClimbResults();
     state.isDirty = true;
     renderStatus();
     renderRawOutput();
@@ -2205,6 +2363,7 @@
     const placedValue = gemPlacementValueForCell(candidate.x, candidate.y, candidate.elevation ?? 0);
     state.cells[candidate.y][candidate.x] = placedValue;
     clearSolverSolution();
+    clearHillClimbResults();
     state.selectedCell = { x: candidate.x, y: candidate.y };
     state.isDirty = true;
     renderGrid();
@@ -2226,8 +2385,24 @@
     });
   }
 
-  function hillClimbBaseCells() {
-    return cloneCells(state.cells).map((row) => row.map(stripGemFromCellValue));
+  function hillClimbBaseCells(mode = getHillClimbMode()) {
+    const cells = cloneCells(state.cells);
+
+    return mode === "fixed_gem"
+      ? cells
+      : cells.map((row) => row.map(stripGemFromCellValue));
+  }
+
+  function firstGemLocation(cells = state.cells) {
+    for (let y = 0; y < cells.length; y += 1) {
+      for (let x = 0; x < cells[y].length; x += 1) {
+        if (getCellTools(cells[y][x]).some((tool) => tool.name === "gem")) {
+          return { x, y };
+        }
+      }
+    }
+
+    return null;
   }
 
   function hillClimbWallCandidateCells(baseCells, x, y, wallToken) {
@@ -2250,12 +2425,26 @@
     return candidateCells;
   }
 
+  function canHillClimbPlaceWallAtPosition(baseCells, x, y, wallToken) {
+    const currentValue = baseCells[y]?.[x] ?? emptyCellToken;
+
+    if (!canHillClimbPlaceWallAtCell(currentValue)) {
+      return false;
+    }
+
+    return (
+      setCellElevationToken(currentValue, wallToken, 0, {
+        preserveBaseSurface: true
+      }) !== currentValue
+    );
+  }
+
   function hillClimbCandidatePositions(baseCells, wallToken) {
     const positions = [];
 
     for (let y = 0; y < state.height; y += 1) {
       for (let x = 0; x < state.width; x += 1) {
-        if (hillClimbWallCandidateCells(baseCells, x, y, wallToken)) {
+        if (canHillClimbPlaceWallAtPosition(baseCells, x, y, wallToken)) {
           positions.push({ x, y });
         }
       }
@@ -2264,12 +2453,18 @@
     return positions;
   }
 
-  function createHillClimbProgressReporter(candidateIndex, candidateCount, maxExpandedStates) {
-    let lastRenderAt = 0;
+  function createHillClimbProgressReporter(
+    candidateIndex,
+    candidateCount,
+    maxExpandedStates,
+    baseExpanded = 0,
+    progressState = null
+  ) {
+    const sharedProgressState = progressState || {
+      lastRenderAt: 0
+    };
     const safeCandidateCount = Math.max(1, candidateCount);
     const safeMaxExpandedStates = Math.max(1, maxExpandedStates);
-    const totalMax = safeCandidateCount * safeMaxExpandedStates;
-    const baseExpanded = candidateIndex * safeMaxExpandedStates;
     const label = "Hill-Climb " + (candidateIndex + 1) + "/" + safeCandidateCount;
 
     return async function reportHillClimbProgress(progress, force = false) {
@@ -2279,30 +2474,157 @@
           ? window.performance.now()
           : Date.now();
 
-      if (!force && now - lastRenderAt < solverProgressRenderIntervalMs) {
+      if (now - sharedProgressState.lastRenderAt < solverProgressRenderIntervalMs) {
         return;
       }
 
-      lastRenderAt = now;
+      sharedProgressState.lastRenderAt = now;
       renderSolverProgress(
         label,
-        Math.min(totalMax, baseExpanded + expanded),
-        totalMax
+        Math.min(safeMaxExpandedStates, baseExpanded + expanded),
+        safeMaxExpandedStates
       );
       await nextSolverProgressFrame();
     };
   }
 
-  function applyHillClimbResult(best) {
-    pushUndoSnapshot();
+  function addAffectedCellKey(keys, x, y) {
+    const cellX = Math.floor(Number(x));
+    const cellY = Math.floor(Number(y));
+
+    if (isInsideEditorCell(cellX, cellY)) {
+      keys.add(cellX + "," + cellY);
+    }
+  }
+
+  function addAffectedPathPoint(keys, point) {
+    if (!point) {
+      return;
+    }
+
+    const x = Number(point.x);
+    const y = Number(point.y);
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return;
+    }
+
+    addAffectedCellKey(keys, Math.floor(x), Math.floor(y));
+    addAffectedCellKey(keys, Math.ceil(x), Math.floor(y));
+    addAffectedCellKey(keys, Math.floor(x), Math.ceil(y));
+    addAffectedCellKey(keys, Math.ceil(x), Math.ceil(y));
+  }
+
+  function addMoveAffectedCells(keys, move) {
+    addAffectedCellKey(keys, move?.fromX, move?.fromY);
+    addAffectedCellKey(keys, move?.toX, move?.toY);
+
+    if (Array.isArray(move?.path)) {
+      move.path.forEach((point) => addAffectedPathPoint(keys, point));
+    }
+  }
+
+  function solverPathAffectedCellKeys(cells, path) {
+    const engine = createSolverEngine(buildEditorPlayData({ cells }));
+    const replayState = engine.createStateBuffer();
+    const keys = new Set();
+
+    engine.copyStateInto(replayState, engine.initialState);
+
+    for (const label of String(path || "")) {
+      const direction = solutionDirections[label];
+
+      if (!direction) {
+        break;
+      }
+
+      const moveResult = engine.moveForSearch(replayState, direction.dx, direction.dy);
+
+      if (!moveResult?.moved) {
+        break;
+      }
+
+      if (Array.isArray(moveResult.moves)) {
+        moveResult.moves.forEach((move) => addMoveAffectedCells(keys, move));
+      }
+    }
+
+    return keys;
+  }
+
+  function rankHillClimbResults(results) {
+    return results.slice().sort((left, right) => {
+      if (right.moves !== left.moves) {
+        return right.moves - left.moves;
+      }
+
+      if (left.wallY !== right.wallY) {
+        return left.wallY - right.wallY;
+      }
+
+      return left.wallX - right.wallX;
+    });
+  }
+
+  function setHillClimbResults(results) {
+    state.hillClimbResults = rankHillClimbResults(results);
+    state.hillClimbResultIndex = state.hillClimbResults.length > 0 ? 0 : -1;
+    syncHillClimbResultControls();
+  }
+
+  function applyHillClimbResult(best, options = {}) {
+    if (options.recordUndo !== false) {
+      pushUndoSnapshot();
+    }
     state.cells = cloneCells(best.cells);
-    clearSolverSolution();
-    state.selectedCell = { x: best.candidate.x, y: best.candidate.y };
+    if (typeof best.solutionPath === "string") {
+      rememberSolverSolution(best.solutionPath);
+    } else {
+      clearSolverSolution();
+    }
+    state.selectedCell = best.selectedCell
+      ? { x: best.selectedCell.x, y: best.selectedCell.y }
+      : { x: best.wallX, y: best.wallY };
     state.isDirty = true;
     renderGrid();
     renderSelectedCell();
     renderRawOutput();
     syncSolverButtonState();
+  }
+
+  function showHillClimbResult(index) {
+    if (!Array.isArray(state.hillClimbResults) || state.hillClimbResults.length === 0) {
+      return false;
+    }
+
+    const nextIndex = Math.max(0, Math.min(state.hillClimbResults.length - 1, index));
+
+    if (nextIndex === state.hillClimbResultIndex) {
+      syncHillClimbResultControls();
+      return false;
+    }
+
+    state.hillClimbResultIndex = nextIndex;
+    const result = currentHillClimbResult();
+
+    if (!result) {
+      syncHillClimbResultControls();
+      return false;
+    }
+
+    applyHillClimbResult(result, { recordUndo: false });
+    setStatus(
+      hillClimbResultSummary(result) +
+        ". UDLR: " +
+        formatSolverPath(result.path) +
+        ".",
+      "success"
+    );
+    return true;
+  }
+
+  function pageHillClimbResult(delta) {
+    return showHillClimbResult(state.hillClimbResultIndex + delta);
   }
 
   async function hillClimb() {
@@ -2312,8 +2634,16 @@
       return;
     }
 
+    const mode = getHillClimbMode();
+
+    if (mode === "fixed_gem" && !levelHasGem()) {
+      setStatus("Fixed Gem Hill-Climb needs a gem first.", "error");
+      syncSolverButtonState();
+      return;
+    }
+
     const wallToken = toolByName.get("wall")?.token || "#";
-    const baseCells = hillClimbBaseCells();
+    const baseCells = hillClimbBaseCells(mode);
     const positions = hillClimbCandidatePositions(baseCells, wallToken);
 
     if (positions.length === 0) {
@@ -2322,19 +2652,56 @@
       return;
     }
 
-    setStatus("Hill-Climb trying wall placements...", "warning");
-    state.isSolverBusy = true;
-    syncSolverButtonState();
+    const algorithm = getSolverAlgorithm();
+    const algorithmLabel = solverAlgorithmLabel(algorithm);
+
+    setStatus(
+      "Hill-Climb " +
+        hillClimbModeLabel(mode) +
+        (mode === "fixed_gem" ? " with " + algorithmLabel : "") +
+        " trying wall placements...",
+      "warning"
+    );
+    const signal = beginSolverRun();
     const maxExpandedStates = normalizeSolverMaxExpandedStatesInput();
-    renderSolverProgress("Hill-Climb", 0, Math.max(1, positions.length * maxExpandedStates));
+    renderSolverProgress("Hill-Climb", 0, maxExpandedStates);
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     let best = null;
     let cappedCount = 0;
+    const hillClimbResults = [];
+    const hillClimbProgressState = { lastRenderAt: 0 };
+    let fixedGemBaseline = null;
+    let fixedGemAffectedCells = null;
 
     try {
       const mazeSolver = getMazeSolver();
+
+      if (mode === "fixed_gem") {
+        fixedGemBaseline = await mazeSolver.solveWithAStar(
+          createSolverEngine(buildEditorPlayData({ cells: baseCells })),
+          {
+            algorithm,
+            maxExpandedStates,
+            onProgress: createHillClimbProgressReporter(
+              0,
+              positions.length,
+              maxExpandedStates,
+              0,
+              hillClimbProgressState
+            ),
+            progressYieldStateInterval: solverProgressYieldStateInterval,
+            signal
+          }
+        );
+
+        if (fixedGemBaseline.status === "solved") {
+          fixedGemAffectedCells = solverPathAffectedCellKeys(baseCells, fixedGemBaseline.path);
+        } else if (fixedGemBaseline.status === "capped") {
+          cappedCount += 1;
+        }
+      }
 
       for (let index = 0; index < positions.length; index += 1) {
         const position = positions[index];
@@ -2349,45 +2716,120 @@
           continue;
         }
 
-        const engine = createSolverEngine(
-          buildEditorPlayData({ cells: candidateCells, includeGems: false })
-        );
-        const gemSurfaceSets = gemPlacementSurfaceSets(candidateCells);
-        const result = await mazeSolver.findHardestGemPlacement(engine, {
-          canPlaceGemAt: (x, y, elevation) =>
-            canPlaceGemAtSurface(x, y, elevation, gemSurfaceSets),
-          maxExpandedStates,
-          onProgress: createHillClimbProgressReporter(
-            index,
-            positions.length,
-            maxExpandedStates
-          ),
-          progressYieldStateInterval: solverProgressYieldStateInterval
-        });
+        if (mode === "fixed_gem") {
+          const positionKey = position.x + "," + position.y;
 
-        if (result.status === "capped") {
-          cappedCount += 1;
-        }
+          if (fixedGemBaseline?.status === "solved" && !fixedGemAffectedCells?.has(positionKey)) {
+            const candidateResult = {
+              cells: candidateCells,
+              moves: fixedGemBaseline.moves,
+              path: fixedGemBaseline.path,
+              resultStatus: fixedGemBaseline.status,
+              selectedCell: firstGemLocation(candidateCells) || { x: position.x, y: position.y },
+              solutionPath: fixedGemBaseline.path,
+              wallX: position.x,
+              wallY: position.y
+            };
 
-        if (result.candidate && (!best || result.candidate.moves > best.candidate.moves)) {
-          const cellsWithGem = cloneCells(candidateCells);
-          cellsWithGem[result.candidate.y][result.candidate.x] = gemPlacementValueForCells(
-            cellsWithGem,
-            result.candidate.x,
-            result.candidate.y,
-            result.candidate.elevation ?? 0
+            hillClimbResults.push(candidateResult);
+            if (!best || candidateResult.moves > best.moves) {
+              best = candidateResult;
+            }
+            continue;
+          }
+
+          const result = await mazeSolver.solveWithAStar(
+            createSolverEngine(buildEditorPlayData({ cells: candidateCells })),
+            {
+              algorithm,
+              maxExpandedStates,
+              onProgress: createHillClimbProgressReporter(
+                index,
+                positions.length,
+                maxExpandedStates,
+                0,
+                hillClimbProgressState
+              ),
+              progressYieldStateInterval: solverProgressYieldStateInterval,
+              signal
+            }
           );
-          best = {
-            candidate: result.candidate,
-            cells: cellsWithGem,
-            resultStatus: result.status,
-            wallX: position.x,
-            wallY: position.y
-          };
+
+          if (result.status === "capped") {
+            cappedCount += 1;
+            continue;
+          }
+
+          if (result.status === "solved") {
+            const candidateResult = {
+              cells: candidateCells,
+              moves: result.moves,
+              path: result.path,
+              resultStatus: result.status,
+              selectedCell: firstGemLocation(candidateCells) || { x: position.x, y: position.y },
+              solutionPath: result.path,
+              wallX: position.x,
+              wallY: position.y
+            };
+
+            hillClimbResults.push(candidateResult);
+            if (!best || candidateResult.moves > best.moves) {
+              best = candidateResult;
+            }
+          }
+        } else {
+          const engine = createSolverEngine(
+            buildEditorPlayData({ cells: candidateCells, includeGems: false })
+          );
+          const gemSurfaceSets = gemPlacementSurfaceSets(candidateCells);
+          const result = await mazeSolver.findHardestGemPlacement(engine, {
+            canPlaceGemAt: (x, y, elevation) =>
+              canPlaceGemAtSurface(x, y, elevation, gemSurfaceSets),
+            maxExpandedStates,
+            onProgress: createHillClimbProgressReporter(
+              index,
+              positions.length,
+              maxExpandedStates,
+              0,
+              hillClimbProgressState
+            ),
+            progressYieldStateInterval: solverProgressYieldStateInterval,
+            signal
+          });
+
+          if (result.status === "capped") {
+            cappedCount += 1;
+            continue;
+          }
+
+          if (result.candidate) {
+            const cellsWithGem = cloneCells(candidateCells);
+            cellsWithGem[result.candidate.y][result.candidate.x] = gemPlacementValueForCells(
+              cellsWithGem,
+              result.candidate.x,
+              result.candidate.y,
+              result.candidate.elevation ?? 0
+            );
+            const candidateResult = {
+              cells: cellsWithGem,
+              moves: result.candidate.moves,
+              path: result.candidate.path,
+              resultStatus: result.status,
+              selectedCell: { x: result.candidate.x, y: result.candidate.y },
+              solutionPath: result.candidate.path,
+              wallX: position.x,
+              wallY: position.y
+            };
+
+            hillClimbResults.push(candidateResult);
+            if (!best || candidateResult.moves > best.moves) {
+              best = candidateResult;
+            }
+          }
         }
       }
 
-      if (!best) {
+      if (hillClimbResults.length === 0 || !best) {
         setStatus(
           "Hill-Climb: no trial wall left a reachable gem placement after " +
             positions.length +
@@ -2399,22 +2841,24 @@
         return;
       }
 
+      setHillClimbResults(hillClimbResults);
+      best = currentHillClimbResult() || best;
       applyHillClimbResult(best);
       setStatus(
-        "Hill-Climb: kept wall at cell " +
+        "Hill-Climb " +
+          hillClimbModeLabel(mode) +
+          ": kept result 1/" +
+          state.hillClimbResults.length +
+          " wall at cell " +
           (best.wallX + 1) +
           ", " +
           (best.wallY + 1) +
-          " and gem at cell " +
-          (best.candidate.x + 1) +
-          ", " +
-          (best.candidate.y + 1) +
           " for " +
-          best.candidate.moves +
+          best.moves +
           " move" +
-          (best.candidate.moves === 1 ? "" : "s") +
+          (best.moves === 1 ? "" : "s") +
           ". UDLR: " +
-          formatSolverPath(best.candidate.path) +
+          formatSolverPath(best.path) +
           "." +
           (cappedCount > 0
             ? " " + cappedCount + " trial" + (cappedCount === 1 ? "" : "s") + " hit the cap."
@@ -2422,11 +2866,16 @@
         best.resultStatus === "capped" ? "warning" : "success"
       );
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Hill-Climb failed.", "error");
+      setStatus(
+        isSolverCancelError(error)
+          ? "Hill-Climb cancelled."
+          : error instanceof Error
+            ? error.message
+            : "Hill-Climb failed.",
+        isSolverCancelError(error) ? "warning" : "error"
+      );
     } finally {
-      state.isSolverBusy = false;
-      hideSolverProgress();
-      syncSolverButtonState();
+      finishSolverRun();
     }
   }
 
@@ -2438,8 +2887,7 @@
     }
 
     setStatus("Place Gem running reachability search...", "warning");
-    state.isSolverBusy = true;
-    syncSolverButtonState();
+    const signal = beginSolverRun();
     const maxExpandedStates = normalizeSolverMaxExpandedStatesInput();
     renderSolverProgress("Place Gem", 0, maxExpandedStates);
 
@@ -2453,7 +2901,8 @@
           canPlaceGemAtSurface(x, y, elevation, gemSurfaceSets),
         maxExpandedStates,
         onProgress: createSolverProgressReporter("Place Gem", maxExpandedStates),
-        progressYieldStateInterval: solverProgressYieldStateInterval
+        progressYieldStateInterval: solverProgressYieldStateInterval,
+        signal
       });
 
       if (result.candidate) {
@@ -2497,11 +2946,16 @@
         "warning"
       );
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Place Gem failed.", "error");
+      setStatus(
+        isSolverCancelError(error)
+          ? "Place Gem cancelled."
+          : error instanceof Error
+            ? error.message
+            : "Place Gem failed.",
+        isSolverCancelError(error) ? "warning" : "error"
+      );
     } finally {
-      state.isSolverBusy = false;
-      hideSolverProgress();
-      syncSolverButtonState();
+      finishSolverRun();
     }
   }
 
@@ -2524,8 +2978,7 @@
     const algorithmLabel = solverAlgorithmLabel(algorithm);
 
     setStatus("Solver running " + algorithmLabel + "...", "warning");
-    state.isSolverBusy = true;
-    syncSolverButtonState();
+    const signal = beginSolverRun();
     const maxExpandedStates = normalizeSolverMaxExpandedStatesInput();
     renderSolverProgress(algorithmLabel, 0, maxExpandedStates);
 
@@ -2537,7 +2990,8 @@
         algorithm,
         maxExpandedStates,
         onProgress: createSolverProgressReporter(algorithmLabel, maxExpandedStates),
-        progressYieldStateInterval: solverProgressYieldStateInterval
+        progressYieldStateInterval: solverProgressYieldStateInterval,
+        signal
       });
 
       if (result.status === "solved") {
@@ -2574,12 +3028,19 @@
         );
       }
     } catch (error) {
-      clearSolverSolution();
-      setStatus(error instanceof Error ? error.message : "Solver failed.", "error");
+      if (!isSolverCancelError(error)) {
+        clearSolverSolution();
+      }
+      setStatus(
+        isSolverCancelError(error)
+          ? "Solver cancelled."
+          : error instanceof Error
+            ? error.message
+            : "Solver failed.",
+        isSolverCancelError(error) ? "warning" : "error"
+      );
     } finally {
-      state.isSolverBusy = false;
-      hideSolverProgress();
-      syncSolverButtonState();
+      finishSolverRun();
     }
   }
 
@@ -2990,7 +3451,15 @@
   });
   elements.placeGem.addEventListener("click", placeGem);
   elements.hillClimb?.addEventListener("click", hillClimb);
+  elements.hillClimbMode?.addEventListener("change", syncSolverButtonState);
+  elements.hillClimbPrev?.addEventListener("click", function () {
+    pageHillClimbResult(-1);
+  });
+  elements.hillClimbNext?.addEventListener("click", function () {
+    pageHillClimbResult(1);
+  });
   elements.playSolution.addEventListener("click", playSolution);
+  elements.solverCancel?.addEventListener("click", cancelSolverRun);
   elements.solverAlgorithm?.addEventListener("change", syncSolverButtonState);
   elements.solverMaxStates.addEventListener("change", normalizeSolverMaxExpandedStatesInput);
   elements.applyCellValue.addEventListener("click", applySelectedCellValue);

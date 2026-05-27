@@ -158,6 +158,10 @@ const {
 } = mazeLevelService;
 
 const DEFAULT_REQUEST_BODY_MAX_BYTES = 5 * 1024 * 1024;
+const NO_CACHE_HEADERS = {
+  "Cache-Control": "no-store, max-age=0",
+  Pragma: "no-cache"
+};
 
 function readRequestBody(request, options = {}) {
   return new Promise((resolve, reject) => {
@@ -211,12 +215,18 @@ async function readJsonBody(request, options = {}) {
 }
 
 function sendHtml(response, statusCode, body) {
-  response.writeHead(statusCode, { "Content-Type": "text/html; charset=utf-8" });
+  response.writeHead(statusCode, {
+    "Content-Type": "text/html; charset=utf-8",
+    ...NO_CACHE_HEADERS
+  });
   response.end(body);
 }
 
 function sendJson(response, statusCode, payload) {
-  response.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8" });
+  response.writeHead(statusCode, {
+    "Content-Type": "application/json; charset=utf-8",
+    ...NO_CACHE_HEADERS
+  });
   response.end(JSON.stringify(payload, null, 2));
 }
 
@@ -233,7 +243,7 @@ function sendFile(response, filePath, contentType) {
     return;
   }
 
-  response.writeHead(200, { "Content-Type": contentType });
+  response.writeHead(200, { "Content-Type": contentType, ...NO_CACHE_HEADERS });
   response.end(fs.readFileSync(filePath));
 }
 

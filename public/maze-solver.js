@@ -161,6 +161,16 @@
     return value === "weighted_astar" || value === "weighted" ? "weighted_astar" : "astar";
   }
 
+  function throwIfSolverAborted(signal) {
+    if (!signal?.aborted) {
+      return;
+    }
+
+    const error = new Error("Solver cancelled.");
+    error.name = "AbortError";
+    throw error;
+  }
+
   function solverNonPlayerMoveReward(engine, moveResult, rewardCap) {
     if (Number.isFinite(moveResult?.nonPlayerMoveCount)) {
       return Math.min(rewardCap, moveResult.nonPlayerMoveCount);
@@ -203,6 +213,7 @@
   }
 
   async function solveWithAStar(engine, options = {}) {
+    throwIfSolverAborted(options.signal);
     const algorithm = solverAlgorithmOption(options.algorithm);
     const directions = Array.isArray(options.directions) ? options.directions : defaultDirections;
     const maxExpandedStates = numericOption(
@@ -248,6 +259,7 @@
     await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
 
     while (open.size > 0) {
+      throwIfSolverAborted(options.signal);
       const current = open.pop();
 
       if (current.cost !== bestCostByKey.get(current.key)) {
@@ -284,6 +296,7 @@
       }
 
       for (const direction of directions) {
+        throwIfSolverAborted(options.signal);
         const moveResult = engine.moveForSearch(
           current.state,
           direction.dx,
@@ -394,6 +407,7 @@
   }
 
   async function findHardestGemPlacement(engine, options = {}) {
+    throwIfSolverAborted(options.signal);
     const directions = Array.isArray(options.directions) ? options.directions : defaultDirections;
     const maxExpandedStates = numericOption(
       options.maxExpandedStates,
@@ -431,6 +445,7 @@
     await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
 
     while (open.size > 0) {
+      throwIfSolverAborted(options.signal);
       const current = open.pop();
 
       if (current.cost !== bestCostByKey.get(current.key)) {
@@ -457,6 +472,7 @@
       }
 
       for (const direction of directions) {
+        throwIfSolverAborted(options.signal);
         const moveResult = engine.moveForSearch(
           current.state,
           direction.dx,

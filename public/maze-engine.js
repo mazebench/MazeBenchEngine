@@ -875,6 +875,117 @@
       });
     }
 
+    function moveRecordPathPoints(move) {
+      if (Array.isArray(move.path) && move.path.length > 0) {
+        return move.path
+          .map((point) => ({
+            x: Number(point.x),
+            y: Number(point.y),
+            elevation: Number(point.elevation)
+          }))
+          .filter(
+            (point) =>
+              Number.isFinite(point.x) &&
+              Number.isFinite(point.y) &&
+              Number.isFinite(point.elevation)
+          );
+      }
+
+      return [
+        {
+          x: move.fromX,
+          y: move.fromY,
+          elevation: move.fromElevation ?? 0
+        },
+        {
+          x: move.toX,
+          y: move.toY,
+          elevation: move.toElevation ?? move.fromElevation ?? 0
+        }
+      ];
+    }
+
+    function playerFollowPathForPushedMove(moves, startIndex, actorIndex, dx, dy) {
+      const pushedMove = moves
+        .slice(startIndex)
+        .find((move) => move.actorIndex === actorIndex && !move.visualOnly);
+
+      if (!pushedMove) {
+        return null;
+      }
+
+      const path = moveRecordPathPoints(pushedMove);
+
+      if (path.length < 2) {
+        return null;
+      }
+
+      const startElevation = path[0].elevation;
+      const movesFlatlyForward = path.every((point, index) => {
+        if (point.elevation !== startElevation) {
+          return false;
+        }
+
+        if (index === 0) {
+          return true;
+        }
+
+        const previous = path[index - 1];
+        return point.x - previous.x === dx && point.y - previous.y === dy;
+      });
+
+      if (!movesFlatlyForward) {
+        return null;
+      }
+
+      return path.map((point) => ({
+        x: point.x - dx,
+        y: point.y - dy,
+        elevation: point.elevation
+      }));
+    }
+
+    function pushedSupportMembersUnderPlayer(beforeState, player, members) {
+      const playerX = beforeState.actorX[player];
+      const playerY = beforeState.actorY[player];
+      const playerElevation = actorElevation(beforeState, player);
+
+      return new Set(
+        members.filter(
+          (member) =>
+            beforeState.actorX[member] === playerX &&
+            beforeState.actorY[member] === playerY &&
+            actorElevation(beforeState, member) + 1 === playerElevation
+        )
+      );
+    }
+
+    function playerRidePathForPushedSupport(moves, startIndex, supportMembers) {
+      for (const member of supportMembers) {
+        const supportMove = moves
+          .slice(startIndex)
+          .find((move) => move.actorIndex === member && !move.visualOnly);
+
+        if (!supportMove) {
+          continue;
+        }
+
+        const path = moveRecordPathPoints(supportMove);
+
+        if (path.length < 2) {
+          continue;
+        }
+
+        return path.map((point) => ({
+          x: point.x,
+          y: point.y,
+          elevation: point.elevation + 1
+        }));
+      }
+
+      return null;
+    }
+
     function pathOffsetsForTraversal(traversal, fromX, fromY, fromElevation) {
       return traversal.path.map((point) => ({
         dx: point.x - fromX,
@@ -1449,6 +1560,75 @@
       return Math.max(0, baseElevation);
     }
 
+    function weightlessGroupCurrentBaseElevation(state, groupId) {
+      const members = weightlessGroupMembers(state, groupId);
+      let baseElevation = Infinity;
+
+      members.forEach((member) => {
+        baseElevation = Math.min(
+          baseElevation,
+          actorElevation(state, member) - (weightlessRelativeElevations[member] || 0)
+        );
+      });
+
+      return Number.isFinite(baseElevation) ? baseElevation : 0;
+    }
+
+    function weightlessComponentSupportedElevation(state, groupIds, gateState, orangeButtonsPressed) {
+      const members = weightlessClusterMembers(state, groupIds);
+      const memberSet = new Set(members);
+      const groupBaseElevations = new Map();
+      let componentCurrentBase = Infinity;
+
+      groupIds.forEach((groupId) => {
+        const groupBase = weightlessGroupCurrentBaseElevation(state, groupId);
+        groupBaseElevations.set(groupId, groupBase);
+        componentCurrentBase = Math.min(componentCurrentBase, groupBase);
+      });
+
+      if (!Number.isFinite(componentCurrentBase)) {
+        componentCurrentBase = 0;
+      }
+
+      const groupBaseOffsets = new Map();
+      groupIds.forEach((groupId) => {
+        groupBaseOffsets.set(groupId, groupBaseElevations.get(groupId) - componentCurrentBase);
+      });
+
+      let baseElevation = 0;
+
+      members.forEach((member) => {
+        const x = state.actorX[member];
+        const y = state.actorY[member];
+        const currentElevation = actorElevation(state, member);
+        const relativeElevation =
+          (groupBaseOffsets.get(actorGroupIds[member]) ?? 0) +
+          (weightlessRelativeElevations[member] || 0);
+        const supportHeights = terrainSurfaceHeightsAt(
+          state,
+          x,
+          y,
+          gateState,
+          orangeButtonsPressed
+        ).concat(actorSupportSurfaceHeightsAt(state, x, y, memberSet, true));
+
+        supportHeights.forEach((height) => {
+          if (height > currentElevation + 1) {
+            return;
+          }
+
+          baseElevation = Math.max(baseElevation, height - relativeElevation);
+        });
+      });
+
+      return {
+        baseElevation: Math.max(0, baseElevation),
+        groupBaseOffsets,
+        memberSet,
+        members
+      };
+    }
+
     function playerSurfaceHeightAt(
       state,
       x,
@@ -1495,42 +1675,14 @@
       playerGateCells.forEach((gateCell) => {
         const x = cellX(gateCell);
         const y = cellY(gateCell);
-        const gateLayers = terrainLayersForCell(state, gateCell).filter(
-          (layer) => layer.type === terrainTypes.player_gate
-        );
 
-        for (const gateLayer of gateLayers) {
-          for (const player of players) {
-            if (
-              actorElevation(state, player) === gateLayer.elevation + 1 &&
-              state.actorX[player] === x &&
-              state.actorY[player] === y
-            ) {
-              raised.add(gateCell);
-              return;
-            }
-          }
-
-          const isOccupied = actorAt(
-            state,
-            x,
-            y,
-          (actor) => !isNonBlockingActor(actor) && actorElevation(state, actor) === gateLayer.elevation
-          );
-
-          if (isOccupied !== -1) {
-            continue;
-          }
-
-          for (const player of players) {
-            if (
-              actorElevation(state, player) === gateLayer.elevation &&
-              Math.abs(state.actorX[player] - x) + Math.abs(state.actorY[player] - y) === 1
-            ) {
-              raised.add(gateCell);
-              return;
-            }
-          }
+        if (
+          players.some(
+            (player) =>
+              Math.abs(state.actorX[player] - x) + Math.abs(state.actorY[player] - y) <= 1
+          )
+        ) {
+          raised.add(gateCell);
         }
       });
 
@@ -1639,6 +1791,43 @@
       }
 
       return members;
+    }
+
+    function weightlessActorsVerticallyTouch(state, left, right) {
+      return (
+        state.actorX[left] === state.actorX[right] &&
+        state.actorY[left] === state.actorY[right] &&
+        Math.abs(actorElevation(state, left) - actorElevation(state, right)) === 1
+      );
+    }
+
+    function weightlessVerticalSupportComponentGroupIds(state, startGroupId) {
+      const componentGroupIds = new Set([startGroupId]);
+      let changed = true;
+
+      while (changed) {
+        changed = false;
+        const componentMembers = weightlessClusterMembers(state, componentGroupIds);
+
+        for (let index = 0; index < actorCount; index += 1) {
+          if (state.actorRemoved[index] || actorTypes[index] !== "weightless_box") {
+            continue;
+          }
+
+          const groupId = actorGroupIds[index];
+
+          if (componentGroupIds.has(groupId)) {
+            continue;
+          }
+
+          if (componentMembers.some((member) => weightlessActorsVerticallyTouch(state, member, index))) {
+            componentGroupIds.add(groupId);
+            changed = true;
+          }
+        }
+      }
+
+      return componentGroupIds;
     }
 
     function canMoveInto(state, x, y, occupied, gateState, orangeButtonsPressed, elevation = 0) {
@@ -2349,6 +2538,23 @@
           actor !== mover &&
           !isNonBlockingActor(actor) &&
           actorElevation(state, actor) === elevation
+      );
+    }
+
+    function pushableSupportActorUnderPlayer(state, player) {
+      const playerElevation = actorElevation(state, player);
+
+      if (playerElevation <= 0) {
+        return -1;
+      }
+
+      return actorAt(
+        state,
+        state.actorX[player],
+        state.actorY[player],
+        (actor) =>
+          isPushableActor(actor) &&
+          actorElevation(state, actor) + 1 === playerElevation
       );
     }
 
@@ -3314,7 +3520,8 @@
       gateState,
       orangeButtonsPressed,
       ignoredActors = new Set(),
-      searchMode = false
+      searchMode = false,
+      pushContext = null
     ) {
       const entityKey = pushEntityKey(actorIndex);
 
@@ -3507,7 +3714,8 @@
           gateState,
           orangeButtonsPressed,
           ignoredActors,
-          searchMode
+          searchMode,
+          pushContext
         );
 
         if (result === null) {
@@ -4894,16 +5102,21 @@
 
           handledWeightlessGroups.add(groupId);
 
-          const members = weightlessGroupMembers(state, groupId);
-          const baseElevation = weightlessGroupSupportedElevation(
+          const componentGroupIds = weightlessVerticalSupportComponentGroupIds(state, groupId);
+          componentGroupIds.forEach((componentGroupId) => handledWeightlessGroups.add(componentGroupId));
+
+          const component = weightlessComponentSupportedElevation(
             state,
-            members,
+            componentGroupIds,
             gateState,
             orangeButtonsPressed
           );
 
-          members.forEach((member) => {
-            const toElevation = baseElevation + (weightlessRelativeElevations[member] || 0);
+          component.members.forEach((member) => {
+            const toElevation =
+              component.baseElevation +
+              (component.groupBaseOffsets.get(actorGroupIds[member]) ?? 0) +
+              (weightlessRelativeElevations[member] || 0);
 
             if (state.actorElevation[member] !== toElevation) {
               state.actorElevation[member] = toElevation;
@@ -4990,27 +5203,31 @@
           continue;
         }
 
-        handledWeightlessGroups.add(groupId);
+        const componentGroupIds = weightlessVerticalSupportComponentGroupIds(state, groupId);
+        componentGroupIds.forEach((componentGroupId) => handledWeightlessGroups.add(componentGroupId));
 
-        const members = weightlessGroupMembers(state, groupId);
-        const baseElevation = weightlessGroupSupportedElevation(
+        const component = weightlessComponentSupportedElevation(
           state,
-          members,
+          componentGroupIds,
           gateState,
           orangeButtonsPressed
         );
-        const groupMovedOrChangedElevation = members.some(
-          (member) =>
-            moveByActor.has(member) ||
-            (originalElevations[member] || 0) !==
-              baseElevation + (weightlessRelativeElevations[member] || 0)
-        );
-        const memberSet = new Set(members);
+        const componentMovedOrChangedElevation = component.members.some((member) => {
+          const toElevation =
+            component.baseElevation +
+            (component.groupBaseOffsets.get(actorGroupIds[member]) ?? 0) +
+            (weightlessRelativeElevations[member] || 0);
+
+          return moveByActor.has(member) || (originalElevations[member] || 0) !== toElevation;
+        });
         const shouldFallIntoHole =
-          groupMovedOrChangedElevation &&
-          members.length > 0 &&
-          members.every((member) => {
-            const toElevation = baseElevation + (weightlessRelativeElevations[member] || 0);
+          componentMovedOrChangedElevation &&
+          component.members.length > 0 &&
+          component.members.every((member) => {
+            const toElevation =
+              component.baseElevation +
+              (component.groupBaseOffsets.get(actorGroupIds[member]) ?? 0) +
+              (weightlessRelativeElevations[member] || 0);
 
             return (
               isHole(state, state.actorX[member], state.actorY[member], toElevation) ||
@@ -5020,13 +5237,16 @@
                 toElevation,
                 gateState,
                 orangeButtonsPressed,
-                memberSet
+                component.memberSet
               )
             );
           });
 
-        members.forEach((member) => {
-          const toElevation = baseElevation + (weightlessRelativeElevations[member] || 0);
+        component.members.forEach((member) => {
+          const toElevation =
+            component.baseElevation +
+            (component.groupBaseOffsets.get(actorGroupIds[member]) ?? 0) +
+            (weightlessRelativeElevations[member] || 0);
 
           if ((originalElevations[member] || 0) !== toElevation || shouldFallIntoHole) {
             const moveRecord = ensureDynamicMove(member, toElevation);
@@ -5342,8 +5562,23 @@
                   moveTargetElevation,
                   player
                 );
+          const supportActor = isInitialStep ? pushableSupportActorUnderPlayer(state, player) : -1;
+          const supportPushActor =
+            blockingActor === -1 &&
+            supportActor !== -1 &&
+            !canTraverseSlope &&
+            !canEnterHole &&
+            !canStandAtTarget &&
+            !canSlipOffIce
+              ? supportActor
+              : -1;
+          const actorToPush = blockingActor !== -1 ? blockingActor : supportPushActor;
           const canAttemptInitialPush =
-            blockingActor !== -1 && isInitialStep && isPushableActor(blockingActor);
+            actorToPush !== -1 && isInitialStep && isPushableActor(actorToPush);
+          let pushedFollowPath = null;
+          let pushedFollowTargetX = moveTargetX;
+          let pushedFollowTargetY = moveTargetY;
+          let pushedFollowTargetElevation = moveTargetElevation;
 
           if (
             !isInsideBoard(targetX, targetY) ||
@@ -5421,15 +5656,18 @@
             break;
           }
 
-          if (blockingActor !== -1) {
+          if (blockingActor !== -1 || supportPushActor !== -1) {
             let didMoveBlockingActor = false;
 
-            if (isInitialStep && isPushableActor(blockingActor)) {
+            if (canAttemptInitialPush) {
               const attemptSnapshot = attemptSnapshotBuffer || cloneState(state);
               const occupiedSnapshot = occupiedSnapshotBuffer || new Set(occupied);
               const moveCount = moves.length;
               const pushBudget = countSupportingPlayers(state, player, stepDx, stepDy);
-              const pushedActorMembers = pushActorMembers(state, blockingActor);
+              const pushedActorMembers = pushActorMembers(state, actorToPush);
+              const pushRidesSupport =
+                supportActor !== -1 &&
+                pushEntityKey(supportActor) === pushEntityKey(actorToPush);
 
               if (attemptSnapshotBuffer) {
                 copyStateInto(attemptSnapshotBuffer, state);
@@ -5442,7 +5680,7 @@
 
               const result = attemptPushActor(
                 state,
-                blockingActor,
+                actorToPush,
                 stepDx,
                 stepDy,
                 occupied,
@@ -5456,36 +5694,103 @@
               );
 
               if (result !== null) {
+                const ridingSupportMembers = pushRidesSupport
+                  ? pushedSupportMembersUnderPlayer(attemptSnapshot, player, pushedActorMembers)
+                  : new Set();
+                const rideFollowPath =
+                  ridingSupportMembers.size > 0
+                    ? playerRidePathForPushedSupport(moves, moveCount, ridingSupportMembers)
+                    : null;
+                const canFollowPushedIcePath = isIce(
+                  state,
+                  nextX,
+                  nextY,
+                  travelElevation,
+                  raisedPlayerGates,
+                  orangeButtonsPressed
+                );
+                const followPath =
+                  rideFollowPath ||
+                  (canFollowPushedIcePath
+                    ? playerFollowPathForPushedMove(
+                        moves,
+                        moveCount,
+                        actorToPush,
+                        stepDx,
+                        stepDy
+                      )
+                    : null);
+                const followTarget =
+                  followPath && followPath.length > 1 ? followPath[followPath.length - 1] : null;
+                pushedFollowPath = followPath && followPath.length > 1 ? followPath : null;
+                pushedFollowTargetX = followTarget?.x ?? moveTargetX;
+                pushedFollowTargetY = followTarget?.y ?? moveTargetY;
+                pushedFollowTargetElevation = followTarget?.elevation ?? moveTargetElevation;
                 const ignoredPostPushSupports = new Set([player, ...pushedActorMembers]);
+                ridingSupportMembers.forEach((member) => ignoredPostPushSupports.delete(member));
+                if (pushedFollowPath) {
+                  const followTargetBlocked =
+                    blockingActorAtElevation(
+                      state,
+                      pushedFollowTargetX,
+                      pushedFollowTargetY,
+                      pushedFollowTargetElevation,
+                      player
+                    ) !== -1;
+                  const followCanEnterHole =
+                    pushedFollowTargetElevation === 0 &&
+                    isHole(state, pushedFollowTargetX, pushedFollowTargetY, 0);
+                  const followCanStand =
+                    !followTargetBlocked &&
+                    canPlayerStandAtElevation(
+                      state,
+                      pushedFollowTargetX,
+                      pushedFollowTargetY,
+                      pushedFollowTargetElevation,
+                      raisedPlayerGates,
+                      orangeButtonsPressed,
+                      ignoredPostPushSupports
+                    );
+
+                  if (followTargetBlocked || (!followCanEnterHole && !followCanStand)) {
+                    pushedFollowPath = null;
+                    pushedFollowTargetX = moveTargetX;
+                    pushedFollowTargetY = moveTargetY;
+                    pushedFollowTargetElevation = moveTargetElevation;
+                  }
+                }
+                const postPushCanEnterHole =
+                  pushedFollowTargetElevation === 0 &&
+                  isHole(state, pushedFollowTargetX, pushedFollowTargetY, 0);
                 const targetBlockedAfterPush =
                   blockingActorAtElevation(
                     state,
-                    moveTargetX,
-                    moveTargetY,
-                    moveTargetElevation,
+                    pushedFollowTargetX,
+                    pushedFollowTargetY,
+                    pushedFollowTargetElevation,
                     player
                   ) !== -1;
                 const canStandAtTargetAfterPush =
                   !targetBlockedAfterPush &&
                   canPlayerStandAtElevation(
                     state,
-                    moveTargetX,
-                    moveTargetY,
-                    moveTargetElevation,
+                    pushedFollowTargetX,
+                    pushedFollowTargetY,
+                    pushedFollowTargetElevation,
                     raisedPlayerGates,
                     orangeButtonsPressed,
                     ignoredPostPushSupports
-                  );
+                );
                 const postPushSlipLanding =
-                  !targetBlockedAfterPush && !canEnterHole && !canStandAtTargetAfterPush
+                  !targetBlockedAfterPush && !postPushCanEnterHole && !canStandAtTargetAfterPush
                     ? playerIceSlipLanding(
                         state,
                         player,
                         nextX,
                         nextY,
-                        moveTargetX,
-                        moveTargetY,
-                        moveTargetElevation,
+                        pushedFollowTargetX,
+                        pushedFollowTargetY,
+                        pushedFollowTargetElevation,
                         occupied,
                         raisedPlayerGates,
                         orangeButtonsPressed
@@ -5493,7 +5798,7 @@
                     : null;
                 const canOccupyTargetAfterPush =
                   !targetBlockedAfterPush &&
-                  (canEnterHole || canStandAtTargetAfterPush || postPushSlipLanding !== null);
+                  (postPushCanEnterHole || canStandAtTargetAfterPush || postPushSlipLanding !== null);
 
                 if (canOccupyTargetAfterPush) {
                   if (postPushSlipLanding) {
@@ -5520,11 +5825,13 @@
             }
           }
 
-          nextX = moveTargetX;
-          nextY = moveTargetY;
-          travelElevation = moveTargetElevation;
+          nextX = pushedFollowTargetX;
+          nextY = pushedFollowTargetY;
+          travelElevation = pushedFollowTargetElevation;
 
-          if (canTraverseSlope) {
+          if (pushedFollowPath) {
+            appendPathPoints(travelPath, pushedFollowPath.slice(1));
+          } else if (canTraverseSlope) {
             travelPath.push(...slopeTraversal.path);
             if (slopeTraversal.levelExit === true) {
               levelExit = {
@@ -5929,7 +6236,7 @@
     }
 
     function heuristic(state) {
-      let best = 2;
+      let best = Infinity;
       let hasPlayer = false;
       let hasGem = false;
 
@@ -5947,19 +6254,16 @@
 
           hasGem = true;
 
-          if (
-            state.actorX[player] === state.actorX[gem] &&
-            state.actorY[player] === state.actorY[gem] &&
-            actorElevation(state, player) === actorElevation(state, gem)
-          ) {
-            best = 0;
-          } else if (state.actorX[player] === state.actorX[gem] || state.actorY[player] === state.actorY[gem]) {
-            best = Math.min(best, 1);
-          }
+          best = Math.min(
+            best,
+            Math.abs(state.actorX[player] - state.actorX[gem]) +
+              Math.abs(state.actorY[player] - state.actorY[gem]) +
+              Math.abs(actorElevation(state, player) - actorElevation(state, gem))
+          );
         }
       }
 
-      return hasPlayer && hasGem ? best : 0;
+      return hasPlayer && hasGem && Number.isFinite(best) ? best : 0;
     }
 
     function isPlayerMove(moveRecord) {

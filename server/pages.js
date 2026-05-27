@@ -317,15 +317,28 @@ function createPageRenderer({
                       <option value="bfs">BFS</option>
                     </select>
                   </label>
+                  <label class="field">
+                    <span>Hill-Climb</span>
+                    <select id="hill-climb-mode" aria-label="Hill-Climb mode">
+                      <option value="place_gem" selected>Place Gem</option>
+                      <option value="fixed_gem">Fixed Gem</option>
+                    </select>
+                  </label>
                 </div>
                 <div class="author-control-row">
                   <button id="place-gem" class="tool-button" type="button">Place Gem</button>
                   <button id="hill-climb" class="tool-button" type="button">Hill-Climb</button>
+                  <button id="solver-cancel" class="tool-button" type="button" disabled>Cancel</button>
                   <button id="solve-level" class="tool-button" type="button">Solver</button>
                   <button id="play-solution" class="tool-button" type="button">
                     <span class="tool-button__icon" aria-hidden="true">&#9654;</span>
                     <span>Play Solution</span>
                   </button>
+                </div>
+                <div class="author-control-row">
+                  <button id="hill-climb-prev" class="tool-button" type="button" disabled>Prev Result</button>
+                  <button id="hill-climb-next" class="tool-button" type="button" disabled>Next Result</button>
+                  <span id="hill-climb-result-label" class="author-panel__copy"></span>
                 </div>
               </div>
             </details>

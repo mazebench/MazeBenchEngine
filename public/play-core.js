@@ -386,6 +386,10 @@
     }
 
     function loadCollectedGemIds() {
+      if (app.isEditorRenderApp) {
+        return new Set();
+      }
+
       try {
         const raw = window.localStorage?.getItem(collectedGemStorageKey());
         const values = JSON.parse(raw || "[]");
@@ -396,6 +400,10 @@
     }
 
     function saveCollectedGemIds() {
+      if (app.isEditorRenderApp) {
+        return;
+      }
+
       try {
         window.localStorage?.setItem(
           collectedGemStorageKey(),
@@ -491,6 +499,10 @@
     }
 
     function applyCollectedGemProgressToActors(actors = app.state.actors, levelId = app.currentLevelId) {
+      if (app.isEditorRenderApp) {
+        return;
+      }
+
       actors.forEach((actor, index) => {
         const collectionId = actor.collectionId || gemCollectionId(actor, index, levelId);
 
@@ -508,6 +520,10 @@
     }
 
     function recordCollectedGemsFromMoves(moves) {
+      if (app.isEditorRenderApp) {
+        return;
+      }
+
       let changed = false;
 
       (moves || []).forEach((move) => {
@@ -594,14 +610,14 @@
 
     function createRuntimeActor(actor, index = 0, levelId = app.currentLevelId) {
       const collectionId = gemCollectionId(actor, index, levelId);
-      const collected = collectionId ? app.collectedGemIds.has(collectionId) : false;
+      const collected = !app.isEditorRenderApp && collectionId ? app.collectedGemIds.has(collectionId) : false;
       const removed = Boolean(actor?.removed) || collected;
       const elevation = actor?.elevation ?? 0;
       const runtimeActor = {
         ...actor,
         collectionId: collectionId || actor?.collectionId || null,
-        collected: actor?.collected === true || collected,
-        showCollectedGhost: actor?.showCollectedGhost === true || collected,
+        collected: app.isEditorRenderApp ? false : actor?.collected === true || collected,
+        showCollectedGhost: app.isEditorRenderApp ? false : actor?.showCollectedGhost === true || collected,
         hoverSeed: actor?.hoverSeed ?? hoverSeedForActor(actor),
         renderX: actor?.renderX ?? actor.x,
         renderY: actor?.renderY ?? actor.y,
@@ -1373,8 +1389,9 @@
         actor.renderY = target.y;
         actor.renderElevation = actor.elevation;
         actor.collectionId = target.collectionId || actor.collectionId || null;
-        actor.collected = target.collected === true || (
-          actor.collectionId ? app.collectedGemIds.has(actor.collectionId) : false
+        actor.collected = !app.isEditorRenderApp && (
+          target.collected === true ||
+          (actor.collectionId ? app.collectedGemIds.has(actor.collectionId) : false)
         );
 
         if (actor.collected && actor.type === "gem") {
@@ -1887,43 +1904,13 @@
             continue;
           }
 
-          terrainLayersOfType(x, y, "player_gate").forEach((gateLayer) => {
-            const gateElevation = gateLayer.elevation ?? 0;
-
-            if (
-              players.some(
-                (actor) =>
-                  actorElevation(actor) === gateElevation + 1 &&
-                  actor.x === x &&
-                  actor.y === y
-              )
-            ) {
-              raised.add(posKey(x, y));
-              return;
-            }
-
-            if (
-              activeActors.some(
-                (actor) =>
-                  !isNonBlockingActor(actor) &&
-                  actorElevation(actor) === gateElevation &&
-                  actor.x === x &&
-                  actor.y === y
-              )
-            ) {
-              return;
-            }
-
-            if (
-              players.some(
-                (actor) =>
-                  actorElevation(actor) === gateElevation &&
-                  Math.abs(actor.x - x) + Math.abs(actor.y - y) === 1
-              )
-            ) {
-              raised.add(posKey(x, y));
-            }
-          });
+          if (
+            players.some(
+              (actor) => Math.abs(actor.x - x) + Math.abs(actor.y - y) <= 1
+            )
+          ) {
+            raised.add(posKey(x, y));
+          }
         }
       }
 
