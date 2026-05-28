@@ -5969,6 +5969,28 @@
 
         let occupiedElevation = fromElevation;
 
+        if (continuePunchSlide && !levelExit) {
+          const landingElevation = landingElevationAtLocation(
+            state,
+            nextX,
+            nextY,
+            travelElevation,
+            occupied,
+            raisedPlayerGates,
+            orangeButtonsPressed,
+            ignoredPlayerSet
+          );
+
+          if (landingElevation !== null && landingElevation !== travelElevation) {
+            travelElevation = landingElevation;
+            travelPath.push({
+              x: nextX,
+              y: nextY,
+              elevation: travelElevation
+            });
+          }
+        }
+
         if (nextX !== fromX || nextY !== fromY || travelElevation !== fromElevation || levelExit) {
           state.actorX[player] = nextX;
           state.actorY[player] = nextY;

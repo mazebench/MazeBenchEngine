@@ -1872,7 +1872,8 @@
 
       if (
         !playerMove ||
-        typeof app.edgeTransitionForPlayerMove !== "function"
+        (typeof app.edgeTransitionForPlayerMove !== "function" &&
+          typeof app.adjacentWorldLevelId !== "function")
       ) {
         return null;
       }
@@ -1885,14 +1886,45 @@
         return null;
       }
 
-      const edgeTransition = app.edgeTransitionForPlayerMove(
-        playerMove.actor,
-        playerMove.toX,
-        playerMove.toY,
-        playerMove.toElevation ?? playerMove.fromElevation ?? playerMove.actor?.elevation ?? 0,
-        transitionDx,
-        transitionDy
-      );
+      const transitionElevation =
+        playerMove.toElevation ?? playerMove.fromElevation ?? playerMove.actor?.elevation ?? 0;
+      let edgeTransition =
+        typeof app.edgeTransitionForPlayerMove === "function"
+          ? app.edgeTransitionForPlayerMove(
+              playerMove.actor,
+              playerMove.toX,
+              playerMove.toY,
+              transitionElevation,
+              transitionDx,
+              transitionDy
+            )
+          : null;
+
+      if (!edgeTransition && playerMove.punchSlide === true) {
+        const onEdge =
+          (transitionDx < 0 && playerMove.toX === 0) ||
+          (transitionDx > 0 && playerMove.toX === state.width - 1) ||
+          (transitionDy < 0 && playerMove.toY === 0) ||
+          (transitionDy > 0 && playerMove.toY === state.height - 1);
+        const nextLevelId =
+          onEdge && typeof app.adjacentWorldLevelId === "function" && app.currentLevelId
+            ? app.adjacentWorldLevelId(app.currentLevelId, transitionDx, transitionDy)
+            : null;
+
+        if (nextLevelId) {
+          edgeTransition = {
+            player: playerMove.actor,
+            nextLevelId,
+            sourceType: "punch",
+            sourceElevation: transitionElevation,
+            targetElevation: transitionElevation,
+            dx: transitionDx,
+            dy: transitionDy,
+            targetX: transitionDx < 0 ? state.width - 1 : transitionDx > 0 ? 0 : playerMove.toX,
+            targetY: transitionDy < 0 ? state.height - 1 : transitionDy > 0 ? 0 : playerMove.toY
+          };
+        }
+      }
 
       if (!shouldContinuePlayerMoveAcrossEdge(moveResult, edgeTransition)) {
         return null;

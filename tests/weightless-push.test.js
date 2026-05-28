@@ -1854,6 +1854,128 @@ asyncTests.push((async () => {
 })());
 
 asyncTests.push((async () => {
+  const terrain = createTerrain(4, 1);
+  terrain[0][0] = stackedWall(2);
+  terrain[0][1] = stackedWall(2);
+  const middleTerrain = createTerrain(4, 1);
+  const stopTerrain = createTerrain(4, 1);
+  stopTerrain[0][0] = stackedWall(2);
+  stopTerrain[0][1] = stackedWall(2);
+  stopTerrain[0][2] = stackedWall(3);
+  const player = { type: "player", x: 0, y: 0, elevation: 2, removed: false };
+  const puncher = { type: "puncher", direction: "right", x: 1, y: 0, elevation: 2, removed: false };
+  const app = createGameplayApp([player, puncher], {
+    currentLevelId: "level_AxA",
+    height: 1,
+    loadLevelState: async (levelId) => ({
+      gameId: "maze",
+      levelId,
+      levelLabel: levelId,
+      width: 4,
+      height: 1,
+      terrain: levelId === "level_BxA" ? middleTerrain : stopTerrain,
+      actors: [{ type: "player", x: 0, y: 0, elevation: 0, removed: false }]
+    }),
+    moveDurationMs: 0,
+    terrain,
+    width: 4
+  });
+
+  app.movePlayers(1, 0);
+  await flushAsyncTurns();
+
+  assert.equal(app.currentLevelId, "level_CxA");
+  assert.deepEqual(
+    app.state.actors
+      .filter((actor) => app.isPlayerActor(actor) && !actor.removed)
+      .map((actor) => [actor.x, actor.y, actor.elevation]),
+    [[1, 0, 2]]
+  );
+})());
+
+asyncTests.push((async () => {
+  const terrain = createTerrain(4, 1);
+  terrain[0][0] = stackedWall(2);
+  terrain[0][1] = stackedWall(2);
+  const middleTerrain = createTerrain(4, 1);
+  const stopTerrain = createTerrain(4, 1);
+  stopTerrain[0][2] = stackedWall(3);
+  const player = { type: "player", x: 0, y: 0, elevation: 2, removed: false };
+  const puncher = { type: "puncher", direction: "right", x: 1, y: 0, elevation: 2, removed: false };
+  const app = createGameplayApp([player, puncher], {
+    currentLevelId: "level_AxA",
+    height: 1,
+    loadLevelState: async (levelId) => ({
+      gameId: "maze",
+      levelId,
+      levelLabel: levelId,
+      width: 4,
+      height: 1,
+      terrain: levelId === "level_BxA" ? middleTerrain : stopTerrain,
+      actors: [{ type: "player", x: 0, y: 0, elevation: 0, removed: false }]
+    }),
+    moveDurationMs: 0,
+    terrain,
+    width: 4
+  });
+
+  app.movePlayers(1, 0);
+  await flushAsyncTurns();
+
+  assert.equal(app.currentLevelId, "level_CxA");
+  assert.deepEqual(
+    app.state.actors
+      .filter((actor) => app.isPlayerActor(actor) && !actor.removed)
+      .map((actor) => [actor.x, actor.y, actor.elevation]),
+    [[1, 0, 0]]
+  );
+})());
+
+asyncTests.push((async () => {
+  const terrain = createTerrain(4, 3);
+  terrain[0][0] = stackedWall(2);
+  terrain[0][1] = stackedWall(2);
+  const middleTerrain = createTerrain(4, 3);
+  const stopTerrain = createTerrain(4, 3);
+  stopTerrain[0][2] = stackedWall(3);
+  stopTerrain[2][1] = { type: "wall" };
+  const player = { type: "player", x: 0, y: 0, elevation: 2, removed: false };
+  const puncher = { type: "puncher", direction: "right", x: 1, y: 0, elevation: 2, removed: false };
+  const app = createGameplayApp([player, puncher], {
+    currentLevelId: "level_AxA",
+    height: 3,
+    loadLevelState: async (levelId) => ({
+      gameId: "maze",
+      levelId,
+      levelLabel: levelId,
+      width: 4,
+      height: 3,
+      terrain: levelId === "level_BxA" ? middleTerrain : stopTerrain,
+      actors: [
+        { type: "player", x: 0, y: 0, elevation: 0, removed: false },
+        ...(levelId === "level_CxA"
+          ? [{ type: "puncher", direction: "down", x: 1, y: 0, elevation: 0, removed: false }]
+          : [])
+      ]
+    }),
+    moveDurationMs: 0,
+    terrain,
+    width: 4
+  });
+
+  app.movePlayers(1, 0);
+  await flushAsyncTurns();
+
+  assert.equal(app.currentLevelId, "level_CxA");
+  assert.deepEqual(
+    app.state.actors
+      .filter((actor) => app.isPlayerActor(actor) && !actor.removed)
+      .map((actor) => [actor.x, actor.y, actor.elevation]),
+    [[1, 1, 0]]
+  );
+})());
+
+asyncTests.push((async () => {
   const nextTerrain = createTerrain(4, 4);
   nextTerrain[3][1] = { type: "wall" };
   const player = { type: "player", x: 0, y: 1, elevation: 0, removed: false };

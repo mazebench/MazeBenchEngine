@@ -2260,6 +2260,62 @@ function createState(playData) {
 }
 
 {
+  const terrain = floorTerrain(4, 1);
+  terrain[0][3] = wallStack(3);
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain,
+    actors: [{ type: "player", x: 0, y: 0, elevation: 2, removed: false }]
+  });
+
+  const result = engine.move(state, 1, 0, { continuePunchSlide: true });
+  const playerMove = result.moves.find((move) => move.actorIndex === 0 && !move.visualOnly);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorY[0]], [2, 0]);
+  assert.equal(state.actorElevation[0], 0);
+  assert.equal(playerMove.punchSlide, true);
+  assert.equal(playerMove.pathControlsElevation, true);
+  assert.deepEqual(playerMove.path.at(-1), { x: 2, y: 0, elevation: 0 });
+}
+
+{
+  const terrain = floorTerrain(4, 1);
+  terrain[0][3] = wallStack(3);
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 2, removed: false },
+      { type: "puncher", direction: "left", x: 2, y: 0, elevation: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0, { continuePunchSlide: true });
+  const playerMove = result.moves.find((move) => move.actorIndex === 0 && !move.visualOnly);
+  const puncherMove = result.moves.find((move) => move.actorIndex === 1 && move.visualOnly);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorY[0]], [0, 0]);
+  assert.equal(state.actorElevation[0], 0);
+  assert.equal(playerMove.punchSlide, true);
+  assert.deepEqual(
+    playerMove.punchSegments.map(({ fromX, fromY, fromElevation, toX, toY, toElevation }) => ({
+      fromX,
+      fromY,
+      fromElevation,
+      toX,
+      toY,
+      toElevation
+    })),
+    [{ fromX: 2, fromY: 0, fromElevation: 0, toX: 0, toY: 0, toElevation: 0 }]
+  );
+  assert.equal(puncherMove?.punchSequence, 0);
+}
+
+{
   const terrain = floorTerrain(5, 4);
   terrain[0][4] = { type: "wall" };
   terrain[3][3] = { type: "wall" };
