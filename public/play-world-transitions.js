@@ -285,6 +285,30 @@
       );
     }
 
+    function transitionLayerHasNonOrangeSupportAtElevation(levelState, x, y, layer, options = {}) {
+      const elevation = layer?.elevation ?? 0;
+
+      return terrainLayersForTransitionCell(terrainCellInLevelState(levelState, x, y)).some(
+        (candidate) => {
+          if (candidate === layer || candidate?.type === "orange_wall") {
+            return false;
+          }
+
+          return transitionTerrainLayerSurfaceHeight(candidate, x, y, options) === elevation;
+        }
+      );
+    }
+
+    function transitionShouldLowerPressedOrangeWallAsBlock(levelState, x, y, layer, options = {}) {
+      const elevation = layer?.elevation ?? 0;
+
+      return (
+        elevation > 0 &&
+        (transitionLayerHasOrangeWallBelow(levelState, x, y, layer) ||
+          !transitionLayerHasNonOrangeSupportAtElevation(levelState, x, y, layer, options))
+      );
+    }
+
     function transitionTerrainLayerSurfaceHeight(layer, x, y, options = {}) {
       const elevation = layer?.elevation ?? 0;
 
@@ -360,7 +384,13 @@
           return layerElevation === elevation;
         }
 
-        return transitionLayerHasOrangeWallBelow(options.levelState, x, y, layer) &&
+        return transitionShouldLowerPressedOrangeWallAsBlock(
+          options.levelState,
+          x,
+          y,
+          layer,
+          options
+        ) &&
           layerElevation - 1 === elevation;
       }
 

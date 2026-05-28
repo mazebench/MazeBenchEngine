@@ -3357,6 +3357,218 @@
       return geometry;
     }
 
+    function variableSolidBoxSignature(boxes) {
+      return boxes
+        .map((box) =>
+          [
+            box.x,
+            box.y,
+            Math.round(box.bottomY * 1000),
+            Math.round(box.topY * 1000)
+          ].join(",")
+        )
+        .sort()
+        .join("|");
+    }
+
+    function variableSolidSegmentKey(from, to) {
+      return [from, to]
+        .map((point) => point.map((value) => Math.round(value * 1000)).join(","))
+        .sort()
+        .join(":");
+    }
+
+    function addVariableSolidFace(faces, normal, corners) {
+      faces.push({ normal, corners });
+    }
+
+    function variableSolidFaces(boxes) {
+      const yLevels = Array.from(
+        new Set(
+          boxes.flatMap((box) => [
+            Math.round(box.bottomY * 1000) / 1000,
+            Math.round(box.topY * 1000) / 1000
+          ])
+        )
+      ).sort((left, right) => left - right);
+      const slabs = [];
+
+      for (let index = 0; index < yLevels.length - 1; index += 1) {
+        const bottomY = yLevels[index];
+        const topY = yLevels[index + 1];
+
+        if (topY - bottomY > 0.001) {
+          slabs.push({ bottomY, topY });
+        }
+      }
+
+      const voxelMap = new Map();
+      const voxelKey = (x, y, slabIndex) => `${x},${y},${slabIndex}`;
+
+      slabs.forEach((slab, slabIndex) => {
+        boxes.forEach((box) => {
+          if (box.bottomY > slab.bottomY + 0.001 || box.topY < slab.topY - 0.001) {
+            return;
+          }
+
+          const key = voxelKey(box.x, box.y, slabIndex);
+
+          if (!voxelMap.has(key)) {
+            voxelMap.set(key, {
+              x: box.x,
+              y: box.y,
+              slabIndex,
+              bottomY: slab.bottomY,
+              topY: slab.topY
+            });
+          }
+        });
+      });
+
+      const faces = [];
+      const hasVoxel = (x, y, slabIndex) => voxelMap.has(voxelKey(x, y, slabIndex));
+
+      voxelMap.forEach((voxel) => {
+        const x0 = voxel.x * unit + renderOffsetX();
+        const x1 = (voxel.x + 1) * unit + renderOffsetX();
+        const z0 = voxel.y * unit + renderOffsetZ();
+        const z1 = (voxel.y + 1) * unit + renderOffsetZ();
+        const y0 = voxel.bottomY;
+        const y1 = voxel.topY;
+
+        if (!hasVoxel(voxel.x + 1, voxel.y, voxel.slabIndex)) {
+          addVariableSolidFace(faces, "xplus", [
+            [x1, y0, z0],
+            [x1, y1, z0],
+            [x1, y1, z1],
+            [x1, y0, z1]
+          ]);
+        }
+
+        if (!hasVoxel(voxel.x - 1, voxel.y, voxel.slabIndex)) {
+          addVariableSolidFace(faces, "xminus", [
+            [x0, y0, z0],
+            [x0, y0, z1],
+            [x0, y1, z1],
+            [x0, y1, z0]
+          ]);
+        }
+
+        if (!hasVoxel(voxel.x, voxel.y + 1, voxel.slabIndex)) {
+          addVariableSolidFace(faces, "zplus", [
+            [x0, y0, z1],
+            [x1, y0, z1],
+            [x1, y1, z1],
+            [x0, y1, z1]
+          ]);
+        }
+
+        if (!hasVoxel(voxel.x, voxel.y - 1, voxel.slabIndex)) {
+          addVariableSolidFace(faces, "zminus", [
+            [x0, y0, z0],
+            [x0, y1, z0],
+            [x1, y1, z0],
+            [x1, y0, z0]
+          ]);
+        }
+
+        if (!hasVoxel(voxel.x, voxel.y, voxel.slabIndex + 1)) {
+          addVariableSolidFace(faces, "top", [
+            [x0, y1, z0],
+            [x0, y1, z1],
+            [x1, y1, z1],
+            [x1, y1, z0]
+          ]);
+        }
+
+        if (!hasVoxel(voxel.x, voxel.y, voxel.slabIndex - 1)) {
+          addVariableSolidFace(faces, "bottom", [
+            [x0, y0, z0],
+            [x1, y0, z0],
+            [x1, y0, z1],
+            [x0, y0, z1]
+          ]);
+        }
+      });
+
+      return faces;
+    }
+
+    function variableSolidGeometry(boxes) {
+      const cacheKey = [
+        "variable-solid-geometry",
+        Math.round(renderOffsetX() * 100),
+        Math.round(renderOffsetZ() * 100),
+        variableSolidBoxSignature(boxes)
+      ].join(":");
+
+      if (geometryCache.has(cacheKey)) {
+        return geometryCache.get(cacheKey);
+      }
+
+      const positions = [];
+
+      variableSolidFaces(boxes).forEach((face) => {
+        pushQuadPositions(positions, face.corners);
+      });
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.computeVertexNormals();
+      geometryCache.set(cacheKey, geometry);
+      return geometry;
+    }
+
+    function variableSolidEdgeGeometry(boxes) {
+      const cacheKey = [
+        "variable-solid-edges",
+        Math.round(renderOffsetX() * 100),
+        Math.round(renderOffsetZ() * 100),
+        variableSolidBoxSignature(boxes)
+      ].join(":");
+
+      if (edgeGeometryCache.has(cacheKey)) {
+        return edgeGeometryCache.get(cacheKey);
+      }
+
+      const edgeMap = new Map();
+
+      variableSolidFaces(boxes).forEach((face) => {
+        face.corners.forEach((from, index) => {
+          const to = face.corners[(index + 1) % face.corners.length];
+          const key = variableSolidSegmentKey(from, to);
+
+          if (!edgeMap.has(key)) {
+            edgeMap.set(key, {
+              from,
+              to,
+              normals: new Map(),
+              total: 0
+            });
+          }
+
+          const entry = edgeMap.get(key);
+          entry.normals.set(face.normal, (entry.normals.get(face.normal) || 0) + 1);
+          entry.total += 1;
+        });
+      });
+
+      const positions = [];
+
+      edgeMap.forEach((entry) => {
+        if (entry.normals.size === 1 && entry.total > 1) {
+          return;
+        }
+
+        positions.push(...entry.from, ...entry.to);
+      });
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      edgeGeometryCache.set(cacheKey, geometry);
+      return geometry;
+    }
+
     function topCapHeight(height) {
       return Math.min(height, Math.max(5, Math.min(height * 0.32, unit * 0.12)));
     }
@@ -4111,6 +4323,18 @@
       return elevation > 0 && renderCellHasOrangeWallLayerAtElevation(x, y, elevation - 1);
     }
 
+    function renderOrangeWallHasNonOrangeSupportBelow(layer, x, y, now = performance.now()) {
+      const elevation = layer.elevation ?? 0;
+
+      return renderTerrainLayersAt(x, y).some((candidate) => {
+        if (candidate === layer || candidate.type === "orange_wall") {
+          return false;
+        }
+
+        return renderTerrainLayerSurfaceHeight(candidate, x, y, now) === elevation;
+      });
+    }
+
     function renderOrangeWallHasLayerAbove(layer, x, y) {
       const elevation = layer.elevation ?? 0;
 
@@ -4474,11 +4698,26 @@
       const isOrangeWall = type === "orange_wall";
       const orangeWallLift = isOrangeWall ? renderOrangeWallLiftValue(x, y, layer, now) : null;
       const orangeWallHasBelow = isOrangeWall && renderOrangeWallHasLayerBelow(layer, x, y);
+      const orangeWallLowersAsBlock =
+        isOrangeWall &&
+        !orangeWallHasBelow &&
+        elevation > 0 &&
+        !renderOrangeWallHasNonOrangeSupportBelow(layer, x, y, now);
       const orangeWallHasAbove = isOrangeWall && renderOrangeWallHasLayerAbove(layer, x, y);
       const isLoweredOrangeSurface =
-        isOrangeWall && !orangeWallHasBelow && orangeWallLift <= 0.001;
+        isOrangeWall &&
+        !orangeWallHasBelow &&
+        !orangeWallLowersAsBlock &&
+        orangeWallLift <= 0.001;
+      const isCollapsingOrangeBase =
+        isOrangeWall &&
+        !orangeWallHasBelow &&
+        !orangeWallLowersAsBlock &&
+        orangeWallHasAbove &&
+        orangeWallLift > 0.001 &&
+        orangeWallLift < 0.999;
 
-      if (isOrangeWall && orangeWallHasBelow) {
+      if (isOrangeWall && (orangeWallHasBelow || orangeWallLowersAsBlock)) {
         const topY = (elevation + orangeWallLift) * elevationUnit;
         const blockHeight = elevationUnit;
         const descriptor = {
@@ -4498,7 +4737,7 @@
         return descriptor;
       }
 
-      if (isOrangeWall && orangeWallHasAbove && orangeWallLift <= 0.001) {
+      if (isOrangeWall && orangeWallHasAbove && !orangeWallLowersAsBlock && orangeWallLift <= 0.001) {
         return null;
       }
 
@@ -4527,6 +4766,7 @@
         elevation,
         isLoweredOrangeSurface,
         isLoweredPlayerLift,
+        isCollapsingOrangeBase,
         isVoid: false,
         layer,
         terrainHeight,
@@ -4545,6 +4785,7 @@
         lower.type !== "tree" &&
         lower.type !== "shrub" &&
         lower.type !== "block_asset" &&
+        !lower.isCollapsingOrangeBase &&
         !lower.isSunkenFloor &&
         !upper.isSunkenFloor &&
         Math.abs(lower.topY - upper.bottomY) <= 0.001
@@ -4710,6 +4951,75 @@
           addTerrainPolycubeComponent(component, now);
         });
       });
+    }
+
+    function canRenderAnimatedOrangeSolid(descriptor) {
+      return (
+        descriptor.type === "orange_wall" &&
+        !descriptor.isLoweredOrangeSurface &&
+        !canRenderTerrainPolycube(descriptor)
+      );
+    }
+
+    function addAnimatedOrangeSolidRegion(entries) {
+      if (entries.length === 0) {
+        return;
+      }
+
+      const cells = Array.from(
+        entries
+          .reduce((cellMap, entry) => {
+            const key = `${entry.x},${entry.y}`;
+
+            if (!cellMap.has(key)) {
+              cellMap.set(key, {
+                gridX: entry.x,
+                gridY: entry.y,
+                left: entry.x * unit + renderOffsetX(),
+                right: (entry.x + 1) * unit + renderOffsetX(),
+                top: entry.y * unit + renderOffsetZ(),
+                bottom: (entry.y + 1) * unit + renderOffsetZ()
+              });
+            }
+
+            return cellMap;
+          }, new Map())
+          .values()
+      );
+      const visibility = transitionPieceProgressForCells(cells);
+
+      if (visibility <= 0.015) {
+        return;
+      }
+
+      const boxes = entries.map((entry) => ({
+        x: entry.x,
+        y: entry.y,
+        bottomY: entry.descriptor.bottomY,
+        topY: entry.descriptor.topY
+      }));
+      const bottomY = Math.min(...boxes.map((box) => box.bottomY));
+      const topY = Math.max(...boxes.map((box) => box.topY));
+
+      addOutlinedMesh(
+        variableSolidGeometry(boxes),
+        terrainColor("orange_wall"),
+        { x: 0, y: 0, z: 0 },
+        {
+          edgeGeometry: variableSolidEdgeGeometry(boxes),
+          edgeThreshold: 18,
+          opacity: visibility,
+          castShadow: renderContextCastsShadows(),
+          receiveShadow: false,
+          editorPick: {
+            kind: "terrain",
+            cells,
+            voxelPick: true,
+            topY,
+            bottomY
+          }
+        }
+      );
     }
 
     function terrainModelWorldScale(descriptor) {
@@ -5232,6 +5542,7 @@
       const pieceDescriptorRows = [];
       const pieceEntries = [];
       const polycubePieceEntries = [];
+      const animatedOrangeEntries = [];
       const state = renderState();
 
       for (let y = 0; y < state.height; y += 1) {
@@ -5248,6 +5559,11 @@
           pieceDescriptors.forEach((descriptor) => {
             if (canRenderTerrainPolycube(descriptor)) {
               polycubePieceEntries.push({ descriptor, x, y });
+              return;
+            }
+
+            if (canRenderAnimatedOrangeSolid(descriptor)) {
+              animatedOrangeEntries.push({ descriptor, x, y });
               return;
             }
 
@@ -5270,6 +5586,7 @@
       }
 
       addTerrainPolycubeRegions(polycubePieceEntries, now);
+      addAnimatedOrangeSolidRegion(animatedOrangeEntries);
 
       const visitedPieces = new Set();
       const pieceVisitKey = (x, y, key) => `${x},${y}:${key}`;

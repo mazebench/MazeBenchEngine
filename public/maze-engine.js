@@ -534,6 +534,54 @@
       return elevation > 0 && hasOrangeWallLayerAtElevation(state, cell, elevation - 1);
     }
 
+    function hasNonOrangeTerrainSupportAtElevation(
+      state,
+      cell,
+      elevation,
+      gateState,
+      orangeButtonsPressed,
+      ignoredLayer = null
+    ) {
+      return terrainLayersForCell(state, cell).some((candidate) => {
+        if (candidate === ignoredLayer || candidate.type === terrainTypes.orange_wall) {
+          return false;
+        }
+
+        return (
+          terrainLayerSurfaceHeight(
+            state,
+            cell,
+            candidate,
+            gateState,
+            orangeButtonsPressed
+          ) === elevation
+        );
+      });
+    }
+
+    function shouldLowerPressedOrangeWallAsBlock(
+      state,
+      cell,
+      layer,
+      gateState,
+      orangeButtonsPressed
+    ) {
+      const elevation = layer.elevation ?? 0;
+
+      return (
+        elevation > 0 &&
+        (hasOrangeWallLayerBelow(state, cell, layer) ||
+          !hasNonOrangeTerrainSupportAtElevation(
+            state,
+            cell,
+            elevation,
+            gateState,
+            orangeButtonsPressed,
+            layer
+          ))
+      );
+    }
+
     function terrainLayerSurfaceHeight(state, cell, layer, gateState, orangeButtonsPressed) {
       if (
         layer.type === terrainTypes.empty ||
@@ -1259,7 +1307,13 @@
           return layerElevation === elevation;
         }
 
-        return hasOrangeWallLayerBelow(state, cell, layer) && layerElevation - 1 === elevation;
+        return shouldLowerPressedOrangeWallAsBlock(
+          state,
+          cell,
+          layer,
+          gateState,
+          orangeButtonsPressed
+        ) && layerElevation - 1 === elevation;
       }
 
       return false;
