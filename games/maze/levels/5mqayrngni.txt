@@ -1,5 +1,5 @@
 + + + + + + + + + + + + + + + +
-+ . . . .+t1 . . . . .+st1 . . . . .+t1 .
++ . . . .+t1 . . . . .+st1 . . . . .+t1+# .
 + . .+I+I+G . . . . .+st1 . . . . .+t1 .+p . .
 i+Sd . .++++++I+Sd .+I+I+I+I+I+# .+I+I+I+I+I+I+Sr .+I+I+I+I+I+I+Sl .++++++I+Sr .++++++I+Sl .++++++I+Sr .++++++I+Sl .++++++I+Sr .++++++I+Sl .++++++I+Sr .++++++I+Sl .++++++I+Sr .++++++I+Sl
 i+I . .++++++I+Su .+I+I+I+I+I+I .+I+I+I+I .+I+I+I+I+Sr .+I+I+I+I+I+Sr .+I+I+I+I+I+I .+I+I+++I+I .+I+I+I+I+I+I i++I+I+I+I+I .+I+I+++I+I .+I+I+I+I+I+I .+I+I+I+I+I+I .+I+I+++I+I .+I+I+I+I+I+I

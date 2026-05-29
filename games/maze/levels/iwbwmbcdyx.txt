@@ -12,5 +12,5 @@
 .+sh .+sh .+sh . .+#+#+#+G .+#+#+Sl .+#+Sl .+Sl . . . . .+sh .+#+sh .+sh .
 .+sh .+sh . . . . . . . . . .+sh .+sh .+#+sh . .
 . .+sh . .+t2 .+sh .+sh . . .+t2 . .+sh .+sh .+sh .+#+sh . .
-. . .+sh .+sh . .+sh .+sh .+sh .+sh . . . .+sh .+#+sh . .
-. . .+sh . .+sh .+sh+sh .+sh+sh .+sh+sh .+sh .+sh .+sh .+sh .+sh .+#+sh . .
+.+sh . .+sh .+sh . .+sh .+sh .+sh .+sh . . . .+sh .+#+sh . .
+.+sh . .+sh . .+sh .+sh+sh .+sh+sh .+sh+sh .+sh .+sh .+sh .+sh .+sh .+#+sh . .
