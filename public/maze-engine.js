@@ -2890,7 +2890,8 @@
       state,
       members,
       gateState,
-      orangeButtonsPressed
+      orangeButtonsPressed,
+      predictedSupports = null
     ) {
       const memberSet = new Set(members);
       let hasIceSlideContact = false;
@@ -2912,7 +2913,8 @@
 
         if (
           terrainSupportsElevation(state, x, y, elevation, gateState, orangeButtonsPressed) ||
-          actorSupportSurfaceHeightsAt(state, x, y, memberSet, true).includes(elevation)
+          actorSupportSurfaceHeightsAt(state, x, y, memberSet, true).includes(elevation) ||
+          predictedSupportsElevation(predictedSupports, x, y, elevation, memberSet)
         ) {
           return false;
         }
@@ -2929,7 +2931,8 @@
       member,
       gateState,
       orangeButtonsPressed,
-      memberSet
+      memberSet,
+      predictedSupports = null
     ) {
       const x = state.actorX[member];
       const y = state.actorY[member];
@@ -2937,8 +2940,29 @@
 
       return (
         terrainSupportsElevation(state, x, y, elevation, gateState, orangeButtonsPressed) ||
-        actorSupportSurfaceHeightsAt(state, x, y, memberSet, true).includes(elevation)
+        actorSupportSurfaceHeightsAt(state, x, y, memberSet, true).includes(elevation) ||
+        predictedSupportsElevation(predictedSupports, x, y, elevation, memberSet)
       );
+    }
+
+    function predictedSupportsElevation(
+      predictedSupports,
+      x,
+      y,
+      elevation,
+      ignoredActors = null
+    ) {
+      if (!Array.isArray(predictedSupports) || predictedSupports.length === 0) {
+        return false;
+      }
+
+      return predictedSupports.some((support) => {
+        if (ignoredActors?.has(support.actorIndex)) {
+          return false;
+        }
+
+        return support.x === x && support.y === y && support.elevation + 1 === elevation;
+      });
     }
 
     function settleWeightlessClusterDownOneLayer(
@@ -2946,7 +2970,8 @@
       members,
       occupied,
       gateState,
-      orangeButtonsPressed
+      orangeButtonsPressed,
+      predictedSupports = null
     ) {
       const memberSet = new Set(members);
 
@@ -2957,7 +2982,8 @@
             member,
             gateState,
             orangeButtonsPressed,
-            memberSet
+            memberSet,
+            predictedSupports
           )
         )
       ) {
@@ -3502,6 +3528,9 @@
       let stepDx = dx;
       let stepDy = dy;
       let reversedAfterSlopeBounce = false;
+      const predictedSupports = Array.isArray(pushContext?.predictedSupports)
+        ? pushContext.predictedSupports
+        : null;
 
       while (true) {
         const attemptSnapshot = pushContext ? cloneState(state) : null;
@@ -3685,7 +3714,8 @@
             members,
             occupied,
             gateState,
-            orangeButtonsPressed
+            orangeButtonsPressed,
+            predictedSupports
           )
         ) {
           const hasSupportAfterSettling = members.some((member) =>
@@ -3694,7 +3724,8 @@
               member,
               gateState,
               orangeButtonsPressed,
-              supportCheckMemberSet
+              supportCheckMemberSet,
+              predictedSupports
             )
           );
           const fullyAtOrBelowFloor = members.every((member) => actorElevation(state, member) <= 0);
@@ -3721,7 +3752,15 @@
           break;
         }
 
-        if (!weightlessClusterShouldContinueSliding(state, members, gateState, orangeButtonsPressed)) {
+        if (
+          !weightlessClusterShouldContinueSliding(
+            state,
+            members,
+            gateState,
+            orangeButtonsPressed,
+            predictedSupports
+          )
+        ) {
           break;
         }
       }
@@ -4008,7 +4047,8 @@
               searchMode,
               {
                 handled,
-                ignoredActors
+                ignoredActors,
+                predictedSupports: pushContext?.predictedSupports || null
               }
             )
           : moveBox(
@@ -6034,7 +6074,17 @@
                 raisedPlayerGates,
                 orangeButtonsPressed,
                 new Set([player]),
-                searchMode
+                searchMode,
+                {
+                  predictedSupports: [
+                    {
+                      actorIndex: player,
+                      x: moveTargetX,
+                      y: moveTargetY,
+                      elevation: moveTargetElevation
+                    }
+                  ]
+                }
               );
 
               if (result !== null) {
