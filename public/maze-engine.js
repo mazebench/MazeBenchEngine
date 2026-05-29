@@ -27,6 +27,11 @@
     "1,0": "R"
   };
   const ICE_SLOPE_VISUAL_CLEARANCE = 0.08;
+  const STATE_ELEVATION_KEY_OFFSET = 1024;
+  const terrainSideBlockingSupportTypes = new Set([
+    terrainTypes.floor,
+    terrainTypes.ice
+  ]);
 
   function actorType(actor) {
     return typeof actor?.type === "string" ? actor.type : "";
@@ -429,7 +434,7 @@
         key +=
           encodeKeyValue(state.actorX[index] + 1) +
           encodeKeyValue(state.actorY[index] + 1) +
-          encodeKeyValue(state.actorElevation[index] + 2) +
+          encodeKeyValue(state.actorElevation[index] + STATE_ELEVATION_KEY_OFFSET) +
           encodeKeyValue(state.actorRemoved[index]);
       }
 
@@ -672,6 +677,37 @@
       orangeButtonsPressed = areOrangeButtonsPressed(state)
     ) {
       return terrainSurfaceHeightsAt(state, x, y, gateState, orangeButtonsPressed).includes(elevation);
+    }
+
+    function terrainSupportSideBlocksWeightlessEntry(
+      state,
+      x,
+      y,
+      elevation,
+      gateState,
+      orangeButtonsPressed
+    ) {
+      if (!isInsideBoard(x, y)) {
+        return false;
+      }
+
+      const cell = cellIndex(x, y);
+
+      return terrainLayersForCell(state, cell).some((layer) => {
+        if (!terrainSideBlockingSupportTypes.has(layer.type)) {
+          return false;
+        }
+
+        const surfaceHeight = terrainLayerSurfaceHeight(
+          state,
+          cell,
+          layer,
+          gateState,
+          orangeButtonsPressed
+        );
+
+        return surfaceHeight !== null && elevation < surfaceHeight;
+      });
     }
 
     function terrainLayerOfTypeAtElevation(
@@ -1649,7 +1685,7 @@
         groupBaseOffsets.set(groupId, groupBaseElevations.get(groupId) - componentCurrentBase);
       });
 
-      let baseElevation = 0;
+      let baseElevation = -Infinity;
 
       members.forEach((member) => {
         const x = state.actorX[member];
@@ -1676,7 +1712,7 @@
       });
 
       return {
-        baseElevation: Math.max(0, baseElevation),
+        baseElevation: Number.isFinite(baseElevation) ? baseElevation : componentCurrentBase,
         groupBaseOffsets,
         memberSet,
         members
@@ -2715,13 +2751,14 @@
       targetY,
       targetElevation,
       gateState,
-      orangeButtonsPressed
+      orangeButtonsPressed,
+      options = {}
     ) {
       if (!isInsideBoard(targetX, targetY)) {
         return false;
       }
 
-      return !terrainBlocksElevation(
+      const canEnter = !terrainBlocksElevation(
         state,
         targetX,
         targetY,
@@ -2729,6 +2766,24 @@
         gateState,
         orangeButtonsPressed
       );
+
+      if (
+        canEnter &&
+        options.blockSupportSide === true &&
+        (state.actorX[member] !== targetX || state.actorY[member] !== targetY) &&
+        terrainSupportSideBlocksWeightlessEntry(
+          state,
+          targetX,
+          targetY,
+          targetElevation,
+          gateState,
+          orangeButtonsPressed
+        )
+      ) {
+        return false;
+      }
+
+      return canEnter;
     }
 
     function weightlessMemberCanOccupy(
@@ -2750,7 +2805,8 @@
           targetY,
           targetElevation,
           gateState,
-          orangeButtonsPressed
+          orangeButtonsPressed,
+          options
         )
       ) {
         if (
@@ -2866,6 +2922,70 @@
         hasIceSlideContact ||
         weightlessClusterHasIceSlopeTransit(state, members, gateState, orangeButtonsPressed)
       );
+    }
+
+    function weightlessMemberHasCurrentSupport(
+      state,
+      member,
+      gateState,
+      orangeButtonsPressed,
+      memberSet
+    ) {
+      const x = state.actorX[member];
+      const y = state.actorY[member];
+      const elevation = actorElevation(state, member);
+
+      return (
+        terrainSupportsElevation(state, x, y, elevation, gateState, orangeButtonsPressed) ||
+        actorSupportSurfaceHeightsAt(state, x, y, memberSet, true).includes(elevation)
+      );
+    }
+
+    function settleWeightlessClusterDownOneLayer(
+      state,
+      members,
+      occupied,
+      gateState,
+      orangeButtonsPressed
+    ) {
+      const memberSet = new Set(members);
+
+      if (
+        members.some((member) =>
+          weightlessMemberHasCurrentSupport(
+            state,
+            member,
+            gateState,
+            orangeButtonsPressed,
+            memberSet
+          )
+        )
+      ) {
+        return false;
+      }
+
+      if (
+        !members.every((member) =>
+          weightlessMemberCanOccupy(
+            state,
+            member,
+            state.actorX[member],
+            state.actorY[member],
+            actorElevation(state, member) - 1,
+            occupied,
+            gateState,
+            orangeButtonsPressed
+          )
+        )
+      ) {
+        return false;
+      }
+
+      members.forEach((member) => {
+        state.actorElevation[member] -= 1;
+      });
+
+      return true;
     }
 
     function weightlessClusterStep(
@@ -3050,7 +3170,10 @@
             occupied,
             gateState,
             orangeButtonsPressed,
-            { allowIceSlopeTransit }
+            {
+              allowIceSlopeTransit,
+              blockSupportSide: step.dx !== 0 || step.dy !== 0
+            }
           );
         })
       ) {
@@ -3251,7 +3374,8 @@
                 targetY,
                 memberElevation,
                 gateState,
-                orangeButtonsPressed
+                orangeButtonsPressed,
+                { blockSupportSide: true }
               ) &&
               !(
                 canStartIceSlopeTransit &&
@@ -3523,6 +3647,66 @@
           }
         });
 
+        let settledDown = false;
+        const supportCheckMemberSet = new Set(members);
+
+        function appendSettledPathPoint() {
+          members.forEach((member) => {
+            const start = startPositionByActor.get(member);
+
+            if (!start) {
+              return;
+            }
+
+            appendPathPoints(start.path, [
+              {
+                x: state.actorX[member],
+                y: state.actorY[member],
+                elevation: actorElevation(state, member)
+              }
+            ]);
+          });
+        }
+
+        const hasPendingPuncherTrigger = members.some(
+          (member) =>
+            puncherActorAt(
+              state,
+              state.actorX[member],
+              state.actorY[member],
+              actorElevation(state, member)
+            ) !== -1
+        );
+
+        while (
+          !hasPendingPuncherTrigger &&
+          settleWeightlessClusterDownOneLayer(
+            state,
+            members,
+            occupied,
+            gateState,
+            orangeButtonsPressed
+          )
+        ) {
+          const hasSupportAfterSettling = members.some((member) =>
+            weightlessMemberHasCurrentSupport(
+              state,
+              member,
+              gateState,
+              orangeButtonsPressed,
+              supportCheckMemberSet
+            )
+          );
+          const fullyAtOrBelowFloor = members.every((member) => actorElevation(state, member) <= 0);
+
+          appendSettledPathPoint();
+          settledDown = true;
+
+          if (hasSupportAfterSettling || fullyAtOrBelowFloor) {
+            break;
+          }
+        }
+
         moved = true;
 
         if (
@@ -3530,6 +3714,10 @@
             isHole(state, state.actorX[member], state.actorY[member], actorElevation(state, member))
           )
         ) {
+          break;
+        }
+
+        if (settledDown) {
           break;
         }
 
@@ -5371,41 +5559,47 @@
           gateState,
           orangeButtonsPressed
         );
+        const componentTargetElevation = (member) =>
+          component.baseElevation +
+          (component.groupBaseOffsets.get(actorGroupIds[member]) ?? 0) +
+          (weightlessRelativeElevations[member] || 0);
         const componentMovedOrChangedElevation = component.members.some((member) => {
-          const toElevation =
-            component.baseElevation +
-            (component.groupBaseOffsets.get(actorGroupIds[member]) ?? 0) +
-            (weightlessRelativeElevations[member] || 0);
+          const toElevation = componentTargetElevation(member);
 
           return moveByActor.has(member) || (originalElevations[member] || 0) !== toElevation;
+        });
+        const componentFullyAtOrBelowFloor = component.members.every(
+          (member) => componentTargetElevation(member) <= 0
+        );
+        const componentHasTargetSupport = component.members.some((member) => {
+          const toElevation = componentTargetElevation(member);
+
+          return (
+            terrainSupportsElevation(
+              state,
+              state.actorX[member],
+              state.actorY[member],
+              toElevation,
+              gateState,
+              orangeButtonsPressed
+            ) ||
+            actorSupportSurfaceHeightsAt(
+              state,
+              state.actorX[member],
+              state.actorY[member],
+              component.memberSet,
+              true
+            ).includes(toElevation)
+          );
         });
         const shouldFallIntoHole =
           componentMovedOrChangedElevation &&
           component.members.length > 0 &&
-          component.members.every((member) => {
-            const toElevation =
-              component.baseElevation +
-              (component.groupBaseOffsets.get(actorGroupIds[member]) ?? 0) +
-              (weightlessRelativeElevations[member] || 0);
-
-            return (
-              isHole(state, state.actorX[member], state.actorY[member], toElevation) ||
-              lacksLandingSupportAtOrBelow(
-                state,
-                member,
-                toElevation,
-                gateState,
-                orangeButtonsPressed,
-                component.memberSet
-              )
-            );
-          });
+          componentFullyAtOrBelowFloor &&
+          !componentHasTargetSupport;
 
         component.members.forEach((member) => {
-          const toElevation =
-            component.baseElevation +
-            (component.groupBaseOffsets.get(actorGroupIds[member]) ?? 0) +
-            (weightlessRelativeElevations[member] || 0);
+          const toElevation = componentTargetElevation(member);
 
           if ((originalElevations[member] || 0) !== toElevation || shouldFallIntoHole) {
             const moveRecord = ensureDynamicMove(member, toElevation);
