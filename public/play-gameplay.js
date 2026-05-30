@@ -1672,12 +1672,15 @@
         return null;
       }
 
+      const isTransitionPlayer =
+        typeof app.isMainPlayerActor === "function" ? app.isMainPlayerActor : app.isPlayerActor;
+
       return (
         moveResult.moves.find(
           (move) =>
             move?.visualOnly !== true &&
             move?.toRemoved !== true &&
-            app.isPlayerActor(move.actor) &&
+            isTransitionPlayer(move.actor) &&
             (move.iceSlide === true || move.punchSlide === true)
         ) || null
       );
@@ -1688,12 +1691,15 @@
         return null;
       }
 
+      const isTransitionPlayer =
+        typeof app.isMainPlayerActor === "function" ? app.isMainPlayerActor : app.isPlayerActor;
+
       return (
         moveResult.moves.find(
           (move) =>
             move?.visualOnly !== true &&
             move?.toRemoved === true &&
-            app.isPlayerActor(move.actor) &&
+            isTransitionPlayer(move.actor) &&
             (move.iceSlide === true || move.punchSlide === true || move.levelExit === true)
         ) || null
       );
@@ -1705,6 +1711,8 @@
       }
 
       const hasDirectionFilter = Number.isInteger(dx) && Number.isInteger(dy);
+      const isTransitionPlayer =
+        typeof app.isMainPlayerActor === "function" ? app.isMainPlayerActor : app.isPlayerActor;
 
       return (
         moveResult.moves.find(
@@ -1715,7 +1723,7 @@
             (!hasDirectionFilter ||
               (move.levelExitDx === dx &&
                 move.levelExitDy === dy)) &&
-            app.isPlayerActor(move.actor)
+            isTransitionPlayer(move.actor)
         ) || null
       );
     }

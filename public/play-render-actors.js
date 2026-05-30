@@ -1042,6 +1042,36 @@
         return;
       }
 
+      if (actor.type === "clone") {
+        sceneCtx.save();
+        sceneCtx.translate(left + TILE_SIZE / 2, top + TILE_SIZE + sink);
+        sceneCtx.scale(scale, scale);
+        sceneCtx.translate(-(left + TILE_SIZE / 2), -(top + TILE_SIZE));
+        const inset = TILE_SIZE * 0.12;
+        const cloneLeft = left + inset;
+        const cloneTop = top + inset;
+        const cloneSize = TILE_SIZE - inset * 2;
+        const cloneBottom = cloneTop + cloneSize;
+        const lipHeight = Math.max(6, Math.round(TILE_SIZE * 0.12));
+
+        sceneCtx.fillStyle = "#b59a2a";
+        sceneCtx.fillRect(cloneLeft, cloneTop, cloneSize, cloneSize);
+        sceneCtx.lineWidth = 3;
+        sceneCtx.strokeStyle = "#000000";
+        sceneCtx.strokeRect(cloneLeft, cloneTop, cloneSize, cloneSize);
+        sceneCtx.fillStyle = "#8f7b21";
+        sceneCtx.fillRect(cloneLeft, cloneBottom - lipHeight, cloneSize, lipHeight);
+        sceneCtx.beginPath();
+        sceneCtx.moveTo(cloneLeft, cloneBottom - lipHeight);
+        sceneCtx.lineTo(cloneLeft + cloneSize, cloneBottom - lipHeight);
+        sceneCtx.stroke();
+        sceneCtx.restore();
+        if (clipToHole) {
+          sceneCtx.restore();
+        }
+        return;
+      }
+
       if (actor.type === "box") {
         sceneCtx.save();
         sceneCtx.translate(left + TILE_SIZE / 2, top + TILE_SIZE + sink);

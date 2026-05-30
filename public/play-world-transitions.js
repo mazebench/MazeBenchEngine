@@ -19,6 +19,7 @@
       cloneActorPositions,
       cloneTerrainState,
       isPlayerActor,
+      isMainPlayerActor,
       actorElevation,
       computeRaisedPlayerGateSet,
       computeRaisedOrangeWallSet,
@@ -35,6 +36,10 @@
       startLevelTransition
     } = renderCompositor;
     const transitionWarmups = new Map();
+    const isTransitionPlayerActor =
+      typeof isMainPlayerActor === "function"
+        ? isMainPlayerActor
+        : (actor) => isPlayerActor(actor) && actor?.type !== "clone";
 
     function cloneStoredLevelSnapshot(snapshot) {
       if (!snapshot) {
@@ -77,7 +82,7 @@
     }
 
     function playerStartForLevelState(levelState, preferredType = null) {
-      const players = (levelState?.actors || []).filter((actor) => isPlayerActor(actor));
+      const players = (levelState?.actors || []).filter((actor) => isTransitionPlayerActor(actor));
 
       if (players.length === 0) {
         return null;
@@ -792,7 +797,7 @@
     }
 
     function edgeTransitionForMove(dx, dy) {
-      const players = state.actors.filter((actor) => isPlayerActor(actor) && !actor.removed);
+      const players = state.actors.filter((actor) => isTransitionPlayerActor(actor) && !actor.removed);
 
       if (players.length !== 1) {
         return null;
@@ -984,7 +989,7 @@
       };
 
       nextLevelState.actors = [
-        ...(nextLevelState.actors || []).filter((actor) => !isPlayerActor(actor)),
+        ...(nextLevelState.actors || []).filter((actor) => !isTransitionPlayerActor(actor)),
         transferredPlayer
       ];
 
@@ -1115,7 +1120,7 @@
         };
 
         nextLevelState.actors = [
-          ...(nextLevelState.actors || []).filter((actor) => !isPlayerActor(actor)),
+          ...(nextLevelState.actors || []).filter((actor) => !isTransitionPlayerActor(actor)),
           transferredPlayer
         ];
 
@@ -1142,7 +1147,7 @@
           incomingRaisedPlayerGates,
           incomingRaisedOrangeWalls
         );
-        const incomingPlayer = state.actors.find((actor) => isPlayerActor(actor) && !actor.removed) || null;
+        const incomingPlayer = state.actors.find((actor) => isTransitionPlayerActor(actor) && !actor.removed) || null;
         const durationMs = Number.isFinite(transition.durationMs)
           ? Math.max(1, transition.durationMs)
           : app.LEVEL_TRANSITION_DURATION_MS || 1000;

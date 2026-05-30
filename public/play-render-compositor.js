@@ -15,6 +15,7 @@
     const {
       clamp,
       isCollectibleActor,
+      isMainPlayerActor,
       isPlayerActor,
       actorRenderElevation,
       easeInOutQuad
@@ -36,6 +37,12 @@
       }
 
       canvas.__pixelGameTextureVersion = (canvas.__pixelGameTextureVersion || 0) + 1;
+    }
+
+    function isTransitionHiddenPlayer(actor) {
+      return typeof isMainPlayerActor === "function"
+        ? isMainPlayerActor(actor)
+        : isPlayerActor(actor) && actor?.type !== "clone";
     }
 
     function drawViewportFromScene(
@@ -428,14 +435,14 @@
       let outgoingCameraX = transition.fromScene?.cameraX ?? 0;
       let outgoingCameraY = transition.fromScene?.cameraY ?? 0;
       const incomingCanvas = captureViewportSnapshot({
-        skipActorsPredicate: (actor) => isPlayerActor(actor)
+        skipActorsPredicate: isTransitionHiddenPlayer
       }, now);
       const incomingForegroundCanvas =
         transition.player?.targetActor
           ? captureForegroundOccluderSnapshot(
               {
                 occludingActor: transition.player.targetActor,
-                skipActorsPredicate: (actor) => isPlayerActor(actor)
+                skipActorsPredicate: isTransitionHiddenPlayer
               },
               now
             )

@@ -242,6 +242,7 @@ function createMazeLevelService({
     return (
       type === "player" ||
       type === "circle_player" ||
+      type === "clone" ||
       type === "box" ||
       type === "gem" ||
       type === "floating_floor" ||
@@ -257,6 +258,7 @@ function createMazeLevelService({
     return (
       type === "player" ||
       type === "circle_player" ||
+      type === "clone" ||
       type === "box" ||
       type === "floating_floor" ||
       type === "weightless_box"
@@ -489,7 +491,11 @@ function createMazeLevelService({
         cellStack.actors.forEach(({ definition, elevation }) => {
           actors.push({
             type: definitionType(definition),
-            groupId: definitionType(definition) === "weightless_box" ? definition.token : null,
+            groupId:
+              definitionType(definition) === "weightless_box" ||
+              definitionType(definition) === "clone"
+                ? definition.token
+                : null,
             label: definition.label,
             imageUrl: definition.imageUrl,
             modelUrl: definition.modelUrl,

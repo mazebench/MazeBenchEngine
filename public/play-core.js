@@ -1539,8 +1539,16 @@
       return actor.type === "weightless_box" ? `weightless:${actor.groupId}` : actor;
     }
 
-    function isPlayerActorType(type) {
+    function isMainPlayerActorType(type) {
       return type === "player" || type === "circle_player";
+    }
+
+    function isPlayerActorType(type) {
+      return isMainPlayerActorType(type) || type === "clone";
+    }
+
+    function isMainPlayerActor(actor) {
+      return isMainPlayerActorType(actor?.type);
     }
 
     function isPlayerActor(actor) {
@@ -2735,6 +2743,7 @@
           other &&
           (other.type === "player" ||
             other.type === "circle_player" ||
+            other.type === "clone" ||
             other.type === "box" ||
             other.type === "floating_floor" ||
             other.type === "weightless_box") &&
@@ -2971,6 +2980,8 @@
       actorsAt,
       actorAt,
       pushEntityKey,
+      isMainPlayerActorType,
+      isMainPlayerActor,
       isPlayerActorType,
       isPlayerActor,
       actorElevation,

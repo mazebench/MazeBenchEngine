@@ -3,6 +3,7 @@
   const actorNames = new Set([
     "player",
     "circle_player",
+    "clone",
     "box",
     "gem",
     "floating_floor",
@@ -13,6 +14,7 @@
   const supportActorNames = new Set([
     "player",
     "circle_player",
+    "clone",
     "box",
     "floating_floor",
     "weightless_box"
@@ -730,7 +732,10 @@
 
             actors.push({
               type: toolType(tool),
-              groupId: toolType(tool) === "weightless_box" ? tool.token : null,
+              groupId:
+                toolType(tool) === "weightless_box" || toolType(tool) === "clone"
+                  ? tool.token
+                  : null,
               label: tool.label,
               imageUrl: tool.imageUrl || null,
               modelUrl: tool.modelUrl || null,

@@ -37,8 +37,16 @@
     return typeof actor?.type === "string" ? actor.type : "";
   }
 
-  function isPlayerType(type) {
+  function isMainPlayerType(type) {
     return type === "player" || type === "circle_player";
+  }
+
+  function isPlayerType(type) {
+    return isMainPlayerType(type) || type === "clone";
+  }
+
+  function isCloneType(type) {
+    return type === "clone";
   }
 
   function isCollectibleType(type) {
@@ -57,6 +65,7 @@
     return (
       type === "player" ||
       type === "circle_player" ||
+      type === "clone" ||
       type === "box" ||
       type === "floating_floor" ||
       type === "weightless_box"
@@ -465,6 +474,14 @@
 
     function isPlayerActor(actorIndex) {
       return isPlayerType(actorTypes[actorIndex]);
+    }
+
+    function isCloneActor(actorIndex) {
+      return isCloneType(actorTypes[actorIndex]);
+    }
+
+    function isMainPlayerActor(actorIndex) {
+      return isMainPlayerType(actorTypes[actorIndex]);
     }
 
     function isCollectibleActor(actorIndex) {
@@ -1864,26 +1881,53 @@
     }
 
     function pushEntityKey(actorIndex) {
-      return actorTypes[actorIndex] === "weightless_box"
-        ? `weightless:${actorGroupIds[actorIndex]}`
-        : `actor:${actorIndex}`;
+      if (actorTypes[actorIndex] === "weightless_box") {
+        return `weightless:${actorGroupIds[actorIndex]}`;
+      }
+
+      if (isCloneActor(actorIndex)) {
+        return `clone:${actorGroupIds[actorIndex] || ""}`;
+      }
+
+      return `actor:${actorIndex}`;
     }
 
     function pushActorMembers(state, actorIndex) {
-      if (actorTypes[actorIndex] !== "weightless_box") {
-        return [actorIndex];
+      if (actorTypes[actorIndex] === "weightless_box") {
+        return weightlessGroupMembers(state, actorGroupIds[actorIndex]);
       }
 
-      return weightlessGroupMembers(state, actorGroupIds[actorIndex]);
+      if (isCloneActor(actorIndex)) {
+        return cloneGroupMembers(state, actorGroupIds[actorIndex]);
+      }
+
+      return [actorIndex];
     }
 
-    function weightlessGroupMembers(state, groupId) {
+    function cloneGroupMembers(state, groupId) {
+      const members = [];
+      const normalizedGroupId = groupId || "";
+
+      for (let index = 0; index < actorCount; index += 1) {
+        if (
+          !state.actorRemoved[index] &&
+          isCloneActor(index) &&
+          (actorGroupIds[index] || "") === normalizedGroupId
+        ) {
+          members.push(index);
+        }
+      }
+
+      return members;
+    }
+
+    function weightlessGroupMembers(state, groupId, actorType = "weightless_box") {
       const members = [];
 
       for (let index = 0; index < actorCount; index += 1) {
         if (
           !state.actorRemoved[index] &&
-          actorTypes[index] === "weightless_box" &&
+          actorTypes[index] === actorType &&
           actorGroupIds[index] === groupId
         ) {
           members.push(index);
@@ -1893,14 +1937,14 @@
       return members;
     }
 
-    function weightlessClusterMembers(state, groupIds) {
+    function weightlessClusterMembers(state, groupIds, actorType = "weightless_box") {
       const groupIdSet = new Set(groupIds);
       const members = [];
 
       for (let index = 0; index < actorCount; index += 1) {
         if (
           !state.actorRemoved[index] &&
-          actorTypes[index] === "weightless_box" &&
+          actorTypes[index] === actorType &&
           groupIdSet.has(actorGroupIds[index])
         ) {
           members.push(index);
@@ -3489,9 +3533,10 @@
       gateState,
       orangeButtonsPressed,
       searchMode,
-      pushContext = null
+      pushContext = null,
+      actorType = "weightless_box"
     ) {
-      const members = weightlessClusterMembers(state, groupIds);
+      const members = weightlessClusterMembers(state, groupIds, actorType);
 
       if (members.length === 0) {
         return false;
@@ -4469,7 +4514,10 @@
     }
 
     function punchFrontSortValue(state, actorIndex, dx, dy) {
-      const members = isPushableActor(actorIndex) ? pushActorMembers(state, actorIndex) : [actorIndex];
+      const members =
+        isPushableActor(actorIndex) || isCloneActor(actorIndex)
+          ? pushActorMembers(state, actorIndex)
+          : [actorIndex];
 
       return members.reduce((front, member) => {
         const value = state.actorX[member] * dx + state.actorY[member] * dy;
@@ -4479,7 +4527,9 @@
     }
 
     function punchTriggerMembers(state, actorIndex) {
-      return isPushableActor(actorIndex) ? pushActorMembers(state, actorIndex) : [actorIndex];
+      return isPushableActor(actorIndex) || isCloneActor(actorIndex)
+        ? pushActorMembers(state, actorIndex)
+        : [actorIndex];
     }
 
     function collectPunchTrainMembers(state, actorIndex, dx, dy) {
@@ -4488,7 +4538,9 @@
       const entityKeys = new Set();
 
       function entityKeyForPunchActor(actor) {
-        return isPushableActor(actor) ? pushEntityKey(actor) : `actor:${actor}`;
+        return isPushableActor(actor) || isCloneActor(actor)
+          ? pushEntityKey(actor)
+          : `actor:${actor}`;
       }
 
       function addActorEntity(actor) {
@@ -5690,7 +5742,7 @@
         }
       }
 
-      return players.sort((left, right) => {
+      const sortedPlayers = players.sort((left, right) => {
         if (dx > 0) {
           return state.actorX[right] - state.actorX[left] || state.actorY[left] - state.actorY[right];
         }
@@ -5701,6 +5753,22 @@
           return state.actorY[right] - state.actorY[left] || state.actorX[left] - state.actorX[right];
         }
         return state.actorY[left] - state.actorY[right] || state.actorX[left] - state.actorX[right];
+      });
+      const seenCloneGroups = new Set();
+
+      return sortedPlayers.filter((actorIndex) => {
+        if (!isCloneActor(actorIndex)) {
+          return true;
+        }
+
+        const groupKey = actorGroupIds[actorIndex] || "";
+
+        if (seenCloneGroups.has(groupKey)) {
+          return false;
+        }
+
+        seenCloneGroups.add(groupKey);
+        return true;
       });
     }
 
@@ -5724,6 +5792,25 @@
         const fromX = state.actorX[player];
         const fromY = state.actorY[player];
         const fromElevation = actorElevation(state, player);
+        const canExitLevel = isMainPlayerActor(player);
+
+        if (isCloneActor(player)) {
+          moveWeightlessCluster(
+            state,
+            [actorGroupIds[player] || ""],
+            dx,
+            dy,
+            occupied,
+            moves,
+            raisedPlayerGates,
+            orangeButtonsPressed,
+            searchMode,
+            null,
+            "clone"
+          );
+          return;
+        }
+
         removeOccupiedAtElevation(occupied, fromX, fromY, fromElevation);
 
         let nextX = fromX;
@@ -5762,12 +5849,16 @@
             appendPathPoints(travelPath, startSlopeTraversal.path);
 
             if (startSlopeTraversal.levelExit === true) {
-              levelExit = {
-                dx: startSlopeTraversal.levelExitDx,
-                dy: startSlopeTraversal.levelExitDy,
-                elevation: startSlopeTraversal.levelExitElevation,
-                sourceType: startSlopeTraversal.levelExitSourceType
-              };
+              if (canExitLevel) {
+                levelExit = {
+                  dx: startSlopeTraversal.levelExitDx,
+                  dy: startSlopeTraversal.levelExitDy,
+                  elevation: startSlopeTraversal.levelExitElevation,
+                  sourceType: startSlopeTraversal.levelExitSourceType
+                };
+              } else {
+                stopAfterStartSlope = true;
+              }
             } else if (
               !isIce(state, nextX, nextY, travelElevation, raisedPlayerGates, orangeButtonsPressed)
             ) {
@@ -5788,12 +5879,14 @@
 
           if (continuePunchSlide) {
             if (!isInsideBoard(targetX, targetY)) {
-              levelExit = {
-                dx: stepDx,
-                dy: stepDy,
-                elevation: travelElevation,
-                sourceType: "punch"
-              };
+              if (canExitLevel) {
+                levelExit = {
+                  dx: stepDx,
+                  dy: stepDy,
+                  elevation: travelElevation,
+                  sourceType: "punch"
+                };
+              }
               break;
             }
 
@@ -6228,12 +6321,16 @@
           } else if (canTraverseSlope) {
             travelPath.push(...slopeTraversal.path);
             if (slopeTraversal.levelExit === true) {
-              levelExit = {
-                dx: slopeTraversal.levelExitDx,
-                dy: slopeTraversal.levelExitDy,
-                elevation: slopeTraversal.levelExitElevation,
-                sourceType: slopeTraversal.levelExitSourceType
-              };
+              if (canExitLevel) {
+                levelExit = {
+                  dx: slopeTraversal.levelExitDx,
+                  dy: slopeTraversal.levelExitDy,
+                  elevation: slopeTraversal.levelExitElevation,
+                  sourceType: slopeTraversal.levelExitSourceType
+                };
+              } else {
+                stopAfterStartSlope = true;
+              }
             }
           } else {
             travelPath.push({
