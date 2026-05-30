@@ -725,7 +725,7 @@
           orangeButtonsPressed
         );
 
-        return surfaceHeight !== null && elevation < surfaceHeight;
+        return surfaceHeight !== null && elevation >= surfaceHeight - 1 && elevation < surfaceHeight;
       });
     }
 
