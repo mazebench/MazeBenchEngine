@@ -3252,6 +3252,41 @@
         return true;
       }
 
+      const canSettleAfterUnsupportedStep =
+        (Array.isArray(step.pathOffsets) && step.pathOffsets.length > 0) ||
+        members.some((member) => {
+          const currentX = state.actorX[member];
+          const currentY = state.actorY[member];
+          const currentElevation = actorElevation(state, member);
+          const targetX = currentX + step.dx;
+          const targetY = currentY + step.dy;
+          const targetElevation = currentElevation + step.elevation;
+
+          return (
+            isIce(state, currentX, currentY, currentElevation, gateState, orangeButtonsPressed) ||
+            terrainBlocksOnlyByIceSlope(
+              state,
+              currentX,
+              currentY,
+              currentElevation,
+              gateState,
+              orangeButtonsPressed
+            ) ||
+            terrainBlocksOnlyByIceSlope(
+              state,
+              targetX,
+              targetY,
+              targetElevation,
+              gateState,
+              orangeButtonsPressed
+            )
+          );
+        });
+
+      if (!canSettleAfterUnsupportedStep) {
+        return false;
+      }
+
       const canSettleDown = members.every((member) => {
         const targetX = state.actorX[member] + step.dx;
         const targetY = state.actorY[member] + step.dy;
