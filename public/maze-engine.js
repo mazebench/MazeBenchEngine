@@ -768,10 +768,18 @@
       }
 
       const cell = cellIndex(x, y);
-      return (
-        state.terrain[cell] === terrainTypes.empty &&
-        terrainLayersForCell(state, cell).length === 0
-      );
+      const layers = terrainLayersForCell(state, cell);
+
+      return !layers.some((layer) => {
+        if (layer.type === terrainTypes.hole || layer.type === terrainTypes.orange_button) {
+          return false;
+        }
+
+        return (
+          terrainLayerSurfaceHeight(state, cell, layer, new Set(), false) === elevation ||
+          terrainLayerBlocksElevation(state, cell, layer, new Set(), false, elevation)
+        );
+      });
     }
 
     function terrainLayersOfType(x, y, type) {
@@ -1550,6 +1558,22 @@
       return actorSupportSurfaceHeightsAt(state, x, y, ignoredActors, includePlayers).includes(elevation);
     }
 
+    function surfaceSupportsElevation(
+      state,
+      x,
+      y,
+      elevation,
+      gateState,
+      orangeButtonsPressed,
+      ignoredActors = null,
+      includePlayers = false
+    ) {
+      return (
+        terrainSupportsElevation(state, x, y, elevation, gateState, orangeButtonsPressed) ||
+        actorSupportsElevation(state, x, y, elevation, ignoredActors, includePlayers)
+      );
+    }
+
     function canPlayerStandAtElevation(
       state,
       x,
@@ -1564,8 +1588,16 @@
       }
 
       return (
-        terrainSupportsElevation(state, x, y, elevation, gateState, orangeButtonsPressed) ||
-        actorSupportsElevation(state, x, y, elevation, ignoredActors, false)
+        surfaceSupportsElevation(
+          state,
+          x,
+          y,
+          elevation,
+          gateState,
+          orangeButtonsPressed,
+          ignoredActors,
+          false
+        )
       );
     }
 
@@ -5556,9 +5588,20 @@
           state.actorY[move.actorIndex],
           toElevation
         );
+        const actorHasSurfaceSupport = surfaceSupportsElevation(
+          state,
+          state.actorX[move.actorIndex],
+          state.actorY[move.actorIndex],
+          toElevation,
+          gateState,
+          orangeButtonsPressed,
+          new Set([move.actorIndex]),
+          true
+        );
+        const actorIsOnUnsupportedHole = actorIsOnHole && !actorHasSurfaceSupport;
         const actorIsOverOpenPit =
           (move.punchSlide === true || move.iceSlipOff === true) &&
-          !actorIsOnHole &&
+          !actorIsOnUnsupportedHole &&
           lacksLandingSupportAtOrBelow(
             state,
             move.actorIndex,
@@ -5568,7 +5611,7 @@
           );
 
         if (
-          (actorIsOnHole || actorIsOverOpenPit) &&
+          (actorIsOnUnsupportedHole || actorIsOverOpenPit) &&
           (!isPlayerType(move.actorType) || actorIsOverOpenPit || toElevation === 0)
         ) {
           move.toRemoved = true;
@@ -6654,15 +6697,30 @@
           } else if (iceSlipLanding) {
             toElevation = iceSlipLanding.toElevation;
           } else {
-            toElevation =
-              playerSurfaceHeightAt(
-                state,
-                nextX,
-                nextY,
-                raisedPlayerGates,
-                orangeButtonsPressed,
-                travelElevation
-              ) ?? travelElevation;
+            const canStandAtTravelElevation = canPlayerStandAtElevation(
+              state,
+              nextX,
+              nextY,
+              travelElevation,
+              raisedPlayerGates,
+              orangeButtonsPressed,
+              ignoredPlayerSet
+            );
+
+            if (isHole(state, nextX, nextY, travelElevation) && !canStandAtTravelElevation) {
+              toElevation = travelElevation;
+            } else {
+              toElevation =
+                playerSurfaceHeightAt(
+                  state,
+                  nextX,
+                  nextY,
+                  raisedPlayerGates,
+                  orangeButtonsPressed,
+                  travelElevation,
+                  ignoredPlayerSet
+                ) ?? travelElevation;
+            }
           }
 
           const pathEndElevation = travelPath[travelPath.length - 1]?.elevation ?? travelElevation;
