@@ -3241,7 +3241,11 @@
       }
 
       const edgeTransition =
-        typeof app.edgeTransitionForMove === "function" ? app.edgeTransitionForMove(dx, dy) : null;
+        options.skipEdgeTransition === true
+          ? null
+          : typeof app.edgeTransitionForMove === "function"
+            ? app.edgeTransitionForMove(dx, dy)
+            : null;
 
       if (edgeTransition) {
         const shouldContinue = isSlideContinuationSurface(edgeTransition.sourceType);
@@ -3272,9 +3276,14 @@
             undoGroupId: app.activeUndoGroupId || null
           })
         ).then((didTransition) => {
-          if (shouldContinue && didTransition === false) {
-            finishMoveUndoGroup();
-            runQueuedAction();
+          if (didTransition === false) {
+            if (shouldContinue) {
+              finishMoveUndoGroup();
+            }
+            movePlayers(dx, dy, {
+              ...options,
+              skipEdgeTransition: true
+            });
           }
         });
         return;

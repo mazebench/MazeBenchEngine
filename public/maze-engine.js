@@ -1089,6 +1089,76 @@
       return null;
     }
 
+    function cloneRidersForMove(state, members, dx, dy, gateState, orangeButtonsPressed) {
+      const riders = [];
+      const memberSet = new Set(members);
+      const riderIndexes = new Set();
+
+      for (const member of members) {
+        const supportX = state.actorX[member];
+        const supportY = state.actorY[member];
+        const supportElevation = actorElevation(state, member);
+
+        for (let actor = 0; actor < actorCount; actor += 1) {
+          if (
+            riderIndexes.has(actor) ||
+            state.actorRemoved[actor] ||
+            !isMainPlayerActor(actor) ||
+            state.actorX[actor] !== supportX ||
+            state.actorY[actor] !== supportY ||
+            actorElevation(state, actor) !== supportElevation + 1
+          ) {
+            continue;
+          }
+
+          const targetX = state.actorX[actor] + dx;
+          const targetY = state.actorY[actor] + dy;
+          const targetElevation = actorElevation(state, actor);
+          const ignoredActors = new Set(memberSet);
+          ignoredActors.add(actor);
+
+          if (
+            !isInsideBoard(targetX, targetY) ||
+            terrainBlocksElevation(
+              state,
+              targetX,
+              targetY,
+              targetElevation,
+              gateState,
+              orangeButtonsPressed
+            )
+          ) {
+            continue;
+          }
+
+          const blocker = actorAt(
+            state,
+            targetX,
+            targetY,
+            (candidate) =>
+              !ignoredActors.has(candidate) &&
+              !isNonBlockingActor(candidate) &&
+              actorElevation(state, candidate) === targetElevation
+          );
+
+          if (blocker !== -1) {
+            continue;
+          }
+
+          riders.push({
+            actorIndex: actor,
+            fromElevation: targetElevation,
+            fromX: state.actorX[actor],
+            fromY: state.actorY[actor],
+            supportMember: member
+          });
+          riderIndexes.add(actor);
+        }
+      }
+
+      return riders;
+    }
+
     function pathOffsetsForTraversal(traversal, fromX, fromY, fromElevation) {
       return traversal.path.map((point) => ({
         dx: point.x - fromX,
@@ -3575,7 +3645,8 @@
       orangeButtonsPressed,
       searchMode,
       pushContext = null,
-      actorType = "weightless_box"
+      actorType = "weightless_box",
+      options = {}
     ) {
       const members = weightlessClusterMembers(state, groupIds, actorType);
 
@@ -3599,6 +3670,10 @@
       const startPositionByActor = new Map(
         startPositions.map((position) => [position.actorIndex, position])
       );
+      const carriedRiders =
+        Array.isArray(options.carriedRiders) && options.carriedRiders.length > 0
+          ? options.carriedRiders
+          : [];
       members.forEach((member) => {
         removeOccupiedAtElevation(
           occupied,
@@ -3607,8 +3682,17 @@
           actorElevation(state, member)
         );
       });
+      carriedRiders.forEach((rider) => {
+        removeOccupiedAtElevation(
+          occupied,
+          rider.fromX,
+          rider.fromY,
+          rider.fromElevation
+        );
+      });
       const ignoredActors = new Set(pushContext?.ignoredActors || []);
       members.forEach((member) => ignoredActors.add(member));
+      carriedRiders.forEach((rider) => ignoredActors.add(rider.actorIndex));
 
       let moved = false;
       let stepDx = dx;
@@ -3869,6 +3953,9 @@
         startPositions.forEach(({ fromElevation, fromX, fromY }) => {
           addOccupiedAtElevation(occupied, fromX, fromY, fromElevation);
         });
+        carriedRiders.forEach((rider) => {
+          addOccupiedAtElevation(occupied, rider.fromX, rider.fromY, rider.fromElevation);
+        });
         return false;
       }
 
@@ -3911,6 +3998,58 @@
           state.actorY[member],
           actorElevation(state, member)
         );
+      });
+
+      carriedRiders.forEach((rider) => {
+        const supportMove = moves
+          .slice(options.moveStartIndex || 0)
+          .find((move) => move.actorIndex === rider.supportMember && !move.visualOnly);
+
+        if (!supportMove) {
+          addOccupiedAtElevation(occupied, rider.fromX, rider.fromY, rider.fromElevation);
+          return;
+        }
+
+        const path = moveRecordPathPoints(supportMove).map((point) => ({
+          x: point.x,
+          y: point.y,
+          elevation: point.elevation + 1
+        }));
+        const toX = supportMove.toX;
+        const toY = supportMove.toY;
+        const toElevation = (supportMove.toElevation ?? rider.fromElevation - 1) + 1;
+        const moveRecord = {
+          actorIndex: rider.actorIndex,
+          actorType: actorTypes[rider.actorIndex],
+          fromElevation: rider.fromElevation,
+          fromX: rider.fromX,
+          fromY: rider.fromY,
+          toElevation,
+          toX,
+          toY
+        };
+
+        if (path.length > 2 || path.some((point) => point.elevation !== rider.fromElevation)) {
+          moveRecord.path = path;
+          moveRecord.pathControlsElevation = path.some(
+            (point) => point.elevation !== rider.fromElevation
+          );
+          moveRecord.pathEndElevation = path[path.length - 1]?.elevation ?? toElevation;
+        }
+
+        if (!searchMode && supportMove.iceSlide === true) {
+          moveRecord.iceSlide = true;
+        }
+
+        state.actorX[rider.actorIndex] = toX;
+        state.actorY[rider.actorIndex] = toY;
+        state.actorElevation[rider.actorIndex] = toElevation;
+        moves.push(moveRecord);
+        addOccupiedAtElevation(occupied, toX, toY, toElevation);
+
+        if (options.carriedPlayers instanceof Set) {
+          options.carriedPlayers.add(rider.actorIndex);
+        }
       });
 
       return true;
@@ -5868,14 +6007,30 @@
       const originalActorY = new Int16Array(state.actorY);
       const originalActorElevation = new Int16Array(state.actorElevation);
       const continuePunchSlide = options.continuePunchSlide === true;
+      const carriedPlayers = new Set();
 
       orderedPlayers.forEach((player) => {
+        if (carriedPlayers.has(player)) {
+          return;
+        }
+
         const fromX = state.actorX[player];
         const fromY = state.actorY[player];
         const fromElevation = actorElevation(state, player);
         const canExitLevel = isMainPlayerActor(player);
 
         if (isCloneActor(player)) {
+          const members = cloneGroupMembers(state, actorGroupIds[player]);
+          const carriedRiders = cloneRidersForMove(
+            state,
+            members,
+            dx,
+            dy,
+            raisedPlayerGates,
+            orangeButtonsPressed
+          );
+          const moveStartIndex = moves.length;
+
           moveWeightlessCluster(
             state,
             [actorGroupIds[player] || ""],
@@ -5887,7 +6042,12 @@
             orangeButtonsPressed,
             searchMode,
             null,
-            "clone"
+            "clone",
+            {
+              carriedPlayers,
+              carriedRiders,
+              moveStartIndex
+            }
           );
           return;
         }

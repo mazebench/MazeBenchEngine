@@ -266,6 +266,32 @@ function createState(playData) {
 
 {
   const { engine, state } = createState({
+    width: 3,
+    height: 2,
+    terrain: floorTerrain(3, 2),
+    actors: [
+      { type: "player", x: 1, y: 0, elevation: 1, removed: false },
+      { type: "clone", groupId: "c0", x: 1, y: 0, elevation: 0, removed: false },
+      { type: "clone", groupId: "c0", x: 2, y: 0, elevation: 0, removed: false },
+      { type: "clone", groupId: "c0", x: 1, y: 1, elevation: 0, removed: false },
+      { type: "clone", groupId: "c0", x: 2, y: 1, elevation: 0, removed: false },
+      { type: "clone", groupId: "c0", x: 2, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, -1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorY[0], state.actorElevation[0]], [0, 0, 1]);
+  assert.deepEqual([state.actorX[1], state.actorY[1], state.actorElevation[1]], [0, 0, 0]);
+  assert.deepEqual([state.actorX[2], state.actorY[2], state.actorElevation[2]], [1, 0, 0]);
+  assert.deepEqual([state.actorX[3], state.actorY[3], state.actorElevation[3]], [0, 1, 0]);
+  assert.deepEqual([state.actorX[4], state.actorY[4], state.actorElevation[4]], [1, 1, 0]);
+  assert.deepEqual([state.actorX[5], state.actorY[5], state.actorElevation[5]], [1, 0, 1]);
+}
+
+{
+  const { engine, state } = createState({
     width: 2,
     height: 1,
     terrain: [[{ type: "floor" }, playerLiftLayer(0, false)]],
