@@ -23,6 +23,7 @@ function createRequestRouter({
   publicFileRoutes,
   readJsonBody,
   renderAuthorPage,
+  renderFlyoverPage,
   renderGamePage,
   renderHomePage,
   renderNotFound,
@@ -156,6 +157,48 @@ function createRequestRouter({
       }
 
       sendRedirect(response, `/play/${encodeURIComponent(game.id)}/${encodeURIComponent(levelId)}`);
+      return;
+    }
+
+    if (segments.length === 2 && segments[0] === "flyover") {
+      const game = getGame(segments[1]);
+      if (!game || game.id !== "maze") {
+        sendHtml(response, 404, renderNotFound());
+        return;
+      }
+
+      const levelId = defaultLevelIdForGame(game);
+      if (!levelId) {
+        sendHtml(response, 404, renderNotFound());
+        return;
+      }
+
+      sendRedirect(response, `/flyover/${encodeURIComponent(game.id)}/${encodeURIComponent(levelId)}`);
+      return;
+    }
+
+    if (segments.length === 3 && segments[0] === "flyover") {
+      const game = getGame(segments[1]);
+      if (!game || game.id !== "maze") {
+        sendHtml(response, 404, renderNotFound());
+        return;
+      }
+
+      if (!isMazeWorldLevelId(segments[2])) {
+        sendRedirect(
+          response,
+          `/flyover/${encodeURIComponent(game.id)}/${encodeURIComponent(defaultLevelIdForGame(game))}`
+        );
+        return;
+      }
+
+      const level = getLevel(game, segments[2]);
+      if (!level) {
+        sendHtml(response, 404, renderNotFound());
+        return;
+      }
+
+      sendHtml(response, 200, renderFlyoverPage(game, level));
       return;
     }
 

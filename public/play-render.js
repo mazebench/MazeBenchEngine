@@ -88,6 +88,14 @@
       });
     }
 
+    function resetFrameTimingStats() {
+      frameTimingStats.samples.length = 0;
+      frameTimingStats.active = false;
+      lastMeasuredFrameNow = 0;
+      lastPublishedFrameSampleCount = -1;
+      publishFrameTimingStats(true);
+    }
+
     function hasActiveFrameMotion() {
       return Boolean(
         app.isAnimating ||
@@ -96,7 +104,8 @@
           app.cameraFrameId !== null ||
           app.gateAnimationFrameId !== null ||
           app.orangeWallAnimationFrameId !== null ||
-          app.playerLiftAnimationFrameId !== null
+          app.playerLiftAnimationFrameId !== null ||
+          app.isFlyoverMode
       );
     }
 
@@ -151,7 +160,8 @@
           app.cameraFrameId !== null ||
           app.gateAnimationFrameId !== null ||
           app.orangeWallAnimationFrameId !== null ||
-          app.playerLiftAnimationFrameId !== null
+          app.playerLiftAnimationFrameId !== null ||
+          app.isFlyoverMode
       );
 
       if (!hasActiveMotion) {
@@ -222,6 +232,11 @@
       }
 
       renderCompositor.drawScene(now);
+
+      if (app.isFlyoverMode && app.threeRenderer?.usesDirectCanvas?.()) {
+        return;
+      }
+
       const settings = app.getEffectSettings();
       const sourceCanvas = renderCompositor.composeViewportSource();
 
@@ -235,7 +250,8 @@
     }
 
     Object.assign(app, {
-      render
+      render,
+      resetFrameTimingStats
     });
   };
 })();

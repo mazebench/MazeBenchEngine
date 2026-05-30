@@ -36,6 +36,7 @@ const PUBLIC_FILE_ROUTES = new Map(
     "/play-movement.js",
     "/play-world-transitions.js",
     "/play-gameplay.js",
+    "/flyover.js",
     "/maze-engine.js",
     "/maze-solver.js",
     "/author-play-data.js",
@@ -249,6 +250,7 @@ function sendFile(response, filePath, contentType) {
 
 const {
   renderAuthorPage,
+  renderFlyoverPage,
   renderGamePage,
   renderHomePage,
   renderNotFound,
@@ -284,6 +286,7 @@ const { handleRequest } = createRequestRouter({
   publicFileRoutes: PUBLIC_FILE_ROUTES,
   readJsonBody,
   renderAuthorPage,
+  renderFlyoverPage,
   renderGamePage,
   renderHomePage,
   renderNotFound,

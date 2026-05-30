@@ -14,6 +14,7 @@
     let lastHeight = 0;
     let lastSceneSignature = "";
     let lastSceneContentSignature = "";
+    let lastShadowSceneSignature = "";
     let lastCameraFitSignature = "";
     let lastCameraFitHeight = 0;
     let hasRenderedScene = false;
@@ -58,7 +59,7 @@
     const debugCameraSideTilt = Math.PI / 2;
     const debugCameraTiltHoldDurationMs = 500;
     const debugCameraMinZoom = 0.55;
-    const debugCameraMaxZoom = 2.4;
+    const debugCameraMaxZoom = 10;
     const debugCameraZoomStep = 1.14;
     const neighboringRoomBrightness = 0.62;
     const geometryCache = new Map();
@@ -95,6 +96,7 @@
     function invalidateSceneCache() {
       lastSceneSignature = "";
       lastSceneContentSignature = "";
+      lastShadowSceneSignature = "";
       hasRenderedScene = false;
     }
 
@@ -188,6 +190,10 @@
     }
 
     function renderContextCastsShadows() {
+      if (app.isFlyoverMode) {
+        return false;
+      }
+
       return renderContextOpacity() > 0.62 && renderContextBrightness() > 0.72;
     }
 
@@ -204,6 +210,31 @@
 
     function cameraIsPerspective() {
       return cameraMode === "perspective";
+    }
+
+    function perspectiveCameraFarPlane() {
+      if (!app.isFlyoverMode) {
+        return 8000;
+      }
+
+      if (app.flyoverWholeWorld === true && app.flyoverWorldBounds) {
+        const bounds = app.flyoverWorldBounds;
+        const span = Math.max(
+          Number(bounds.maxX) - Number(bounds.minX),
+          Number(bounds.maxZ) - Number(bounds.minZ),
+          app.boardRect.width,
+          app.boardRect.height
+        );
+
+        return Math.max(24000, span * 8);
+      }
+
+      return Math.max(
+        24000,
+        (surroundingLevelRadius() * 2 + 1) *
+          Math.max(app.boardRect.width, app.boardRect.height) *
+          4
+      );
     }
 
     function updateCameraModeToggle() {
@@ -279,7 +310,7 @@
       }
 
       camera = cameraIsPerspective()
-        ? new THREE.PerspectiveCamera(34, 1, 1, 8000)
+        ? new THREE.PerspectiveCamera(34, 1, 1, perspectiveCameraFarPlane())
         : new THREE.OrthographicCamera();
       syncRendererSize();
     }
@@ -408,13 +439,23 @@
         return `camera:${cameraMode}:default`;
       }
 
-      return [
+      const parts = [
         "camera",
         cameraMode,
         Math.round(debugCameraYaw * 1000),
         Math.round(debugCameraTilt * 1000),
         Math.round(debugCameraZoom * 1000)
-      ].join(":");
+      ];
+
+      if (app.isFlyoverMode) {
+        parts.push(
+          "flyover",
+          Math.round(Number(app.flyoverCameraOffsetX || 0) * 1000),
+          Math.round(Number(app.flyoverCameraOffsetZ || 0) * 1000)
+        );
+      }
+
+      return parts.join(":");
     }
 
     function normalizeQuarterTurns(yaw) {
@@ -2518,6 +2559,183 @@
       return edges;
     }
 
+    function mergeGeometryBatch(children) {
+      if (!children.length) {
+        return null;
+      }
+
+      const attributeMeta = new Map();
+      const attributeValues = new Map();
+
+      children.forEach((child) => {
+        const sourceGeometry = child.geometry.index
+          ? child.geometry.toNonIndexed()
+          : child.geometry.clone();
+
+        sourceGeometry.applyMatrix4(child.matrixWorld);
+        Object.keys(sourceGeometry.attributes).forEach((name) => {
+          const attribute = sourceGeometry.getAttribute(name);
+
+          if (!attribute) {
+            return;
+          }
+
+          if (!attributeMeta.has(name)) {
+            attributeMeta.set(name, {
+              ArrayType: attribute.array.constructor,
+              itemSize: attribute.itemSize,
+              normalized: attribute.normalized
+            });
+            attributeValues.set(name, []);
+          }
+
+          attributeValues.get(name).push(...attribute.array);
+        });
+        sourceGeometry.dispose();
+      });
+
+      const geometry = new THREE.BufferGeometry();
+
+      attributeValues.forEach((values, name) => {
+        const meta = attributeMeta.get(name);
+
+        geometry.setAttribute(
+          name,
+          new THREE.BufferAttribute(
+            new meta.ArrayType(values),
+            meta.itemSize,
+            meta.normalized
+          )
+        );
+      });
+      geometry.computeBoundingSphere();
+      return geometry;
+    }
+
+    function attributeBatchSignature(geometry) {
+      return Object.keys(geometry.attributes)
+        .sort()
+        .map((name) => {
+          const attribute = geometry.attributes[name];
+          return [
+            name,
+            attribute.itemSize,
+            attribute.normalized ? 1 : 0,
+            attribute.array?.constructor?.name || "Array"
+          ].join(":");
+        })
+        .join("|");
+    }
+
+    function mergeImmediateSceneObjects(container, kind) {
+      const batches = new Map();
+      let sourceCount = 0;
+      let mergedCount = 0;
+
+      const children = [];
+
+      container.traverse((child) => {
+        if (child === container) {
+          return;
+        }
+
+        children.push(child);
+      });
+
+      children.forEach((child) => {
+        const isBatchable =
+          kind === "mesh"
+            ? child.isMesh
+            : child.isLineSegments;
+
+        if (
+          !isBatchable ||
+          !child.parent ||
+          !child.geometry?.attributes?.position ||
+          !child.material ||
+          Array.isArray(child.material) ||
+          child.children.length > 0
+        ) {
+          return;
+        }
+
+        const key = [
+          kind,
+          child.material.uuid,
+          child.castShadow ? 1 : 0,
+          child.receiveShadow ? 1 : 0,
+          child.renderOrder || 0,
+          attributeBatchSignature(child.geometry)
+        ].join(":");
+
+        if (!batches.has(key)) {
+          batches.set(key, []);
+        }
+
+        batches.get(key).push(child);
+      });
+
+      batches.forEach((children) => {
+        if (children.length <= 1) {
+          return;
+        }
+
+        const geometry = mergeGeometryBatch(children);
+
+        if (!geometry) {
+          return;
+        }
+
+        const first = children[0];
+        const merged =
+          kind === "mesh"
+            ? new THREE.Mesh(geometry, first.material)
+            : new THREE.LineSegments(geometry, first.material);
+
+        merged.castShadow = first.castShadow;
+        merged.receiveShadow = first.receiveShadow;
+        merged.renderOrder = first.renderOrder;
+        if (kind === "line") {
+          merged.userData.edgeBasePosition = new THREE.Vector3(0, 0, 0);
+        }
+        children.forEach((child) => {
+          child.parent?.remove(child);
+
+          if (child.geometry && !cachedGeometryHas(child.geometry)) {
+            child.geometry.dispose();
+          }
+        });
+        container.add(merged);
+        sourceCount += children.length;
+        mergedCount += 1;
+      });
+
+      return {
+        sourceCount,
+        mergedCount
+      };
+    }
+
+    function optimizeWholeWorldFlyoverScene() {
+      if (!app.isFlyoverMode || app.flyoverWholeWorld !== true) {
+        return;
+      }
+
+      scene.updateMatrixWorld(true);
+      edgeScene.updateMatrixWorld(true);
+      const meshStats = mergeImmediateSceneObjects(scene, "mesh");
+      const edgeStats = mergeImmediateSceneObjects(edgeScene, "line");
+
+      app.flyoverSceneBatchStats = {
+        meshSourceObjects: meshStats.sourceCount,
+        meshMergedObjects: meshStats.mergedCount,
+        edgeSourceObjects: edgeStats.sourceCount,
+        edgeMergedObjects: edgeStats.mergedCount,
+        sceneObjects: scene.children.length,
+        edgeObjects: edgeScene.children.length
+      };
+    }
+
     function biasEdgeSceneTowardCamera() {
       const cameraDirection = new THREE.Vector3();
       camera.getWorldDirection(cameraDirection);
@@ -3767,7 +3985,7 @@
     }
 
     function shouldRenderFloorGridLines() {
-      return activeRenderContext?.role !== "neighbor";
+      return !app.isFlyoverMode && activeRenderContext?.role !== "neighbor";
     }
 
     function shouldRenderTileTopDetails() {
@@ -6826,6 +7044,10 @@
     }
 
     function sceneLightBounds() {
+      if (app.isFlyoverMode) {
+        return flyoverStaticBounds();
+      }
+
       const actionBounds = worldActionBounds();
 
       if (actionBounds) {
@@ -6881,7 +7103,7 @@
       const keyLight = new THREE.DirectionalLight("#ffffff", 1.2);
       keyLight.position.set(boardCenter.x + unit * 5, unit * 18, boardCenter.z - unit * 5);
       keyLight.target.position.copy(boardCenter);
-      keyLight.castShadow = true;
+      keyLight.castShadow = !app.isFlyoverMode;
       keyLight.shadow.mapSize.width = 1024;
       keyLight.shadow.mapSize.height = 1024;
       keyLight.shadow.bias = -0.0002;
@@ -7005,6 +7227,10 @@
     }
 
     function floatingFloorAnimationSignature(now) {
+      if (app.isFlyoverMode && app.flyoverWholeWorld === true) {
+        return "";
+      }
+
       if (app.floatingFloorFrameId === null) {
         return "";
       }
@@ -7012,9 +7238,56 @@
       return `floating-floor:${Math.floor(now / Math.max(1, app.FLOATING_FLOOR_HOVER_FRAME_MS || 33))}`;
     }
 
+    function flyoverFadeAnimationSignature(now) {
+      if (!app.isFlyoverMode) {
+        return "";
+      }
+
+      const durationMs = Math.max(1, Number(app.flyoverRoomFadeDurationMs) || 900);
+      const parts = [];
+
+      (app.flyoverDepartingViews || []).forEach((view) => {
+        const progress = clamp01((now - view.startMs) / Math.max(1, view.durationMs || durationMs));
+
+        if (progress < 1) {
+          parts.push(`out:${view.levelId}:${Math.floor(progress * 6)}`);
+        }
+      });
+
+      if (app.flyoverRoomFadeIns instanceof Map) {
+        app.flyoverRoomFadeIns.forEach((startMs, levelId) => {
+          const progress = clamp01((now - startMs) / durationMs);
+
+          if (progress < 1) {
+            parts.push(`in:${levelId}:${Math.floor(progress * 6)}`);
+          }
+        });
+      }
+
+      return parts.length > 0 ? `flyover-fade:${parts.join("|")}` : "";
+    }
+
     function sceneContentSignature(now) {
       const transition = app.levelTransition?.transitionData;
       const worldAction = app.worldActionAnimation;
+
+      if (app.isFlyoverMode && app.flyoverWholeWorld === true) {
+        return [
+          app.state.width,
+          app.state.height,
+          app.boardRect.width,
+          app.boardRect.height,
+          edgeOutlinesEnabled() ? "edges:on" : "edges:off",
+          animationSignature(now),
+          flyoverFadeAnimationSignature(now),
+          transition ? "transition" : "no-transition",
+          worldAction ? "world-action" : "no-world-action",
+          `flyover-whole:${Number(app.flyoverSceneVersion) || 0}`,
+          `renderable:${app.flyoverRenderableLevelIds?.size || 0}`,
+          `world-levels:${Number(app.flyoverWorldTotalLevelCount) || 0}`
+        ].join(";");
+      }
+
       const surroundingViews = surroundingLevelViews();
       const parts = [
         app.state.width,
@@ -7024,6 +7297,7 @@
         edgeOutlinesEnabled() ? "edges:on" : "edges:off",
         animationSignature(now),
         floatingFloorAnimationSignature(now),
+        flyoverFadeAnimationSignature(now),
         transition
           ? [
               transition.kind,
@@ -7043,6 +7317,9 @@
               worldAction.visualSignature || ""
             ].join(":")
           : "no-world-action",
+        app.isFlyoverMode
+          ? `flyover-current:${Math.round(flyoverCurrentLevelBrightness() * 1000)}`
+          : "no-flyover-current",
         `neighbors:${surroundingViews
           .map((view) => `${view.dx},${view.dy},${view.levelId},${Math.round(view.brightness * 1000)}`)
           .join("|")}`
@@ -7073,6 +7350,44 @@
       ].join(";");
     }
 
+    function flyoverShadowSceneSignature() {
+      if (app.isFlyoverMode && app.flyoverWholeWorld === true) {
+        return [
+          app.state.width,
+          app.state.height,
+          edgeOutlinesEnabled() ? "edges:on" : "edges:off",
+          `flyover-whole-shadow:${Number(app.flyoverSceneVersion) || 0}`
+        ].join(";");
+      }
+
+      const surroundingViews = surroundingLevelViews();
+      const parts = [
+        app.state.width,
+        app.state.height,
+        edgeOutlinesEnabled() ? "edges:on" : "edges:off",
+        `neighbors:${surroundingViews
+          .map((view) => `${view.dx},${view.dy},${view.levelId}`)
+          .join("|")}`
+      ];
+
+      surroundingViews.forEach((view) => {
+        parts.push(`neighbor:${view.dx},${view.dy}:${levelStateSignature(view.levelState)}`);
+      });
+
+      for (let y = 0; y < app.state.height; y += 1) {
+        for (let x = 0; x < app.state.width; x += 1) {
+          const layers = app.terrainLayersAt(x, y);
+          parts.push(layers.map(layerSignature).join("+") || "empty");
+        }
+      }
+
+      app.state.actors.forEach((actor) => {
+        parts.push(actorSignature(actor));
+      });
+
+      return parts.join(";");
+    }
+
     function syncRendererSize() {
       const width = app.boardRect.width;
       const height = app.boardRect.height;
@@ -7091,7 +7406,7 @@
         camera.aspect = width / Math.max(1, height);
         camera.fov = 34;
         camera.near = 1;
-        camera.far = 8000;
+        camera.far = perspectiveCameraFarPlane();
       } else {
         camera.left = -width / 2;
         camera.right = width / 2;
@@ -7141,7 +7456,7 @@
       const maxWorldZ = options.maxZ ?? app.boardRect.height;
       const center = new THREE.Vector3(
         options.centerX ?? (minWorldX + maxWorldX) / 2,
-        stableHeight / 2,
+        options.centerY ?? stableHeight / 2,
         options.centerZ ?? (minWorldZ + maxWorldZ) / 2
       );
       const canvasWidth = Math.max(1, app.boardRect.width);
@@ -7207,6 +7522,16 @@
       }
 
       camera.up.copy(cameraUp);
+
+      if (Number.isFinite(Number(options.fixedCameraDistance))) {
+        const distance = Math.max(unit, Number(options.fixedCameraDistance));
+
+        camera.position.copy(center).addScaledVector(viewDirection, distance / cameraZoom);
+        camera.lookAt(center);
+        camera.updateProjectionMatrix();
+        camera.updateMatrixWorld(true);
+        return;
+      }
 
       let distance = maxSpan * 1.65 + unit * 3;
 
@@ -7301,14 +7626,89 @@
       );
     }
 
+    function surroundingLevelRadius() {
+      return app.isFlyoverMode ? Math.max(1, Math.min(6, Number(app.flyoverRadius) || 3)) : 1;
+    }
+
+    function flyoverRoomWorldWidth() {
+      return Math.max(1, Number(app.flyoverRoomTileWidth) || app.state.width || 16) * unit;
+    }
+
+    function flyoverRoomWorldHeight() {
+      return Math.max(1, Number(app.flyoverRoomTileHeight) || app.state.height || 16) * unit;
+    }
+
+    function flyoverStaticBounds() {
+      if (app.flyoverWholeWorld === true && app.flyoverWorldBounds) {
+        const bounds = app.flyoverWorldBounds;
+
+        return {
+          minX: Number(bounds.minX) || 0,
+          maxX: Number(bounds.maxX) || flyoverRoomWorldWidth(),
+          minZ: Number(bounds.minZ) || 0,
+          maxZ: Number(bounds.maxZ) || flyoverRoomWorldHeight()
+        };
+      }
+
+      const radius = surroundingLevelRadius();
+      const roomWidth = flyoverRoomWorldWidth();
+      const roomHeight = flyoverRoomWorldHeight();
+
+      return {
+        minX: -roomWidth * radius,
+        maxX: roomWidth * (radius + 1),
+        minZ: -roomHeight * radius,
+        maxZ: roomHeight * (radius + 1)
+      };
+    }
+
+    function flyoverFixedCameraDistance() {
+      if (app.flyoverWholeWorld === true && app.flyoverWorldBounds) {
+        const bounds = app.flyoverWorldBounds;
+        const roomSpan = Math.max(
+          Number(bounds.maxX) - Number(bounds.minX),
+          Number(bounds.maxZ) - Number(bounds.minZ),
+          flyoverRoomWorldWidth(),
+          flyoverRoomWorldHeight()
+        );
+
+        return roomSpan * 1.68 + unit * 3;
+      }
+
+      const radius = surroundingLevelRadius();
+      const roomSpan = Math.max(flyoverRoomWorldWidth(), flyoverRoomWorldHeight()) * (radius * 2 + 1);
+
+      return roomSpan * 1.68 + unit * 3;
+    }
+
+    function flyoverCurrentLevelBrightness() {
+      return 1;
+    }
+
     function surroundingLevelBrightness(dx, dy) {
+      if (app.isFlyoverMode) {
+        return 1;
+      }
+
       return neighboringRoomBrightness;
     }
 
     function surroundingLevelOffset(dx, dy, levelState, currentState = runtimeLevelState()) {
+      if (app.isFlyoverMode) {
+        return {
+          x: dx * flyoverRoomWorldWidth(),
+          z: dy * flyoverRoomWorldHeight()
+        };
+      }
+
+      const currentWidth = Math.max(1, currentState.width) * unit;
+      const currentHeight = Math.max(1, currentState.height) * unit;
+      const levelWidth = Math.max(1, levelState.width) * unit;
+      const levelHeight = Math.max(1, levelState.height) * unit;
+
       return {
-        x: dx < 0 ? -levelState.width * unit : dx > 0 ? currentState.width * unit : 0,
-        z: dy < 0 ? -levelState.height * unit : dy > 0 ? currentState.height * unit : 0
+        x: dx < 0 ? dx * levelWidth : dx > 0 ? dx * currentWidth : 0,
+        z: dy < 0 ? dy * levelHeight : dy > 0 ? dy * currentHeight : 0
       };
     }
 
@@ -7317,11 +7717,20 @@
         return [];
       }
 
+      if (app.isFlyoverMode && typeof app.flyoverSurroundingLevelViews === "function") {
+        const flyoverViews = app.flyoverSurroundingLevelViews();
+
+        if (Array.isArray(flyoverViews)) {
+          return flyoverViews;
+        }
+      }
+
       const currentState = runtimeLevelState();
       const views = [];
+      const radius = surroundingLevelRadius();
 
-      for (let dy = -1; dy <= 1; dy += 1) {
-        for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
           if (dx === 0 && dy === 0) {
             continue;
           }
@@ -7336,6 +7745,14 @@
 
           if (!levelState) {
             app.queueHorizontalNeighborLevelState?.(levelId);
+            continue;
+          }
+
+          if (
+            app.isFlyoverMode &&
+            app.flyoverRenderableLevelIds instanceof Set &&
+            !app.flyoverRenderableLevelIds.has(levelId)
+          ) {
             continue;
           }
 
@@ -7359,15 +7776,20 @@
     }
 
     function surroundingLevelBounds(views = []) {
+      if (app.isFlyoverMode) {
+        return flyoverStaticBounds();
+      }
+
       const currentState = runtimeLevelState();
       const currentWidth = Math.max(1, currentState.width) * unit;
       const currentHeight = Math.max(1, currentState.height) * unit;
+      const radius = surroundingLevelRadius();
       const bounds = shouldRenderSurroundingLevels()
         ? {
-            minX: -currentWidth,
-            maxX: currentWidth * 2,
-            minZ: -currentHeight,
-            maxZ: currentHeight * 2
+            minX: -currentWidth * radius,
+            maxX: currentWidth * (radius + 1),
+            minZ: -currentHeight * radius,
+            maxZ: currentHeight * (radius + 1)
           }
         : {
             minX: 0,
@@ -7384,6 +7806,25 @@
       });
 
       return bounds;
+    }
+
+    function flyoverFitOptions() {
+      if (!app.isFlyoverMode) {
+        return null;
+      }
+
+      const bounds = flyoverStaticBounds();
+      const centerX = flyoverRoomWorldWidth() / 2 + Number(app.flyoverCameraOffsetX || 0);
+      const centerZ = flyoverRoomWorldHeight() / 2 + Number(app.flyoverCameraOffsetZ || 0);
+
+      return {
+        ...bounds,
+        centerX,
+        centerZ,
+        centerY: 0,
+        stableHeight: oneLayerCameraWorldHeight(),
+        fixedCameraDistance: flyoverFixedCameraDistance()
+      };
     }
 
     function worldActionBounds(action = app.worldActionAnimation) {
@@ -7419,18 +7860,75 @@
     }
 
     function renderSurroundingLevelViews(now, views) {
+      renderFlyoverDepartingLevelViews(now);
+
       views
         .slice()
         .sort((a, b) => b.distance - a.distance)
         .forEach((view) => {
+          let brightness = view.brightness;
+
+          if (app.isFlyoverMode && app.flyoverRoomFadeIns instanceof Map) {
+            const startMs = app.flyoverRoomFadeIns.get(view.levelId);
+
+            if (Number.isFinite(startMs)) {
+              const durationMs = Math.max(1, Number(app.flyoverRoomFadeDurationMs) || 900);
+              const progress = clamp01((now - startMs) / durationMs);
+
+              if (progress >= 1) {
+                app.flyoverRoomFadeIns.delete(view.levelId);
+              } else {
+                const eased = app.easeInOutQuad ? app.easeInOutQuad(progress) : progress;
+                brightness *= eased;
+              }
+            }
+          }
+
           renderLevelStateAt(view.levelState, view.offset, {
             role: "neighbor",
-            brightness: view.brightness,
+            brightness,
             dx: view.dx,
             dy: view.dy,
             hidePlayers: true
           }, now);
         });
+    }
+
+    function renderFlyoverDepartingLevelViews(now) {
+      if (!app.isFlyoverMode || !Array.isArray(app.flyoverDepartingViews)) {
+        return;
+      }
+
+      const durationMs = Math.max(1, Number(app.flyoverRoomFadeDurationMs) || 900);
+      const remainingViews = [];
+
+      app.flyoverDepartingViews
+        .slice()
+        .sort((a, b) => {
+          const leftDistance = Math.hypot(a.offset?.x || 0, a.offset?.z || 0);
+          const rightDistance = Math.hypot(b.offset?.x || 0, b.offset?.z || 0);
+
+          return rightDistance - leftDistance;
+        })
+        .forEach((view) => {
+          const progress = clamp01(
+            (now - view.startMs) / Math.max(1, Number(view.durationMs) || durationMs)
+          );
+
+          if (progress >= 1) {
+            return;
+          }
+
+          remainingViews.push(view);
+          const eased = app.easeInOutQuad ? app.easeInOutQuad(progress) : progress;
+          renderLevelStateAt(view.levelState, view.offset || { x: 0, z: 0 }, {
+            role: "neighbor",
+            brightness: 1 - eased,
+            hidePlayers: true
+          }, now);
+        });
+
+      app.flyoverDepartingViews = remainingViews;
     }
 
     function transitionSurroundingLevelAlpha(progress, appears) {
@@ -8225,10 +8723,40 @@
 
     function renderSceneToComposite(shouldUpdateShadowMap) {
       syncPlayerLiftMarkerRotations();
+      renderer.info?.reset?.();
       renderer.setClearColor("#050608", 1);
       renderer.clear(true, true, true);
       renderer.shadowMap.needsUpdate = shouldUpdateShadowMap;
       renderer.render(scene, camera);
+      const mainRenderInfo = renderer.info?.render
+        ? { ...renderer.info.render }
+        : { calls: 0, triangles: 0, points: 0, lines: 0 };
+
+      if (app.isFlyoverMode && app.flyoverDirectCanvas === true) {
+        if (edgeOutlinesEnabled()) {
+          biasEdgeSceneTowardCamera();
+          renderer.render(edgeScene, camera);
+        }
+
+        const totalRenderInfo = renderer.info?.render
+          ? { ...renderer.info.render }
+          : mainRenderInfo;
+        app.threeRenderStats = {
+          calls: totalRenderInfo.calls || 0,
+          triangles: totalRenderInfo.triangles || 0,
+          lines: totalRenderInfo.lines || 0,
+          points: totalRenderInfo.points || 0,
+          mainCalls: mainRenderInfo.calls || 0,
+          mainTriangles: mainRenderInfo.triangles || 0,
+          edgeCalls: Math.max(0, (totalRenderInfo.calls || 0) - (mainRenderInfo.calls || 0)),
+          edgeLines: Math.max(0, (totalRenderInfo.lines || 0) - (mainRenderInfo.lines || 0)),
+          sceneObjects: scene?.children?.length || 0,
+          edgeObjects: edgeScene?.children?.length || 0,
+          renderedAtMs: performance.now()
+        };
+        return;
+      }
+
       compositeCtx.clearRect(0, 0, app.boardRect.width, app.boardRect.height);
       compositeCtx.drawImage(threeCanvas, 0, 0);
 
@@ -8239,6 +8767,23 @@
         renderer.render(edgeScene, camera);
         drawToonOutlineOverlay(compositeCtx);
       }
+
+      const totalRenderInfo = renderer.info?.render
+        ? { ...renderer.info.render }
+        : mainRenderInfo;
+      app.threeRenderStats = {
+        calls: totalRenderInfo.calls || 0,
+        triangles: totalRenderInfo.triangles || 0,
+        lines: totalRenderInfo.lines || 0,
+        points: totalRenderInfo.points || 0,
+        mainCalls: mainRenderInfo.calls || 0,
+        mainTriangles: mainRenderInfo.triangles || 0,
+        edgeCalls: Math.max(0, (totalRenderInfo.calls || 0) - (mainRenderInfo.calls || 0)),
+        edgeLines: Math.max(0, (totalRenderInfo.lines || 0) - (mainRenderInfo.lines || 0)),
+        sceneObjects: scene?.children?.length || 0,
+        edgeObjects: edgeScene?.children?.length || 0,
+        renderedAtMs: performance.now()
+      };
 
       app.sceneCtx.clearRect(0, 0, app.boardRect.width, app.boardRect.height);
       app.sceneCtx.drawImage(compositeCanvas, 0, 0);
@@ -8295,8 +8840,16 @@
         forceRender ||
         !hasRenderedScene ||
         contentSignature !== lastSceneContentSignature;
-      const shouldUpdateShadowMap =
-        contentChanged || hasShadowAffectingAnimation();
+      const shadowAnimationChanged = !app.isFlyoverMode && hasShadowAffectingAnimation();
+      let shadowSignature = lastShadowSceneSignature;
+      let shouldUpdateShadowMap = shadowAnimationChanged;
+
+      if (contentChanged || shadowAnimationChanged) {
+        shadowSignature = app.isFlyoverMode ? flyoverShadowSceneSignature() : contentSignature;
+        shouldUpdateShadowMap =
+          shadowAnimationChanged ||
+          shadowSignature !== lastShadowSceneSignature;
+      }
 
       if (!forceRender && hasRenderedScene && signature === lastSceneSignature) {
         app.sceneCtx.clearRect(0, 0, app.boardRect.width, app.boardRect.height);
@@ -8305,7 +8858,7 @@
       }
 
       if (!contentChanged) {
-        fitCameraToScene(editorSurroundingFitOptions() || {});
+        fitCameraToScene(editorSurroundingFitOptions() || flyoverFitOptions() || {});
         renderSceneToComposite(false);
         lastSceneSignature = signature;
         return true;
@@ -8321,15 +8874,31 @@
         const surroundingViews = surroundingLevelViews();
 
         renderSurroundingLevelViews(now, surroundingViews);
-        addTerrainRegions(now);
-        renderActorsForCurrentContext(now);
-        fitCameraToScene(editorSurroundingFitOptions() || {});
+        if (app.isFlyoverMode) {
+          withRenderContext({
+            state: renderState(),
+            offsetX: 0,
+            offsetZ: 0,
+            role: "flyover-current",
+            brightness: flyoverCurrentLevelBrightness(),
+            hidePlayers: true
+          }, () => {
+            addTerrainRegions(now);
+            renderActorsForCurrentContext(now);
+          });
+        } else {
+          addTerrainRegions(now);
+          renderActorsForCurrentContext(now);
+        }
+        fitCameraToScene(editorSurroundingFitOptions() || flyoverFitOptions(surroundingViews) || {});
       }
 
       addEditorHoverHighlight();
+      optimizeWholeWorldFlyoverScene();
       renderSceneToComposite(shouldUpdateShadowMap);
       lastSceneSignature = forceRender ? "" : signature;
       lastSceneContentSignature = forceRender ? "" : contentSignature;
+      lastShadowSceneSignature = shouldUpdateShadowMap ? shadowSignature : lastShadowSceneSignature;
       hasRenderedScene = true;
       return true;
     }
@@ -8344,6 +8913,7 @@
           preserveDrawingBuffer: false
         });
         renderer.autoClear = false;
+        renderer.info.autoReset = false;
         renderer.setClearColor("#050608", 1);
         renderer.setPixelRatio(1);
         renderer.shadowMap.enabled = true;
@@ -8354,6 +8924,14 @@
         createCameraForMode();
         updateCameraModeToggle();
         invalidateSceneCache();
+
+        if (app.isFlyoverMode && app.mazeFrame && !threeCanvas.parentElement) {
+          app.flyoverDirectCanvas = true;
+          threeCanvas.className = "maze-canvas flyover-direct-canvas";
+          threeCanvas.setAttribute("aria-label", app.canvas?.getAttribute("aria-label") || "Flyover view");
+          app.canvas.style.display = "none";
+          app.mazeFrame.appendChild(threeCanvas);
+        }
 
         if (typeof app.render === "function") {
           window.requestAnimationFrame(() => app.render());
@@ -8373,6 +8951,8 @@
       invalidateSceneCache,
       prewarmAdjacentLevelTransition,
       renderScene,
+      getRenderStats: () => ({ ...(app.threeRenderStats || {}) }),
+      usesDirectCanvas: () => app.flyoverDirectCanvas === true,
       threeCanvas
     };
 

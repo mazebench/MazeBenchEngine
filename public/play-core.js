@@ -124,6 +124,8 @@
       currentLevelLabel: playData.levelLabel || currentLevelId,
       worldColumns: playRules.normalizeAxisValues(playData?.worldColumns, defaultWorldAxis),
       worldRows: playRules.normalizeAxisValues(playData?.worldRows, defaultWorldAxis),
+      isFlyoverMode: playData?.flyover === true,
+      flyoverRadius: Math.max(1, Math.min(6, Number(playData?.flyoverRadius) || 3)),
       canvas,
       enableCameraControls:
         enableCameraControls === true ||
@@ -162,8 +164,10 @@
       FLOATING_FLOOR_SHADOW_HEIGHT: 64 * 0.12,
       FLOATING_FLOOR_HOVER_PERIOD_MS: 2400,
       FLOATING_FLOOR_HOVER_FPS: 30,
-      VIEWPORT_TILE_WIDTH: initialViewportTiles.width,
-      VIEWPORT_TILE_HEIGHT: initialViewportTiles.height,
+      VIEWPORT_TILE_WIDTH:
+        playData?.flyover === true ? playData.width : initialViewportTiles.width,
+      VIEWPORT_TILE_HEIGHT:
+        playData?.flyover === true ? playData.height : initialViewportTiles.height,
       CAMERA_FOLLOW_SMOOTHING_MS: 210,
       LEVEL_TRANSITION_DURATION_MS: 1000,
       PLAYER_LIFT_ARROW_URL: `/assets/${encodeURIComponent(currentGameId)}/images/arrow.png`,
@@ -222,6 +226,12 @@
     app.NOISE_FRAME_MS = 1000 / app.NOISE_FPS;
     app.FLOATING_FLOOR_HOVER_FRAME_MS = 1000 / app.FLOATING_FLOOR_HOVER_FPS;
     app.horizontalNeighborLevelStates = new Map();
+    app.horizontalNeighborLevelQueue = [];
+    app.horizontalNeighborQueuedLevelIds = new Set();
+    app.horizontalNeighborActiveLoads = 0;
+    app.horizontalNeighborQueueFrameId = 0;
+    app.horizontalNeighborLoadConcurrency = app.isFlyoverMode ? 4 : 8;
+    app.deferNeighborLoadRenders = false;
 
     function parseWorldLevelId(levelId) {
       return playRules.parseWorldLevelId(levelId, app.worldColumns, app.worldRows);
@@ -309,11 +319,23 @@
       return cached && typeof cached.then !== "function" ? cached : null;
     }
 
-    async function loadHorizontalNeighborLevelState(levelId) {
+    function waitForIdleSlot(timeoutMs = 48) {
+      return new Promise((resolve) => {
+        if (typeof window.requestIdleCallback === "function") {
+          window.requestIdleCallback(resolve, { timeout: timeoutMs });
+          return;
+        }
+
+        window.setTimeout(resolve, 0);
+      });
+    }
+
+    async function loadHorizontalNeighborLevelState(levelId, options = {}) {
       if (!levelId || typeof window.fetch !== "function") {
         return null;
       }
 
+      app.horizontalNeighborQueuedLevelIds.delete(levelId);
       const cached = app.horizontalNeighborLevelStates.get(levelId);
 
       if (cached) {
@@ -331,7 +353,26 @@
             throw new Error(`Unable to load ${levelId}`);
           }
 
-          return rememberHorizontalNeighborLevelState(await response.json());
+          const levelState = await response.json();
+
+          if (options.idlePrepare === true) {
+            await waitForIdleSlot();
+          }
+
+          const storedLevelState = rememberHorizontalNeighborLevelState(levelState);
+
+          if (storedLevelState && options.preloadAssets === true) {
+            await preloadImagesForLevelState(storedLevelState);
+          }
+
+          if (
+            storedLevelState &&
+            typeof app.onNeighborLevelStateLoaded === "function"
+          ) {
+            app.onNeighborLevelStateLoaded(storedLevelState);
+          }
+
+          return storedLevelState;
         })
         .catch((error) => {
           app.horizontalNeighborLevelStates.delete(levelId);
@@ -342,32 +383,84 @@
       return request;
     }
 
-    function queueHorizontalNeighborLevelState(levelId) {
+    function scheduleHorizontalNeighborLoadQueue() {
+      if (app.horizontalNeighborQueueFrameId) {
+        return;
+      }
+
+      app.horizontalNeighborQueueFrameId = window.setTimeout(processHorizontalNeighborLoadQueue, 0);
+    }
+
+    function processHorizontalNeighborLoadQueue() {
+      app.horizontalNeighborQueueFrameId = 0;
+
+      while (
+        app.horizontalNeighborActiveLoads < app.horizontalNeighborLoadConcurrency &&
+        app.horizontalNeighborLevelQueue.length > 0
+      ) {
+        const queued = app.horizontalNeighborLevelQueue.shift();
+        const levelId = queued?.levelId;
+
+        if (!levelId || app.horizontalNeighborLevelStates.has(levelId)) {
+          app.horizontalNeighborQueuedLevelIds.delete(levelId);
+          continue;
+        }
+
+        app.horizontalNeighborQueuedLevelIds.delete(levelId);
+        app.horizontalNeighborActiveLoads += 1;
+        loadHorizontalNeighborLevelState(levelId, {
+          idlePrepare: true,
+          preloadAssets: app.preloadQueuedNeighborAssets === true
+        })
+          .then(() => {
+            if (
+              !app.deferNeighborLoadRenders &&
+              !app.isTransitioningLevel &&
+              !app.isPlanningWorldAction &&
+              !app.worldActionAnimation &&
+              typeof app.render === "function"
+            ) {
+              app.render();
+            }
+          })
+          .catch(() => {})
+          .finally(() => {
+            app.horizontalNeighborActiveLoads = Math.max(0, app.horizontalNeighborActiveLoads - 1);
+            scheduleHorizontalNeighborLoadQueue();
+          });
+      }
+
+      if (app.horizontalNeighborLevelQueue.length > 0) {
+        scheduleHorizontalNeighborLoadQueue();
+      }
+    }
+
+    function queueHorizontalNeighborLevelState(levelId, options = {}) {
       if (!levelId || typeof window.fetch !== "function") {
         return;
       }
 
-      if (app.horizontalNeighborLevelStates.has(levelId)) {
+      if (
+        app.horizontalNeighborLevelStates.has(levelId) ||
+        app.horizontalNeighborQueuedLevelIds.has(levelId)
+      ) {
         return;
       }
 
-      loadHorizontalNeighborLevelState(levelId)
-        .then(() => {
-          if (
-            !app.isTransitioningLevel &&
-            !app.isPlanningWorldAction &&
-            !app.worldActionAnimation &&
-            typeof app.render === "function"
-          ) {
-            app.render();
-          }
-        })
-        .catch(() => {});
+      app.horizontalNeighborQueuedLevelIds.add(levelId);
+      app.horizontalNeighborLevelQueue.push({
+        levelId,
+        priority: Number.isFinite(Number(options.priority)) ? Number(options.priority) : 0
+      });
+      app.horizontalNeighborLevelQueue.sort((left, right) => left.priority - right.priority);
+      scheduleHorizontalNeighborLoadQueue();
     }
 
     function syncHorizontalNeighborLevelStates() {
-      for (let dy = -1; dy <= 1; dy += 1) {
-        for (let dx = -1; dx <= 1; dx += 1) {
+      const radius = app.isFlyoverMode ? app.flyoverRadius : 1;
+
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
           if (dx === 0 && dy === 0) {
             continue;
           }
@@ -2717,6 +2810,11 @@
         app.floatingFloorFrameId = null;
       }
 
+      if (app.isFlyoverMode && app.flyoverWholeWorld === true) {
+        app.lastFloatingFloorTickMs = 0;
+        return;
+      }
+
       if (!hasVisibleFloatingFloorActors()) {
         app.lastFloatingFloorTickMs = 0;
         return;
@@ -2749,7 +2847,16 @@
     }
 
     function setupCanvas() {
-      const dpr = window.devicePixelRatio || 1;
+      if (app.isFlyoverMode && app.mazeFrame) {
+        const rect = app.mazeFrame.getBoundingClientRect();
+        const width = Math.max(1, Math.round(rect.width || window.innerWidth || app.boardRect.width));
+        const height = Math.max(1, Math.round(rect.height || window.innerHeight || app.boardRect.height));
+
+        app.boardRect = { width, height };
+        app.viewportRect = { width, height };
+      }
+
+      const dpr = app.isFlyoverMode ? 1 : window.devicePixelRatio || 1;
       app.canvas.width = Math.round(app.viewportRect.width * dpr);
       app.canvas.height = Math.round(app.viewportRect.height * dpr);
       app.canvas.style.aspectRatio = `${app.viewportRect.width} / ${app.viewportRect.height}`;
@@ -2771,6 +2878,19 @@
     }
 
     function syncPlayLayout() {
+      if (app.isFlyoverMode && app.playStage && app.mazeFrame) {
+        const width = Math.max(1, app.playStage.clientWidth || window.innerWidth || app.viewportRect.width);
+        const height = Math.max(1, app.playStage.clientHeight || window.innerHeight || app.viewportRect.height);
+
+        app.mazeFrame.style.width = `${width}px`;
+        app.mazeFrame.style.height = `${height}px`;
+
+        if (app.playHeader) {
+          app.playHeader.style.width = `${width}px`;
+        }
+        return;
+      }
+
       if (!app.playShell || !app.playHeader || !app.playStage || !app.mazeFrame) {
         return;
       }
