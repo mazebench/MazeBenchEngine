@@ -1591,7 +1591,7 @@
 
     function weightlessGroupLabel(groupId) {
       const value = String(groupId || "").trim();
-      const match = value.match(/^M(.+)$/i);
+      const match = value.match(/^[Mc](.+)$/i);
 
       return match ? match[1] : value;
     }
@@ -4033,6 +4033,10 @@
         return "#5aa95c";
       }
 
+      if (actor.type === "clone") {
+        return "#b59a2a";
+      }
+
       if (actor.type === "weightless_box") {
         return "#315991";
       }
@@ -5961,8 +5965,11 @@
         rounded(column.sink),
         column.hasHoleFade ? 1 : 0
       ].join(":");
+      const isGroupedPolycubeActor = (actor) =>
+        actor?.type === "weightless_box" || actor?.type === "clone";
       const canMergeStackedWeightlessEntries = (lower, upper) =>
         lower.groupId === upper.groupId &&
+        lower.actor.type === upper.actor.type &&
         !lower.actor.renderInHole &&
         !upper.actor.renderInHole &&
         Math.abs(lower.scale - upper.scale) <= 0.001 &&
@@ -6077,7 +6084,18 @@
       };
 
       state.actors.forEach((actor, index) => {
-        if (actor.type !== "weightless_box" || !actorIsVisible(actor)) {
+        if (!isGroupedPolycubeActor(actor) || !actorIsVisible(actor)) {
+          return;
+        }
+
+        if (
+          activeRenderContext?.hidePlayers &&
+          (
+            typeof app.isMainPlayerActor === "function"
+              ? app.isMainPlayerActor(actor)
+              : app.isPlayerActor?.(actor) && actor?.type !== "clone"
+          )
+        ) {
           return;
         }
 
@@ -6095,7 +6113,7 @@
           fade: actorFadeVisibility(actor),
           gridX: actor.x,
           gridY: actor.y,
-          groupId: actor.groupId || `weightless-${index}`,
+          groupId: actor.groupId || `${actor.type}-${index}`,
           height,
           index,
           opacity: actorOpacity(actor),
@@ -7590,9 +7608,16 @@
       const state = renderState();
       const renderedActors = addWeightlessActorGroups();
       const hiddenActorKeys = activeRenderContext?.hiddenActorKeys;
+      const shouldHidePlayerActor = (actor) =>
+        activeRenderContext?.hidePlayers &&
+        (
+          typeof app.isMainPlayerActor === "function"
+            ? app.isMainPlayerActor(actor)
+            : app.isPlayerActor?.(actor) && actor?.type !== "clone"
+        );
 
       state.actors.forEach((actor) => {
-        if (activeRenderContext?.hidePlayers && app.isPlayerActor?.(actor)) {
+        if (shouldHidePlayerActor(actor)) {
           return;
         }
 

@@ -45,6 +45,23 @@
     "player": {
       "token": "p"
     },
+    "clone": {
+      "tokens": [
+        {
+          "token": "c0",
+          "label": "Clone 0"
+        },
+        {
+          "token": "c1",
+          "label": "Clone 1"
+        },
+        {
+          "token": "c2",
+          "label": "Clone 2"
+        }
+      ],
+      "label": "Clone"
+    },
     "gem": {
       "token": "G",
       "image": "images/gem.png",

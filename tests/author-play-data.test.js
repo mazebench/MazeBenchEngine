@@ -57,6 +57,9 @@ const authorData = {
     { direction: "up", imageUrl: null, label: "Puncher Up", name: "puncher", token: "pu", type: "puncher" },
     { direction: "down", imageUrl: null, label: "Puncher Down", name: "puncher", token: "pd", type: "puncher" },
     { imageUrl: null, label: "Player", name: "player", token: "P" },
+    { imageUrl: null, label: "Clone 0", name: "clone", token: "c0", type: "clone" },
+    { imageUrl: null, label: "Clone 1", name: "clone", token: "c1", type: "clone" },
+    { imageUrl: null, label: "Clone 2", name: "clone", token: "c2", type: "clone" },
     {
       imageUrl: "/assets/maze/images/gem.png",
       label: "Gem",
@@ -102,6 +105,20 @@ assert.deepEqual(
   ]
 );
 assert.equal(playData.actors[1].modelUrl, "/assets/maze/assets_3d/gem.glb");
+
+const clonePlayData = adapter.buildPlayData({
+  cells: [["c1+c1"]],
+  height: 1,
+  width: 1
+});
+
+assert.deepEqual(
+  clonePlayData.actors.map((actor) => [actor.type, actor.groupId, actor.elevation]),
+  [
+    ["clone", "c1", 0],
+    ["clone", "c1", 1]
+  ]
+);
 
 const noGemPlayData = adapter.buildPlayData({
   cells: [["P+G"]],

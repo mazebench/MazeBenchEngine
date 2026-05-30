@@ -1453,8 +1453,53 @@
     markDirty();
   }
 
+  function updateCellsForSingleMainPlayerPlacement(x, y, normalizedValue) {
+    const nextCells = state.cells.map((row) => row.slice());
+    const targetValue = keepFirstMainPlayerTokenInCellValue(normalizedValue);
+    let changed = nextCells[y][x] !== targetValue;
+
+    nextCells[y][x] = targetValue;
+
+    for (let rowIndex = 0; rowIndex < state.height; rowIndex += 1) {
+      for (let columnIndex = 0; columnIndex < state.width; columnIndex += 1) {
+        if (rowIndex === y && columnIndex === x) {
+          continue;
+        }
+
+        const strippedValue = stripMainPlayerTokensFromCellValue(nextCells[rowIndex][columnIndex]);
+
+        if (strippedValue !== nextCells[rowIndex][columnIndex]) {
+          changed = true;
+          nextCells[rowIndex][columnIndex] = strippedValue;
+        }
+      }
+    }
+
+    if (!changed) {
+      selectCell(x, y);
+      return;
+    }
+
+    pushUndoSnapshot();
+    state.cells = nextCells;
+    state.selectedCell = {
+      x: Math.max(0, Math.min(state.width - 1, x)),
+      y: Math.max(0, Math.min(state.height - 1, y))
+    };
+    renderGrid();
+    renderSelectedCell();
+    markDirty();
+  }
+
   function setCellValue(x, y, value) {
-    updateCellValue(x, y, normalizeAuthoringCellValue(value));
+    const normalizedValue = normalizeAuthoringCellValue(value);
+
+    if (cellValueHasMainPlayerToken(normalizedValue)) {
+      updateCellsForSingleMainPlayerPlacement(x, y, normalizedValue);
+      return;
+    }
+
+    updateCellValue(x, y, normalizedValue);
   }
 
   function appendTokenToCellValue(currentValue, token) {
@@ -1525,7 +1570,18 @@
       return;
     }
 
-    updateCellValue(x, y, appendTokenToCellValue(state.cells[y][x], value));
+    const isMainPlayerPaint = isMainPlayerToken(value);
+    const currentValue = isMainPlayerPaint
+      ? stripMainPlayerTokensFromCellValue(state.cells[y][x])
+      : state.cells[y][x];
+    const nextValue = appendTokenToCellValue(currentValue, value);
+
+    if (isMainPlayerPaint) {
+      updateCellsForSingleMainPlayerPlacement(x, y, nextValue);
+      return;
+    }
+
+    updateCellValue(x, y, nextValue);
   }
 
   function isInsideEditorCell(x, y) {
@@ -1658,6 +1714,48 @@
   function toolTypeForToken(token) {
     const tool = toolByToken.get(token);
     return tool?.type || tool?.name || "";
+  }
+
+  function isMainPlayerToken(token) {
+    const type = toolTypeForToken(token);
+
+    return type === "player" || type === "circle_player";
+  }
+
+  function cellValueHasMainPlayerToken(value) {
+    return getCellTokens(value).some((token) => isMainPlayerToken(token));
+  }
+
+  function stripMainPlayerTokensFromCellValue(value) {
+    const tokens = getCellTokens(value).map((token) => (isMainPlayerToken(token) ? "" : token));
+
+    return normalizeAuthoringCellValue(
+      tokens.some((token) => token.length > 0)
+        ? tokens.join(authorData.blockAdder)
+        : emptyCellToken
+    );
+  }
+
+  function keepFirstMainPlayerTokenInCellValue(value) {
+    let hasMainPlayer = false;
+    const tokens = getCellTokens(value).map((token) => {
+      if (!isMainPlayerToken(token)) {
+        return token;
+      }
+
+      if (hasMainPlayer) {
+        return "";
+      }
+
+      hasMainPlayer = true;
+      return token;
+    });
+
+    return normalizeAuthoringCellValue(
+      tokens.some((token) => token.length > 0)
+        ? tokens.join(authorData.blockAdder)
+        : emptyCellToken
+    );
   }
 
   function isPuncherToken(token) {
@@ -1841,13 +1939,21 @@
 
     const paintToken = effectivePaintToken();
     const paintLayer = adjustedPaintLayerForTarget(target);
-    const currentValue = state.cells[target.paintY][target.paintX];
+    const isMainPlayerPaint = isMainPlayerToken(paintToken);
+    const currentValue = isMainPlayerPaint
+      ? stripMainPlayerTokensFromCellValue(state.cells[target.paintY][target.paintX])
+      : state.cells[target.paintY][target.paintX];
     const nextValue =
       paintLayer === null || paintLayer === undefined
         ? appendTokenToCellValue(currentValue, paintToken)
         : setCellElevationToken(currentValue, paintToken, paintLayer, {
             preserveBaseSurface: true
           });
+
+    if (isMainPlayerPaint) {
+      updateCellsForSingleMainPlayerPlacement(target.paintX, target.paintY, nextValue);
+      return true;
+    }
 
     updateCellValue(target.paintX, target.paintY, nextValue);
     return true;
