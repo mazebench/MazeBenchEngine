@@ -247,6 +247,138 @@ function createState(playData) {
 }
 
 {
+  const terrain = floorTerrain(3, 1);
+  terrain[0][2] = { type: "hole" };
+  const { engine, state } = createState({
+    width: 3,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "clone", groupId: "c0", x: 0, y: 0, elevation: 0, removed: false },
+      { type: "clone", groupId: "c0", x: 1, y: 0, elevation: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorElevation[0], state.actorRemoved[0]], [1, 0, 0]);
+  assert.deepEqual([state.actorX[1], state.actorElevation[1], state.actorRemoved[1]], [2, 0, 0]);
+}
+
+{
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain: floorTerrain(4, 1),
+    actors: [
+      { type: "clone", groupId: "c0", x: 0, y: 0, elevation: 0, removed: false },
+      { type: "box", x: 1, y: 0, elevation: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorElevation[0]], [1, 0]);
+  assert.deepEqual([state.actorX[1], state.actorElevation[1]], [2, 0]);
+}
+
+{
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain: floorTerrain(4, 1),
+    actors: [
+      { type: "clone", groupId: "c0", x: 0, y: 0, elevation: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorElevation[0]], [1, 0]);
+  assert.deepEqual([state.actorX[1], state.actorElevation[1]], [2, 0]);
+}
+
+{
+  const terrain = [[
+    wallStack(1),
+    wallStack(1),
+    iceSlopeOnIceBlockLayer("right", 1),
+    iceBlockLayer(0),
+    iceBlockLayer(0),
+    iceBlockLayer(0)
+  ]];
+  const { engine, state } = createState({
+    width: 6,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "clone", groupId: "c0", x: 0, y: 0, elevation: 1, removed: false },
+      { type: "box", x: 1, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  const boxMove = result.moves.find((move) => move.actorType === "box");
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorElevation[0]], [1, 1]);
+  assert.deepEqual([state.actorX[1], state.actorElevation[1]], [3, 1]);
+  assert.deepEqual(boxMove.path, [
+    { x: 1, y: 0, elevation: 1 },
+    { x: 2, y: 0, elevation: 2 },
+    { x: 3, y: 0, elevation: 2 },
+    { x: 3, y: 0, elevation: 1 }
+  ]);
+}
+
+{
+  const terrain = [[
+    wallStack(1),
+    wallStack(1),
+    iceBlockLayer(0),
+    iceBlockLayer(0),
+    iceSlopeOnIceBlockLayer("right", 1),
+    iceBlockLayer(0),
+    iceBlockLayer(0),
+    iceBlockLayer(0),
+    iceBlockLayer(0)
+  ]];
+  const { engine, state } = createState({
+    width: 9,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "clone", groupId: "c0", x: 1, y: 0, elevation: 1, removed: false },
+      { type: "clone", groupId: "c0", x: 2, y: 0, elevation: 1, removed: false },
+      { type: "clone", groupId: "c0", x: 3, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  const cloneMoves = result.moves.filter((move) => move.actorType === "clone");
+
+  assert.equal(result.moved, true);
+  assert.deepEqual(cloneMoves.map((move) => [move.toX, move.toElevation]), [
+    [5, 1],
+    [6, 1],
+    [7, 1]
+  ]);
+  assert.deepEqual(cloneMoves[0].path, [
+    { x: 1, y: 0, elevation: 1 },
+    { x: 2, y: 0, elevation: 2 },
+    { x: 3, y: 0, elevation: 2 },
+    { x: 4, y: 0, elevation: 2 },
+    { x: 5, y: 0, elevation: 2 },
+    { x: 5, y: 0, elevation: 1 }
+  ]);
+  assert.equal(cloneMoves.every((move) => move.toRemoved === false), true);
+}
+
+{
   const { engine, state } = createState({
     width: 3,
     height: 1,

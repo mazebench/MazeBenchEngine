@@ -1840,6 +1840,53 @@
       };
     }
 
+    function cloneGroupCurrentBaseElevation(state, groupId) {
+      const members = cloneGroupMembers(state, groupId);
+      let baseElevation = Infinity;
+
+      members.forEach((member) => {
+        baseElevation = Math.min(baseElevation, actorElevation(state, member));
+      });
+
+      return Number.isFinite(baseElevation) ? baseElevation : 0;
+    }
+
+    function cloneGroupSupportedElevation(state, groupId, gateState, orangeButtonsPressed) {
+      const members = cloneGroupMembers(state, groupId);
+      const memberSet = new Set(members);
+      const currentBaseElevation = cloneGroupCurrentBaseElevation(state, groupId);
+      let baseElevation = -Infinity;
+
+      members.forEach((member) => {
+        const x = state.actorX[member];
+        const y = state.actorY[member];
+        const currentElevation = actorElevation(state, member);
+        const relativeElevation = currentElevation - currentBaseElevation;
+        const supportHeights = terrainSurfaceHeightsAt(
+          state,
+          x,
+          y,
+          gateState,
+          orangeButtonsPressed
+        ).concat(actorSupportSurfaceHeightsAt(state, x, y, memberSet, true));
+
+        supportHeights.forEach((height) => {
+          if (height > currentElevation + 1) {
+            return;
+          }
+
+          baseElevation = Math.max(baseElevation, height - relativeElevation);
+        });
+      });
+
+      return {
+        baseElevation: Number.isFinite(baseElevation) ? baseElevation : currentBaseElevation,
+        currentBaseElevation,
+        memberSet,
+        members
+      };
+    }
+
     function playerSurfaceHeightAt(
       state,
       x,
@@ -3167,16 +3214,69 @@
       state,
       members,
       step,
+      occupied,
       gateState,
       orangeButtonsPressed,
       predictedSupports = null
     ) {
       const memberSet = new Set(members);
 
-      return members.some((member) => {
+      const hasDirectSupport = members.some((member) => {
         const targetX = state.actorX[member] + step.dx;
         const targetY = state.actorY[member] + step.dy;
         const targetElevation = actorElevation(state, member) + step.elevation;
+
+        return (
+          terrainSupportsElevation(
+            state,
+            targetX,
+            targetY,
+            targetElevation,
+            gateState,
+            orangeButtonsPressed
+          ) ||
+          actorSupportSurfaceHeightsAt(state, targetX, targetY, memberSet, true).includes(
+            targetElevation
+          ) ||
+          predictedSupportsElevation(
+            predictedSupports,
+            targetX,
+            targetY,
+            targetElevation,
+            memberSet
+          )
+        );
+      });
+
+      if (hasDirectSupport) {
+        return true;
+      }
+
+      const canSettleDown = members.every((member) => {
+        const targetX = state.actorX[member] + step.dx;
+        const targetY = state.actorY[member] + step.dy;
+        const targetElevation = actorElevation(state, member) + step.elevation - 1;
+
+        return weightlessMemberCanOccupy(
+          state,
+          member,
+          targetX,
+          targetY,
+          targetElevation,
+          occupied,
+          gateState,
+          orangeButtonsPressed
+        );
+      });
+
+      if (!canSettleDown) {
+        return false;
+      }
+
+      return members.some((member) => {
+        const targetX = state.actorX[member] + step.dx;
+        const targetY = state.actorY[member] + step.dy;
+        const targetElevation = actorElevation(state, member) + step.elevation - 1;
 
         return (
           terrainSupportsElevation(
@@ -3470,7 +3570,8 @@
       occupied,
       gateState,
       orangeButtonsPressed,
-      ignoredActors
+      ignoredActors,
+      actorType = "weightless_box"
     ) {
       const clusterGroupIds = new Set([groupId]);
       const blockers = [];
@@ -3479,10 +3580,10 @@
 
       while (expanded) {
         expanded = false;
-        const clusterMembers = new Set(weightlessClusterMembers(state, clusterGroupIds));
+        const clusterMembers = new Set(weightlessClusterMembers(state, clusterGroupIds, actorType));
 
         Array.from(clusterGroupIds).forEach((currentGroupId) => {
-          const members = weightlessGroupMembers(state, currentGroupId);
+          const members = weightlessGroupMembers(state, currentGroupId, actorType);
           const canStartIceSlopeTransit = weightlessClusterCanStartIceSlopeTransit(
             state,
             members,
@@ -3625,7 +3726,7 @@
                 candidate !== member &&
                 !isNonBlockingActor(candidate) &&
                 actorElevation(state, candidate) === actorElevation(state, member) &&
-                !(actorTypes[candidate] === "weightless_box" && clusterGroupIds.has(actorGroupIds[candidate]))
+                !(actorTypes[candidate] === actorType && clusterGroupIds.has(actorGroupIds[candidate]))
             );
 
             if (blocker === -1) {
@@ -3637,7 +3738,7 @@
               return;
             }
 
-            if (actorTypes[blocker] === "weightless_box") {
+            if (actorTypes[blocker] === actorType) {
               if (!clusterGroupIds.has(actorGroupIds[blocker])) {
                 clusterGroupIds.add(actorGroupIds[blocker]);
                 expanded = true;
@@ -3841,6 +3942,7 @@
             state,
             members,
             step,
+            occupied,
             gateState,
             orangeButtonsPressed,
             predictedSupports
@@ -5557,7 +5659,7 @@
           return;
         }
 
-        if (move.actorType === "weightless_box") {
+        if (move.actorType === "weightless_box" || isCloneType(move.actorType)) {
           return;
         }
 
@@ -5743,6 +5845,7 @@
           if (
             state.actorRemoved[index] ||
             actorTypes[index] === "weightless_box" ||
+            isCloneActor(index) ||
             !isSupportActorType(actorTypes[index])
           ) {
             continue;
@@ -5786,6 +5889,31 @@
           });
         }
 
+        const handledCloneGroups = new Set();
+
+        for (let index = 0; index < actorCount; index += 1) {
+          if (!isCloneActor(index) || state.actorRemoved[index]) {
+            continue;
+          }
+
+          const groupId = actorGroupIds[index] || "";
+
+          if (handledCloneGroups.has(groupId)) {
+            continue;
+          }
+
+          handledCloneGroups.add(groupId);
+
+          const group = cloneGroupSupportedElevation(state, groupId, gateState, orangeButtonsPressed);
+
+          group.members.forEach((member) => {
+            const toElevation =
+              group.baseElevation + (actorElevation(state, member) - group.currentBaseElevation);
+
+            setDynamicElevation(member, toElevation);
+          });
+        }
+
         const propagationQueue = Array.from(changedSupportActors);
         for (let queueIndex = 0; queueIndex < propagationQueue.length; queueIndex += 1) {
           const lower = propagationQueue[queueIndex];
@@ -5802,6 +5930,7 @@
               state.actorRemoved[upper] ||
               !isSupportActorType(actorTypes[upper]) ||
               actorTypes[upper] === "weightless_box" ||
+              isCloneActor(upper) ||
               state.actorX[upper] !== state.actorX[lower] ||
               state.actorY[upper] !== state.actorY[lower] ||
               (iterationStartElevations[upper] || 0) !== lowerFromElevation + 1
@@ -5853,6 +5982,7 @@
         if (
           state.actorRemoved[index] ||
           actorTypes[index] === "weightless_box" ||
+          isCloneActor(index) ||
           !isSupportActorType(actorTypes[index])
         ) {
           continue;
@@ -5968,6 +6098,38 @@
           state.actorRemoved[member] = shouldFallIntoHole ? 1 : 0;
         });
       }
+
+      const handledCloneGroups = new Set();
+
+      for (let index = 0; index < actorCount; index += 1) {
+        if (!isCloneActor(index) || state.actorRemoved[index]) {
+          continue;
+        }
+
+        const groupId = actorGroupIds[index] || "";
+
+        if (handledCloneGroups.has(groupId)) {
+          continue;
+        }
+
+        handledCloneGroups.add(groupId);
+
+        const group = cloneGroupSupportedElevation(state, groupId, gateState, orangeButtonsPressed);
+
+        group.members.forEach((member) => {
+          const toElevation =
+            group.baseElevation + (actorElevation(state, member) - group.currentBaseElevation);
+
+          if ((originalElevations[member] || 0) !== toElevation || moveByActor.has(member)) {
+            const moveRecord = ensureDynamicMove(member, toElevation);
+
+            moveRecord.toRemoved = false;
+          }
+
+          state.actorElevation[member] = toElevation;
+          state.actorRemoved[member] = 0;
+        });
+      }
     }
 
     function sortPlayersForMove(state, dx, dy) {
@@ -6063,7 +6225,8 @@
         const canExitLevel = isMainPlayerActor(player);
 
         if (isCloneActor(player)) {
-          const members = cloneGroupMembers(state, actorGroupIds[player]);
+          const cloneGroupId = actorGroupIds[player] || "";
+          const members = cloneGroupMembers(state, cloneGroupId);
           const carriedRiders = cloneRidersForMove(
             state,
             members,
@@ -6073,25 +6236,94 @@
             orangeButtonsPressed
           );
           const moveStartIndex = moves.length;
-
-          moveWeightlessCluster(
+          const ignoredActors = new Set(members);
+          carriedRiders.forEach((rider) => ignoredActors.add(rider.actorIndex));
+          const attemptSnapshot = cloneState(state);
+          const occupiedSnapshot = new Set(occupied);
+          const clonePushCluster = collectWeightlessPushCluster(
             state,
-            [actorGroupIds[player] || ""],
+            cloneGroupId,
             dx,
             dy,
             occupied,
-            moves,
             raisedPlayerGates,
             orangeButtonsPressed,
-            searchMode,
-            null,
-            "clone",
-            {
-              carriedPlayers,
-              carriedRiders,
-              moveStartIndex
-            }
+            ignoredActors,
+            "clone"
           );
+          let canMoveClone = clonePushCluster !== null;
+          let remainingPushBudget = Math.max(1, members.length);
+          const handled = new Set();
+
+          if (canMoveClone) {
+            members.forEach((member) => {
+              removeOccupiedAtElevation(
+                occupied,
+                state.actorX[member],
+                state.actorY[member],
+                actorElevation(state, member)
+              );
+            });
+            carriedRiders.forEach((rider) => {
+              removeOccupiedAtElevation(occupied, rider.fromX, rider.fromY, rider.fromElevation);
+            });
+
+            for (const blocker of clonePushCluster.blockers) {
+              const result = attemptPushActor(
+                state,
+                blocker,
+                dx,
+                dy,
+                occupied,
+                moves,
+                remainingPushBudget,
+                handled,
+                raisedPlayerGates,
+                orangeButtonsPressed,
+                ignoredActors,
+                searchMode
+              );
+
+              if (result === null) {
+                canMoveClone = false;
+                break;
+              }
+
+              remainingPushBudget = result;
+            }
+          }
+
+          if (
+            canMoveClone &&
+            moveWeightlessCluster(
+              state,
+              clonePushCluster.groupIds,
+              dx,
+              dy,
+              occupied,
+              moves,
+              raisedPlayerGates,
+              orangeButtonsPressed,
+              searchMode,
+              {
+                handled,
+                ignoredActors
+              },
+              "clone",
+              {
+                carriedPlayers,
+                carriedRiders,
+                moveStartIndex
+              }
+            )
+          ) {
+            return;
+          }
+
+          copyStateInto(state, attemptSnapshot);
+          occupied.clear();
+          occupiedSnapshot.forEach((key) => occupied.add(key));
+          moves.length = moveStartIndex;
           return;
         }
 
