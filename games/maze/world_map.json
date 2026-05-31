@@ -1,10 +1,70 @@
 {
   "levels": {
-    "sjejnsyuln.txt": [
+    "20oruubtee.txt": [
       "A",
       "A"
     ],
-    "20oruubtee.txt": [
+    "04r5a6rnen.txt": [
+      "B",
+      "A"
+    ],
+    "aleh4bcrs1.txt": [
+      "C",
+      "A"
+    ],
+    "vcryfr7rx5.txt": [
+      "D",
+      "A"
+    ],
+    "t3qyrveo5s.txt": [
+      "E",
+      "A"
+    ],
+    "hrnoezs23q.txt": [
+      "F",
+      "A"
+    ],
+    "cnwspnqtb4.txt": [
+      "G",
+      "A"
+    ],
+    "vndvq4loik.txt": [
+      "H",
+      "A"
+    ],
+    "dsgc0sn2ov.txt": [
+      "I",
+      "A"
+    ],
+    "ovqo3gb3vn.txt": [
+      "J",
+      "A"
+    ],
+    "col2f40f59.txt": [
+      "K",
+      "A"
+    ],
+    "zzg05us8i5.txt": [
+      "L",
+      "A"
+    ],
+    "b9enwgzf7b.txt": [
+      "M",
+      "A"
+    ],
+    "ancz5c3uty.txt": [
+      "N",
+      "A"
+    ],
+    "d8mvq40fpc.txt": [
+      "O",
+      "A"
+    ],
+    "kpympejsed.txt": [
+      "P",
+      "A"
+    ],
+    "sjejnsyuln.txt": [
       "A",
       "B"
     ],
@@ -64,6 +124,14 @@
       "O",
       "B"
     ],
+    "rsecv88qvf.txt": [
+      "P",
+      "B"
+    ],
+    "xz3cl89yyl.txt": [
+      "A",
+      "C"
+    ],
     "l03iufzqh7.txt": [
       "B",
       "C"
@@ -120,6 +188,14 @@
       "O",
       "C"
     ],
+    "isoa65tgje.txt": [
+      "P",
+      "C"
+    ],
+    "s9j9mhtrdt.txt": [
+      "A",
+      "D"
+    ],
     "r6tzluprjw.txt": [
       "B",
       "D"
@@ -174,6 +250,10 @@
     ],
     "m85yd3qc0f.txt": [
       "O",
+      "D"
+    ],
+    "03h2y6docf.txt": [
+      "P",
       "D"
     ],
     "yahqqkn1o1.txt": [
@@ -236,6 +316,10 @@
       "O",
       "E"
     ],
+    "ywu1mq8z0a.txt": [
+      "P",
+      "E"
+    ],
     "oya2si9ksy.txt": [
       "A",
       "F"
@@ -296,6 +380,14 @@
       "O",
       "F"
     ],
+    "mals0r6l75.txt": [
+      "P",
+      "F"
+    ],
+    "lwyjbf97lx.txt": [
+      "A",
+      "G"
+    ],
     "qevrh3xrj9.txt": [
       "B",
       "G"
@@ -351,6 +443,14 @@
     "3ccre0xgj5.txt": [
       "O",
       "G"
+    ],
+    "hn9a9qdhoc.txt": [
+      "P",
+      "G"
+    ],
+    "ytuqqzjaxn.txt": [
+      "A",
+      "H"
     ],
     "haz0y1uwt4.txt": [
       "B",
@@ -408,6 +508,14 @@
       "O",
       "H"
     ],
+    "3b1bqwc6vr.txt": [
+      "P",
+      "H"
+    ],
+    "atcquxzhzq.txt": [
+      "A",
+      "I"
+    ],
     "wuh9bglsl5.txt": [
       "B",
       "I"
@@ -463,6 +571,14 @@
     "cfzpbkqtdd.txt": [
       "O",
       "I"
+    ],
+    "q45bhovnrp.txt": [
+      "P",
+      "I"
+    ],
+    "totdhyqgez.txt": [
+      "A",
+      "J"
     ],
     "iufsaauspn.txt": [
       "B",
@@ -520,6 +636,14 @@
       "O",
       "J"
     ],
+    "cgfounlbxl.txt": [
+      "P",
+      "J"
+    ],
+    "ooakpb6cia.txt": [
+      "A",
+      "K"
+    ],
     "beznpglxoe.txt": [
       "B",
       "K"
@@ -575,6 +699,14 @@
     "yb25brl5q0.txt": [
       "O",
       "K"
+    ],
+    "dueh31unx7.txt": [
+      "P",
+      "K"
+    ],
+    "tkt3t1umof.txt": [
+      "A",
+      "L"
     ],
     "jzlholnboh.txt": [
       "B",
@@ -632,6 +764,14 @@
       "O",
       "L"
     ],
+    "isevdxnqv9.txt": [
+      "P",
+      "L"
+    ],
+    "qnmivkpnhd.txt": [
+      "A",
+      "M"
+    ],
     "qkdhlx8ahq.txt": [
       "B",
       "M"
@@ -687,6 +827,14 @@
     "jvw9sjlqnx.txt": [
       "O",
       "M"
+    ],
+    "mcp21lddom.txt": [
+      "P",
+      "M"
+    ],
+    "odyp76rbyt.txt": [
+      "A",
+      "N"
     ],
     "izfhw6j9vx.txt": [
       "B",
@@ -744,6 +892,14 @@
       "O",
       "N"
     ],
+    "rpccyrq7ib.txt": [
+      "P",
+      "N"
+    ],
+    "bswerj80ds.txt": [
+      "A",
+      "O"
+    ],
     "rwlw6f678w.txt": [
       "B",
       "O"
@@ -800,12 +956,36 @@
       "O",
       "O"
     ],
+    "buvcasegb6.txt": [
+      "P",
+      "O"
+    ],
     "zk2vabfzho.txt": [
       "A",
       "P"
     ],
+    "3mxxdbl8lk.txt": [
+      "B",
+      "P"
+    ],
+    "hpa9bjp0qo.txt": [
+      "C",
+      "P"
+    ],
+    "keea0v0tso.txt": [
+      "D",
+      "P"
+    ],
     "4jkyjbx7cu.txt": [
       "E",
+      "P"
+    ],
+    "qdzi7ngcvv.txt": [
+      "F",
+      "P"
+    ],
+    "vxxqlg2zpv.txt": [
+      "G",
       "P"
     ],
     "oei2scfpp1.txt": [
@@ -818,6 +998,30 @@
     ],
     "0kasincuqs.txt": [
       "J",
+      "P"
+    ],
+    "rzkskalj35.txt": [
+      "K",
+      "P"
+    ],
+    "ifw26xruqd.txt": [
+      "L",
+      "P"
+    ],
+    "cktk6k6rov.txt": [
+      "M",
+      "P"
+    ],
+    "momsqqst1a.txt": [
+      "N",
+      "P"
+    ],
+    "nhhmjvdi3g.txt": [
+      "O",
+      "P"
+    ],
+    "kjbdrkvs0y.txt": [
+      "P",
       "P"
     ]
   }
