@@ -237,6 +237,10 @@
       );
     }
 
+    function perspectiveCameraNearPlane() {
+      return Math.max(2, unit * 0.075);
+    }
+
     function updateCameraModeToggle() {
       if (!app.cameraModeToggle) {
         return;
@@ -2510,15 +2514,32 @@
 
     function addOutlinedMesh(geometry, color, position, options = {}) {
       const opacity = options.opacity ?? 1;
-      const meshMaterial = options.doubleSide === true ? material(color, opacity).clone() : material(color, opacity);
+      const shouldCloneMaterial =
+        options.doubleSide === true ||
+        options.depthWrite === false ||
+        options.polygonOffset === true;
+      const meshMaterial = shouldCloneMaterial ? material(color, opacity).clone() : material(color, opacity);
 
       if (options.doubleSide === true) {
         meshMaterial.side = THREE.DoubleSide;
         meshMaterial.needsUpdate = true;
       }
 
+      if (options.depthWrite === false) {
+        meshMaterial.depthWrite = false;
+        meshMaterial.needsUpdate = true;
+      }
+
+      if (options.polygonOffset === true) {
+        meshMaterial.polygonOffset = true;
+        meshMaterial.polygonOffsetFactor = options.polygonOffsetFactor ?? -2;
+        meshMaterial.polygonOffsetUnits = options.polygonOffsetUnits ?? -2;
+        meshMaterial.needsUpdate = true;
+      }
+
       const mesh = new THREE.Mesh(geometry, meshMaterial);
       mesh.position.set(position.x, position.y, position.z);
+      mesh.renderOrder = options.renderOrder ?? 0;
       mesh.castShadow = options.castShadow !== false;
       mesh.receiveShadow = options.receiveShadow !== false;
       if (options.editorPick) {
@@ -2739,13 +2760,16 @@
     function biasEdgeSceneTowardCamera() {
       const cameraDirection = new THREE.Vector3();
       camera.getWorldDirection(cameraDirection);
+      const depthRange = Math.max(0, Number(camera.far || 0) - Number(camera.near || 0));
+      const depthScaledBias = Math.min(unit * 0.11, depthRange * 0.00022);
+      const edgeBias = Math.max(edgeDepthBias, depthScaledBias);
 
       edgeScene.children.forEach((child) => {
         const basePosition = child.userData.edgeBasePosition;
 
         if (basePosition) {
           child.position.copy(basePosition);
-          child.position.addScaledVector(cameraDirection, -edgeDepthBias);
+          child.position.addScaledVector(cameraDirection, -edgeBias);
         }
       });
     }
@@ -4563,6 +4587,30 @@
       return renderCellHasOrangeWallLayerAtElevation(x, y, elevation + 1);
     }
 
+    function renderPlayerGateHasSurfaceBelow(layer, x, y, now = performance.now()) {
+      const elevation = layer.elevation ?? 0;
+
+      if (elevation <= 0) {
+        return true;
+      }
+
+      return renderTerrainLayersAt(x, y).some((candidate) => {
+        if (
+          candidate === layer ||
+          candidate.type === "empty" ||
+          candidate.type === "hole" ||
+          candidate.type === "orange_button" ||
+          candidate.type === "player_gate"
+        ) {
+          return false;
+        }
+
+        const surfaceHeight = renderTerrainLayerSurfaceHeight(candidate, x, y, now);
+
+        return surfaceHeight !== null && Math.abs(surfaceHeight - elevation) <= 0.001;
+      });
+    }
+
     function renderTerrainLayerLiftValue(layer, x, y, now = performance.now()) {
       const key = `${x},${y}`;
       const surfaceLiftValue = activeRenderContext?.surfaceLiftValues?.get(`${layer.type}:${key}`);
@@ -4965,18 +5013,22 @@
 
       const isRaisedPiece = terrainHeight > elevation;
       const isLoweredPlayerLift = type === "player_lift" && !isRaisedPiece;
+      const isSurfacePlayerGate =
+        type === "player_gate" &&
+        !isRaisedPiece &&
+        renderPlayerGateHasSurfaceBelow(layer, x, y, now);
       const isStackedFloorCube = !isRaisedPiece && elevation > 0 && isStackableFloorType(type);
       const isSunkenFloor = !isRaisedPiece && terrainHeight === 0 && isSunkenFloorType(type);
       const topY = isLoweredPlayerLift
         ? topHeight + playerLiftPlateOffset()
-        : isLoweredOrangeSurface
+        : isLoweredOrangeSurface || isSurfacePlayerGate
           ? topHeight + playerLiftPlateOffset()
           : isRaisedPiece || isStackedFloorCube
             ? topHeight
             : topHeight - (isSunkenFloor ? floorDrop : 0);
       const blockHeight = isRaisedPiece
         ? Math.max(1, topHeight - baseHeight)
-        : isLoweredPlayerLift
+        : isLoweredPlayerLift || isSurfacePlayerGate
           ? playerLiftPlateThickness()
           : isStackedFloorCube
             ? elevationUnit
@@ -4988,6 +5040,7 @@
         elevation,
         isLoweredOrangeSurface,
         isLoweredPlayerLift,
+        isSurfacePlayerGate,
         isCollapsingOrangeBase,
         isVoid: false,
         layer,
@@ -5640,7 +5693,7 @@
         return;
       }
 
-      if (descriptor.isLoweredPlayerLift || descriptor.isLoweredOrangeSurface) {
+      if (descriptor.isLoweredPlayerLift || descriptor.isLoweredOrangeSurface || descriptor.isSurfacePlayerGate) {
         addOutlinedMesh(
           componentTopPlaneGeometry(cells),
           terrainColor(descriptor.type),
@@ -5648,6 +5701,10 @@
           {
             edgeThreshold: 18,
             opacity: visibility,
+            polygonOffset: descriptor.isSurfacePlayerGate,
+            polygonOffsetFactor: -6,
+            polygonOffsetUnits: -6,
+            renderOrder: descriptor.isSurfacePlayerGate ? 20 : 0,
             castShadow: false,
             receiveShadow: !descriptor.isLoweredPlayerLift,
             editorPick: {
@@ -7423,7 +7480,7 @@
       if (camera.isPerspectiveCamera) {
         camera.aspect = width / Math.max(1, height);
         camera.fov = 34;
-        camera.near = 1;
+        camera.near = perspectiveCameraNearPlane();
         camera.far = perspectiveCameraFarPlane();
       } else {
         camera.left = -width / 2;
@@ -8935,6 +8992,7 @@
           alpha: true,
           antialias: true,
           canvas: threeCanvas,
+          logarithmicDepthBuffer: true,
           preserveDrawingBuffer: false
         });
         renderer.autoClear = false;
