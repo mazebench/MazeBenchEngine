@@ -199,6 +199,66 @@ function createPageRenderer({
     });
   }
 
+  function renderBigPlayPage(game, level) {
+    const levelState = {
+      ...getLevelState(game, level),
+      flyover: true,
+      flyoverRadius: 3,
+      bigPlay: true,
+      routePrefix: "big-play"
+    };
+    const hasBoard = levelState.width > 0 && levelState.height > 0;
+    const returnHref = `/flyover/${encodeURIComponent(game.id)}/${encodeURIComponent(level.id)}`;
+    const boardMarkup =
+      hasBoard
+        ? `<section class="play-stage big-play-stage" aria-label="${escapeHtml(game.name)} widescreen play">
+            <div class="maze-frame big-play-frame">
+              <canvas
+                id="maze-canvas"
+                class="maze-canvas"
+                width="${levelState.width * 64}"
+                height="${levelState.height * 64}"
+                aria-label="${escapeHtml(game.name)} widescreen play"
+              ></canvas>
+            </div>
+          </section>
+          <script>window.__PLAY_DATA__ = ${serializeForScript(levelState)};</script>
+          <script src="/play-rules.js" defer></script>
+          <script src="/play-core.js" defer></script>
+          <script src="/play-render-effects.js" defer></script>
+          <script src="/play-render-terrain.js" defer></script>
+          <script src="/play-render-actors.js" defer></script>
+          <script src="/play-render-three.js" defer></script>
+          <script src="/play-render-compositor.js" defer></script>
+          <script src="/play-render.js" defer></script>
+          <script src="/maze-engine.js" defer></script>
+          <script src="/play-movement.js" defer></script>
+          <script src="/play-world-transitions.js" defer></script>
+          <script src="/play-gameplay.js" defer></script>
+          <script src="/big-play.js" defer></script>`
+        : `<section class="play-stage"><p>This level is empty.</p></section>`;
+
+    return renderPage({
+      title: `${game.name} Big Play`,
+      bodyClass: "play-body big-play-body",
+      body: `<main class="play-shell big-play-shell">
+        <header class="play-header big-play-header">
+          <div class="play-header-meta big-play-header-meta">
+            <a class="back-link big-play-return" data-big-play-return href="${returnHref}">Flyover</a>
+            <p data-big-play-level-label>${escapeHtml(level.label)}</p>
+            <button
+              id="reset-progress"
+              class="progress-reset-button big-play-reset"
+              type="button"
+              title="Reset collected gems"
+            >Reset</button>
+          </div>
+        </header>
+        ${boardMarkup}
+      </main>`
+    });
+  }
+
   function renderFlyoverPage(game, level) {
     const levelState = {
       ...getLevelState(game, level),
@@ -502,6 +562,7 @@ function createPageRenderer({
 
   return {
     renderAuthorPage,
+    renderBigPlayPage,
     renderFlyoverPage,
     renderGamePage,
     renderHomePage,

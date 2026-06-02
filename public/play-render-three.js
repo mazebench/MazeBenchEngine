@@ -455,7 +455,9 @@
         parts.push(
           "flyover",
           Math.round(Number(app.flyoverCameraOffsetX || 0) * 1000),
-          Math.round(Number(app.flyoverCameraOffsetZ || 0) * 1000)
+          Math.round(Number(app.flyoverCameraOffsetZ || 0) * 1000),
+          String(app.flyoverFocusedLevelId || ""),
+          flyoverFocusTransitionSignature()
         );
       }
 
@@ -7353,6 +7355,7 @@
           app.boardRect.width,
           app.boardRect.height,
           edgeOutlinesEnabled() ? "edges:on" : "edges:off",
+          `big-play:${app.bigPlayMode === true ? 1 : 0}`,
           animationSignature(now),
           flyoverFadeAnimationSignature(now),
           transition ? "transition" : "no-transition",
@@ -7373,6 +7376,9 @@
         animationSignature(now),
         floatingFloorAnimationSignature(now),
         flyoverFadeAnimationSignature(now),
+        app.isFlyoverMode
+          ? `big-play:${app.bigPlayMode === true ? 1 : 0}`
+          : "no-flyover-selection",
         transition
           ? [
               transition.kind,
@@ -7764,7 +7770,7 @@
     }
 
     function flyoverCurrentLevelBrightness() {
-      return 1;
+      return flyoverLevelBrightness(app.currentLevelId, 1);
     }
 
     function surroundingLevelBrightness(dx, dy) {
@@ -7773,6 +7779,10 @@
       }
 
       return neighboringRoomBrightness;
+    }
+
+    function flyoverLevelBrightness(levelId, brightness = 1) {
+      return clamp01(Number(brightness) || 0);
     }
 
     function surroundingLevelOffset(dx, dy, levelState, currentState = runtimeLevelState()) {
@@ -7896,8 +7906,26 @@
       }
 
       const bounds = flyoverStaticBounds();
-      const centerX = flyoverRoomWorldWidth() / 2 + Number(app.flyoverCameraOffsetX || 0);
-      const centerZ = flyoverRoomWorldHeight() / 2 + Number(app.flyoverCameraOffsetZ || 0);
+      const focusedFrame = flyoverLevelFrame(app.flyoverFocusedLevelId || app.flyoverSelectedLevelId);
+      const roomWidth = flyoverRoomWorldWidth();
+      const roomHeight = flyoverRoomWorldHeight();
+      const defaultOptions = flyoverDefaultFitOptions(bounds, roomWidth, roomHeight);
+      const transitionOptions = flyoverFocusTransitionFitOptions(bounds, roomWidth, roomHeight, defaultOptions);
+
+      if (transitionOptions) {
+        return transitionOptions;
+      }
+
+      if (focusedFrame) {
+        return flyoverFocusedFitOptions(focusedFrame, bounds, roomWidth, roomHeight);
+      }
+
+      return defaultOptions;
+    }
+
+    function flyoverDefaultFitOptions(bounds, roomWidth, roomHeight) {
+      const centerX = roomWidth / 2 + Number(app.flyoverCameraOffsetX || 0);
+      const centerZ = roomHeight / 2 + Number(app.flyoverCameraOffsetZ || 0);
 
       return {
         ...bounds,
@@ -7906,6 +7934,251 @@
         centerY: 0,
         stableHeight: oneLayerCameraWorldHeight(),
         fixedCameraDistance: flyoverFixedCameraDistance()
+      };
+    }
+
+    function flyoverFocusedFitOptions(focusedFrame, bounds, roomWidth, roomHeight) {
+      const focusPaddingMultiplier = app.bigPlayMode === true ? 1.2 : 0.85;
+      const distanceMultiplier = app.bigPlayMode === true ? 3.25 : 2.35;
+      const paddingX = roomWidth * focusPaddingMultiplier;
+      const paddingZ = roomHeight * focusPaddingMultiplier;
+      const focusWidth = focusedFrame.maxX - focusedFrame.minX + paddingX * 2;
+      const focusHeight = focusedFrame.maxZ - focusedFrame.minZ + paddingZ * 2;
+      const focusSpan = Math.max(focusWidth, focusHeight, oneLayerCameraWorldHeight(), unit);
+      const worldCenterX = (bounds.minX + bounds.maxX) / 2;
+      const worldCenterZ = (bounds.minZ + bounds.maxZ) / 2;
+      const bigPlayWorldBlend = app.bigPlayMode === true ? 0.34 : 0;
+      const centerX = lerp(focusedFrame.centerX, worldCenterX, bigPlayWorldBlend);
+      const centerZ = lerp(focusedFrame.centerZ, worldCenterZ, bigPlayWorldBlend);
+
+      return {
+        minX: focusedFrame.minX - paddingX,
+        maxX: focusedFrame.maxX + paddingX,
+        minZ: focusedFrame.minZ - paddingZ,
+        maxZ: focusedFrame.maxZ + paddingZ,
+        centerX,
+        centerZ,
+        centerY: 0,
+        stableHeight: oneLayerCameraWorldHeight(),
+        fixedCameraDistance: focusSpan * distanceMultiplier + unit * 3
+      };
+    }
+
+    function flyoverFocusTransitionProgress() {
+      const transition = app.flyoverFocusTransition;
+
+      if (!transition || !Number.isFinite(transition.startMs) || !Number.isFinite(transition.durationMs)) {
+        return null;
+      }
+
+      const progress = clamp01((performance.now() - transition.startMs) / Math.max(1, transition.durationMs));
+
+      if (progress >= 1) {
+        return null;
+      }
+
+      return {
+        transition,
+        progress
+      };
+    }
+
+    function flyoverFocusTransitionSignature() {
+      const active = flyoverFocusTransitionProgress();
+
+      if (!active) {
+        return "";
+      }
+
+      return [
+        "focus-transition",
+        active.transition.fromLevelId || "",
+        active.transition.toLevelId || "",
+        Math.floor(active.progress * 48)
+      ].join(":");
+    }
+
+    function interpolateFlyoverFitOptions(fromOptions, toOptions, progress) {
+      const eased = smootherStep(progress);
+      const lerpField = (field) => lerp(Number(fromOptions[field]) || 0, Number(toOptions[field]) || 0, eased);
+
+      return {
+        minX: lerpField("minX"),
+        maxX: lerpField("maxX"),
+        minZ: lerpField("minZ"),
+        maxZ: lerpField("maxZ"),
+        centerX: lerpField("centerX"),
+        centerY: lerpField("centerY"),
+        centerZ: lerpField("centerZ"),
+        stableHeight: lerpField("stableHeight"),
+        fixedCameraDistance: lerpField("fixedCameraDistance")
+      };
+    }
+
+    function flyoverFocusTransitionFitOptions(bounds, roomWidth, roomHeight, defaultOptions) {
+      const active = flyoverFocusTransitionProgress();
+
+      if (!active) {
+        return null;
+      }
+
+      const fromFrame = flyoverLevelFrame(active.transition.fromLevelId);
+      const toFrame = flyoverLevelFrame(active.transition.toLevelId);
+      const fromOptions = fromFrame
+        ? flyoverFocusedFitOptions(fromFrame, bounds, roomWidth, roomHeight)
+        : defaultOptions;
+      const toOptions = toFrame
+        ? flyoverFocusedFitOptions(toFrame, bounds, roomWidth, roomHeight)
+        : defaultOptions;
+
+      return interpolateFlyoverFitOptions(fromOptions, toOptions, active.progress);
+    }
+
+    function flyoverLevelFrame(levelId) {
+      if (!app.isFlyoverMode || !levelId) {
+        return null;
+      }
+
+      const levelIdText = String(levelId);
+      const levelState =
+        levelIdText === app.currentLevelId
+          ? runtimeLevelState()
+          : app.cachedHorizontalNeighborLevelState?.(levelIdText);
+
+      if (!levelState?.width || !levelState?.height) {
+        return null;
+      }
+
+      let offsetX = 0;
+      let offsetZ = 0;
+      let dx = 0;
+      let dy = 0;
+
+      if (Array.isArray(app.flyoverWorldEntries)) {
+        const entry = app.flyoverWorldEntries.find((candidate) => candidate.levelId === levelIdText);
+
+        if (entry) {
+          dx = Number(entry.dx) || 0;
+          dy = Number(entry.dy) || 0;
+          offsetX = dx * flyoverRoomWorldWidth();
+          offsetZ = dy * flyoverRoomWorldHeight();
+        }
+      }
+
+      if (levelIdText !== app.currentLevelId && offsetX === 0 && offsetZ === 0) {
+        const view = surroundingLevelViews().find((candidate) => candidate.levelId === levelIdText);
+
+        if (!view) {
+          return null;
+        }
+
+        dx = Number(view.dx) || 0;
+        dy = Number(view.dy) || 0;
+        offsetX = Number(view.offset?.x) || 0;
+        offsetZ = Number(view.offset?.z) || 0;
+      }
+
+      const width = levelState.width * unit;
+      const height = levelState.height * unit;
+
+      return {
+        levelId: levelIdText,
+        levelLabel: levelState.levelLabel || (levelIdText === app.currentLevelId ? app.currentLevelLabel : ""),
+        levelState,
+        dx,
+        dy,
+        minX: offsetX,
+        maxX: offsetX + width,
+        minZ: offsetZ,
+        maxZ: offsetZ + height,
+        centerX: offsetX + width / 2,
+        centerZ: offsetZ + height / 2
+      };
+    }
+
+    function flyoverPickableLevelFrames() {
+      if (!app.isFlyoverMode) {
+        return [];
+      }
+
+      const levelIds = new Set([app.currentLevelId]);
+
+      if (Array.isArray(app.flyoverWorldEntries)) {
+        app.flyoverWorldEntries.forEach((entry) => {
+          if (entry?.levelId) {
+            levelIds.add(entry.levelId);
+          }
+        });
+      } else {
+        surroundingLevelViews().forEach((view) => {
+          if (view?.levelId) {
+            levelIds.add(view.levelId);
+          }
+        });
+      }
+
+      return Array.from(levelIds)
+        .map((levelId) => flyoverLevelFrame(levelId))
+        .filter(Boolean);
+    }
+
+    function pickFlyoverLevel(clientX, clientY, targetElement = threeCanvas) {
+      const hitElement = targetElement || threeCanvas || app.canvas;
+
+      if (!THREE || !camera || !hitElement || !app.isFlyoverMode) {
+        return null;
+      }
+
+      const rect = hitElement.getBoundingClientRect();
+
+      if (rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+
+      if (!raycaster) {
+        raycaster = new THREE.Raycaster();
+      }
+
+      const pointer = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -(((clientY - rect.top) / rect.height) * 2 - 1)
+      );
+      const groundPoint = new THREE.Vector3();
+      const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+
+      raycaster.setFromCamera(pointer, camera);
+
+      if (!raycaster.ray.intersectPlane(groundPlane, groundPoint)) {
+        return null;
+      }
+
+      const tolerance = unit * 0.18;
+      const matches = flyoverPickableLevelFrames()
+        .filter((frame) => (
+          groundPoint.x >= frame.minX - tolerance &&
+          groundPoint.x <= frame.maxX + tolerance &&
+          groundPoint.z >= frame.minZ - tolerance &&
+          groundPoint.z <= frame.maxZ + tolerance
+        ))
+        .sort((left, right) => {
+          const leftDx = left.centerX - groundPoint.x;
+          const leftDz = left.centerZ - groundPoint.z;
+          const rightDx = right.centerX - groundPoint.x;
+          const rightDz = right.centerZ - groundPoint.z;
+
+          return leftDx * leftDx + leftDz * leftDz - (rightDx * rightDx + rightDz * rightDz);
+        });
+
+      if (matches.length === 0) {
+        return null;
+      }
+
+      return {
+        ...matches[0],
+        point: {
+          x: groundPoint.x,
+          z: groundPoint.z
+        }
       };
     }
 
@@ -7966,6 +8239,7 @@
             }
           }
 
+          brightness = flyoverLevelBrightness(view.levelId, brightness);
           renderLevelStateAt(view.levelState, view.offset, {
             role: "neighbor",
             brightness,
@@ -8963,7 +9237,7 @@
             offsetZ: 0,
             role: "flyover-current",
             brightness: flyoverCurrentLevelBrightness(),
-            hidePlayers: true
+            hidePlayers: app.bigPlayMode === true ? false : true
           }, () => {
             addTerrainRegions(now);
             renderActorsForCurrentContext(now);
@@ -9027,6 +9301,7 @@
 
     app.threeRenderer = {
       pickEditorFace,
+      pickFlyoverLevel,
       isDebugCameraAnimating,
       setEditorHoverTarget,
       setDebugCameraView,

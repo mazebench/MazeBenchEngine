@@ -98,6 +98,10 @@
       (typeof playData?.levelId === "string" && playData.levelId) ||
       (currentPathSegments[0] === "play" ? currentPathSegments[2] : "") ||
       "";
+    const playRoutePrefix =
+      typeof playData?.routePrefix === "string" && /^[a-z][a-z0-9-]*$/i.test(playData.routePrefix)
+        ? playData.routePrefix
+        : "play";
     const playRules = modules.PlayRules;
 
     if (!playRules) {
@@ -122,6 +126,7 @@
       currentGameId,
       currentLevelId,
       currentLevelLabel: playData.levelLabel || currentLevelId,
+      playRoutePrefix,
       worldColumns: playRules.normalizeAxisValues(playData?.worldColumns, defaultWorldAxis),
       worldRows: playRules.normalizeAxisValues(playData?.worldRows, defaultWorldAxis),
       isFlyoverMode: playData?.flyover === true,
@@ -1437,7 +1442,8 @@
       }
 
       if (updateUrl && app.currentLevelId) {
-        const nextUrl = `/play/${encodeURIComponent(app.currentGameId)}/${encodeURIComponent(app.currentLevelId)}`;
+        const routePrefix = app.playRoutePrefix || "play";
+        const nextUrl = `/${encodeURIComponent(routePrefix)}/${encodeURIComponent(app.currentGameId)}/${encodeURIComponent(app.currentLevelId)}`;
         window.history.replaceState({ levelId: app.currentLevelId }, "", nextUrl);
       }
 

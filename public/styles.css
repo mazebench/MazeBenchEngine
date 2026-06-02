@@ -451,6 +451,53 @@ pre {
   pointer-events: none;
 }
 
+.flyover-selection-panel {
+  position: absolute;
+  left: 18px;
+  bottom: calc(18px + var(--shadow-md));
+  z-index: 3;
+  width: min(300px, calc(100vw - 36px - var(--shadow-md)));
+  padding: 14px;
+  border: 4px solid #000000;
+  border-radius: 6px;
+  background: #fff8df;
+  box-shadow: var(--shadow-md) var(--shadow-md) 0 #000000;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+.flyover-selection-panel__title {
+  margin: 0 0 12px;
+  color: #111111;
+  font-size: clamp(1.2rem, 5vw, 1.85rem);
+  font-weight: 950;
+  line-height: 1;
+}
+
+.flyover-selection-panel__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.flyover-selection-panel__button {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 3px solid #000000;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: var(--shadow-xs) var(--shadow-xs) 0 #000000;
+  color: #111111;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 950;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.flyover-selection-panel__button--play {
+  background: #7ee0a1;
+}
+
 .flyover-minimap__cell {
   min-width: 0;
   min-height: 0;
@@ -480,6 +527,7 @@ pre {
   box-shadow: none;
   margin: 0;
   background: #111111;
+  cursor: pointer;
 }
 
 .flyover-frame .maze-canvas {
@@ -491,6 +539,69 @@ pre {
 
 .flyover-direct-canvas {
   display: block;
+}
+
+.big-play-shell {
+  width: 100vw;
+  height: 100dvh;
+  min-height: 100dvh;
+  padding: 0;
+  gap: 0;
+  align-items: stretch;
+  background: #050608;
+}
+
+.big-play-header {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  width: auto !important;
+  max-width: calc(100vw - 24px);
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.big-play-header-meta {
+  max-width: calc(100vw - 24px);
+  justify-content: flex-start;
+  pointer-events: auto;
+}
+
+.big-play-stage {
+  position: relative;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.big-play-frame {
+  width: 100vw !important;
+  height: 100dvh !important;
+  aspect-ratio: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+  background: #050608;
+}
+
+.big-play-frame .maze-canvas {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #050608;
+}
+
+.big-play-return {
+  background: #ffd84d;
+}
+
+.big-play-reset {
+  background: #dcfff1;
 }
 
 .field {

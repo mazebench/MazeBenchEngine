@@ -92,9 +92,17 @@
   app.flyoverWholeWorld = true;
   app.flyoverWholeWorldReady = false;
   app.flyoverSceneVersion = 0;
+  app.flyoverSelectedLevelId = "";
+  app.flyoverFocusedLevelId = "";
   app.flyoverRenderableLevelIds = new Set([app.currentLevelId]);
   app.flyoverPendingRenderableLevelIds = new Set();
   app.flyoverRenderableFlushId = 0;
+  let selectionPanel = null;
+  let selectionPreviousForwardEnabled = null;
+  const selectionOrbit = {
+    pausedUntilMs: 0,
+    radiansPerSecond: (Math.PI * 2) / 20
+  };
 
   function currentWorldIndex() {
     return app.parseWorldLevelId?.(app.currentLevelId || playData.levelId) || null;
@@ -388,6 +396,58 @@
     button.addEventListener("pointerleave", stop);
   }
 
+  function bindFlyoverLevelSelection() {
+    if (!app.mazeFrame) {
+      return;
+    }
+
+    let pointerStart = null;
+
+    app.mazeFrame.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) {
+        pointerStart = null;
+        return;
+      }
+
+      pointerStart = {
+        x: event.clientX,
+        y: event.clientY
+      };
+    });
+
+    app.mazeFrame.addEventListener("pointerup", (event) => {
+      if (event.button !== 0 || !pointerStart) {
+        pointerStart = null;
+        return;
+      }
+
+      const dx = event.clientX - pointerStart.x;
+      const dy = event.clientY - pointerStart.y;
+      pointerStart = null;
+
+      if (dx * dx + dy * dy > 14 * 14) {
+        return;
+      }
+
+      const targetElement = app.threeRenderer?.threeCanvas || app.mazeFrame;
+      const pick = app.threeRenderer?.pickFlyoverLevel?.(
+        event.clientX,
+        event.clientY,
+        targetElement
+      );
+
+      if (pick?.levelId) {
+        event.preventDefault();
+        selectFlyoverLevel(pick);
+        return;
+      }
+
+      if (app.flyoverSelectedLevelId) {
+        clearFlyoverSelection();
+      }
+    });
+  }
+
   function normalizeIndex(value, length) {
     return ((value % length) + length) % length;
   }
@@ -448,6 +508,151 @@
     const number = Number(value) || 0;
 
     return number.toLocaleString("en-US");
+  }
+
+  function formatFlyoverLevelName(levelId, fallback = "") {
+    if (fallback) {
+      return fallback;
+    }
+
+    const parsed = app.parseWorldLevelId?.(levelId);
+    const column = parsed ? app.worldColumns?.[parsed.columnIndex] : "";
+    const row = parsed ? app.worldRows?.[parsed.rowIndex] : "";
+
+    if (column && row) {
+      return `Level ${column}x${row}`;
+    }
+
+    return String(levelId || "Level");
+  }
+
+  function ensureSelectionPanel() {
+    if (selectionPanel?.isConnected) {
+      return selectionPanel;
+    }
+
+    const stage = document.querySelector(".flyover-stage");
+
+    if (!stage) {
+      return null;
+    }
+
+    selectionPanel = document.createElement("aside");
+    selectionPanel.className = "flyover-selection-panel";
+    selectionPanel.setAttribute("aria-live", "polite");
+
+    const title = document.createElement("h2");
+    title.className = "flyover-selection-panel__title";
+    title.dataset.flyoverSelectionTitle = "true";
+
+    const actions = document.createElement("div");
+    actions.className = "flyover-selection-panel__actions";
+
+    const playButton = document.createElement("button");
+    playButton.className = "flyover-selection-panel__button flyover-selection-panel__button--play";
+    playButton.type = "button";
+    playButton.textContent = "Play";
+    playButton.dataset.flyoverSelectionPlay = "true";
+
+    const exitButton = document.createElement("button");
+    exitButton.className = "flyover-selection-panel__button";
+    exitButton.type = "button";
+    exitButton.textContent = "Exit";
+    exitButton.dataset.flyoverSelectionExit = "true";
+
+    actions.append(playButton, exitButton);
+    selectionPanel.append(title, actions);
+    selectionPanel.addEventListener("pointerdown", (event) => event.stopPropagation());
+    selectionPanel.addEventListener("click", (event) => event.stopPropagation());
+    stage.appendChild(selectionPanel);
+    return selectionPanel;
+  }
+
+  function updateSelectionPanel(pick) {
+    const panel = ensureSelectionPanel();
+
+    if (!panel) {
+      return;
+    }
+
+    const levelId = pick.levelId;
+    const levelName = formatFlyoverLevelName(levelId, pick.levelLabel);
+    const title = panel.querySelector("[data-flyover-selection-title]");
+    const playButton = panel.querySelector("[data-flyover-selection-play]");
+    const exitButton = panel.querySelector("[data-flyover-selection-exit]");
+
+    panel.dataset.levelId = levelId;
+
+    if (title) {
+      title.textContent = levelName;
+    }
+
+    if (playButton) {
+      playButton.onclick = () => {
+        window.location.href = `/big-play/${encodeURIComponent(playData.gameId)}/${encodeURIComponent(levelId)}`;
+      };
+    }
+
+    if (exitButton) {
+      exitButton.onclick = () => clearFlyoverSelection();
+    }
+  }
+
+  function startFocusTransition(toLevelId, durationMs = 900) {
+    app.flyoverFocusTransition = {
+      fromLevelId: app.flyoverFocusedLevelId || "",
+      toLevelId: toLevelId || "",
+      startMs: performance.now(),
+      durationMs
+    };
+  }
+
+  function clearFlyoverSelection(options = {}) {
+    if (!app.flyoverSelectedLevelId && !selectionPanel) {
+      return;
+    }
+
+    startFocusTransition("", 620);
+    app.flyoverSelectedLevelId = "";
+    app.flyoverFocusedLevelId = "";
+    selectionOrbit.pausedUntilMs = 0;
+    selectionPanel?.remove();
+    selectionPanel = null;
+
+    if (selectionPreviousForwardEnabled !== null) {
+      flight.forwardEnabled = selectionPreviousForwardEnabled;
+      selectionPreviousForwardEnabled = null;
+    }
+
+    if (options.animate !== false) {
+      applyCamera(true, 420);
+    }
+
+    app.render();
+  }
+
+  function selectFlyoverLevel(pick) {
+    if (!pick?.levelId) {
+      return;
+    }
+
+    if (selectionPreviousForwardEnabled === null) {
+      selectionPreviousForwardEnabled = flight.forwardEnabled;
+    }
+
+    flight.forwardEnabled = false;
+    flightVelocity.xRoomsPerSecond = 0;
+    flightVelocity.zRoomsPerSecond = 0;
+    heldFlightControls.clear();
+    app.flyoverSelectedLevelId = pick.levelId;
+    startFocusTransition(pick.levelId, 920);
+    app.flyoverFocusedLevelId = pick.levelId;
+    selectionOrbit.pausedUntilMs = performance.now() + 920;
+    camera.tilt = Math.min(maxTilt, Math.max(camera.tilt, Math.PI * 0.14));
+    camera.zoom = Math.max(minZoom, Math.min(maxZoom, camera.zoom));
+    updateSelectionPanel(pick);
+    applyCamera(true, 680);
+    app.render();
   }
 
   function updateFlyoverStatsHud(now = performance.now(), force = false) {
@@ -1095,6 +1300,11 @@
     const movementRooms = applyHeldFlightControls(elapsedSeconds, now);
 
     applyHeldCameraControls(elapsedSeconds, now);
+    if (app.flyoverSelectedLevelId && now >= selectionOrbit.pausedUntilMs) {
+      camera.yaw += selectionOrbit.radiansPerSecond * elapsedSeconds;
+      applyCamera(false);
+    }
+
     if (movementRooms.x !== 0 || movementRooms.z !== 0) {
       app.flyoverCameraOffsetX += movementRooms.x * roomSize.width * app.TILE_SIZE;
       app.flyoverCameraOffsetZ += movementRooms.z * roomSize.height * app.TILE_SIZE;
@@ -1122,6 +1332,7 @@
   bindHoldButton("flyover-tilt-down", "tilt-down");
   bindHoldButton("flyover-zoom-in", "zoom-in");
   bindHoldButton("flyover-zoom-out", "zoom-out");
+  bindFlyoverLevelSelection();
 
   function cameraControlForKey(key) {
     if (key === "a") {
@@ -1200,6 +1411,12 @@
     }
 
     const key = event.key.toLowerCase();
+
+    if (key === "escape" && app.flyoverSelectedLevelId) {
+      event.preventDefault();
+      clearFlyoverSelection();
+      return;
+    }
 
     if (key === "p") {
       event.preventDefault();
