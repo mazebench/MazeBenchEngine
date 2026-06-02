@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
@@ -14,8 +15,10 @@ const {
   GAME_WON_GEM_COUNT,
   isGameWon,
   loadMazeEngine,
+  replayActionCommands,
   renderScreen,
   resetLevel,
+  rotateCamera,
   screenMoveVector,
   undoMove
 } = require(terminalScript);
@@ -187,6 +190,21 @@ function syntheticFloor(width, height) {
 {
   const context = createContext();
 
+  applyMove(context, "U");
+  rotateCamera(context, "left");
+  undoMove(context);
+  resetLevel(context);
+  assert.deepEqual(replayActionCommands(context), [
+    "up",
+    "rotate camera left",
+    "undo",
+    "reset"
+  ]);
+}
+
+{
+  const context = createContext();
+
   context.stats.startedAtMs = 1000;
   "UUUUU".split("").forEach((move) => applyMove(context, move));
   const scorecard = JSON.parse(buildScorecard(context, 61000)).scorecard;
@@ -322,6 +340,50 @@ function syntheticFloor(width, height) {
   assert.match(output, /maze level_AxP \| view=top yaw=0/);
   assert.match(body(output), /P/);
   assert.doesNotMatch(body(output), /[a-z]/);
+}
+
+{
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "maze-terminal-replay-"));
+
+  try {
+    const output = runTerminal([
+      "--level",
+      "level_AxA",
+      "--view",
+      "top",
+      "--moves",
+      "U",
+      "--once",
+      "--record-replay",
+      "--replay-out-dir",
+      outDir
+    ]);
+    const scorecardPath = path.join(outDir, "maze_scorecard.json");
+    const actionsPath = path.join(outDir, "maze_actions.txt");
+    const videoPath = path.join(outDir, "maze_replay.mp4");
+    const replayPath = path.join(outDir, "maze_replay.json");
+    const resultsPath = path.join(outDir, "results.jsonl");
+
+    assert.match(output, /Replay artifacts:/);
+    assert.match(output, /maze_scorecard\.json/);
+    assert.equal(fs.existsSync(scorecardPath), true);
+    assert.equal(fs.existsSync(actionsPath), true);
+    assert.equal(fs.existsSync(replayPath), true);
+    assert.equal(fs.existsSync(resultsPath), true);
+    assert.equal(fs.existsSync(videoPath), false);
+    assert.equal(fs.readFileSync(actionsPath, "utf8"), "up\n");
+
+    const replay = JSON.parse(fs.readFileSync(replayPath, "utf8"));
+    assert.equal(replay.start_level_id, "level_AxA");
+    assert.deepEqual(replay.initial, { view: "top", yaw: 0 });
+    assert.equal(replay.actions[0].command, "up");
+
+    const row = JSON.parse(fs.readFileSync(resultsPath, "utf8").trim());
+    assert.equal(row.maze_actions[0].command, "up");
+    assert.equal(row.maze_scorecard.rooms.starting, "level_AxA");
+  } finally {
+    fs.rmSync(outDir, { force: true, recursive: true });
+  }
 }
 
 {

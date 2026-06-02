@@ -3,7 +3,7 @@
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const DEFAULT_RESULTS_ROOT = path.join(
@@ -32,9 +32,10 @@ Options:
   --out-dir <path>     Directory for exported artifacts. Default: eval results dir.
   --video              Render maze_replay.mp4. Enabled by default.
   --no-video           Only write maze_scorecard.json and maze_actions.txt.
-  --width <px>         Video viewport width. Default: 1920.
-  --height <px>        Video viewport height. Default: 1080.
+  --width <px>         Output video width. Default: 1920.
+  --height <px>        Output video height. Default: 1080.
   --fps <n>            Video frames per second. Default: 60.
+  --fast               Capture only settled states, not animation tweens.
   --move-speed <n>     Movement animation speed multiplier. Default: 5.
   --camera-speed <n>   Camera animation speed multiplier. Default: 2.
   --speed <n>          Uniform speed multiplier for movement and camera.
@@ -53,28 +54,7 @@ Options:
 }
 
 function parseCli(argv) {
-  const options = {
-    browser: "",
-    cameraStepDegrees: 18,
-    cameraTiltDegrees: 58,
-    cameraZoom: 1,
-    cameraSpeed: 2,
-    crf: 21,
-    fps: 60,
-    format: "mp4",
-    height: 1080,
-    index: 0,
-    keepFrames: false,
-    moveSpeed: 5,
-    outDir: "",
-    preset: "veryslow",
-    resultsInput: "",
-    video: true,
-    videoBitrate: 24000000,
-    motionScale: 4,
-    tailSeconds: 0.45,
-    width: 1920
-  };
+  const options = defaultReplayOptions();
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -103,6 +83,10 @@ function parseCli(argv) {
       options.height = Number(next());
     } else if (arg === "--fps") {
       options.fps = Number(next());
+    } else if (arg === "--fast" || arg === "--fast-render") {
+      options.fast = true;
+    } else if (arg === "--no-fast") {
+      options.fast = false;
     } else if (arg === "--speed") {
       const speed = Number(next());
       options.cameraSpeed = speed;
@@ -140,6 +124,36 @@ function parseCli(argv) {
     }
   }
 
+  return validateReplayOptions(options);
+}
+
+function defaultReplayOptions() {
+  return {
+    browser: "",
+    cameraStepDegrees: 18,
+    cameraTiltDegrees: 58,
+    cameraZoom: 1,
+    cameraSpeed: 2,
+    crf: 21,
+    fps: 60,
+    fast: false,
+    format: "mp4",
+    height: 1080,
+    index: 0,
+    keepFrames: false,
+    moveSpeed: 5,
+    outDir: "",
+    preset: "veryslow",
+    resultsInput: "",
+    video: true,
+    videoBitrate: 24000000,
+    motionScale: 4,
+    tailSeconds: 0.45,
+    width: 1920
+  };
+}
+
+function validateReplayOptions(options) {
   if (!Number.isInteger(options.index) || options.index < 0) {
     throw new Error("--index must be a non-negative integer");
   }
@@ -667,6 +681,224 @@ function frameName(index) {
   return `frame-${String(index).padStart(6, "0")}.png`;
 }
 
+function progressBar(percent, width = 24) {
+  const safePercent = Math.max(0, Math.min(1, Number(percent) || 0));
+  const filled = Math.round(safePercent * width);
+  return `[${"#".repeat(filled)}${"-".repeat(width - filled)}]`;
+}
+
+function formatDuration(milliseconds) {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) {
+    return "--";
+  }
+
+  const seconds = Math.ceil(milliseconds / 1000);
+
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}m ${String(remainder).padStart(2, "0")}s`;
+}
+
+function humanBytes(bytes) {
+  const units = ["B", "KB", "MB", "GB"];
+  let size = Math.max(0, Number(bytes) || 0);
+  let unitIndex = 0;
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+
+  return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function createProgressReporter({ estimateBytes = 0, label, total, unit = "frames" }) {
+  const startedAtMs = Date.now();
+  const tty = Boolean(process.stdout.isTTY);
+  const safeTotal = Math.max(1, Number(total) || 1);
+  let current = 0;
+  let lastLineLength = 0;
+  let lastWriteMs = 0;
+
+  function progressText(value) {
+    if (unit === "seconds") {
+      return `${value.toFixed(1)}s/${safeTotal.toFixed(1)}s`;
+    }
+
+    return `${Math.round(value)}/${Math.round(safeTotal)} ${unit}`;
+  }
+
+  function render(value = current, { force = false, nextEstimateBytes = estimateBytes } = {}) {
+    current = Math.max(0, Number(value) || 0);
+    estimateBytes = nextEstimateBytes;
+    const now = Date.now();
+    const percent = Math.max(0, Math.min(1, current / safeTotal));
+
+    if (!force && !tty && now - lastWriteMs < 5000) {
+      return;
+    }
+
+    const elapsedMs = now - startedAtMs;
+    const etaMs = percent > 0 ? (elapsedMs / percent) * (1 - percent) : Infinity;
+    const line = `${label} ${progressBar(percent)} ${Math.round(
+      percent * 100
+    )}% | ${progressText(current)} | ETA ${formatDuration(
+      etaMs
+    )} | expected MP4 ~${humanBytes(estimateBytes)}`;
+
+    if (tty) {
+      process.stdout.write(`\r${line}${" ".repeat(Math.max(0, lastLineLength - line.length))}`);
+      lastLineLength = line.length;
+    } else {
+      console.log(line);
+    }
+
+    lastWriteMs = now;
+  }
+
+  function finish(message = "") {
+    render(safeTotal, { force: true });
+
+    if (tty) {
+      process.stdout.write("\n");
+    }
+
+    if (message) {
+      console.log(message);
+    }
+  }
+
+  return { finish, render };
+}
+
+function estimatedActionSeconds(parsed, options) {
+  if (!parsed) {
+    return 0;
+  }
+
+  if (parsed.command === "move") {
+    return Math.max(0.2, (0.65 * options.motionScale) / options.moveSpeed);
+  }
+
+  if (parsed.command === "rotate_camera") {
+    const baseMs = parsed.direction === "left" || parsed.direction === "right" ? 780 : 620;
+    return Math.max(0.15, baseMs / 1000 / options.cameraSpeed);
+  }
+
+  if (parsed.command === "undo" || parsed.command === "reset_level" || parsed.command === "goto_level") {
+    return Math.max(0.2, (0.5 * options.motionScale) / options.moveSpeed);
+  }
+
+  if (parsed.command === "quit") {
+    return 1 / options.fps;
+  }
+
+  return 0.1;
+}
+
+function estimateCaptureFrameCount(actions, options) {
+  const parsedActions = actions.map(parseCommandLine).filter(Boolean);
+  const tailFrames = Math.round(options.tailSeconds * options.fps);
+
+  if (options.fast) {
+    return Math.max(1, 1 + parsedActions.length + tailFrames);
+  }
+
+  const actionFrames = parsedActions.reduce(
+    (total, parsed) => total + Math.max(1, Math.ceil(estimatedActionSeconds(parsed, options) * options.fps)),
+    0
+  );
+  return Math.max(1, 1 + actionFrames + tailFrames);
+}
+
+function estimatedVideoBytes(frameCount, options) {
+  const evenWidth = Math.max(2, Math.floor(options.width / 2) * 2);
+  const evenHeight = Math.max(2, Math.floor(options.height / 2) * 2);
+  const durationSeconds = Math.max(0.1, frameCount / options.fps);
+  const pixels = evenWidth * evenHeight;
+  const crfFactor = Math.pow(2, (23 - options.crf) / 6);
+  const motionFactor = options.fast ? 0.75 : 1.25;
+  const containerOverheadBytes = 10 * 1024;
+  const estimatedBits = durationSeconds * pixels * motionFactor * crfFactor;
+
+  return Math.max(containerOverheadBytes, containerOverheadBytes + estimatedBits / 8);
+}
+
+function parseFfmpegProgressSeconds(line) {
+  const [key, rawValue] = String(line || "").split("=");
+  const value = String(rawValue || "").trim();
+
+  if (key === "out_time_us" || key === "out_time_ms") {
+    const microseconds = Number(value);
+    return Number.isFinite(microseconds) ? microseconds / 1000000 : null;
+  }
+
+  if (key === "out_time") {
+    const match = value.match(/^(\d+):(\d+):(\d+(?:\.\d+)?)$/);
+
+    if (match) {
+      return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+    }
+  }
+
+  return null;
+}
+
+async function encodeVideo(ffmpegArgs, { durationSeconds, estimateBytes }) {
+  const progress = createProgressReporter({
+    estimateBytes,
+    label: "Encoding video",
+    total: Math.max(0.1, durationSeconds),
+    unit: "seconds"
+  });
+
+  progress.render(0, { force: true });
+
+  await new Promise((resolve, reject) => {
+    const encode = spawn("ffmpeg", ffmpegArgs, {
+      cwd: ROOT_DIR,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stderr = "";
+    let stdoutBuffer = "";
+
+    encode.stdout.on("data", (chunk) => {
+      stdoutBuffer += chunk.toString();
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const seconds = parseFfmpegProgressSeconds(line);
+
+        if (seconds !== null) {
+          progress.render(Math.min(seconds, durationSeconds), { nextEstimateBytes: estimateBytes });
+        } else if (line === "progress=end") {
+          progress.render(durationSeconds, { force: true, nextEstimateBytes: estimateBytes });
+        }
+      }
+    });
+
+    encode.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    encode.on("error", reject);
+    encode.on("close", (status) => {
+      if (status === 0) {
+        resolve();
+      } else {
+        reject(new Error(stderr || `ffmpeg exited with status ${status}`));
+      }
+    });
+  });
+
+  progress.finish(`Encoded video; expected MP4 ~${humanBytes(estimateBytes)}.`);
+}
+
 async function renderReplayVideo(actions, mazeOptions, outDir, options) {
   const ffmpegCheck = spawnSync("ffmpeg", ["-version"], { encoding: "utf8" });
 
@@ -679,6 +911,9 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
   const browser = await launchBrowser(chromium, options.browser);
   const framesDir = path.join(outDir, ".maze_replay_frames");
   const videoPath = path.join(outDir, `maze_replay.${options.format}`);
+  const estimatedFrames = estimateCaptureFrameCount(actions, options);
+  let estimatedBytes = estimatedVideoBytes(estimatedFrames, options);
+  let captureProgress = null;
   let frameIndex = 0;
   let lastFrameBuffer = null;
 
@@ -740,7 +975,7 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
         }
       `
     });
-    await page.evaluate(async ({ fps, motionScale, moveSpeed }) => {
+    await page.evaluate(async ({ fast, fps, motionScale, moveSpeed }) => {
       const app = window.__PIXEL_GAME_APP__;
       window.dispatchEvent(new Event("resize"));
       app.syncPlayLayout?.();
@@ -768,7 +1003,7 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
         "LEVEL_TRANSITION_DURATION_MS"
       ].forEach((key) => {
         if (Number.isFinite(app[key])) {
-          app[key] *= motionScale / moveSpeed;
+          app[key] = fast ? 1 : app[key] * motionScale / moveSpeed;
         }
       });
 
@@ -779,7 +1014,12 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
       await app.threeRendererReady;
       app.syncCameraTarget?.(true);
       app.render?.();
-    }, { fps: options.fps, motionScale: options.motionScale, moveSpeed: options.moveSpeed });
+    }, {
+      fast: Boolean(options.fast),
+      fps: options.fps,
+      motionScale: options.motionScale,
+      moveSpeed: options.moveSpeed
+    });
 
     function writeFrameDataUrl(dataUrl) {
       const base64 = String(dataUrl || "").split(",")[1];
@@ -791,6 +1031,8 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
       lastFrameBuffer = Buffer.from(base64, "base64");
       fs.writeFileSync(path.join(framesDir, frameName(frameIndex)), lastFrameBuffer);
       frameIndex += 1;
+      estimatedBytes = estimatedVideoBytes(Math.max(frameIndex, estimatedFrames), options);
+      captureProgress?.render(frameIndex, { nextEstimateBytes: estimatedBytes });
     }
 
     async function captureFrame() {
@@ -820,12 +1062,14 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
       for (let index = 0; index < count; index += 1) {
         fs.writeFileSync(path.join(framesDir, frameName(frameIndex)), lastFrameBuffer);
         frameIndex += 1;
+        estimatedBytes = estimatedVideoBytes(Math.max(frameIndex, estimatedFrames), options);
+        captureProgress?.render(frameIndex, { nextEstimateBytes: estimatedBytes });
       }
     }
 
-    async function waitUntilSettled(maxSeconds) {
+    async function waitUntilSettled(maxSeconds, { capture = true } = {}) {
       const maxFrames = Math.max(1, Math.ceil(maxSeconds * options.fps));
-      const dataUrls = await page.evaluate(async (frameLimit) => {
+      const dataUrls = await page.evaluate(async ({ captureFrames, frameLimit }) => {
         function captureReplayFrame() {
           const app = window.__PIXEL_GAME_APP__;
           const canvas =
@@ -855,7 +1099,9 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
 
         for (let index = 0; index < frameLimit; index += 1) {
           await new Promise((resolve) => window.requestAnimationFrame(resolve));
-          frames.push(captureReplayFrame());
+          if (captureFrames) {
+            frames.push(captureReplayFrame());
+          }
 
           if (!replayIsBusy()) {
             break;
@@ -863,9 +1109,18 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
         }
 
         return frames;
-      }, maxFrames);
+      }, { captureFrames: capture, frameLimit: maxFrames });
 
       dataUrls.forEach(writeFrameDataUrl);
+    }
+
+    async function settleAndCapture(maxSeconds) {
+      if (options.fast) {
+        await waitUntilSettled(maxSeconds, { capture: false });
+        await captureFrame();
+      } else {
+        await waitUntilSettled(maxSeconds);
+      }
     }
 
     let cameraTiltDegrees = options.cameraTiltDegrees;
@@ -896,8 +1151,15 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
       );
     }
 
+    captureProgress = createProgressReporter({
+      estimateBytes: estimatedBytes,
+      label: "Capturing replay frames",
+      total: estimatedFrames
+    });
+    captureProgress.render(0, { force: true });
+
     await setCameraView({ animate: false });
-    await waitUntilSettled(1);
+    await settleAndCapture(1);
 
     for (const commandText of actions) {
       const parsed = parseCommandLine(commandText);
@@ -914,31 +1176,31 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
           up: "ArrowUp"
         }[parsed.direction];
         await page.keyboard.press(key);
-        await waitUntilSettled(3.0);
+        await settleAndCapture(3.0);
       } else if (parsed.command === "rotate_camera") {
         if (parsed.direction === "left") {
           cameraYawTurns -= 1;
-          await setCameraView({ animate: true, durationMs: cameraYawDurationMs });
-          await waitUntilSettled(1.8);
+          await setCameraView({ animate: !options.fast, durationMs: cameraYawDurationMs });
+          await settleAndCapture(1.8);
         } else if (parsed.direction === "right") {
           cameraYawTurns += 1;
-          await setCameraView({ animate: true, durationMs: cameraYawDurationMs });
-          await waitUntilSettled(1.8);
+          await setCameraView({ animate: !options.fast, durationMs: cameraYawDurationMs });
+          await settleAndCapture(1.8);
         } else if (parsed.direction === "up") {
           cameraTiltDegrees = Math.max(20, cameraTiltDegrees - options.cameraStepDegrees);
-          await setCameraView({ animate: true, durationMs: cameraTiltDurationMs });
-          await waitUntilSettled(1.5);
+          await setCameraView({ animate: !options.fast, durationMs: cameraTiltDurationMs });
+          await settleAndCapture(1.5);
         } else if (parsed.direction === "down") {
           cameraTiltDegrees = Math.min(82, cameraTiltDegrees + options.cameraStepDegrees);
-          await setCameraView({ animate: true, durationMs: cameraTiltDurationMs });
-          await waitUntilSettled(1.5);
+          await setCameraView({ animate: !options.fast, durationMs: cameraTiltDurationMs });
+          await settleAndCapture(1.5);
         }
       } else if (parsed.command === "undo") {
         await page.keyboard.press("z");
-        await waitUntilSettled(2.0);
+        await settleAndCapture(2.0);
       } else if (parsed.command === "reset_level") {
         await page.keyboard.press("r");
-        await waitUntilSettled(2.0);
+        await settleAndCapture(2.0);
       } else if (parsed.command === "goto_level") {
         const levelId = `level_${parsed.x}x${parsed.y}`;
         await page.evaluate(async (nextLevelId) => {
@@ -961,7 +1223,7 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
           await app.preloadImagesForLevelState?.(levelState);
           app.render?.();
         }, levelId);
-        await waitUntilSettled(2.0);
+        await settleAndCapture(2.0);
       } else if (parsed.command === "quit") {
         await captureFrame();
       }
@@ -977,11 +1239,21 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
     throw new Error("Replay renderer did not capture any frames");
   }
 
+  estimatedBytes = estimatedVideoBytes(frameIndex, options);
+  captureProgress?.finish(
+    `Captured ${frameIndex} replay frame${frameIndex === 1 ? "" : "s"}; expected MP4 ~${humanBytes(
+      estimatedBytes
+    )}.`
+  );
+
   const ffmpegArgs = [
     "-y",
     "-hide_banner",
     "-loglevel",
     "error",
+    "-nostats",
+    "-progress",
+    "pipe:1",
     "-framerate",
     String(options.fps),
     "-i",
@@ -1001,15 +1273,10 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
     "+faststart",
     videoPath
   ];
-  const encode = spawnSync("ffmpeg", ffmpegArgs, {
-    cwd: ROOT_DIR,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
+  await encodeVideo(ffmpegArgs, {
+    durationSeconds: frameIndex / options.fps,
+    estimateBytes: estimatedBytes
   });
-
-  if (encode.status !== 0) {
-    throw new Error(encode.stderr || `ffmpeg exited with status ${encode.status}`);
-  }
 
   if (!options.keepFrames) {
     fs.rmSync(framesDir, { force: true, recursive: true });
@@ -1019,8 +1286,12 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
 }
 
 function videoFilter(options) {
+  const width = Math.max(2, Math.floor(options.width / 2) * 2);
+  const height = Math.max(2, Math.floor(options.height / 2) * 2);
+
   return [
-    "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+    `scale=${width}:${height}:force_original_aspect_ratio=decrease`,
+    `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
     "format=yuv420p"
   ].join(",");
 }
@@ -1074,7 +1345,17 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  defaultReplayOptions,
+  humanSize,
+  renderReplayVideo,
+  validateReplayOptions,
+  writeSidecarFiles
+};

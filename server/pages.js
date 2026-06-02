@@ -218,9 +218,7 @@ function createPageRenderer({
                 aria-label="${escapeHtml(game.name)} flyover"
               ></canvas>
             </div>
-            <div class="flyover-hud">
-              <div id="flyover-stats" class="flyover-stats" aria-live="polite"></div>
-            </div>
+            <div class="flyover-hud"></div>
           </section>
           <script>window.__PLAY_DATA__ = ${serializeForScript(levelState)};</script>
           <script src="/play-rules.js" defer></script>

@@ -22,6 +22,23 @@ Use arrow keys to move, `i/k` to rotate the camera up/down, `j/l` to rotate left
 npm run maze:terminal -- --level level_HxI --view top-diagonal --moves U --once
 ```
 
+Interactive terminal runs now write local replay artifacts when the run ends:
+`outputs/maze-terminal/<timestamp>/maze_scorecard.json`,
+`maze_actions.txt`, `maze_replay.json`, `results.jsonl`, and
+optionally `maze_replay.mp4`. After the scorecard is written, the terminal asks
+whether to render a video; if you say yes, it asks for FPS and dimensions. Use
+`--replay-out-dir <path>` to choose a directory, `--no-video` to skip the video
+prompt, or `--no-replay` to disable artifacts for an interactive run. The video
+prompt also asks for fast mode, which captures only the settled result of each
+action instead of animation tweens. Video rendering reports capture/encode
+progress with ETA and a rough expected MP4 size. For non-interactive runs, opt in with
+`--record-replay`; add `--video --fast --fps <n> --width <px> --height <px>`
+when you want a faster MP4:
+
+```bash
+npm run maze:terminal -- --level level_HxI --view top-diagonal --moves U --once --record-replay
+```
+
 To play locally through the same prompt/action surface that Prime Verifiers models see:
 
 ```bash

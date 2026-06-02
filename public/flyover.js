@@ -43,6 +43,9 @@
     lastPrefetchLevelId: "",
     lastMinimapLevelId: "",
     lastStatsHudMs: 0,
+    forwardEnabled: true,
+    diagnosticsVisible: false,
+    manualSpeedMultiplier: 8,
     speedRoomsPerSecond: 0.32
   };
   const roomSize = {
@@ -70,7 +73,12 @@
     tilt: 0,
     zoom: 0
   };
+  const flightVelocity = {
+    xRoomsPerSecond: 0,
+    zRoomsPerSecond: 0
+  };
   const heldCameraControls = new Map();
+  const heldFlightControls = new Map();
   app.flyoverRoomFadeDurationMs = 900;
   app.flyoverRoomFadeIns = new Map();
   app.flyoverDepartingViews = [];
@@ -272,6 +280,74 @@
     return changed;
   }
 
+  function applyHeldFlightControls(elapsedSeconds, now) {
+    const targetVelocity = {
+      xRoomsPerSecond: 0,
+      zRoomsPerSecond: 0
+    };
+    const manualSpeedRoomsPerSecond =
+      flight.speedRoomsPerSecond * flight.manualSpeedMultiplier;
+
+    if (heldFlightControls.size > 0) {
+      heldFlightControls.forEach((startedAt, control) => {
+        const holdMs = Math.max(0, now - startedAt);
+        const ramp = Math.min(1, holdMs / cameraHoldRampMs);
+        const easedRamp = ramp * ramp * (3 - 2 * ramp);
+
+        if (control === "forward") {
+          targetVelocity.zRoomsPerSecond += manualSpeedRoomsPerSecond * easedRamp;
+        } else if (control === "backward") {
+          targetVelocity.zRoomsPerSecond -= manualSpeedRoomsPerSecond * easedRamp;
+        } else if (control === "left") {
+          targetVelocity.xRoomsPerSecond -= manualSpeedRoomsPerSecond * easedRamp;
+        } else if (control === "right") {
+          targetVelocity.xRoomsPerSecond += manualSpeedRoomsPerSecond * easedRamp;
+        }
+      });
+
+      targetVelocity.xRoomsPerSecond = Math.max(
+        -manualSpeedRoomsPerSecond,
+        Math.min(manualSpeedRoomsPerSecond, targetVelocity.xRoomsPerSecond)
+      );
+      targetVelocity.zRoomsPerSecond = Math.max(
+        -manualSpeedRoomsPerSecond,
+        Math.min(manualSpeedRoomsPerSecond, targetVelocity.zRoomsPerSecond)
+      );
+    } else if (flight.forwardEnabled) {
+      targetVelocity.zRoomsPerSecond = flight.speedRoomsPerSecond;
+    }
+
+    const blend = 1 - Math.exp(-elapsedSeconds / cameraEaseSeconds);
+    const yawSin = Math.sin(camera.yaw);
+    const yawCos = Math.cos(camera.yaw);
+
+    flightVelocity.xRoomsPerSecond +=
+      (targetVelocity.xRoomsPerSecond - flightVelocity.xRoomsPerSecond) * blend;
+    flightVelocity.zRoomsPerSecond +=
+      (targetVelocity.zRoomsPerSecond - flightVelocity.zRoomsPerSecond) * blend;
+
+    if (
+      targetVelocity.xRoomsPerSecond === 0 &&
+      Math.abs(flightVelocity.xRoomsPerSecond) < 0.002
+    ) {
+      flightVelocity.xRoomsPerSecond = 0;
+    }
+
+    if (
+      targetVelocity.zRoomsPerSecond === 0 &&
+      Math.abs(flightVelocity.zRoomsPerSecond) < 0.002
+    ) {
+      flightVelocity.zRoomsPerSecond = 0;
+    }
+
+    return {
+      x: (yawCos * flightVelocity.xRoomsPerSecond - yawSin * flightVelocity.zRoomsPerSecond) *
+        elapsedSeconds,
+      z: (-yawSin * flightVelocity.xRoomsPerSecond - yawCos * flightVelocity.zRoomsPerSecond) *
+        elapsedSeconds
+    };
+  }
+
   function bindHoldButton(id, control) {
     const button = document.getElementById(id);
 
@@ -375,6 +451,11 @@
   }
 
   function updateFlyoverStatsHud(now = performance.now(), force = false) {
+    if (!flight.diagnosticsVisible) {
+      document.getElementById("flyover-stats")?.remove();
+      return;
+    }
+
     if (!force && now - flight.lastStatsHudMs < 400) {
       return;
     }
@@ -391,6 +472,7 @@
       target = document.createElement("div");
       target.id = "flyover-stats";
       target.className = "flyover-stats";
+      target.setAttribute("aria-live", "polite");
       hud.appendChild(target);
     }
 
@@ -1010,12 +1092,14 @@
 
     const elapsedSeconds = Math.min(0.08, Math.max(0, (now - flight.lastMs) / 1000));
     flight.lastMs = now;
-    const distanceRooms = flight.speedRoomsPerSecond * elapsedSeconds;
+    const movementRooms = applyHeldFlightControls(elapsedSeconds, now);
 
     applyHeldCameraControls(elapsedSeconds, now);
-    app.flyoverCameraOffsetX -= Math.sin(camera.yaw) * distanceRooms * roomSize.width * app.TILE_SIZE;
-    app.flyoverCameraOffsetZ -= Math.cos(camera.yaw) * distanceRooms * roomSize.height * app.TILE_SIZE;
-    tryRecenterFlyover();
+    if (movementRooms.x !== 0 || movementRooms.z !== 0) {
+      app.flyoverCameraOffsetX += movementRooms.x * roomSize.width * app.TILE_SIZE;
+      app.flyoverCameraOffsetZ += movementRooms.z * roomSize.height * app.TILE_SIZE;
+      tryRecenterFlyover();
+    }
   }
 
   function scheduleFlight() {
@@ -1067,12 +1151,79 @@
     return "";
   }
 
+  function flightControlForKey(key) {
+    if (key === "arrowup") {
+      return "forward";
+    }
+
+    if (key === "arrowdown") {
+      return "backward";
+    }
+
+    if (key === "arrowleft") {
+      return "left";
+    }
+
+    if (key === "arrowright") {
+      return "right";
+    }
+
+    return "";
+  }
+
+  function isSpaceKey(event) {
+    return (
+      event.code === "Space" ||
+      event.key === " " ||
+      event.key.toLowerCase() === "spacebar"
+    );
+  }
+
+  function toggleDiagnostics() {
+    flight.diagnosticsVisible = !flight.diagnosticsVisible;
+    updateFlyoverStatsHud(performance.now(), true);
+  }
+
   window.addEventListener("keydown", (event) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
       return;
     }
 
-    const control = cameraControlForKey(event.key.toLowerCase());
+    if (isSpaceKey(event)) {
+      event.preventDefault();
+
+      if (!event.repeat) {
+        flight.forwardEnabled = !flight.forwardEnabled;
+      }
+
+      return;
+    }
+
+    const key = event.key.toLowerCase();
+
+    if (key === "p") {
+      event.preventDefault();
+
+      if (!event.repeat) {
+        toggleDiagnostics();
+      }
+
+      return;
+    }
+
+    const flightControl = flightControlForKey(key);
+
+    if (flightControl) {
+      event.preventDefault();
+
+      if (!heldFlightControls.has(flightControl)) {
+        heldFlightControls.set(flightControl, performance.now());
+      }
+
+      return;
+    }
+
+    const control = cameraControlForKey(key);
 
     if (!control) {
       return;
@@ -1085,7 +1236,15 @@
   }, true);
 
   window.addEventListener("keyup", (event) => {
-    const control = cameraControlForKey(event.key.toLowerCase());
+    const key = event.key.toLowerCase();
+    const flightControl = flightControlForKey(key);
+
+    if (flightControl) {
+      heldFlightControls.delete(flightControl);
+      return;
+    }
+
+    const control = cameraControlForKey(key);
 
     if (control) {
       heldCameraControls.delete(control);
