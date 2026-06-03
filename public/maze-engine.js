@@ -6626,6 +6626,87 @@
         return base;
       }
 
+      function weightlessComponentFallBaseElevation(component, baseElevation) {
+        const occupied = buildOccupiedMap(state);
+        const memberRelativeElevations = new Map(
+          component.members.map((member) => [
+            member,
+            (component.groupBaseOffsets.get(actorGroupIds[member]) ?? 0) +
+              (weightlessRelativeElevations[member] || 0)
+          ])
+        );
+
+        component.members.forEach((member) => {
+          removeOccupiedAtElevation(
+            occupied,
+            state.actorX[member],
+            state.actorY[member],
+            actorElevation(state, member)
+          );
+        });
+
+        const memberElevationAtBase = (member, base) =>
+          base + (memberRelativeElevations.get(member) || 0);
+        const hasSupportAtBase = (base) =>
+          component.members.some((member) => {
+            const toElevation = memberElevationAtBase(member, base);
+
+            return (
+              terrainSupportsElevation(
+                state,
+                state.actorX[member],
+                state.actorY[member],
+                toElevation,
+                gateState,
+                orangeButtonsPressed
+              ) ||
+              actorSupportSurfaceHeightsAt(
+                state,
+                state.actorX[member],
+                state.actorY[member],
+                component.memberSet,
+                true
+              ).includes(toElevation)
+            );
+          });
+        const canOccupyBase = (base) =>
+          component.members.every((member) =>
+            weightlessMemberCanOccupy(
+              state,
+              member,
+              state.actorX[member],
+              state.actorY[member],
+              memberElevationAtBase(member, base),
+              occupied,
+              gateState,
+              orangeButtonsPressed
+            )
+          );
+
+        let base = baseElevation;
+        let guard = Math.max(4, actorCount + width + height + 8);
+
+        while (guard > 0) {
+          guard -= 1;
+
+          if (hasSupportAtBase(base)) {
+            return base;
+          }
+
+          if (component.members.every((member) => memberElevationAtBase(member, base) <= 0)) {
+            return base;
+          }
+
+          if (!canOccupyBase(base - 1)) {
+            return base;
+          }
+
+          base -= 1;
+        }
+
+        return base;
+      }
+
       for (let index = 0; index < actorCount; index += 1) {
         if (
           state.actorRemoved[index] ||
@@ -6666,8 +6747,11 @@
           gateState,
           orangeButtonsPressed
         );
+        const componentBaseElevation = component.members.some((member) => moveByActor.has(member))
+          ? weightlessComponentFallBaseElevation(component, component.baseElevation)
+          : component.baseElevation;
         const componentTargetElevation = (member) =>
-          component.baseElevation +
+          componentBaseElevation +
           (component.groupBaseOffsets.get(actorGroupIds[member]) ?? 0) +
           (weightlessRelativeElevations[member] || 0);
         const componentMovedOrChangedElevation = component.members.some((member) => {
