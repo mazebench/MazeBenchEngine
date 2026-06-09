@@ -125,3 +125,7 @@ Export a Codex run to scorecard files and video:
 ```bash
 npm run --silent maze:codex -- video --video --fast --draft --fps 20 --width 400 --height 400
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).

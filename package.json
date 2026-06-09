@@ -1,6 +1,7 @@
 {
   "name": "maze-bench",
   "version": "1.0.0",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "test": "node tests/maze-engine.test.js && node tests/maze-solver.test.js && node tests/weightless-push.test.js && node tests/render-silhouette.test.js && node tests/author-play-data.test.js && node tests/maze-levels-author.test.js && node tests/maze-terminal.test.js",
