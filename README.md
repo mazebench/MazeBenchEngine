@@ -1,6 +1,6 @@
 # MazeBench
 
-The same maze can run in the browser, in the terminal,
+The Maze Bench env can run in the browser, in the terminal,
 through Prime Intellect Verifiers, or through Codex.
 
 ## 1. Set up the web app with Node
