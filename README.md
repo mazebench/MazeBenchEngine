@@ -64,7 +64,7 @@ prime env install mazebench
 Run a small eval:
 
 ```bash
-prime eval run mazebench -m openai/gpt-4.1-mini -n 1 -r 1 -s -C "maze_actions,maze_scorecard,maze_replay" -d
+prime eval run mazebench -m openai/gpt-5-nano -n 1 -r 1 -s -C "maze_actions,maze_scorecard,maze_replay" -d
 ```
 
 Use your own configured model after `-m`, or omit `-m` to use your Prime
