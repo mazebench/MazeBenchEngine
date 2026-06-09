@@ -19,8 +19,6 @@ Open the app at:
 http://localhost:3000
 ```
 
-Use `PORT=3001 npm run dev` if port 3000 is already busy.
-
 ## 2. Run the game in the terminal, see the scorecard, and save video
 
 Start an interactive terminal game:
