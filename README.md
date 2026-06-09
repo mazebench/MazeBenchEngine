@@ -1,8 +1,11 @@
 # PixelGameTest
 
-Browser-first maze game experiments with a new Prime Intellect Verifiers workspace for `mazebench`.
+A small maze game repo. The same maze can run in the browser, in the terminal,
+through Prime Intellect Verifiers, or through Codex.
 
-The web app still runs with Node:
+## 1. Set up the web app with Node
+
+Install dependencies, run tests, then start the local server:
 
 ```bash
 npm install
@@ -10,88 +13,105 @@ npm test
 npm run dev
 ```
 
-There is also a terminal ASCII/isometric prototype that uses the same level parser and JS movement engine as the browser:
+Open the app at:
+
+```text
+http://localhost:3000
+```
+
+Use `PORT=3001 npm run dev` if port 3000 is already busy.
+
+## 2. Run the game in the terminal, see the scorecard, and save video
+
+Start an interactive terminal game:
 
 ```bash
 npm run maze:terminal -- --level level_HxI --view top-diagonal
 ```
 
-Use arrow keys to move, `i/k` to rotate the camera up/down, `j/l` to rotate left/right, and `q` to quit. For a non-interactive smoke run:
+Controls:
+
+- Arrow keys: move
+- `i` / `k`: rotate camera up / down
+- `j` / `l`: rotate camera left / right
+- `z` or `u`: undo
+- `r`: reset
+- `q`: quit and print the scorecard
+
+Interactive runs write replay files under `outputs/maze-terminal/<timestamp>/`.
+When the run ends, answer the video prompt to save `maze_replay.mp4`.
+
+For a non-interactive run that saves the scorecard and video:
 
 ```bash
-npm run maze:terminal -- --level level_HxI --view top-diagonal --moves U --once
+npm run maze:terminal -- --level level_HxI --view top-diagonal --moves UDLR --once --record-replay --video --fast --draft --fps 20 --width 400 --height 400
 ```
 
-ASCII objects use unique `top -> side` glyph pairs. Terrain: `A -> a` floor,
-`W -> w` wall, `E -> e` exit, `I -> i` ice, `K -> k` ice block, `T -> t`
-tree, `S -> s` shrub, `O -> o` orange wall, `N -> n` orange button terrain,
-`Y -> y` player gate, `L -> l` player lift, `H -> h` configured hole glyph,
-and space for empty. Block assets: `! -> 1` Block 1, `@ -> 2` Block 2,
-`# -> 3` Block 3, `$ -> 4` Block 4. Ice slopes: `R -> r` right, `< -> ,`
-left, `^ -> 6` up, `V -> v` down. Actors: `P -> p` player, `B -> b` box,
-`F -> f` floating floor, `G -> g` gem, `* -> 8` orange button actor,
-`C -> c` clone 0, `D -> d` clone 1, `J -> j` clone 2. Weightless pushboxes:
-`U -> u` M0, `0 -> 9` M1, `( -> )` M2, `+ -> =` M3, `. -> :` M4,
-`; -> _` unknown weightless box. Punchers: `Q -> q` right, `X -> x` left,
-`Z -> z` up, `% -> 5` down.
-The repo-local terminal runner and the packaged mazebench runtime use this same
-glyph contract.
+The output folder contains:
 
-Interactive terminal runs now write local replay artifacts when the run ends:
-`outputs/maze-terminal/<timestamp>/maze_scorecard.json`,
-`maze_actions.txt`, `maze_replay.json`, `results.jsonl`, and
-optionally `maze_replay.mp4`. After the scorecard is written, the terminal asks
-whether to render a video; if you say yes, it asks for FPS and dimensions. Use
-`--replay-out-dir <path>` to choose a directory, `--no-video` to skip the video
-prompt, or `--no-replay` to disable artifacts for an interactive run. The video
-prompt defaults to 20 FPS and 400x400. It also asks for fast mode, which
-captures only the settled result of each action instead of animation tweens, and
-draft speed mode, which lowers replay DPR and disables fuzzy/edge effects for
-faster capture. Video rendering reports capture/encode progress with ETA and a
-rough expected MP4 size. For
-non-interactive runs, opt in with `--record-replay`; add `--video --fast
---draft --fps <n> --width <px> --height <px>` when you want a faster MP4:
+- `maze_scorecard.json`
+- `maze_actions.txt`
+- `maze_replay.json`
+- `results.jsonl`
+- `maze_replay.mp4` when video is enabled
+
+## 3. Run with Prime Intellect Verifiers and see results
+
+Install the local environment from `./environments/mazebench`:
 
 ```bash
-npm run maze:terminal -- --level level_HxI --view top-diagonal --moves U --once --record-replay
+prime env install mazebench
 ```
 
-To play locally through the same prompt/action surface that Prime Verifiers models see:
+Run a small eval:
 
 ```bash
-npm run maze:model -- --level level_HxI --view top-diagonal --target-gems 1
+prime eval run mazebench -m openai/gpt-4.1-mini -n 1 -r 1 -s -C "maze_actions,maze_scorecard,maze_replay" -d
 ```
 
-This prints the model-facing system prompt and user prompt, then accepts text commands such as `up`, `rotate camera left`, `undo`, `reset`, `go to level H I`, or `quit`.
+Use your own configured model after `-m`, or omit `-m` to use your Prime
+default. The terminal prints the run summary.
 
-To let Codex itself play through a persistent local API, render a prompt and
-hand it to Codex:
+View saved evals:
+
+```bash
+prime eval view
+```
+
+Export scorecard files and a replay video from a saved eval directory:
+
+```bash
+npm run maze:replay -- environments/mazebench/outputs/evals/<model>/<run-id>
+```
+
+## 4. Run it with Codex
+
+Print the prompt that tells Codex how to play:
 
 ```bash
 npm run --silent maze:codex -- prompt default
 ```
 
-Or start a non-interactive Codex run directly:
+Run Codex directly:
 
 ```bash
 codex exec --sandbox workspace-write "$(npm run --silent maze:codex -- prompt default)"
 ```
 
-The prompt tells Codex to use `npm run --silent maze:codex -- start`, then one
-API action at a time such as `npm run --silent maze:codex -- up` or
-`npm run --silent maze:codex -- rotate left`. Session files live under
-`outputs/maze-codex`, so Codex can compact its own context and recover the
-authoritative game state with `npm run --silent maze:codex -- observe`.
-
-Generate replay artifacts or a video from a Codex session JSON:
+Codex will use commands like:
 
 ```bash
-npm run --silent maze:codex -- video --session outputs/maze-codex/maze-20260603T001600.json
+npm run --silent maze:codex -- start
+npm run --silent maze:codex -- observe
+npm run --silent maze:codex -- up
+npm run --silent maze:codex -- rotate left
+npm run --silent maze:codex -- scorecard
 ```
 
-That writes `maze_scorecard.json`, `maze_actions.txt`, `maze_replay.json`,
-`results.jsonl`, and, if you answer yes, `maze_replay.mp4`. To skip prompts,
-pass video options directly, for example `--video --fast --draft --fps 12
---width 1280 --height 720`.
+Codex session files live in `outputs/maze-codex/`.
 
-Prime/Verifiers setup lives under `environments/`. The `mazebench` package now uses the JS runtime as the benchmark contract: the default environment is a `vf.MultiTurnEnv` text-action game loop backed by `scripts/maze-bridge.js`, observations render through `scripts/maze-terminal.js`, and gem/visited-room state is tracked during the rollout. The default starter task is `level_HxI`.
+Export a Codex run to scorecard files and video:
+
+```bash
+npm run --silent maze:codex -- video --video --fast --draft --fps 20 --width 400 --height 400
+```
