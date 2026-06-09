@@ -3,7 +3,7 @@ const path = require("path");
 
 const MAZE_LEVEL_ID_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const MAZE_WORLD_LEVEL_ID_PATTERN = /^level_([A-Z])x([A-Z])$/;
-const MAZE_DEFAULT_LEVEL_ID = "level_AxA";
+const MAZE_DEFAULT_LEVEL_ID = "level_HxI";
 
 function createMazeWorldMapService({ buildMazePreviewData, listTopLevelFiles, loadJson, mazeDir }) {
   const mazeWorldMapPath = path.join(mazeDir, "world_map.json");
