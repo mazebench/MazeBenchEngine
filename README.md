@@ -1,6 +1,6 @@
 # MazeBench
 
-A small maze game repo. The same maze can run in the browser, in the terminal,
+The same maze can run in the browser, in the terminal,
 through Prime Intellect Verifiers, or through Codex.
 
 ## 1. Set up the web app with Node
