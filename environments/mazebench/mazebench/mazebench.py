@@ -11,7 +11,7 @@ import atexit
 from importlib.resources import files
 from pathlib import Path
 from string import Template
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -26,6 +26,9 @@ DEFAULT_NODE_BIN = "node"
 DEFAULT_TIMEOUT_SECONDS = 20
 DEFAULT_MAX_TURNS = 40
 DEFAULT_TARGET_GEMS = 0
+DEFAULT_OBSERVATION_MODE = "ascii"
+DEFAULT_VISION_HEIGHT = 512
+DEFAULT_VISION_WIDTH = 512
 GAME_WON_GEM_COUNT = 100
 REPO_ROOT_ENV = "MAZEBENCH_REPO_ROOT"
 INFO_KEY = "mazebench"
@@ -285,6 +288,103 @@ def render_multiturn_user_prompt(
         yaw=status.get("yaw", 0),
         **player_fields(status.get("player")),
     )
+
+
+def render_vision_user_prompt(
+    *,
+    status: dict[str, Any],
+    target_text: str,
+    result_text: str,
+) -> str:
+    visited_rooms = status.get("visited_levels") or []
+    current_room = status.get("current_room") or status.get("level_id") or "?"
+    current_view = status.get("current_view") or status.get("view") or "?"
+    fields = player_fields(status.get("player"))
+    lines = [
+        result_text,
+        "",
+        f"Objective: {target_text}",
+        "",
+        f"Current room: `{current_room}`",
+        f"Current view: {current_view}",
+        f"Yaw: {status.get('yaw', 0)}",
+        (
+            "Player: "
+            f"x={fields['player_x']} "
+            f"y={fields['player_y']} "
+            f"elevation={fields['player_elevation']}"
+        ),
+        f"Gems collected: {status.get('gem_count', 0)}",
+        "Visited rooms: " + (", ".join(str(room) for room in visited_rooms) or "(none)"),
+    ]
+    death = death_text(status)
+    if death:
+        lines.append(death)
+    lines.extend(
+        [
+            "",
+            "The current maze view is attached as a perspective image. Do not rely on an ASCII board.",
+            "",
+            "Allowed commands:",
+            allowed_commands_text(status),
+            "",
+            terminal_note_text(status),
+            response_instruction(status),
+        ]
+    )
+    return "\n".join(line for line in lines if line is not None)
+
+
+def valid_action_commands(actions: list[dict[str, Any]]) -> list[str]:
+    return [
+        str(action.get("command") or "").strip()
+        for action in actions
+        if action and action.get("valid") is not False and action.get("command")
+    ]
+
+
+def render_vision_frame_data_url(
+    *,
+    actions: list[str],
+    task: "MazeBenchTask",
+) -> str:
+    payload = {
+        "actions": actions,
+        "draft": True,
+        "fast": True,
+        "gameId": task.game_id,
+        "height": int(task.vision_height),
+        "levelId": task.level_id,
+        "width": int(task.vision_width),
+        "yaw": int(task.yaw),
+    }
+    result = subprocess.run(
+        [
+            task.node_bin,
+            str(Path(task.repo_root) / "scripts" / "maze-render-frame.js"),
+        ],
+        input=json.dumps(payload),
+        capture_output=True,
+        cwd=task.repo_root,
+        encoding="utf8",
+        timeout=max(30, int(task.timeout_seconds)),
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "maze-render-frame.js failed: "
+            + (result.stderr.strip() or result.stdout.strip() or "unknown error")
+        )
+    try:
+        response = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            f"maze-render-frame.js returned invalid JSON: {result.stdout[:500]}"
+        ) from error
+    data_url = str(response.get("data_url") or "")
+    if not data_url.startswith("data:image/png;base64,"):
+        raise RuntimeError("maze-render-frame.js did not return a PNG data URL")
+    return data_url
 
 
 def make_row(
@@ -724,10 +824,13 @@ class MazeBenchTask(vf.Task):
     level_id: str = DEFAULT_START_LEVEL_ID
     node_bin: str = DEFAULT_NODE_BIN
     observation: str = ""
+    observation_mode: Literal["ascii", "vision"] = DEFAULT_OBSERVATION_MODE
     repo_root: str = ""
     target_gems: int = DEFAULT_TARGET_GEMS
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     view: str = DEFAULT_VIEW
+    vision_height: int = DEFAULT_VISION_HEIGHT
+    vision_width: int = DEFAULT_VISION_WIDTH
     yaw: int = DEFAULT_YAW
 
 
@@ -740,9 +843,12 @@ class MazeBenchConfig(vf.TasksetConfig):
     yaw: int = DEFAULT_YAW
     game_won_gem_count: int = GAME_WON_GEM_COUNT
     node_bin: str = DEFAULT_NODE_BIN
+    observation_mode: Literal["ascii", "vision"] = DEFAULT_OBSERVATION_MODE
     repo_root: str | None = None
     target_gems: int = DEFAULT_TARGET_GEMS
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+    vision_height: int = DEFAULT_VISION_HEIGHT
+    vision_width: int = DEFAULT_VISION_WIDTH
     system_prompt: str = MULTITURN_SYSTEM_PROMPT
     user: vf.UserConfig = Field(default_factory=vf.UserConfig)
 
@@ -770,6 +876,42 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
             yaw=task.yaw,
         )
         atexit.register(self.close_session)
+
+    def build_user_message(self, status: dict[str, Any], result_text: str) -> vf.Messages:
+        task = self.task
+        target_text = target_text_for_row(task.model_dump())
+        if task.observation_mode != "vision":
+            return [
+                {
+                    "role": "user",
+                    "content": render_multiturn_user_prompt(
+                        status=status,
+                        target_text=target_text,
+                        result_text=result_text,
+                    ),
+                }
+            ]
+
+        data_url = render_vision_frame_data_url(
+            actions=valid_action_commands(self.state.maze_actions),
+            task=task,
+        )
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": render_vision_user_prompt(
+                            status=status,
+                            target_text=target_text,
+                            result_text=result_text,
+                        ),
+                    },
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            }
+        ]
 
     def close_session(self) -> None:
         session = getattr(self, "session", None)
@@ -824,16 +966,7 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
         if not self.state.maze_status:
             status = session.request("observe")
             self.initialize_state(status)
-            return [
-                {
-                    "role": "user",
-                    "content": render_multiturn_user_prompt(
-                        status=status,
-                        target_text=target_text_for_row(task.model_dump()),
-                        result_text="Start of run.",
-                    ),
-                }
-            ]
+            return self.build_user_message(status, "Start of run.")
 
         raw_response = str(message or "")
         result_text = ""
@@ -881,16 +1014,7 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
                 }
             ]
 
-        return [
-            {
-                "role": "user",
-                "content": render_multiturn_user_prompt(
-                    status=status,
-                    target_text=target_text_for_row(task.model_dump()),
-                    result_text=result_text,
-                ),
-            }
-        ]
+        return self.build_user_message(status, result_text)
 
 
 class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState]):
@@ -923,10 +1047,13 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
                 level_id=str(row["level_id"]),
                 node_bin=str(row["node_bin"]),
                 observation=str(row["observation"]),
+                observation_mode=self.config.observation_mode,
                 repo_root=str(row["repo_root"]),
                 target_gems=int(row["target_gems"]),
                 timeout_seconds=int(row["timeout_seconds"]),
                 view=str(row["view"]),
+                vision_height=int(self.config.vision_height),
+                vision_width=int(self.config.vision_width),
                 yaw=int(row["yaw"]),
             )
             for index, row in enumerate(rows)

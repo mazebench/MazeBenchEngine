@@ -126,6 +126,27 @@ MazeBench evals:
 npm run maze:replay -- environments/mazebench/outputs/evals/<model>/<run-id>
 ```
 
+## 5. Run vision observations
+
+The normal `mazebench` taskset can send perspective PNG observations instead of
+ASCII boards:
+
+```bash
+cd environments/mazebench
+uv run eval mazebench \
+  -m openai/gpt-4.1-mini \
+  -n 1 -r 1 \
+  --taskset.observation-mode vision \
+  --taskset.vision-width 512 \
+  --taskset.vision-height 512 \
+  --max-turns 8 \
+  --rich false
+```
+
+Vision mode keeps the same JS game state, allowed commands, terminal conditions,
+and gem-only reward as ASCII mode. It sends a short text status plus a
+perspective image of the current room, with no ASCII board.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

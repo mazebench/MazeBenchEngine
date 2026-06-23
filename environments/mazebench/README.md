@@ -56,6 +56,25 @@ The saved v1 `results.jsonl` trace includes `info.maze_actions` as the normalize
 action list, `info.maze_scorecard` as the final JS scorecard, and
 `info.maze_replay` as a compact replay payload with initial state, actions, and scorecard.
 
+Run with perspective image observations instead of ASCII boards:
+
+```bash
+uv run eval mazebench \
+  -m openai/gpt-4.1-mini \
+  -n 1 -r 1 \
+  --taskset.observation-mode vision \
+  --taskset.vision-width 512 \
+  --taskset.vision-height 512 \
+  --max-turns 8 \
+  --rich false
+```
+
+Vision mode uses the same JS game state, action parser, terminal conditions, and
+gem-only reward as ASCII mode. The user simulator sends a short text status with
+allowed commands plus a perspective PNG image of the current room; it does not
+include the ASCII board. Local vision runs require the repo's Node dependencies
+and a Chromium-compatible browser for Playwright.
+
 Run MazeBench through the local Codex CLI and Verifiers v1:
 
 ```bash
@@ -124,10 +143,13 @@ Accepted text forms include `up`, `rotate camera left`, `undo`, `reset`, `go to 
 | `view` | str | `top-diagonal` | Initial ASCII camera view. |
 | `yaw` | int | `0` | Initial camera yaw. Movement actions are screen-relative. |
 | `game_won_gem_count` | int | package default | Unique gems required for `game_won`. This value is also passed into the JS bridge/scorecard. |
+| `observation_mode` | `ascii`/`vision` | `ascii` | Observation surface. `vision` sends a perspective PNG image plus text metadata instead of an ASCII board. |
 | `target_gems` | int | `0` | Optional gem-reward/prompt target for smoke runs. `0` uses the `game_won_gem_count` objective. The semantic `game_won` condition remains `game_won_gem_count`. |
 | `repo_root` | str/null | `None` | MazeBench repo root. Falls back to `MAZEBENCH_REPO_ROOT` or current working directory. |
 | `node_bin` | str | `node` | Node executable used to run the JS benchmark bridge. |
 | `timeout_seconds` | int | `20` | Subprocess timeout for JS observation/scoring calls. |
+| `vision_width` | int | `512` | Width in pixels for vision-mode PNG observations. |
+| `vision_height` | int | `512` | Height in pixels for vision-mode PNG observations. |
 | `system_prompt` | str | built in | Optional instruction override. |
 
 For `mazebench_codex`, `max_actions` controls the maze action budget shown to
