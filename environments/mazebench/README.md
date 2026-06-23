@@ -17,7 +17,7 @@
 - **Goal**: collect `game_won_gem_count` unique gems across the run. Not every room has a gem, and some rooms have multiple gems.
 - **Terminal states**: `game_won` fires when the run has collected `game_won_gem_count` unique gems. `game_lost` fires when the model types `quit`. Both terminal states end the loop and return a final scorecard.
 - **Scorecard result**: includes `won` and `percent`. `percent` is `100 * collected_gems / game_won_gem_count`.
-- **Reward overview**: default reward is the number of unique gems collected, plus a small `0.1` shaped reward for each newly visited room after the start room. If `target_gems > 0`, the gem reward is normalized to that target, but the semantic win condition remains `game_won_gem_count`.
+- **Reward overview**: default reward is only the number of unique gems collected. If `target_gems > 0`, the gem reward is normalized to that target, but the semantic win condition remains `game_won_gem_count`.
 
 Each assistant response should be exactly one text command. The v1 user simulator then replies as the next `user` message with the current ASCII room layout, metadata, and the allowed commands. Framework-level v1 limits such as `max_turns`, token caps, and timeouts are configured on the eval environment, while MazeBench-specific task generation lives under the taskset config.
 
@@ -141,7 +141,6 @@ timeouts are v1 eval/harness settings, not MazeBench taskset arguments.
 | Metric | Meaning |
 | ------ | ------- |
 | `gem_score` | Reward: raw unique gems collected, or normalized if `target_gems > 0`. |
-| `room_exploration_score` | Reward: unique rooms visited after the start room, weighted by `0.1`. |
 | `collected_gems` | Number of unique gem IDs collected across the run. |
 | `current_level_solved` | Whether the current room's JS solved condition is true. |
 | `visited_level_count` | Number of rooms visited during the rollout. |

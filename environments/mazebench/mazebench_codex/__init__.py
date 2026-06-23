@@ -19,7 +19,6 @@ from mazebench.mazebench import (
     DEFAULT_VIEW,
     DEFAULT_YAW,
     GAME_WON_GEM_COUNT,
-    ROOM_EXPLORATION_REWARD_WEIGHT,
     MazeBenchTask,
     build_rows,
     canonical_command_text,
@@ -503,11 +502,6 @@ class MazeBenchCodexTaskset(
         if target <= 0:
             return float(collected or 0)
         return min(1.0, float(collected or 0) / target)
-
-    @vf.reward(weight=ROOM_EXPLORATION_REWARD_WEIGHT)
-    async def room_exploration_score(self, trace: vf.Trace) -> float:
-        status = trace.info.get("maze_status") or {}
-        return float(max(0, len(status.get("visited_levels") or []) - 1))
 
     @vf.metric
     async def collected_gems(self, trace: vf.Trace) -> float:
