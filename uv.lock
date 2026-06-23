@@ -581,11 +581,6 @@ wheels = [
 ]
 
 [[package]]
-name = "harnesses"
-version = "0.2.0"
-source = { git = "https://github.com/PrimeIntellect-ai/verifiers.git?subdirectory=packages%2Fharnesses&rev=feat%2Fnano-as-v1#15359acd03fdb96afbfb52663dcb7b23525b0dc8" }
-
-[[package]]
 name = "hf-xet"
 version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -884,17 +879,11 @@ name = "maze-bench"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "harnesses" },
-    { name = "tasksets" },
     { name = "verifiers" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "harnesses", git = "https://github.com/PrimeIntellect-ai/verifiers.git?subdirectory=packages%2Fharnesses&rev=feat%2Fnano-as-v1" },
-    { name = "tasksets", git = "https://github.com/PrimeIntellect-ai/verifiers.git?subdirectory=packages%2Ftasksets&rev=feat%2Fnano-as-v1" },
-    { name = "verifiers", git = "https://github.com/PrimeIntellect-ai/verifiers.git?rev=feat%2Fnano-as-v1" },
-]
+requires-dist = [{ name = "verifiers", git = "https://github.com/PrimeIntellect-ai/verifiers.git?rev=main" }]
 
 [[package]]
 name = "mcp"
@@ -2087,11 +2076,6 @@ wheels = [
 ]
 
 [[package]]
-name = "tasksets"
-version = "0.2.0"
-source = { git = "https://github.com/PrimeIntellect-ai/verifiers.git?subdirectory=packages%2Ftasksets&rev=feat%2Fnano-as-v1#15359acd03fdb96afbfb52663dcb7b23525b0dc8" }
-
-[[package]]
 name = "tenacity"
 version = "9.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2351,7 +2335,7 @@ wheels = [
 [[package]]
 name = "verifiers"
 version = "0.1.15.dev373"
-source = { git = "https://github.com/PrimeIntellect-ai/verifiers.git?rev=feat%2Fnano-as-v1#15359acd03fdb96afbfb52663dcb7b23525b0dc8" }
+source = { git = "https://github.com/PrimeIntellect-ai/verifiers.git?rev=main#18740ec9ea7418cbd55cd1e9fbf051080059be15" }
 dependencies = [
     { name = "aiohttp" },
     { name = "aiolimiter" },
