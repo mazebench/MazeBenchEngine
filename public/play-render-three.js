@@ -945,8 +945,11 @@
     }
 
     function material(color, opacity = 1, variants = null) {
+      return cachedMaterialForRenderColor(renderContextColor(color), opacity, variants);
+    }
+
+    function cachedMaterialForRenderColor(renderColor, opacity = 1, variants = null) {
       const alpha = Math.max(0, Math.min(1, opacity));
-      const renderColor = renderContextColor(color);
       const doubleSide = variants?.doubleSide === true;
       const noDepthWrite = variants?.depthWrite === false;
       const polygonOffset = variants?.polygonOffset === true;
@@ -980,10 +983,39 @@
           cachedMaterial.polygonOffsetUnits = polygonOffsetUnits;
         }
 
+        // Enough provenance to mint the dimmed twin this cache entry's
+        // meshes would have been built with at a lower brightness.
+        cachedMaterial.userData.dimSource = {
+          color: renderColor,
+          opacity: alpha,
+          doubleSide,
+          noDepthWrite,
+          polygonOffset,
+          polygonOffsetFactor,
+          polygonOffsetUnits
+        };
         materialCache.set(key, cachedMaterial);
       }
 
       return materialCache.get(key);
+    }
+
+    // Dimmed twin of a cache material; identical to what a rebuild at
+    // `factor` would have produced (same dimHexColor + same creator).
+    function dimmedWorldMaterial(baseMaterial, factor) {
+      const source = baseMaterial?.userData?.dimSource;
+
+      if (!source || factor >= 0.999) {
+        return baseMaterial;
+      }
+
+      return cachedMaterialForRenderColor(dimHexColor(source.color, factor), source.opacity, {
+        doubleSide: source.doubleSide,
+        depthWrite: source.noDepthWrite ? false : undefined,
+        polygonOffset: source.polygonOffset,
+        polygonOffsetFactor: source.polygonOffsetFactor,
+        polygonOffsetUnits: source.polygonOffsetUnits
+      });
     }
 
     function lineMaterial(color = "#000000", opacity = 1) {
@@ -7435,6 +7467,8 @@
         edgeOutlinesEnabled() ? "edges:on" : "edges:off",
         animationSignature(now),
         flyoverFadeAnimationSignature(now),
+        worldShadowSignature(now),
+        app.worldViewVistaMode === true ? "vista-anchor" : "live-anchor",
         app.isFlyoverMode ? "flyover-selection" : "no-flyover-selection",
         transition
           ? [
@@ -7609,10 +7643,26 @@
         (isPalettePreviewRenderMode()
           ? palettePreviewCameraWorldHeight()
           : stableCameraWorldHeight());
+      // Default fit bounds are the current room. In the classic square
+      // layout boardRect equals the room's world size, but full-bleed hosts
+      // (hostFullBleedView) resize boardRect to the frame rect, which would
+      // fit — and center the camera on — a viewport-sized world box instead
+      // of the room. The consolidated home vista intentionally frames that
+      // viewport box, so it keeps the boardRect default.
+      const fitCurrentRoomBounds =
+        app.hostFullBleedView === true &&
+        !app.isFlyoverMode &&
+        app.worldViewConsolidate !== true;
+      const defaultMaxWorldX = fitCurrentRoomBounds
+        ? Math.max(1, Number(app.state?.width) || 1) * unit
+        : app.boardRect.width;
+      const defaultMaxWorldZ = fitCurrentRoomBounds
+        ? Math.max(1, Number(app.state?.height) || 1) * unit
+        : app.boardRect.height;
       const minWorldX = options.minX ?? 0;
-      const maxWorldX = options.maxX ?? app.boardRect.width;
+      const maxWorldX = options.maxX ?? defaultMaxWorldX;
       const minWorldZ = options.minZ ?? 0;
-      const maxWorldZ = options.maxZ ?? app.boardRect.height;
+      const maxWorldZ = options.maxZ ?? defaultMaxWorldZ;
       // Host pages can glide the camera across the surrounding world (e.g.
       // the mazebench.com home-page flyby) without moving the current room.
       const worldPanOffsetX = app.isFlyoverMode ? 0 : Number(app.worldPanCameraOffsetX || 0);
@@ -8101,6 +8151,58 @@
       }
 
       return neighboringRoomBrightness;
+    }
+
+    // Animated shadow for non-current rooms: room GROUPS are always built at
+    // full brightness; this factor dims them by swapping shared cache
+    // materials (no re-mesh). Hosts opt into animation via
+    // app.worldShadowFadeMs; zero means snap.
+    const worldShadowFade = { current: 1, target: 1, from: 1, startMs: 0 };
+
+    function worldShadowTargetFactor() {
+      if (app.isFlyoverMode || app.worldViewRoomFadeInsEnabled === true || !isWorldViewPlayMode()) {
+        return 1;
+      }
+
+      return app.worldViewUniformBrightness === true ? 1 : neighboringRoomBrightness;
+    }
+
+    function worldShadowFactor(now) {
+      const target = worldShadowTargetFactor();
+
+      if (worldShadowFade.target !== target) {
+        worldShadowFade.from = worldShadowFade.current;
+        worldShadowFade.target = target;
+        worldShadowFade.startMs = now;
+      }
+
+      const durationMs = Math.max(0, Number(app.worldShadowFadeMs) || 0);
+
+      if (durationMs === 0) {
+        worldShadowFade.current = target;
+        return target;
+      }
+
+      const progress = clamp01((now - worldShadowFade.startMs) / durationMs);
+      const eased = app.easeInOutQuad ? app.easeInOutQuad(progress) : progress;
+
+      worldShadowFade.current =
+        progress >= 1 ? target : lerp(worldShadowFade.from, target, eased);
+      return worldShadowFade.current;
+    }
+
+    function worldShadowQuantized(factor) {
+      // Same 1/32 grid as renderContextColor so swapped materials are the
+      // exact entries a rebuild at this brightness would have minted.
+      return factor >= 0.999 ? 1 : Math.round(factor * 32) / 32;
+    }
+
+    function worldShadowAnimating() {
+      return worldShadowFade.current !== worldShadowFade.target;
+    }
+
+    function worldShadowSignature(now) {
+      return `shadow:${Math.round(worldShadowQuantized(worldShadowFactor(now)) * 1000)}`;
     }
 
     function flyoverLevelBrightness(levelId, brightness = 1) {
@@ -8638,6 +8740,40 @@
       entry.edgeGroup.userData.edgeBasePosition.set(view.offset.x, 0, view.offset.z);
       scene.add(entry.group);
       edgeScene.add(entry.edgeGroup);
+    }
+
+    // Dim a room group by swapping its meshes onto the dimmed twins of their
+    // shared cache materials — pixel-identical to a rebuild at `factor`, but
+    // with zero meshing. Edge lines were never brightness-dimmed; the edge
+    // group is intentionally untouched.
+    function applyWorldViewRoomShadow(entry, factor) {
+      const quantized = worldShadowQuantized(factor);
+
+      if (entry.shadowFactor === quantized) {
+        return;
+      }
+
+      entry.shadowFactor = quantized;
+      entry.group.traverse((child) => {
+        if (!child.isMesh || !child.material) {
+          return;
+        }
+
+        if (child.userData.shadowBase === undefined) {
+          child.userData.shadowBase = {
+            material: child.material,
+            castShadow: child.castShadow
+          };
+        }
+
+        const base = child.userData.shadowBase;
+
+        child.material =
+          quantized >= 0.999 ? base.material : dimmedWorldMaterial(base.material, quantized);
+        // Mirror renderContextCastsShadows(): neighbors stop casting
+        // shadows below the 0.72 brightness gate.
+        child.castShadow = base.castShadow && quantized > 0.72;
+      });
     }
 
     function detachWorldViewRoomGroups() {
@@ -9241,7 +9377,14 @@
       let remaining = 0;
 
       for (const view of views) {
-        const brightness = worldViewRoomBrightness(view, now);
+        // Match renderWorldViewRoomGroups: outside flyover/fade-in
+        // choreography groups build at full brightness (dimming is a
+        // material swap, not a rebuild), so warmed signatures stay valid
+        // across the vista/play brightness flip.
+        const brightness =
+          app.isFlyoverMode || app.worldViewRoomFadeInsEnabled === true
+            ? worldViewRoomBrightness(view, now)
+            : 1;
         const signature = worldViewRoomSignature(view, brightness);
         const existing = worldViewRoomGroups.get(view.levelId);
 
@@ -9320,11 +9463,20 @@
 
       worldViewRoomBuildPending = false;
 
+      // Outside flyover/fade-in choreography, room groups always BUILD at
+      // full brightness and get dimmed afterwards by cheap material swaps
+      // (applyWorldViewRoomShadow) — brightness changes never re-mesh.
+      const legacyBrightnessBuilds =
+        app.isFlyoverMode || app.worldViewRoomFadeInsEnabled === true;
+      const shadowFactor = legacyBrightnessBuilds ? 1 : worldShadowFactor(now);
+
       views
         .slice()
         .sort((a, b) => b.distance - a.distance)
         .forEach((view) => {
-          const brightness = worldViewRoomBrightness(view, now);
+          const brightness = legacyBrightnessBuilds
+            ? worldViewRoomBrightness(view, now)
+            : 1;
           const signature = worldViewRoomSignature(view, brightness);
           const entry = worldViewRoomGroups.get(view.levelId);
 
@@ -9339,6 +9491,11 @@
           }
 
           attachWorldViewRoomEntry(entry, view);
+
+          if (!legacyBrightnessBuilds) {
+            applyWorldViewRoomShadow(entry, shadowFactor);
+          }
+
           consolidationParts.push(`${view.levelId}@${view.offset.x},${view.offset.z}:${entry.signature}`);
         });
 
@@ -9388,6 +9545,11 @@
 
         worldViewRoomGroups.set(pending.view.levelId, entry);
         attachWorldViewRoomEntry(entry, pending.view);
+
+        if (!legacyBrightnessBuilds) {
+          applyWorldViewRoomShadow(entry, shadowFactor);
+        }
+
         allRoomsReady = false;
       }
 
@@ -9424,7 +9586,7 @@
       const fadesPending =
         app.flyoverRoomFadeIns instanceof Map && app.flyoverRoomFadeIns.size > 0;
 
-      if (!allRoomsReady || fadesPending || views.length === 0) {
+      if (!allRoomsReady || fadesPending || views.length === 0 || worldShadowAnimating()) {
         disposeWorldConsolidation();
         return;
       }
@@ -10502,7 +10664,12 @@
         !worldViewRoomBuildPending &&
         signature === lastSceneSignature
       ) {
-        // sceneCanvas already holds this exact frame; nothing to redraw.
+        // sceneCanvas already holds this exact frame; nothing to redraw —
+        // but keep frames coming while the world-shadow fade animates
+        // between quantized steps (only the ~12 step frames redraw).
+        if (!app.isFlyoverMode && worldShadowAnimating()) {
+          window.requestAnimationFrame((frameNow) => (app.renderOncePerFrame || app.render)(frameNow));
+        }
         return true;
       }
 
@@ -10537,6 +10704,17 @@
             addTerrainRegions(now);
             renderActorsForCurrentContext(now);
           });
+        } else if (app.worldViewVistaMode === true) {
+          // Home-vista anchor room: render through the neighbor path so it
+          // is indistinguishable from the baked snapshot rooms — no floor
+          // grid, no tile-top details, no player avatar, frozen actors.
+          renderLevelStateAt(renderState(), { x: 0, z: 0 }, {
+            role: "neighbor",
+            brightness: 1,
+            dx: 0,
+            dy: 0,
+            hidePlayers: true
+          }, now);
         } else {
           addTerrainRegions(now);
           renderActorsForCurrentContext(now);
@@ -10556,9 +10734,9 @@
       lastShadowSceneSignature = updateShadowMapNow ? shadowSignature : lastShadowSceneSignature;
       hasRenderedScene = true;
 
-      if (worldViewRoomBuildPending) {
-        // The room-group build budget ran out; keep rendering frames until
-        // the remaining rooms have been built in the background.
+      if (worldViewRoomBuildPending || (!app.isFlyoverMode && worldShadowAnimating())) {
+        // The room-group build budget ran out (or the world-shadow fade is
+        // mid-flight); keep rendering frames until the work drains.
         window.requestAnimationFrame((frameNow) => (app.renderOncePerFrame || app.render)(frameNow));
       }
 
