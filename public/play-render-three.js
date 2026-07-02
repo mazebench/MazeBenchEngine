@@ -91,6 +91,10 @@
     const textureCache = new Map();
     const imageMaterialCache = new Map();
     const modelAssetCache = new Map();
+    // Bumped whenever a GLB finishes parsing. World-view room signatures fold
+    // it in so groups meshed with fallback primitives re-sign (and rebuild
+    // with the real model) once the asset arrives.
+    let modelAssetsVersion = 0;
     const outlineOffsetCache = new Map();
     const levelStateSignatureCache = new WeakMap();
     // Level-state signatures are large per-tile strings; comparing or joining
@@ -1308,6 +1312,11 @@
             ? { status: "ready", model }
             : { status: "failed", failedAtMs: performance.now() }
         );
+        // A real model arriving must re-sign cached room groups so their
+        // fallback primitives rebuild into the actual geometry.
+        if (model) {
+          modelAssetsVersion += 1;
+        }
         invalidateSceneCache();
 
         if (typeof app.render === "function") {
@@ -8693,6 +8702,7 @@
       const bKey = Math.round(brightness * 1000);
       const edges = edgeOutlinesEnabled() ? 1 : 0;
       const version = app.horizontalNeighborStatesVersion || 0;
+      const modelsVersion = modelAssetsVersion;
       const hit = worldViewRoomSignatureMemo.get(view.levelId);
 
       if (
@@ -8700,6 +8710,7 @@
         hit.bKey === bKey &&
         hit.edges === edges &&
         hit.version === version &&
+        hit.modelsVersion === modelsVersion &&
         hit.state === view.levelState
       ) {
         return hit.value;
@@ -8710,6 +8721,7 @@
         signatureToken(levelStateSignature(view.levelState)),
         bKey,
         edges,
+        modelsVersion,
         boundaryNeighborStatesToken(view.levelId)
       ].join(":");
 
@@ -8717,6 +8729,7 @@
         bKey,
         edges,
         version,
+        modelsVersion,
         state: view.levelState,
         value
       });
@@ -9357,6 +9370,54 @@
       return objects;
     }
 
+    function collectLevelStateModelUrls(levelState, urls) {
+      (levelState?.terrain || []).forEach((row) => {
+        (row || []).forEach((cell) => {
+          for (let node = cell; node; node = node.underlay) {
+            if (node.modelUrl) {
+              urls.add(node.modelUrl);
+            }
+
+            (node.layers || []).forEach((layer) => {
+              if (layer?.modelUrl) {
+                urls.add(layer.modelUrl);
+              }
+            });
+          }
+        });
+      });
+
+      (levelState?.actors || []).forEach((actor) => {
+        if (actor?.modelUrl) {
+          urls.add(actor.modelUrl);
+        }
+      });
+    }
+
+    // Kick fetch+parse of every GLB and resolve once they are all ready (or
+    // permanently failed). Hosts and the bake harness await this so the first
+    // build already has real models instead of fallback primitives.
+    function preloadModelAssets(urls) {
+      const pending = [];
+
+      (urls instanceof Set ? Array.from(urls) : urls || []).forEach((url) => {
+        if (!url || requestModelAsset(url)) {
+          return;
+        }
+
+        const promise = modelAssetCache.get(url)?.promise;
+
+        if (promise) {
+          pending.push(promise.catch(() => null));
+        }
+      });
+
+      return Promise.all(pending);
+    }
+
+    let warmupModelUrls = null;
+    let warmupModelUrlsVersion = -1;
+
     // Build missing world-view room groups into the cache WITHOUT attaching
     // them, so a snapshot-backed vista can warm the per-room world in idle
     // time — by the time the player flies into a save, every room group
@@ -9370,6 +9431,37 @@
       const views = surroundingLevelViews();
 
       if (!views.length) {
+        return false;
+      }
+
+      // Gate the very first builds on every GLB being loaded, so groups are
+      // never meshed with fallback primitives (which would then have to be
+      // torn down and rebuilt once the model arrives). Failed loads keep
+      // their fallback and do not block.
+      const statesVersion = app.horizontalNeighborStatesVersion || 0;
+
+      if (!warmupModelUrls || warmupModelUrlsVersion !== statesVersion) {
+        warmupModelUrls = new Set();
+        warmupModelUrlsVersion = statesVersion;
+
+        if (app.horizontalNeighborLevelStates instanceof Map) {
+          app.horizontalNeighborLevelStates.forEach((state) => {
+            if (state && typeof state.then !== "function") {
+              collectLevelStateModelUrls(state, warmupModelUrls);
+            }
+          });
+        }
+      }
+
+      let modelsPending = 0;
+
+      warmupModelUrls.forEach((url) => {
+        if (!requestModelAsset(url) && modelAssetCache.get(url)?.status === "loading") {
+          modelsPending += 1;
+        }
+      });
+
+      if (modelsPending > 0) {
         return false;
       }
 
@@ -10610,6 +10702,76 @@
       }
     }
 
+    // Compile the play-look shader programs (dimmed room materials + the
+    // live current-room render) once, before the first fly-in, so the first
+    // landing doesn't pay a ~50ms one-time GL program compile. renderer.compile
+    // warms the programs without drawing to the canvas; the surrounding
+    // scene state is torn down and the vista is rebuilt on the trailing
+    // render so nothing visibly changes.
+    let playLookShadersWarmed = false;
+
+    function prewarmPlayLookShaders() {
+      if (
+        playLookShadersWarmed ||
+        !THREE ||
+        !renderer ||
+        !camera ||
+        typeof renderer.compile !== "function" ||
+        app.isFlyoverMode ||
+        !usesRoomGroupWorld()
+      ) {
+        return;
+      }
+
+      const saved = {
+        consolidate: app.worldViewConsolidate,
+        uniform: app.worldViewUniformBrightness,
+        vista: app.worldViewVistaMode,
+        fadeMs: app.worldShadowFadeMs,
+        fitSignature: lastCameraFitSignature,
+        fitHeight: lastCameraFitHeight
+      };
+      const savedFade = { ...worldShadowFade };
+
+      try {
+        // Play look: no consolidation, non-uniform brightness (rooms dim),
+        // no vista anchor styling, shadow snapped to target.
+        app.worldViewConsolidate = false;
+        app.worldViewUniformBrightness = false;
+        app.worldViewVistaMode = false;
+        app.worldShadowFadeMs = 0;
+
+        const now = performance.now();
+        resetScene();
+        const views = surroundingLevelViews();
+        renderSurroundingLevelViews(now, views);
+        addTerrainRegions(now);
+        renderActorsForCurrentContext(now);
+        fitCameraToScene(cameraFlightFitOptions() || flyoverFitOptions(views) || {});
+
+        renderer.compile(scene, camera);
+
+        if (edgeScene) {
+          renderer.compile(edgeScene, camera);
+        }
+
+        playLookShadersWarmed = true;
+      } catch (error) {
+        // Never let a prewarm failure disturb the vista.
+      } finally {
+        Object.assign(worldShadowFade, savedFade);
+        app.worldViewConsolidate = saved.consolidate;
+        app.worldViewUniformBrightness = saved.uniform;
+        app.worldViewVistaMode = saved.vista;
+        app.worldShadowFadeMs = saved.fadeMs;
+        lastCameraFitSignature = saved.fitSignature;
+        lastCameraFitHeight = saved.fitHeight;
+        invalidateSceneCache();
+        // Rebuild + composite the vista so the canvas is unchanged.
+        (app.renderOncePerFrame || app.render)(performance.now());
+      }
+    }
+
     function renderScene(now = performance.now()) {
       if (!THREE || !renderer || !camera) {
         return false;
@@ -10727,7 +10889,17 @@
       // signature changes; rebuilding the shadow map each time costs more
       // than the meshing budget itself. Defer it — the first frame after the
       // last room lands still sees a changed shadow signature and updates.
-      const updateShadowMapNow = shouldUpdateShadowMap && !worldViewRoomBuildPending;
+      // Same reasoning during the world-shadow fade and camera flights: the
+      // light and geometry are static (only per-room brightness and the
+      // camera move), so a briefly-stale shadow map is imperceptible and the
+      // settled frame afterwards refreshes it. This is the biggest per-frame
+      // saving during the vista→play dive.
+      const cameraFlightInProgress =
+        Array.isArray(app.cameraFlightLevelViews) && app.cameraFlightLevelViews.length > 0;
+      const deferShadowMap =
+        worldViewRoomBuildPending ||
+        (!app.isFlyoverMode && (worldShadowAnimating() || cameraFlightInProgress));
+      const updateShadowMapNow = shouldUpdateShadowMap && !deferShadowMap;
       renderSceneToComposite(updateShadowMapNow);
       lastSceneSignature = forceRender ? "" : signature;
       lastSceneContentSignature = forceRender ? "" : contentSignature;
@@ -10864,6 +11036,8 @@
       serializeWorldConsolidation,
       restoreWorldConsolidation,
       warmWorldViewRoomGroups,
+      preloadModelAssets,
+      prewarmPlayLookShaders,
       renderScene,
       renderHoverFrame,
       dispose: disposeRenderer,
