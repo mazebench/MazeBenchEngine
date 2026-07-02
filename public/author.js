@@ -2478,7 +2478,10 @@
       ) {
         try {
           const playResponse = await fetch(
-            "/api/play/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId),
+            (authorData.playApiBaseUrl
+              ? authorData.playApiBaseUrl.replace(/\/+$/, "")
+              : "/api/play/" + encodeURIComponent(authorData.game.id)) +
+              "/" + encodeURIComponent(state.levelId),
             { headers: { Accept: "application/json" } }
           );
           const playPayload = await playResponse.json();
