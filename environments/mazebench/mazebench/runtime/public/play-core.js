@@ -264,6 +264,9 @@
       app.state.height = levelState.height;
       app.state.terrain = levelState.terrain;
       app.state.actors = levelState.actors;
+      // The feature index caches by app.state identity, which this in-place
+      // swap preserves — drop it so callbacks index the temporary terrain.
+      invalidateTerrainFeatureIndex();
 
       try {
         return callback();
@@ -272,6 +275,7 @@
         app.state.height = previousHeight;
         app.state.terrain = previousTerrain;
         app.state.actors = previousActors;
+        invalidateTerrainFeatureIndex();
       }
     }
 
@@ -1478,6 +1482,7 @@
       app.state.actors = (levelState.actors || []).map((actor, index) =>
         createRuntimeActor(actor, index, levelState.levelId || app.currentLevelId)
       );
+      invalidateTerrainFeatureIndex();
       app.gateAnimations.clear();
       app.gateAnimationsInitialized = false;
       app.orangeWallAnimations.clear();
@@ -1865,7 +1870,12 @@
     }
 
     function getTerrainFeatureIndex() {
-      if (terrainFeatureIndex && terrainFeatureIndexState === app.state) {
+      // Key on the terrain array identity, not app.state: app.state is
+      // mutated in place when levels load/swap, so its identity is useless
+      // as a freshness signal. A replaced terrain array must rebuild the
+      // index. (In-place cell edits still require an explicit
+      // invalidateTerrainFeatureIndex call.)
+      if (terrainFeatureIndex && terrainFeatureIndexState === app.state.terrain) {
         return terrainFeatureIndex;
       }
 
@@ -1901,7 +1911,7 @@
       dedupeFeatureCells(index.orangeWalls);
       dedupeFeatureCells(index.orangeButtons);
       terrainFeatureIndex = index;
-      terrainFeatureIndexState = app.state;
+      terrainFeatureIndexState = app.state.terrain;
       return index;
     }
 

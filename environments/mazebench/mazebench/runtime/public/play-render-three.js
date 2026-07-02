@@ -21,6 +21,7 @@
     let lastShadowSceneSignature = "";
     let lastCameraFitSignature = "";
     let lastCameraFitHeight = 0;
+    let lastCameraFitDistance = 0;
     let hasRenderedScene = false;
     let debugCameraYaw = 0;
     let debugCameraTilt = 0.22;
@@ -989,17 +990,38 @@
       const key = `${color}:${Math.round(alpha * 1000)}`;
 
       if (!lineMaterialCache.has(key)) {
-        lineMaterialCache.set(
-          key,
-          new THREE.LineBasicMaterial({
-            color,
-            depthTest: true,
-            depthWrite: false,
-            linewidth: 1,
-            opacity: alpha,
-            transparent: alpha < 0.999
-          })
-        );
+        const material = new THREE.LineBasicMaterial({
+          color,
+          depthTest: true,
+          depthWrite: false,
+          linewidth: 1,
+          opacity: alpha,
+          transparent: alpha < 0.999
+        });
+
+        // Pull each edge vertex toward the eye along its own view ray. Points
+        // on the eye ray project to the same screen pixel, so this wins the
+        // depth test against the retained main-scene depth buffer without the
+        // screen-space parallax a world-space camera-axis translation causes
+        // at off-center view angles.
+        material.onBeforeCompile = (shader) => {
+          shader.vertexShader = shader.vertexShader.replace(
+            "#include <project_vertex>",
+            [
+              "vec4 mvPosition = modelViewMatrix * vec4( transformed, 1.0 );",
+              `float edgePullBias = ${edgeDepthBias.toFixed(4)};`,
+              "if ( isPerspectiveMatrix( projectionMatrix ) ) {",
+              "  float edgeViewDistance = max( length( mvPosition.xyz ), 0.0001 );",
+              "  float edgePull = max( edgePullBias, edgeViewDistance * 0.0015 );",
+              "  mvPosition.xyz *= max( edgeViewDistance - edgePull, 0.0 ) / edgeViewDistance;",
+              "} else {",
+              "  mvPosition.z += edgePullBias;",
+              "}",
+              "gl_Position = projectionMatrix * mvPosition;"
+            ].join("\n")
+          );
+        };
+        lineMaterialCache.set(key, material);
       }
 
       return lineMaterialCache.get(key);
@@ -2158,30 +2180,17 @@
         return edgeGeometryCache.get(key);
       }
 
-      const geometryIsCached = geometryCacheHas(geometry);
+      // The boundary loops fully determine the outline the old
+      // EdgesGeometry + keepComponentEdgeSegment pipeline kept: the top and
+      // bottom loop segments, plus a vertical edge at each loop corner
+      // (collinear joints between cells produce coplanar side quads, which
+      // EdgesGeometry dropped via the angle threshold). Emitting them
+      // directly skips the O(triangles) edge scan and the per-segment loop
+      // filtering — the bulk of full-world edge meshing.
       const loops = orderedBoundaryLoops(cells);
-      const rawEdges = geometryIsCached
-        ? edgeGeometryFor(geometry, threshold)
-        : new THREE.EdgesGeometry(geometry, threshold);
-      const rawPositions = rawEdges.getAttribute("position");
       const positions = [];
 
-      for (let index = 0; index < rawPositions.count; index += 2) {
-        const a = {
-          x: rawPositions.getX(index),
-          y: rawPositions.getY(index),
-          z: rawPositions.getZ(index)
-        };
-        const b = {
-          x: rawPositions.getX(index + 1),
-          y: rawPositions.getY(index + 1),
-          z: rawPositions.getZ(index + 1)
-        };
-
-        if (!keepComponentEdgeSegment(a, b, loops, height)) {
-          continue;
-        }
-
+      const pushSegment = (a, b) => {
         if (options?.suppressSharedRoomEdges) {
           const offsetA = {
             ...a,
@@ -2195,18 +2204,37 @@
           };
 
           if (sharedRoomBoundaryEdgeSegment(offsetA, offsetB, options)) {
-            continue;
+            return;
           }
         } else if (sharedRoomBoundaryEdgeSegment(a, b, options)) {
-          continue;
+          return;
         }
 
         positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
-      }
+      };
 
-      if (!geometryIsCached) {
-        rawEdges.dispose();
-      }
+      loops.forEach((loop) => {
+        // Loops are closed (last point repeats the first).
+        for (let index = 0; index < loop.length - 1; index += 1) {
+          const from = loop[index];
+          const to = loop[index + 1];
+
+          pushSegment({ x: from.x, y: 0, z: from.z }, { x: to.x, y: 0, z: to.z });
+          pushSegment(
+            { x: from.x, y: -height, z: from.z },
+            { x: to.x, y: -height, z: to.z }
+          );
+
+          // Vertical edge only where the boundary turns a corner at `to`.
+          const next = index + 2 < loop.length ? loop[index + 2] : loop[1];
+          const incomingHorizontal = nearlyEqual(from.z, to.z);
+          const outgoingHorizontal = nearlyEqual(to.z, next.z);
+
+          if (incomingHorizontal !== outgoingHorizontal) {
+            pushSegment({ x: to.x, y: 0, z: to.z }, { x: to.x, y: -height, z: to.z });
+          }
+        }
+      });
 
       const filteredEdges = new THREE.BufferGeometry();
       filteredEdges.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
@@ -2447,32 +2475,40 @@
     }
 
     function biasEdgeSceneTowardCamera() {
-      const cameraDirection = new THREE.Vector3();
-      camera.getWorldDirection(cameraDirection);
-      const depthRange = Math.max(0, Number(camera.far || 0) - Number(camera.near || 0));
-      const maxScaledBias =
-        app.isFlyoverMode && app.flyoverWholeWorld === true
-          ? unit * 0.028
-          : unit * 0.11;
-      const depthScale =
-        app.isFlyoverMode && app.flyoverWholeWorld === true
-          ? 0.00002
-          : 0.00022;
-      const depthScaledBias = Math.min(maxScaledBias, depthRange * depthScale);
-      const edgeBias = Math.max(edgeDepthBias, depthScaledBias);
-
+      // Depth clearance now happens per-vertex in lineMaterial()'s shader
+      // (an eye-ray pull with zero screen drift); just keep edge objects
+      // pinned to their base positions.
       edgeScene.children.forEach((child) => {
         const basePosition = child.userData.edgeBasePosition;
 
         if (basePosition) {
           child.position.copy(basePosition);
-          child.position.addScaledVector(cameraDirection, -edgeBias);
         }
       });
     }
 
     function outlinePixelRadius() {
-      return Math.max(1.5, unit * 0.035 * 0.75);
+      // Half-thickness the outline should have in WORLD units (matches the
+      // old 1.68px look at the default single-room camera distance).
+      const worldRadius = unit * 0.035 * 0.75;
+      let pixelsPerUnit = 0;
+
+      if (camera?.isOrthographicCamera) {
+        pixelsPerUnit = camera.zoom;
+      } else if (camera?.isPerspectiveCamera && lastCameraFitDistance > 0) {
+        const fovRadians = (camera.fov * Math.PI) / 180;
+        pixelsPerUnit =
+          threeCanvas.height /
+          (2 * lastCameraFitDistance * Math.tan(fovRadians / 2));
+      }
+
+      if (!(pixelsPerUnit > 0)) {
+        return Math.max(1.5, worldRadius);
+      }
+
+      // Attenuate with distance like perspective geometry; clamp so extreme
+      // zoom-in doesn't explode the 2D stamp count (offsets grow ~radius^2).
+      return Math.max(0, Math.min(6, worldRadius * pixelsPerUnit));
     }
 
     function outlinePixelOffsets(radius) {
@@ -2480,6 +2516,13 @@
 
       if (outlineOffsetCache.has(key)) {
         return outlineOffsetCache.get(key);
+      }
+
+      if (radius < 0.5) {
+        const offsets = [{ x: 0, y: 0 }];
+
+        outlineOffsetCache.set(key, offsets);
+        return offsets;
       }
 
       if (radius <= 2) {
@@ -2551,33 +2594,49 @@
         return geometryCache.get(cacheKey);
       }
 
-      const loops = orderedBoundaryLoops(cells)
-        .map((loop) => ({ loop, area: loopArea(loop) }))
-        .filter((entry) => Math.abs(entry.area) > 0.001)
-        .sort((a, b) => Math.abs(b.area) - Math.abs(a.area));
+      // Direct quad construction instead of THREE.Shape/ExtrudeGeometry:
+      // the cells tile the footprint exactly, so the caps need no earcut
+      // triangulation (two triangles per cell), and the boundary loops give
+      // the side quads directly. This is the hottest geometry builder in
+      // full-world room meshing.
+      const positions = [];
 
-      if (loops.length === 0) {
-        return new THREE.BufferGeometry();
-      }
-
-      const shape = new THREE.Shape();
-      const outerLoop = loops[0].area < 0 ? loops[0].loop.slice().reverse() : loops[0].loop;
-      addLoopToPath(shape, outerLoop);
-
-      loops.slice(1).forEach((entry) => {
-        const hole = new THREE.Path();
-        const holeLoop = entry.area > 0 ? entry.loop.slice().reverse() : entry.loop;
-        addLoopToPath(hole, holeLoop);
-        shape.holes.push(hole);
+      cells.forEach((cell) => {
+        // Top cap (y = 0), normal +Y — same winding as componentTopPlaneGeometry.
+        pushQuadPositions(positions, [
+          [cell.left, 0, cell.top],
+          [cell.left, 0, cell.bottom],
+          [cell.right, 0, cell.bottom],
+          [cell.right, 0, cell.top]
+        ]);
+        // Bottom cap (y = -height), normal -Y.
+        pushQuadPositions(positions, [
+          [cell.left, -height, cell.top],
+          [cell.right, -height, cell.top],
+          [cell.right, -height, cell.bottom],
+          [cell.left, -height, cell.bottom]
+        ]);
       });
 
-      const geometry = new THREE.ExtrudeGeometry(shape, {
-        bevelEnabled: false,
-        depth: height,
-        steps: 1
+      // One outward-facing quad per boundary segment (outer loops are wound
+      // clockwise in XZ by orderedBoundaryLoops, holes counter-clockwise, so
+      // the same vertex order faces away from the solid for both).
+      orderedBoundaryLoops(cells).forEach((loop) => {
+        for (let index = 0; index < loop.length - 1; index += 1) {
+          const from = loop[index];
+          const to = loop[index + 1];
+
+          pushQuadPositions(positions, [
+            [from.x, 0, from.z],
+            [to.x, 0, to.z],
+            [to.x, -height, to.z],
+            [from.x, -height, from.z]
+          ]);
+        }
       });
 
-      geometry.rotateX(Math.PI / 2);
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
       geometry.computeVertexNormals();
 
       if (cacheKey) {
@@ -7034,7 +7093,11 @@
     function terrainScanSignature() {
       const version = Number(app.terrainRenderVersion) || 0;
 
-      if (terrainScanCacheState === app.state && terrainScanCacheVersion === version) {
+      // Key on the terrain array identity, not app.state: app.state is
+      // mutated in place by applyLevelState (editor repaints replace the
+      // terrain array without bumping terrainRenderVersion), so app.state's
+      // identity never changes and the cache would return stale scans.
+      if (terrainScanCacheState === app.state.terrain && terrainScanCacheVersion === version) {
         return terrainScanCacheValue;
       }
 
@@ -7047,7 +7110,7 @@
         }
       }
 
-      terrainScanCacheState = app.state;
+      terrainScanCacheState = app.state.terrain;
       terrainScanCacheVersion = version;
       terrainScanCacheValue = parts.join(";");
       return terrainScanCacheValue;
@@ -7068,7 +7131,7 @@
         const progress = clamp01((now - view.startMs) / Math.max(1, view.durationMs || durationMs));
 
         if (progress < 1) {
-          parts.push(`out:${view.levelId}:${Math.floor(progress * 6)}`);
+          parts.push(`out:${view.levelId}:${Math.floor(progress * 3)}`);
         }
       });
 
@@ -7077,7 +7140,7 @@
           const progress = clamp01((now - startMs) / durationMs);
 
           if (progress < 1) {
-            parts.push(`in:${levelId}:${Math.floor(progress * 6)}`);
+            parts.push(`in:${levelId}:${Math.floor(progress * 3)}`);
           }
         });
       }
@@ -7388,6 +7451,7 @@
         const distance = Math.max(unit, Number(options.fixedCameraDistance));
 
         camera.position.copy(center).addScaledVector(viewDirection, distance / cameraZoom);
+        lastCameraFitDistance = distance / cameraZoom;
         camera.lookAt(center);
         camera.updateProjectionMatrix();
         camera.updateMatrixWorld(true);
@@ -7423,6 +7487,7 @@
       }
 
       camera.position.copy(center).addScaledVector(viewDirection, distance / cameraZoom);
+      lastCameraFitDistance = distance / cameraZoom;
       camera.lookAt(center);
       camera.updateProjectionMatrix();
       camera.updateMatrixWorld(true);
@@ -8378,7 +8443,9 @@
             const eased = app.easeInOutQuad ? app.easeInOutQuad(progress) : progress;
 
             // Quantized so each fade step rebuilds the room group once.
-            brightness *= Math.round(eased * 6) / 6;
+            // 3 steps halves fade-driven re-meshes vs the original 6 while
+            // staying visually smooth at sub-second fade durations.
+            brightness *= Math.round(eased * 3) / 3;
           }
         }
       }
@@ -8477,7 +8544,7 @@
       // budget so the world streams in without blocking the frame. Flyover
       // keeps synchronous builds: its reveal choreography expects every room
       // to appear on the frame its fade starts.
-      const buildBudgetMs = app.isFlyoverMode ? Infinity : isWideLevelTransition ? 3 : 8;
+      const buildBudgetMs = app.isFlyoverMode ? Infinity : isWideLevelTransition ? 3 : 32;
       const pendingBuilds = [];
       let allRoomsReady = true;
 
@@ -8527,6 +8594,16 @@
         }
 
         const previous = worldViewRoomGroups.get(pending.view.levelId);
+
+        // A room whose boundary neighbors are still loading would bake "?"
+        // seams and need a full re-mesh per neighbor arrival (up to 5 builds
+        // per frontier room). Wait for its neighbors instead — the fetch
+        // stream keeps frames coming, so it builds once, correctly.
+        if (pending.awaitingNeighbors && !app.isFlyoverMode && !previous) {
+          worldViewRoomBuildPending = true;
+          allRoomsReady = false;
+          continue;
+        }
 
         if (previous) {
           disposeWorldViewRoomEntry(previous);
@@ -9680,10 +9757,15 @@
       }
 
       addEditorHoverHighlight();
-      renderSceneToComposite(shouldUpdateShadowMap);
+      // While world rooms are still streaming in, every frame's content
+      // signature changes; rebuilding the shadow map each time costs more
+      // than the meshing budget itself. Defer it — the first frame after the
+      // last room lands still sees a changed shadow signature and updates.
+      const updateShadowMapNow = shouldUpdateShadowMap && !worldViewRoomBuildPending;
+      renderSceneToComposite(updateShadowMapNow);
       lastSceneSignature = forceRender ? "" : signature;
       lastSceneContentSignature = forceRender ? "" : contentSignature;
-      lastShadowSceneSignature = shouldUpdateShadowMap ? shadowSignature : lastShadowSceneSignature;
+      lastShadowSceneSignature = updateShadowMapNow ? shadowSignature : lastShadowSceneSignature;
       hasRenderedScene = true;
 
       if (worldViewRoomBuildPending) {
