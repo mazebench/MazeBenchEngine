@@ -8959,6 +8959,16 @@
         return false;
       }
 
+      // Already resident (retained across a fly-in/fly-out round trip):
+      // re-attach on the next render instead of re-minting GPU buffers.
+      if (
+        worldConsolidation?.fromSnapshot &&
+        worldConsolidation.signature === `snapshot:${manifest.contentKey || ""}`
+      ) {
+        invalidateSceneCache();
+        return true;
+      }
+
       let jsonMaterialsById = null;
       const ownedMaterials = [];
       const ownedTextures = [];
@@ -9211,6 +9221,58 @@
       return objects;
     }
 
+    // Build missing world-view room groups into the cache WITHOUT attaching
+    // them, so a snapshot-backed vista can warm the per-room world in idle
+    // time — by the time the player flies into a save, every room group
+    // already exists and nothing visibly regenerates. Returns true when all
+    // current views are cached.
+    function warmWorldViewRoomGroups(budgetMs = 8) {
+      if (!THREE || !renderer || !usesRoomGroupWorld()) {
+        return true;
+      }
+
+      const views = surroundingLevelViews();
+
+      if (!views.length) {
+        return false;
+      }
+
+      const now = performance.now();
+      let remaining = 0;
+
+      for (const view of views) {
+        const brightness = worldViewRoomBrightness(view, now);
+        const signature = worldViewRoomSignature(view, brightness);
+        const existing = worldViewRoomGroups.get(view.levelId);
+
+        if (existing && existing.signature === signature) {
+          continue;
+        }
+
+        // Neighbor states still priming would bake "?" seams; try later.
+        if (signature.includes("?")) {
+          remaining += 1;
+          continue;
+        }
+
+        if (performance.now() - now > budgetMs) {
+          remaining += 1;
+          continue;
+        }
+
+        if (existing) {
+          disposeWorldViewRoomEntry(existing);
+        }
+
+        worldViewRoomGroups.set(
+          view.levelId,
+          buildWorldViewRoomEntry(view, brightness, signature, now)
+        );
+      }
+
+      return remaining === 0;
+    }
+
     function renderWorldViewRoomGroups(now, views) {
       // Snapshot-backed vista: the merged world was restored from a baked
       // snapshot, so there are no per-room groups to build — just keep the
@@ -9346,7 +9408,16 @@
         (!app.isFlyoverMode && app.worldViewConsolidate === true && isWorldViewPlayMode());
 
       if (!wantsWorldConsolidation) {
-        disposeWorldConsolidation();
+        // Hosts that round-trip between the vista and play (mazebench.com
+        // home) keep the merged world cached while it is off screen so
+        // returning home re-attaches instead of re-meshing/re-fetching.
+        if (worldConsolidation && app.retainWorldConsolidation === true) {
+          worldConsolidation.objects.forEach(({ object }) => {
+            object.parent?.remove(object);
+          });
+        } else {
+          disposeWorldConsolidation();
+        }
         return;
       }
 
@@ -10614,6 +10685,7 @@
       prewarmAdjacentLevelTransition,
       serializeWorldConsolidation,
       restoreWorldConsolidation,
+      warmWorldViewRoomGroups,
       renderScene,
       renderHoverFrame,
       dispose: disposeRenderer,
