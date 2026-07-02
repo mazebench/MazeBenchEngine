@@ -515,6 +515,15 @@
       debugCameraTilt = debugCameraTargetTilt;
       debugCameraZoom = debugCameraTargetZoom;
       lastSceneSignature = "";
+
+      // Hosts driving the camera every frame (e.g. the mazebench.com home
+      // flyby) render via renderOncePerFrame themselves; skipRender avoids a
+      // second full render plus per-frame DOM writes.
+      if (options.skipRender === true) {
+        updateCameraDirectionMapper();
+        return;
+      }
+
       updateCameraModeToggle();
       updateCameraDirectionMapper();
 
@@ -547,6 +556,27 @@
           Math.round(Number(app.flyoverCameraOffsetZ || 0) * 1000),
           String(app.flyoverFocusedLevelId || ""),
           flyoverFocusTransitionSignature()
+        );
+      } else if (app.cameraFlightFitOptions) {
+        const fit = app.cameraFlightFitOptions;
+
+        parts.push(
+          "flight-fit",
+          Math.round(Number(fit.minX || 0) * 10),
+          Math.round(Number(fit.maxX || 0) * 10),
+          Math.round(Number(fit.minZ || 0) * 10),
+          Math.round(Number(fit.maxZ || 0) * 10),
+          Math.round(Number(fit.centerX || 0) * 10),
+          Math.round(Number(fit.centerZ || 0) * 10)
+        );
+      } else if (app.worldPanCameraOffsetX || app.worldPanCameraOffsetZ) {
+        // World-pan glides must dirty the camera signature, otherwise pure
+        // pan frames early-return before fitCameraToScene and the camera
+        // only moves on (expensive) content-rebuild frames.
+        parts.push(
+          "pan",
+          Math.round(Number(app.worldPanCameraOffsetX || 0) * 10),
+          Math.round(Number(app.worldPanCameraOffsetZ || 0) * 10)
         );
       }
 
@@ -790,46 +820,62 @@
       return tagName === "input" || tagName === "textarea" || tagName === "select";
     }
 
+    // Camera keys honor the shared controls config (window.__MAZEBENCH_CONTROLS__)
+    // when the host page provides one; otherwise the classic WASD/QE defaults apply.
+    function matchesCameraControl(event, action, fallbackKeys) {
+      const keys = window.__MAZEBENCH_CONTROLS__?.keys;
+      const codes = keys && Array.isArray(keys[action]) ? keys[action] : null;
+      if (codes) {
+        return codes.includes(event.code);
+      }
+      return fallbackKeys.includes(event.key.toLowerCase());
+    }
+
+    function cameraYawKeyDirection() {
+      return window.__MAZEBENCH_CONTROLS__?.invertCameraRotation === true ? -1 : 1;
+    }
+
     function handleDebugCameraKeydown(event) {
       if (
         event.defaultPrevented ||
         event.metaKey ||
         event.ctrlKey ||
         event.altKey ||
+        window.__MAZEBENCH_CONTROLS_CAPTURE__ === true ||
+        window.__MAZEBENCH_INPUT_LOCKED__ === true ||
         eventTargetsEditableText(event)
       ) {
         return;
       }
 
-      const key = event.key.toLowerCase();
-      const yawStep = Math.PI / 2;
+      const yawStep = (Math.PI / 2) * cameraYawKeyDirection();
       let handled = true;
       let durationMs = 180;
 
-      if (key === "w") {
-        startDebugCameraTiltHold(key);
+      if (matchesCameraControl(event, "cameraUp", ["w"])) {
+        startDebugCameraTiltHold("w");
         event.preventDefault();
         return;
-      } else if (key === "s") {
-        startDebugCameraTiltHold(key);
+      } else if (matchesCameraControl(event, "cameraDown", ["s"])) {
+        startDebugCameraTiltHold("s");
         event.preventDefault();
         return;
-      } else if (key === "a") {
+      } else if (matchesCameraControl(event, "cameraLeft", ["a"])) {
         if (event.repeat) {
           return;
         }
         debugCameraTargetYaw -= yawStep;
         durationMs = 260;
-      } else if (key === "d") {
+      } else if (matchesCameraControl(event, "cameraRight", ["d"])) {
         if (event.repeat) {
           return;
         }
         debugCameraTargetYaw += yawStep;
         durationMs = 260;
-      } else if (key === "q") {
+      } else if (matchesCameraControl(event, "zoomIn", ["q"])) {
         debugCameraTargetZoom = clampDebugCameraZoom(debugCameraTargetZoom * debugCameraZoomStep);
         durationMs = 140;
-      } else if (key === "e") {
+      } else if (matchesCameraControl(event, "zoomOut", ["e"])) {
         debugCameraTargetZoom = clampDebugCameraZoom(debugCameraTargetZoom / debugCameraZoomStep);
         durationMs = 140;
       } else {
@@ -851,9 +897,13 @@
         return;
       }
 
-      const key = event.key.toLowerCase();
+      const key = matchesCameraControl(event, "cameraUp", ["w"])
+        ? "w"
+        : matchesCameraControl(event, "cameraDown", ["s"])
+          ? "s"
+          : "";
 
-      if (key !== "w" && key !== "s") {
+      if (!key) {
         return;
       }
 
@@ -7004,7 +7054,10 @@
     }
 
     function flyoverFadeAnimationSignature(now) {
-      if (!app.isFlyoverMode) {
+      // Fade steps must dirty the content signature while they animate, or
+      // they only advance on frames dirtied by other events. Host pages can
+      // opt world-view fades in via worldViewRoomFadeInsEnabled.
+      if (!app.isFlyoverMode && app.worldViewRoomFadeInsEnabled !== true) {
         return "";
       }
 
@@ -7032,9 +7085,26 @@
       return parts.length > 0 ? `flyover-fade:${parts.join("|")}` : "";
     }
 
+    function cameraFlightViewsSignature() {
+      if (!Array.isArray(app.cameraFlightLevelViews) || app.cameraFlightLevelViews.length === 0) {
+        return "";
+      }
+
+      return app.cameraFlightLevelViews
+        .map((view) => [
+          view.levelId || view.levelState?.levelId || "",
+          Math.round(Number(view.offset?.x || 0)),
+          Math.round(Number(view.offset?.z || 0)),
+          view.hidePlayers === true ? "hide" : "show",
+          signatureToken(levelStateSignature(view.levelState || {}))
+        ].join(":"))
+        .join("|");
+    }
+
     function sceneContentSignature(now) {
       const transition = app.levelTransition?.transitionData;
       const worldAction = app.worldActionAnimation;
+      const cameraFlightSignature = cameraFlightViewsSignature();
 
       if (app.isFlyoverMode && app.flyoverWholeWorld === true) {
         return [
@@ -7047,6 +7117,7 @@
           flyoverFadeAnimationSignature(now),
           transition ? "transition" : "no-transition",
           worldAction ? "world-action" : "no-world-action",
+          cameraFlightSignature ? `camera-flight:${cameraFlightSignature}` : "no-camera-flight",
           `flyover-whole:${Number(app.flyoverSceneVersion) || 0}`,
           `renderable:${app.flyoverRenderableLevelIds?.size || 0}`,
           `world-levels:${Number(app.flyoverWorldTotalLevelCount) || 0}`
@@ -7082,6 +7153,7 @@
               worldAction.visualSignature || ""
             ].join(":")
           : "no-world-action",
+        cameraFlightSignature ? `camera-flight:${cameraFlightSignature}` : "no-camera-flight",
         app.isFlyoverMode
           ? `flyover-current:${Math.round(flyoverCurrentLevelBrightness() * 1000)}`
           : "no-flyover-current",
@@ -7190,6 +7262,45 @@
       return oneLayerCameraWorldHeight();
     }
 
+    function cameraFlightFitOptions() {
+      if (app.isFlyoverMode || isEditorRenderMode()) {
+        return null;
+      }
+
+      const fit = app.cameraFlightFitOptions;
+
+      if (!fit) {
+        return null;
+      }
+
+      const minX = Number(fit.minX);
+      const maxX = Number(fit.maxX);
+      const minZ = Number(fit.minZ);
+      const maxZ = Number(fit.maxZ);
+
+      if (![minX, maxX, minZ, maxZ].every(Number.isFinite)) {
+        return null;
+      }
+
+      const centerX = Number(fit.centerX);
+      const centerY = Number(fit.centerY);
+      const centerZ = Number(fit.centerZ);
+      const stableHeight = Number(fit.stableHeight);
+
+      return {
+        minX,
+        maxX,
+        minZ,
+        maxZ,
+        centerX: Number.isFinite(centerX) ? centerX : (minX + maxX) / 2,
+        centerY: Number.isFinite(centerY) ? centerY : undefined,
+        centerZ: Number.isFinite(centerZ) ? centerZ : (minZ + maxZ) / 2,
+        stableHeight: Number.isFinite(stableHeight) && stableHeight > 0
+          ? stableHeight
+          : oneLayerCameraWorldHeight()
+      };
+    }
+
     function fitCameraToScene(options = {}) {
       const stableHeight =
         options.stableHeight ??
@@ -7200,10 +7311,14 @@
       const maxWorldX = options.maxX ?? app.boardRect.width;
       const minWorldZ = options.minZ ?? 0;
       const maxWorldZ = options.maxZ ?? app.boardRect.height;
+      // Host pages can glide the camera across the surrounding world (e.g.
+      // the mazebench.com home-page flyby) without moving the current room.
+      const worldPanOffsetX = app.isFlyoverMode ? 0 : Number(app.worldPanCameraOffsetX || 0);
+      const worldPanOffsetZ = app.isFlyoverMode ? 0 : Number(app.worldPanCameraOffsetZ || 0);
       const center = new THREE.Vector3(
-        options.centerX ?? (minWorldX + maxWorldX) / 2,
+        (options.centerX ?? (minWorldX + maxWorldX) / 2) + worldPanOffsetX,
         options.centerY ?? stableHeight / 2,
-        options.centerZ ?? (minWorldZ + maxWorldZ) / 2
+        (options.centerZ ?? (minWorldZ + maxWorldZ) / 2) + worldPanOffsetZ
       );
       const canvasWidth = Math.max(1, app.boardRect.width);
       const canvasHeight = Math.max(1, app.boardRect.height);
@@ -7677,7 +7792,7 @@
     }
 
     function surroundingLevelBrightness(dx, dy) {
-      if (app.isFlyoverMode) {
+      if (app.isFlyoverMode || app.worldViewUniformBrightness === true) {
         return 1;
       }
 
@@ -8245,7 +8360,12 @@
       // Quantized fade-ins rebuild the room group on every step, so they are
       // reserved for flyover where the whole world is on screen. Play mode
       // streams rooms in at final brightness; they are off-screen anyway.
-      if (app.isFlyoverMode && app.flyoverRoomFadeIns instanceof Map) {
+      // Host pages can opt in (worldViewRoomFadeInsEnabled) for cinematic
+      // world views like the mazebench.com home-page flyby.
+      if (
+        (app.isFlyoverMode || app.worldViewRoomFadeInsEnabled === true) &&
+        app.flyoverRoomFadeIns instanceof Map
+      ) {
         const startMs = app.flyoverRoomFadeIns.get(view.levelId);
 
         if (Number.isFinite(startMs)) {
@@ -8468,13 +8588,23 @@
 
     function renderSurroundingLevelViews(now, views) {
       renderFlyoverDepartingLevelViews(now);
+      const cameraFlightViews = Array.isArray(app.cameraFlightLevelViews)
+        ? app.cameraFlightLevelViews.filter((view) => view?.levelState && view?.offset)
+        : [];
+      const cameraFlightLevelIds = new Set(
+        cameraFlightViews.map((view) => String(view.levelId || view.levelState?.levelId || ""))
+      );
+      const baseViews = cameraFlightLevelIds.size > 0
+        ? views.filter((view) => !cameraFlightLevelIds.has(String(view.levelId || "")))
+        : views;
 
       if (usesRoomGroupWorld()) {
-        renderWorldViewRoomGroups(now, views);
+        renderWorldViewRoomGroups(now, baseViews);
+        renderCameraFlightLevelViews(now, cameraFlightViews);
         return;
       }
 
-      views
+      baseViews
         .slice()
         .sort((a, b) => b.distance - a.distance)
         .forEach((view) => {
@@ -8503,6 +8633,28 @@
             dx: view.dx,
             dy: view.dy,
             hidePlayers: true
+          }, now);
+        });
+      renderCameraFlightLevelViews(now, cameraFlightViews);
+    }
+
+    function renderCameraFlightLevelViews(now, views) {
+      if (!Array.isArray(views) || views.length === 0) {
+        return;
+      }
+
+      views
+        .slice()
+        .sort((a, b) => Number(b.distance || 0) - Number(a.distance || 0))
+        .forEach((view) => {
+          const brightness = flyoverLevelBrightness(view.levelId || view.levelState?.levelId, view.brightness ?? 1);
+
+          renderLevelStateAt(view.levelState, view.offset, {
+            role: view.role || "camera-flight",
+            brightness,
+            dx: view.dx,
+            dy: view.dy,
+            hidePlayers: view.hidePlayers === true
           }, now);
         });
     }
@@ -9490,7 +9642,7 @@
       }
 
       if (!contentChanged) {
-        fitCameraToScene(editorSurroundingFitOptions() || flyoverFitOptions() || {});
+        fitCameraToScene(editorSurroundingFitOptions() || cameraFlightFitOptions() || flyoverFitOptions() || {});
         renderSceneToComposite(false);
         lastSceneSignature = signature;
         return true;
@@ -9524,7 +9676,7 @@
           addTerrainRegions(now);
           renderActorsForCurrentContext(now);
         }
-        fitCameraToScene(editorSurroundingFitOptions() || flyoverFitOptions(surroundingViews) || {});
+        fitCameraToScene(editorSurroundingFitOptions() || cameraFlightFitOptions() || flyoverFitOptions(surroundingViews) || {});
       }
 
       addEditorHoverHighlight();
@@ -9655,6 +9807,9 @@
       isDebugCameraAnimating,
       setEditorHoverTarget,
       setDebugCameraView,
+      getDebugCameraYaw: () => debugCameraTargetYaw,
+      getDebugCameraTilt: () => debugCameraTargetTilt,
+      getDebugCameraZoom: () => debugCameraTargetZoom,
       useLevelPreviewCamera,
       invalidateSceneCache,
       prewarmAdjacentLevelTransition,

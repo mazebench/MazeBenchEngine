@@ -3058,37 +3058,22 @@
     function hasContinuousWorldActionCrossing(dx, dy, options = {}) {
       const player = currentPlayerForWorldAction();
 
-      if (!player) {
+      if (!player || typeof movement.previewPlayerMove !== "function") {
         return false;
       }
 
-      const startSnapshot = app.cloneLevelSnapshot?.();
-      const startCollectedGemIds = app.collectedGemIds
-        ? new Set(app.collectedGemIds)
-        : null;
+      const moveResult = movement.previewPlayerMove(dx, dy, {
+        continuePunchSlide: options.continuePunchSlide === true,
+        startOnCurrentSlope: options.startOnCurrentSlope === true
+      });
 
-      if (!startSnapshot) {
+      if (!supportsWorldActionMoveResult(moveResult)) {
         return false;
       }
 
-      try {
-        const moveResult = movement.performPlayerMove(dx, dy, {
-          animate: false,
-          continuePunchSlide: options.continuePunchSlide === true,
-          recordHistory: false,
-          startOnCurrentSlope: options.startOnCurrentSlope === true
-        });
+      const edgeTransition = continuationTransitionForMoveResult(moveResult, dx, dy);
 
-        if (!supportsWorldActionMoveResult(moveResult)) {
-          return false;
-        }
-
-        const edgeTransition = continuationTransitionForMoveResult(moveResult, dx, dy);
-
-        return Boolean(edgeTransition && shouldContinuePlayerMoveAcrossEdge(moveResult, edgeTransition));
-      } finally {
-        restorePlannedWorldActionStart(startSnapshot, startCollectedGemIds);
-      }
+      return Boolean(edgeTransition && shouldContinuePlayerMoveAcrossEdge(moveResult, edgeTransition));
     }
 
     function terrainCellHasContinuationSurface(cell) {
@@ -3525,18 +3510,35 @@
       }
     }
 
-    function handleKeydown(event) {
-      const directionalMoves = {
-        ArrowUp: [0, -1],
-        ArrowDown: [0, 1],
-        ArrowLeft: [-1, 0],
-        ArrowRight: [1, 0]
-      };
-      const key = event.key.toLowerCase();
+    // Bindings honor the shared controls config (window.__MAZEBENCH_CONTROLS__)
+    // when the host page provides one; otherwise the classic defaults apply.
+    function matchesGameplayControl(event, action, fallbackCodes) {
+      const keys = window.__MAZEBENCH_CONTROLS__?.keys;
+      const codes = keys && Array.isArray(keys[action]) ? keys[action] : fallbackCodes;
+      return codes.includes(event.code);
+    }
 
-      if (directionalMoves[event.key]) {
+    function handleKeydown(event) {
+      if (
+        window.__MAZEBENCH_CONTROLS_CAPTURE__ === true ||
+        window.__MAZEBENCH_INPUT_LOCKED__ === true
+      ) {
+        return;
+      }
+
+      const directionalMoves = {
+        moveUp: { fallback: ["ArrowUp"], vector: [0, -1] },
+        moveDown: { fallback: ["ArrowDown"], vector: [0, 1] },
+        moveLeft: { fallback: ["ArrowLeft"], vector: [-1, 0] },
+        moveRight: { fallback: ["ArrowRight"], vector: [1, 0] }
+      };
+
+      for (const [action, move] of Object.entries(directionalMoves)) {
+        if (!matchesGameplayControl(event, action, move.fallback)) {
+          continue;
+        }
         event.preventDefault();
-        const [rawDx, rawDy] = directionalMoves[event.key];
+        const [rawDx, rawDy] = move.vector;
         const [dx, dy] =
           typeof app.mapCameraRelativeDirection === "function"
             ? app.mapCameraRelativeDirection(rawDx, rawDy)
@@ -3545,13 +3547,13 @@
         return;
       }
 
-      if (key === "z" || key === "u") {
+      if (matchesGameplayControl(event, "undo", ["KeyZ", "KeyU"])) {
         event.preventDefault();
         undoMove();
         return;
       }
 
-      if (key === "r") {
+      if (matchesGameplayControl(event, "reset", ["KeyR"])) {
         event.preventDefault();
         resetPositions();
       }

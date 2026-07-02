@@ -50,6 +50,16 @@ function iceSlopeCell(direction = "right", elevation = 0) {
   };
 }
 
+function iceWallCell() {
+  return {
+    type: "wall",
+    layers: [
+      { type: "ice", elevation: 0 },
+      { type: "wall", elevation: 0 }
+    ]
+  };
+}
+
 function stackedWall(height) {
   return {
     type: "wall",
@@ -398,6 +408,43 @@ function createUShapeActors(extraActors = []) {
     { x: 4, y: 0, elevation: 1 },
     { x: 5, y: 0, elevation: 0 }
   ]);
+}
+
+{
+  const player = { type: "player", x: 1, y: 0, elevation: 0, removed: false };
+  const terrain = createTerrain(16, 1, "ice");
+  terrain[0][15] = iceWallCell();
+  const app = createGameplayApp([player], {
+    currentLevelId: "level_IxG",
+    height: 1,
+    terrain,
+    width: 16,
+    worldColumns: Array.from("ABCDEFGHIJKLMNOP"),
+    worldRows: Array.from("ABCDEFGHIJKLMNOP")
+  });
+  const performCalls = [];
+  const originalPerformPlayerMove = app.movement.performPlayerMove;
+
+  app.movement.performPlayerMove = function trackedPerformPlayerMove(dx, dy, options = {}) {
+    performCalls.push({
+      animate: options.animate,
+      dx,
+      dy,
+      recordHistory: options.recordHistory
+    });
+    return originalPerformPlayerMove.apply(this, arguments);
+  };
+
+  app.movePlayers(1, 0);
+
+  assert.deepEqual([player.x, player.y], [14, 0]);
+  assert.equal(performCalls.length, 1);
+  assert.deepEqual(performCalls[0], {
+    animate: true,
+    dx: 1,
+    dy: 0,
+    recordHistory: true
+  });
 }
 
 {

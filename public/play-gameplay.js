@@ -3058,37 +3058,22 @@
     function hasContinuousWorldActionCrossing(dx, dy, options = {}) {
       const player = currentPlayerForWorldAction();
 
-      if (!player) {
+      if (!player || typeof movement.previewPlayerMove !== "function") {
         return false;
       }
 
-      const startSnapshot = app.cloneLevelSnapshot?.();
-      const startCollectedGemIds = app.collectedGemIds
-        ? new Set(app.collectedGemIds)
-        : null;
+      const moveResult = movement.previewPlayerMove(dx, dy, {
+        continuePunchSlide: options.continuePunchSlide === true,
+        startOnCurrentSlope: options.startOnCurrentSlope === true
+      });
 
-      if (!startSnapshot) {
+      if (!supportsWorldActionMoveResult(moveResult)) {
         return false;
       }
 
-      try {
-        const moveResult = movement.performPlayerMove(dx, dy, {
-          animate: false,
-          continuePunchSlide: options.continuePunchSlide === true,
-          recordHistory: false,
-          startOnCurrentSlope: options.startOnCurrentSlope === true
-        });
+      const edgeTransition = continuationTransitionForMoveResult(moveResult, dx, dy);
 
-        if (!supportsWorldActionMoveResult(moveResult)) {
-          return false;
-        }
-
-        const edgeTransition = continuationTransitionForMoveResult(moveResult, dx, dy);
-
-        return Boolean(edgeTransition && shouldContinuePlayerMoveAcrossEdge(moveResult, edgeTransition));
-      } finally {
-        restorePlannedWorldActionStart(startSnapshot, startCollectedGemIds);
-      }
+      return Boolean(edgeTransition && shouldContinuePlayerMoveAcrossEdge(moveResult, edgeTransition));
     }
 
     function terrainCellHasContinuationSurface(cell) {

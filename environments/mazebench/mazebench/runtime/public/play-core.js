@@ -124,6 +124,10 @@
       playData,
       isEditorRenderApp: playData?.editorRender === true,
       currentGameId,
+      // Base URL for level-state fetches; keeps custom worlds (editor and
+      // play) from falling back to the main game's /api/play endpoint.
+      playApiBaseUrl:
+        typeof playData?.playApiBaseUrl === "string" ? playData.playApiBaseUrl.replace(/\/+$/, "") : "",
       currentLevelId,
       currentLevelLabel: playData.levelLabel || currentLevelId,
       playRoutePrefix,
@@ -335,6 +339,13 @@
       });
     }
 
+    function levelStateUrl(levelId) {
+      if (app.playApiBaseUrl) {
+        return `${app.playApiBaseUrl}/${encodeURIComponent(levelId)}`;
+      }
+      return `/api/play/${encodeURIComponent(app.currentGameId)}/${encodeURIComponent(levelId)}`;
+    }
+
     async function loadHorizontalNeighborLevelState(levelId, options = {}) {
       if (!levelId || typeof window.fetch !== "function") {
         return null;
@@ -348,7 +359,7 @@
       }
 
       const request = window
-        .fetch(`/api/play/${encodeURIComponent(app.currentGameId)}/${encodeURIComponent(levelId)}`, {
+        .fetch(levelStateUrl(levelId), {
           headers: {
             Accept: "application/json"
           }
@@ -1509,14 +1520,11 @@
     }
 
     async function loadLevelState(levelId) {
-      const response = await window.fetch(
-        `/api/play/${encodeURIComponent(app.currentGameId)}/${encodeURIComponent(levelId)}`,
-        {
-          headers: {
-            Accept: "application/json"
-          }
+      const response = await window.fetch(levelStateUrl(levelId), {
+        headers: {
+          Accept: "application/json"
         }
-      );
+      });
 
       if (!response.ok) {
         throw new Error(`Unable to load ${levelId}`);
@@ -2442,10 +2450,14 @@
     }
 
     function floatingFloorHoverOffset(actor, now = performance.now()) {
-      const hoverBase = actor?.type === "gem" ? app.GEM_HOVER_BASE : app.FLOATING_FLOOR_HOVER_BASE;
-      const hoverBob = actor?.type === "gem" ? app.GEM_HOVER_BOB : app.FLOATING_FLOOR_HOVER_BOB;
+      if (actor?.type !== "gem" && actor?.type !== "floating_floor") {
+        return 0;
+      }
+
+      const hoverBase = actor.type === "gem" ? app.GEM_HOVER_BASE : app.FLOATING_FLOOR_HOVER_BASE;
+      const hoverBob = actor.type === "gem" ? app.GEM_HOVER_BOB : app.FLOATING_FLOOR_HOVER_BOB;
       const hoverPeriod =
-        actor?.type === "gem" ? app.GEM_HOVER_PERIOD_MS : app.FLOATING_FLOOR_HOVER_PERIOD_MS;
+        actor.type === "gem" ? app.GEM_HOVER_PERIOD_MS : app.FLOATING_FLOOR_HOVER_PERIOD_MS;
       const oscillation =
         Math.sin((now / hoverPeriod) * Math.PI * 2 + (actor.hoverSeed || 0)) * hoverBob;
       return hoverBase + oscillation;

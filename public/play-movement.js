@@ -406,9 +406,26 @@
       };
     }
 
+    function previewPlayerMove(dx, dy, options = {}) {
+      const engine = createCurrentEngine();
+      const engineState = engine.cloneState(engine.initialState);
+      const moveResult = engine.move(engineState, dx, dy, {
+        continuePunchSlide: options.continuePunchSlide === true,
+        startOnCurrentSlope: options.startOnCurrentSlope === true
+      });
+      const moves = moveResult.moves.map(moveFromEngineRecord).filter(Boolean);
+
+      return {
+        ...moveResult,
+        moved: moves.length > 0,
+        moves
+      };
+    }
+
     return {
       applyMoveFinalState,
       applyUndoIceSlideMetadata,
+      previewPlayerMove,
       performPlayerMove
     };
   };
