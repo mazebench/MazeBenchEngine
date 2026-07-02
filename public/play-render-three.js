@@ -3208,7 +3208,12 @@
         "polycube-edges",
         Math.round(renderOffsetX() * 100),
         Math.round(renderOffsetZ() * 100),
-        options?.suppressSharedRoomEdges ? "shared" : "normal",
+        // Boundary suppression depends on which neighbor states are loaded;
+        // key the cache on them so seam edges recompute when a neighbor
+        // arrives instead of replaying the stale first build.
+        options?.suppressSharedRoomEdges
+          ? `shared:${boundaryNeighborStatesToken(activeRenderContext?.state?.levelId || app.currentLevelId)}`
+          : "normal",
         iceSlopeContactSignature,
         options?.descriptor?.key || "",
         activeRenderContext?.state?.levelId || "",
@@ -7664,7 +7669,9 @@
         }
       }
 
-      coords = Array.from(byLevelId.values());
+      // Nearest-first so state fetches and room-group builds stream outward
+      // from the current room.
+      coords = Array.from(byLevelId.values()).sort((a, b) => a.distance - b.distance);
       worldNeighborCoordsCache.set(key, coords);
       return coords;
     }
@@ -7721,7 +7728,7 @@
         const levelState = app.cachedHorizontalNeighborLevelState?.(levelId);
 
         if (!levelState) {
-          app.queueHorizontalNeighborLevelState?.(levelId);
+          app.queueHorizontalNeighborLevelState?.(levelId, { priority: coord.distance });
           return;
         }
 
@@ -8112,12 +8119,56 @@
       return Number.isFinite(bounds.minX) ? bounds : null;
     }
 
+    // The four grid neighbors of a level are static per world.
+    const adjacentBoundaryLevelIdsCache = new Map();
+
+    function adjacentBoundaryLevelIds(levelId) {
+      let ids = adjacentBoundaryLevelIdsCache.get(levelId);
+
+      if (ids === undefined) {
+        ids = [[0, -1], [1, 0], [0, 1], [-1, 0]].map(
+          ([dx, dy]) => app.adjacentWorldLevelId?.(levelId, dx, dy) || null
+        );
+        adjacentBoundaryLevelIdsCache.set(levelId, ids);
+      }
+
+      return ids;
+    }
+
+    // Wall edge lines at room boundaries are suppressed by sampling the
+    // adjacent room's terrain, so a room's rendered content depends on which
+    // neighbor states are loaded. This token folds that dependency into room
+    // signatures and edge-geometry cache keys: "?" (state not loaded yet)
+    // flips to the state's signature token when it arrives, invalidating the
+    // stale seam edges.
+    function boundaryNeighborStatesToken(levelId) {
+      return adjacentBoundaryLevelIds(levelId)
+        .map((neighborId) => {
+          if (!neighborId) {
+            return "-";
+          }
+
+          if (neighborId === app.currentLevelId) {
+            // Boundary sampling reads the live current-room state, which is
+            // always available; its wall layout only changes when the level
+            // itself is replaced.
+            return "c";
+          }
+
+          const state = app.cachedHorizontalNeighborLevelState?.(neighborId);
+
+          return state ? signatureToken(levelStateSignature(state)) : "?";
+        })
+        .join(",");
+    }
+
     function worldViewRoomSignature(view, brightness) {
       return [
         view.levelId,
         signatureToken(levelStateSignature(view.levelState)),
         Math.round(brightness * 1000),
-        edgeOutlinesEnabled() ? 1 : 0
+        edgeOutlinesEnabled() ? 1 : 0,
+        boundaryNeighborStatesToken(view.levelId)
       ].join(":");
     }
 
@@ -8336,7 +8387,17 @@
 
       const buildStart = performance.now();
 
-      pendingBuilds.sort((a, b) => a.view.distance - b.view.distance);
+      // Nearest-first; rooms with still-loading boundary neighbors ("?" in
+      // the signature) sink to the end — building them now would bake seam
+      // edges that need an immediate rebuild once the neighbor arrives.
+      pendingBuilds.forEach((pending) => {
+        pending.awaitingNeighbors = pending.signature.includes("?") ? 1 : 0;
+      });
+      pendingBuilds.sort(
+        (a, b) =>
+          a.awaitingNeighbors - b.awaitingNeighbors ||
+          a.view.distance - b.view.distance
+      );
 
       for (const pending of pendingBuilds) {
         if (performance.now() - buildStart > buildBudgetMs) {
@@ -8583,7 +8644,7 @@
         const levelState = app.cachedHorizontalNeighborLevelState?.(candidate.levelId);
 
         if (!levelState) {
-          app.queueHorizontalNeighborLevelState?.(candidate.levelId);
+          app.queueHorizontalNeighborLevelState?.(candidate.levelId, { priority: candidate.distance });
           return;
         }
 

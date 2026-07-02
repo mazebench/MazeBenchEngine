@@ -482,6 +482,10 @@
       const radius = app.isFlyoverMode
         ? app.flyoverRadius
         : Math.max(1, Math.min(26, Math.floor(Number(app.playSurroundingRadius) || 1)));
+      // World level ids wrap around the grid, so a wide radius revisits the
+      // same room at multiple coordinates. Queue each room once, at the
+      // priority of its nearest copy, so fetches stream outward.
+      const priorities = new Map();
 
       for (let dy = -radius; dy <= radius; dy += 1) {
         for (let dx = -radius; dx <= radius; dx += 1) {
@@ -489,11 +493,26 @@
             continue;
           }
 
-          queueHorizontalNeighborLevelState(adjacentWorldLevelId(app.currentLevelId, dx, dy), {
-            priority: Math.hypot(dx, dy)
-          });
+          const levelId = adjacentWorldLevelId(app.currentLevelId, dx, dy);
+
+          if (!levelId || levelId === app.currentLevelId) {
+            continue;
+          }
+
+          const distance = Math.hypot(dx, dy);
+          const existing = priorities.get(levelId);
+
+          if (existing === undefined || distance < existing) {
+            priorities.set(levelId, distance);
+          }
         }
       }
+
+      Array.from(priorities.entries())
+        .sort((left, right) => left[1] - right[1])
+        .forEach(([levelId, priority]) => {
+          queueHorizontalNeighborLevelState(levelId, { priority });
+        });
     }
 
     function hoverSeedForActor(actor) {
