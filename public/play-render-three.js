@@ -7800,7 +7800,13 @@
         edgeOutlinesEnabled() ? "edges:on" : "edges:off",
         animationSignature(now),
         flyoverFadeAnimationSignature(now),
-        worldShadowSignature(now),
+        // The world-shadow fade is applied by per-frame material swaps
+        // (applyWorldShadowGlowSwapPass), never by rebuilds, so it has no
+        // signature term. The vector glow needs one: immediate-mode renders
+        // (the vista anchor room and camera-flight rooms) bake the glow into
+        // their materials at mesh time, so each 1/32 glow step must dirty
+        // the content once for those few rooms to re-mesh at the new value.
+        `vector-glow:${Math.round(currentVectorGlow() * 32)}`,
         app.worldViewVistaMode === true ? "vista-anchor" : "live-anchor",
         app.isFlyoverMode ? "flyover-selection" : "no-flyover-selection",
         transition
@@ -8538,8 +8544,31 @@
       return worldShadowFade.current !== worldShadowFade.target;
     }
 
-    function worldShadowSignature(now) {
-      return `shadow:${Math.round(worldShadowQuantized(worldShadowFactor(now)) * 1000)}`;
+    // Land a flight on exactly the final shadow value: the fade would
+    // otherwise settle a few frames after the camera stops, leaving the
+    // landed frame visibly mid-fade on slow devices.
+    function snapWorldShadowFade() {
+      worldShadowFade.current = worldShadowTargetFactor();
+      worldShadowFade.target = worldShadowFade.current;
+      worldShadowFade.from = worldShadowFade.current;
+    }
+
+    // Advance the world-shadow and vector-glow fades on frames that do NOT
+    // rebuild the scene: re-skin every attached room group at this frame's
+    // factors. applyWorldViewRoomShadow early-returns per entry when the
+    // quantized values are unchanged, so settled frames cost one Map walk.
+    function applyWorldShadowGlowSwapPass(now) {
+      if (app.isFlyoverMode || app.worldViewRoomFadeInsEnabled === true) {
+        return;
+      }
+
+      const factor = worldShadowFactor(now);
+
+      worldViewRoomGroups.forEach((entry) => {
+        if (entry.group?.parent) {
+          applyWorldViewRoomShadow(entry, factor);
+        }
+      });
     }
 
     function flyoverLevelBrightness(levelId, brightness = 1) {
@@ -9660,6 +9689,10 @@
       worldConsolidation = {
         signature: `snapshot:${manifest.contentKey || ""}`,
         fromSnapshot: true,
+        // The snapshot bakes room offsets relative to this anchor room; the
+        // attach paths refuse to re-attach it under any other anchor, which
+        // would draw every room one-or-more slots away from its true spot.
+        anchorLevelId: String(manifest.anchorLevelId || ""),
         objects,
         ownedMaterials,
         ownedTextures
@@ -9874,16 +9907,26 @@
       return remaining === 0;
     }
 
-    function renderWorldViewRoomGroups(now, views) {
+    function renderWorldViewRoomGroups(now, views, retainLevelIds = null) {
       // Snapshot-backed vista: the merged world was restored from a baked
       // snapshot, so there are no per-room groups to build — just keep the
       // snapshot objects attached. PLAY clears worldViewConsolidate, which
       // routes back through the normal path and disposes the snapshot.
+      // The merged geometry is baked in ONE anchor's coordinates: attaching
+      // it while the runtime is anchored anywhere else shifts every room by
+      // whole slots (the anchor room's content lands on the current room).
+      // Never attach across an anchor mismatch — detach and let the per-room
+      // path draw this frame instead.
+      const consolidationAnchorMatches =
+        !worldConsolidation?.anchorLevelId ||
+        worldConsolidation.anchorLevelId === String(app.currentLevelId || "");
+
       if (
         worldConsolidation?.fromSnapshot &&
         !app.isFlyoverMode &&
         app.worldViewConsolidate === true &&
-        isWorldViewPlayMode()
+        isWorldViewPlayMode() &&
+        consolidationAnchorMatches
       ) {
         worldViewRoomBuildPending = false;
         detachWorldViewRoomGroups();
@@ -9910,10 +9953,17 @@
       // Hosts that prime every level state up front (mazebench.com home
       // vista) opt into one synchronous whole-world build; play mode keeps
       // the per-frame budget so frames never block.
+      // Camera flights get the same treatment as wide transitions: a tiny
+      // per-frame budget and stale-signature reuse, so late-arriving level
+      // states (the bulk priming can land mid-ascent) never stack 32ms of
+      // meshing on top of the flight tween. Missing rooms finish streaming
+      // in after landing — the landing render invalidates the cache anyway.
+      const cameraFlightActive =
+        Array.isArray(app.cameraFlightLevelViews) && app.cameraFlightLevelViews.length > 0;
       const buildBudgetMs =
         app.isFlyoverMode || app.worldViewSynchronousBuild === true
           ? Infinity
-          : isWideLevelTransition
+          : isWideLevelTransition || cameraFlightActive
             ? 3
             : 32;
       const pendingBuilds = [];
@@ -9940,7 +9990,10 @@
 
           activeLevelIds.add(view.levelId);
 
-          if (!entry || (!isWideLevelTransition && entry.signature !== signature)) {
+          if (
+            !entry ||
+            (!isWideLevelTransition && !cameraFlightActive && entry.signature !== signature)
+          ) {
             pendingBuilds.push({ view, brightness, signature });
 
             if (!entry) {
@@ -10011,12 +10064,20 @@
         allRoomsReady = false;
       }
 
-      worldViewRoomGroups.forEach((entry, levelId) => {
-        if (!activeLevelIds.has(levelId)) {
-          disposeWorldViewRoomEntry(entry);
-          worldViewRoomGroups.delete(levelId);
-        }
-      });
+      // Rooms rendered as camera-flight views this frame are excluded from
+      // `views`, but their warm groups must survive the flight — disposing
+      // them here would force a full re-mesh the next time they render as
+      // plain neighbors. The vista likewise never wants evictions: every
+      // room is permanently on screen there.
+      retainLevelIds?.forEach((levelId) => activeLevelIds.add(levelId));
+      if (app.worldViewVistaMode !== true && !cameraFlightActive) {
+        worldViewRoomGroups.forEach((entry, levelId) => {
+          if (!activeLevelIds.has(levelId)) {
+            disposeWorldViewRoomEntry(entry);
+            worldViewRoomGroups.delete(levelId);
+          }
+        });
+      }
 
       // Flyover flight and host-flagged static world vistas (mazebench.com
       // home) consolidate into merged meshes: their camera sees every room
@@ -10024,8 +10085,12 @@
       // per-room groups buys nothing. Play mode (including wide transitions)
       // keeps per-room groups so the camera frustum culls off-screen rooms.
       const wantsWorldConsolidation =
-        (app.isFlyoverMode && app.flyoverWholeWorld === true) ||
-        (!app.isFlyoverMode && app.worldViewConsolidate === true && isWorldViewPlayMode());
+        ((app.isFlyoverMode && app.flyoverWholeWorld === true) ||
+          (!app.isFlyoverMode && app.worldViewConsolidate === true && isWorldViewPlayMode())) &&
+        // An anchor-mismatched retained snapshot must not be clobbered by a
+        // live rebuild — keep drawing per-room groups until the anchor is
+        // back (or the snapshot is released by the host).
+        (consolidationAnchorMatches || !worldConsolidation?.fromSnapshot);
 
       if (!wantsWorldConsolidation) {
         // Hosts that round-trip between the vista and play (mazebench.com
@@ -10043,7 +10108,17 @@
         app.flyoverRoomFadeIns instanceof Map && app.flyoverRoomFadeIns.size > 0;
 
       if (!allRoomsReady || fadesPending || views.length === 0 || worldShadowAnimating()) {
-        disposeWorldConsolidation();
+        // Not ready to merge this frame. A retained consolidation (the home
+        // vista's merged world, kept across round trips) must survive these
+        // frames — landing one frame before the shadow fade settles, or with
+        // one room still streaming, would otherwise throw away the merged
+        // world and force a full re-mesh on exactly the slow devices that
+        // land late.
+        if (worldConsolidation && app.retainWorldConsolidation === true) {
+          detachWorldConsolidation();
+        } else {
+          disposeWorldConsolidation();
+        }
         return;
       }
 
@@ -10055,6 +10130,9 @@
         edgeScene.updateMatrixWorld(true);
         worldConsolidation = {
           signature: consolidationSignature,
+          // The merged geometry bakes room offsets relative to this anchor;
+          // the attach paths refuse to re-attach under any other anchor.
+          anchorLevelId: String(app.currentLevelId || ""),
           objects: buildConsolidatedObjects(scene, "mesh", scene).concat(
             buildConsolidatedObjects(edgeScene, "line", edgeScene)
           )
@@ -10082,7 +10160,7 @@
         : views;
 
       if (usesRoomGroupWorld()) {
-        renderWorldViewRoomGroups(now, baseViews);
+        renderWorldViewRoomGroups(now, baseViews, cameraFlightLevelIds);
         renderCameraFlightLevelViews(now, cameraFlightViews);
         return;
       }
@@ -11197,16 +11275,24 @@
         !worldViewRoomBuildPending &&
         signature === lastSceneSignature
       ) {
-        // sceneCanvas already holds this exact frame; nothing to redraw —
-        // but keep frames coming while the world-shadow fade animates
-        // between quantized steps (only the ~12 step frames redraw).
+        // sceneCanvas already holds this exact frame. The world-shadow fade
+        // lives outside the signature (it is applied by material swaps, not
+        // rebuilds), so while it animates each frame re-skins the attached
+        // groups and composites — display-rate fades with zero re-meshing.
         if (!app.isFlyoverMode && worldShadowAnimating()) {
+          applyWorldShadowGlowSwapPass(now);
+          renderSceneToComposite(false);
           window.requestAnimationFrame((frameNow) => (app.renderOncePerFrame || app.render)(frameNow));
         }
         return true;
       }
 
       if (!contentChanged) {
+        // Camera-only frames during flights: keep the shadow/glow material
+        // swaps advancing even though the scene graph is reused.
+        if (!app.isFlyoverMode) {
+          applyWorldShadowGlowSwapPass(now);
+        }
         fitCameraToScene(editorSurroundingFitOptions() || cameraFlightFitOptions() || flyoverFitOptions() || {});
         renderSceneToComposite(false);
         lastSceneSignature = signature;
@@ -11397,6 +11483,7 @@
       serializeWorldConsolidation,
       restoreWorldConsolidation,
       detachWorldConsolidation,
+      snapWorldShadowFade,
       warmWorldViewRoomGroups,
       preloadModelAssets,
       prewarmPlayLookShaders,
