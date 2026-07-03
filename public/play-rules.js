@@ -48,9 +48,16 @@
       return null;
     }
 
-    const normalizedColumn = ((columnIndex % columns.length) + columns.length) % columns.length;
-    const normalizedRow = ((rowIndex % rows.length) + rows.length) % rows.length;
-    return `level_${columns[normalizedColumn]}x${rows[normalizedRow]}`;
+    if (
+      columnIndex < 0 ||
+      rowIndex < 0 ||
+      columnIndex >= columns.length ||
+      rowIndex >= rows.length
+    ) {
+      return null;
+    }
+
+    return `level_${columns[columnIndex]}x${rows[rowIndex]}`;
   }
 
   function adjacentWorldLevelId(levelId, dx, dy, worldColumns = DEFAULT_WORLD_AXIS, worldRows = DEFAULT_WORLD_AXIS) {

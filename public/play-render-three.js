@@ -8435,9 +8435,8 @@
       return flyoverLevelBrightness(app.currentLevelId, 1);
     }
 
-    // World level ids wrap around the grid, so a wide radius revisits the
-    // same room at multiple coordinates. The grid is static per world, so the
-    // deduped nearest-copy coordinate list is cached per anchor level.
+    // The grid is static per world, so the coordinate list is cached per
+    // anchor level.
     const worldNeighborCoordsCache = new Map();
 
     function worldNeighborCoords(levelId, radius) {
@@ -10215,8 +10214,7 @@
 
     function transitionSurroundingLevelViews(transition, outgoingState, incomingState, incomingOffset, progress) {
       const radius = surroundingLevelRadius();
-      // Union of both neighborhoods, deduped to the nearest copy of each
-      // room (world level ids wrap around the grid).
+      // Union of both neighborhoods, deduped to the nearest copy of each room.
       const candidatesByLevelId = new Map();
 
       const addCandidate = (levelId, x, y) => {
@@ -10490,6 +10488,11 @@
             }
 
             const levelId = app.adjacentWorldLevelId(baseLevelId, dx, dy);
+
+            if (!levelId) {
+              continue;
+            }
+
             const levelState = app.cachedHorizontalNeighborLevelState(levelId);
 
             if (!levelState?.width || !levelState?.height) {

@@ -376,8 +376,17 @@
       return levelId;
     }
 
-    const nextColumnIndex = (columnIndex + dx + worldColumns.length) % worldColumns.length;
-    const nextRowIndex = (rowIndex + dy + worldRows.length) % worldRows.length;
+    const nextColumnIndex = columnIndex + dx;
+    const nextRowIndex = rowIndex + dy;
+
+    if (
+      nextColumnIndex < 0 ||
+      nextRowIndex < 0 ||
+      nextColumnIndex >= worldColumns.length ||
+      nextRowIndex >= worldRows.length
+    ) {
+      return null;
+    }
 
     return "level_" + worldColumns[nextColumnIndex] + "x" + worldRows[nextRowIndex];
   }
@@ -1281,6 +1290,15 @@
       const dx = Number(button.dataset.dx);
       const dy = Number(button.dataset.dy);
       const nextLevelId = adjacentLevelId(state.levelId, dx, dy);
+      if (!nextLevelId) {
+        delete button.dataset.levelId;
+        button.disabled = true;
+        button.title = "World edge";
+        button.setAttribute("aria-label", "World edge");
+        return;
+      }
+
+      button.disabled = false;
       button.dataset.levelId = nextLevelId;
       button.title = "Go to " + nextLevelId.replace("level_", "");
       button.setAttribute("aria-label", "Go to " + nextLevelId);

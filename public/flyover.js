@@ -514,14 +514,8 @@
       columns.forEach((column, columnIndex) => {
         const levelId = rules.worldLevelId(columnIndex, rowIndex, columns, rows);
         const cell = document.createElement("a");
-        const columnDistance = Math.min(
-          Math.abs(columnIndex - current.columnIndex),
-          columns.length - Math.abs(columnIndex - current.columnIndex)
-        );
-        const rowDistance = Math.min(
-          Math.abs(rowIndex - current.rowIndex),
-          rows.length - Math.abs(rowIndex - current.rowIndex)
-        );
+        const columnDistance = Math.abs(columnIndex - current.columnIndex);
+        const rowDistance = Math.abs(rowIndex - current.rowIndex);
         const visible =
           columnDistance <= radius &&
           rowDistance <= radius &&
@@ -1274,76 +1268,32 @@
         minZ: 0,
         maxZ: totalHeight
       };
-      const reflectAxis = (value, min, max, roomSpan) => {
+      const clampAxis = (value, min, max, roomSpan) => {
         if (!Number.isFinite(value) || !Number.isFinite(roomSpan) || roomSpan <= 0) {
-          return { reflected: false, value };
+          return value;
         }
 
         const low = min - roomSpan * 0.5;
         const high = max - roomSpan * 0.5;
-        const width = high - low;
 
-        if (!Number.isFinite(width) || width <= 0) {
-          return { reflected: false, value: low };
+        if (!Number.isFinite(low) || !Number.isFinite(high) || high <= low) {
+          return low;
         }
 
-        let nextValue = value;
-        let reflected = false;
-
-        for (let bounce = 0; bounce < 8; bounce += 1) {
-          if (nextValue < low) {
-            nextValue = low + (low - nextValue);
-            reflected = true;
-            continue;
-          }
-
-          if (nextValue > high) {
-            nextValue = high - (nextValue - high);
-            reflected = true;
-            continue;
-          }
-
-          break;
-        }
-
-        return {
-          reflected,
-          value: Math.max(low, Math.min(high, nextValue))
-        };
+        return Math.max(low, Math.min(high, value));
       };
-      const xAxis = reflectAxis(
+      app.flyoverCameraOffsetX = clampAxis(
         Number(app.flyoverCameraOffsetX) || 0,
         Number(bounds.minX) || 0,
         Number(bounds.maxX) || totalWidth,
         roomWorldWidth
       );
-      const zAxis = reflectAxis(
+      app.flyoverCameraOffsetZ = clampAxis(
         Number(app.flyoverCameraOffsetZ) || 0,
         Number(bounds.minZ) || 0,
         Number(bounds.maxZ) || totalHeight,
         roomWorldHeight
       );
-
-      app.flyoverCameraOffsetX = xAxis.value;
-      app.flyoverCameraOffsetZ = zAxis.value;
-
-      const currentYaw = camera.yaw;
-      let reflectedYaw = currentYaw;
-
-      if (xAxis.reflected) {
-        reflectedYaw = -reflectedYaw;
-      }
-
-      if (zAxis.reflected) {
-        reflectedYaw = Math.PI - reflectedYaw;
-      }
-
-      if (xAxis.reflected || zAxis.reflected) {
-        cameraVelocity.yaw = 0;
-        camera.yaw = currentYaw + shortestYawDelta(currentYaw, reflectedYaw);
-        applyCamera(true, 780);
-      }
-
       return;
     }
 
