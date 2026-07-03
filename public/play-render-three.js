@@ -948,12 +948,18 @@
       return dimHexColor(color, quantized);
     }
 
+    function liveVectorGlowAmount() {
+      return homeThemeSuspendDepth === 0 ? currentVectorGlow() : 0;
+    }
+
     function material(color, opacity = 1, variants = null) {
-      // Vector-boot vista: every solid body (blocks, floors, GLB props, frozen
-      // actors) renders near-black so only the light-blue edges read. The
-      // background color is left alone.
-      if (useHomeVectorTheme() && color !== "#050608") {
-        color = HOME_BLOCK_COLOR;
+      // Vector-vista presentation: live geometry keeps its normal base colors
+      // so transitions can lerp them toward black. Cached per-room play groups
+      // are built while the theme is suspended and get recolored later by the
+      // cheap room-group shadow/glow pass.
+      const glow = liveVectorGlowAmount();
+      if (glow > 0.001 && color !== "#050608") {
+        color = lerpHexColor(color, HOME_BLOCK_COLOR, glow);
       }
       return cachedMaterialForRenderColor(renderContextColor(color), opacity, variants);
     }
@@ -1028,6 +1034,67 @@
       });
     }
 
+    // Channel-lerp between two #rrggbb colors. Used to cross-fade the world
+    // between its normal palette and the black-block / blue-edge vector look.
+    function lerpHexColor(a, b, t) {
+      const ma = String(a || "").match(/^#([0-9a-f]{6})$/i);
+      const mb = String(b || "").match(/^#([0-9a-f]{6})$/i);
+      if (!ma || !mb) return a;
+      const va = parseInt(ma[1], 16);
+      const vb = parseInt(mb[1], 16);
+      const amount = clamp01(t);
+      const mix = (shift) => {
+        const ca = (va >> shift) & 255;
+        const cb = (vb >> shift) & 255;
+        return Math.round(ca + (cb - ca) * amount);
+      };
+      return `#${[mix(16), mix(8), mix(0)]
+        .map((channel) => channel.toString(16).padStart(2, "0"))
+        .join("")}`;
+    }
+
+    // Glow twin of a cache material: the base solid color lerped toward the
+    // near-black vector-block color by `glow`, then dimmed by the shadow
+    // `factor` — one cache-shared MeshLambertMaterial, no re-mesh. Composes
+    // with the shadow fade (both fold into a single reassigned material).
+    function glowDimmedWorldMaterial(baseMaterial, glow, factor) {
+      const source = baseMaterial?.userData?.dimSource;
+
+      if (!source) {
+        return dimmedWorldMaterial(baseMaterial, factor);
+      }
+      if (glow <= 0.001 && factor >= 0.999) {
+        return baseMaterial;
+      }
+
+      let color = source.color;
+      if (glow > 0.001) {
+        color = lerpHexColor(color, HOME_BLOCK_COLOR, glow);
+      }
+      if (factor < 0.999) {
+        color = dimHexColor(color, factor);
+      }
+
+      return cachedMaterialForRenderColor(color, source.opacity, {
+        doubleSide: source.doubleSide,
+        depthWrite: source.noDepthWrite ? false : undefined,
+        polygonOffset: source.polygonOffset,
+        polygonOffsetFactor: source.polygonOffsetFactor,
+        polygonOffsetUnits: source.polygonOffsetUnits
+      });
+    }
+
+    // Glow twin of an edge line material: black play edge lerped toward the
+    // light-blue vector-edge color by `glow`. Edges are never shadow-dimmed.
+    function glowEdgeMaterial(baseMaterial, glow) {
+      if (!baseMaterial || glow <= 0.001) {
+        return baseMaterial;
+      }
+      const opacity =
+        typeof baseMaterial.opacity === "number" ? baseMaterial.opacity : 1;
+      return lineMaterial(lerpHexColor("#000000", HOME_EDGE_COLOR, glow), opacity);
+    }
+
     // ---- Home "vector boot" theme (black blocks, light-blue edges) ----
     // Active only on the home vista: the home page and the snapshot bake set
     // app.homeVectorTheme; live gameplay never does, so play keeps its normal
@@ -1051,7 +1118,8 @@
     }
 
     function edgeColor() {
-      return useHomeVectorTheme() ? HOME_EDGE_COLOR : "#000000";
+      const glow = liveVectorGlowAmount();
+      return glow > 0.001 ? lerpHexColor("#000000", HOME_EDGE_COLOR, glow) : "#000000";
     }
 
     function lineMaterial(color = "#000000", opacity = 1) {
@@ -2827,27 +2895,15 @@
     }
 
     function outlinePixelRadius() {
-      // Half-thickness the outline should have in WORLD units (matches the
-      // old 1.68px look at the default single-room camera distance).
+      // Constant on-screen thickness, independent of camera zoom/distance, so
+      // edges are the SAME width in the zoomed-out vista and in zoomed-in play.
+      // (The renderer runs at pixelRatio 1 and threeCanvas is sized to the
+      // display, so this value is already in on-screen pixels.) A fixed width
+      // is what lets the two looks — glowing blue edges vs plain black edges —
+      // be cross-faded as a pure colour/glow change without the line width
+      // jumping. This is the "default single-room" thickness applied always.
       const worldRadius = unit * 0.035 * 0.75;
-      let pixelsPerUnit = 0;
-
-      if (camera?.isOrthographicCamera) {
-        pixelsPerUnit = camera.zoom;
-      } else if (camera?.isPerspectiveCamera && lastCameraFitDistance > 0) {
-        const fovRadians = (camera.fov * Math.PI) / 180;
-        pixelsPerUnit =
-          threeCanvas.height /
-          (2 * lastCameraFitDistance * Math.tan(fovRadians / 2));
-      }
-
-      if (!(pixelsPerUnit > 0)) {
-        return Math.max(1.5, worldRadius);
-      }
-
-      // Attenuate with distance like perspective geometry; clamp so extreme
-      // zoom-in doesn't explode the 2D stamp count (offsets grow ~radius^2).
-      return Math.max(0, Math.min(6, worldRadius * pixelsPerUnit));
+      return Math.max(1.5, worldRadius);
     }
 
     function outlinePixelOffsets(radius) {
@@ -2894,6 +2950,17 @@
       return offsets;
     }
 
+    // How "glowing" the edges currently are: 1 = the home vector look (glowing
+    // blue), 0 = plain play edges (black). During a look-to-look transition the
+    // fade sets app.vectorGlowAmount to a value in between; otherwise it tracks
+    // the active theme.
+    function currentVectorGlow() {
+      if (typeof app.vectorGlowAmount === "number") {
+        return Math.max(0, Math.min(1, app.vectorGlowAmount));
+      }
+      return useHomeVectorTheme() ? 1 : 0;
+    }
+
     function drawToonOutlineOverlay(targetContext) {
       const width = threeCanvas.width;
       const height = threeCanvas.height;
@@ -2903,9 +2970,16 @@
         return;
       }
 
+      // Glowing edges are drawn about half as thick: keep the solid 1px core
+      // but fade the outer stamp ring so the line reads thin and lets the bloom
+      // fill it out. Plain black play edges keep the full-strength outline.
+      const outerAlpha = 1 - currentVectorGlow() * 0.7;
+
       targetContext.save();
       targetContext.imageSmoothingEnabled = false;
       outlinePixelOffsets(radius).forEach((offset) => {
+        targetContext.globalAlpha =
+          offset.x === 0 && offset.y === 0 ? 1 : outerAlpha;
         targetContext.drawImage(threeCanvas, offset.x, offset.y);
       });
       targetContext.restore();
@@ -4156,10 +4230,6 @@
     }
 
     function terrainColor(type) {
-      if (useHomeVectorTheme()) {
-        return type === "hole" || type === "empty" ? "#050608" : HOME_BLOCK_COLOR;
-      }
-
       if (type === "wall") {
         return "#23262c";
       }
@@ -4275,10 +4345,6 @@
     }
 
     function actorColor(actor) {
-      if (useHomeVectorTheme()) {
-        return HOME_BLOCK_COLOR;
-      }
-
       if (actor.type === "player" || actor.type === "circle_player") {
         return "#5aa95c";
       }
@@ -8978,12 +9044,15 @@
 
     // Dim a room group by swapping its meshes onto the dimmed twins of their
     // shared cache materials — pixel-identical to a rebuild at `factor`, but
-    // with zero meshing. Edge lines were never brightness-dimmed; the edge
-    // group is intentionally untouched.
+    // with zero meshing. The same pass also folds in the vector-glow cross-fade
+    // (solids toward black, edges toward blue) so a look-to-look transition
+    // never fights the shadow swap over child.material.
     function applyWorldViewRoomShadow(entry, factor) {
       const quantized = worldShadowQuantized(factor);
+      const glow = currentVectorGlow();
+      const glowQuantized = glow <= 0.001 ? 0 : Math.round(glow * 32) / 32;
 
-      if (entry.shadowFactor === quantized) {
+      if (entry.shadowFactor === quantized && entry.glowFactor === glowQuantized) {
         return;
       }
 
@@ -9003,11 +9072,31 @@
         const base = child.userData.shadowBase;
 
         child.material =
-          quantized >= 0.999 ? base.material : dimmedWorldMaterial(base.material, quantized);
+          quantized >= 0.999 && glowQuantized <= 0.001
+            ? base.material
+            : glowDimmedWorldMaterial(base.material, glowQuantized, quantized);
         // Mirror renderContextCastsShadows(): neighbors stop casting
         // shadows below the 0.72 brightness gate.
         child.castShadow = base.castShadow && quantized > 0.72;
       });
+
+      // Edges only respond to the glow (never to shadow), so re-skin them only
+      // when the glow amount actually moved.
+      if (entry.edgeGroup && entry.glowFactor !== glowQuantized) {
+        entry.edgeGroup.traverse((child) => {
+          if ((!child.isLine && !child.isLineSegments) || !child.material) {
+            return;
+          }
+
+          if (child.userData.glowBase === undefined) {
+            child.userData.glowBase = { material: child.material };
+          }
+
+          child.material = glowEdgeMaterial(child.userData.glowBase.material, glowQuantized);
+        });
+      }
+
+      entry.glowFactor = glowQuantized;
     }
 
     function detachWorldViewRoomGroups() {
