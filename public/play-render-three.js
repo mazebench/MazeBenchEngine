@@ -7549,6 +7549,9 @@
       // Cached world-view room groups survive rebuilds; detach them so
       // disposeScene doesn't free their merged geometry.
       detachWorldViewRoomGroups();
+      // Retained home snapshots also survive rebuilds; only the consolidated
+      // vista path should re-attach them for the current frame.
+      detachWorldConsolidation();
       disposeScene();
 
       if (!scene) {
@@ -9224,6 +9227,16 @@
       return flyoverLevelBrightness(view.levelId, brightness);
     }
 
+    function detachWorldConsolidation() {
+      if (!worldConsolidation) {
+        return;
+      }
+
+      worldConsolidation.objects.forEach(({ object }) => {
+        object.parent?.remove(object);
+      });
+    }
+
     function disposeWorldConsolidation() {
       if (!worldConsolidation) {
         return;
@@ -10019,9 +10032,7 @@
         // home) keep the merged world cached while it is off screen so
         // returning home re-attaches instead of re-meshing/re-fetching.
         if (worldConsolidation && app.retainWorldConsolidation === true) {
-          worldConsolidation.objects.forEach(({ object }) => {
-            object.parent?.remove(object);
-          });
+          detachWorldConsolidation();
         } else {
           disposeWorldConsolidation();
         }
@@ -11385,6 +11396,7 @@
       prewarmAdjacentLevelTransition,
       serializeWorldConsolidation,
       restoreWorldConsolidation,
+      detachWorldConsolidation,
       warmWorldViewRoomGroups,
       preloadModelAssets,
       prewarmPlayLookShaders,
