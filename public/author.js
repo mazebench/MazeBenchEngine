@@ -856,6 +856,8 @@
       modules.registerGameplayFunctions(app);
     }
     app.isEditorRenderApp = true;
+    // Diagnostic handle, matching the other __MAZEBENCH_* globals.
+    window.__MAZEBENCH_AUTHOR_APP__ = app;
     if (
       editorBootReveal.state === "pending" &&
       typeof window.__MAZEBENCH_AUTHOR_MARK_READY__ === "function"
@@ -1613,7 +1615,13 @@
       case "tree":
       case "shrub":
       case "block_asset":
-        return { cells: [[".", t, "."], [".", ".", "p"]], moves: "" };
+        // Tall models: padding rows to the north plus a pulled-back camera
+        // give the model vertical screen room, with the player for scale.
+        return {
+          cells: [[".", ".", "."], [".", ".", "."], [".", t, "."], [".", ".", "p"]],
+          moves: "",
+          zoom: 0.55
+        };
       default:
         return null;
     }
@@ -1680,6 +1688,7 @@
     const playData = demoPlayData(scene.cells, tool.label);
     try {
       await app.preloadImagesForLevelState(playData);
+      await app.threeRenderer?.whenLevelStateModelsReady?.(playData);
     } catch {
       // Missing imagery keeps fallback primitives; the demo still runs.
     }
@@ -1715,7 +1724,7 @@
       app.threeRenderer?.setDebugCameraView?.({
         yaw: 0,
         tilt: 0.6,
-        zoom: 1.05,
+        zoom: scene.zoom || 1.05,
         mode: "perspective",
         skipRender: true
       });
@@ -1814,6 +1823,7 @@
     });
     try {
       await app.preloadImagesForLevelState(playData);
+      await app.threeRenderer?.whenLevelStateModelsReady?.(playData);
     } catch {
       // Fallback primitives still make a recognizable thumbnail.
     }
@@ -2001,7 +2011,14 @@
       }
 
       const previewsByToken = new Map();
-      previewPlayDataByToken.forEach((playData, token) => {
+      for (const [token, playData] of previewPlayDataByToken.entries()) {
+        // Model-backed tools (gem, trees, blocks) wait for their GLB so the
+        // swatch shows the real 3D asset, never a fallback primitive.
+        try {
+          await app.threeRenderer?.whenLevelStateModelsReady?.(playData);
+        } catch {
+          // Failed loads keep their fallback and do not block the capture.
+        }
         app.applyLevelState(playData, {
           deferRender: true,
           immediateCamera: true,
@@ -2020,7 +2037,7 @@
         if (previewUrl) {
           previewsByToken.set(token, previewUrl);
         }
-      });
+      }
 
       palettePreviewRenderer.previewsByToken = previewsByToken;
       renderPalette();
@@ -4300,9 +4317,26 @@
       return;
     }
 
-    if (key === "e") {
+    // B toggles the toolbox (E belongs to the camera: Q/E zoom, W/S tilt,
+    // A/D rotate — WASD is handled by the renderer's own camera bindings).
+    if (key === "b") {
       event.preventDefault();
       setInventoryOpen(!isInventoryOpen());
+      return;
+    }
+
+    if (key === "q" || key === "e") {
+      const renderer = editorRenderer.app?.threeRenderer;
+      if (renderer && typeof renderer.setDebugCameraView === "function") {
+        event.preventDefault();
+        const currentZoom =
+          typeof renderer.getDebugCameraZoom === "function" ? renderer.getDebugCameraZoom() : 1;
+        renderer.setDebugCameraView({
+          animate: true,
+          durationMs: 200,
+          zoom: key === "e" ? currentZoom * 1.3 : currentZoom / 1.3
+        });
+      }
       return;
     }
 

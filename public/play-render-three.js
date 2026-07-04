@@ -9883,6 +9883,16 @@
       return Promise.all(pending);
     }
 
+    // Convenience for hosts rendering one-off boards (palette previews,
+    // toolbox demos, local thumbnails): resolve once every GLB referenced by
+    // the level state is loaded (or failed), so the first visible render
+    // already uses real models instead of fallback primitives.
+    function whenLevelStateModelsReady(levelState) {
+      const urls = new Set();
+      collectLevelStateModelUrls(levelState, urls);
+      return preloadModelAssets(urls);
+    }
+
     let warmupModelUrls = null;
     let warmupModelUrlsVersion = -1;
 
@@ -11558,6 +11568,7 @@
       snapWorldShadowFade,
       warmWorldViewRoomGroups,
       preloadModelAssets,
+      whenLevelStateModelsReady,
       prewarmPlayLookShaders,
       primeHomeEdgeReveal,
       beginHomeEdgeReveal,
