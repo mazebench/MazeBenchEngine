@@ -844,7 +844,11 @@
       playStage: null,
       mazeFrame: null,
       fuzzyToggle: null,
-      enableCameraControls: true
+      // The editor drives the camera itself (keyboard + CAM pad below) with
+      // the same velocity/easing model the play page uses, so rotation and
+      // tilt feel identical everywhere. The renderer's built-in key handler
+      // stays off to avoid double-handling.
+      enableCameraControls: false
     });
 
     if (!app) {
@@ -1523,6 +1527,159 @@
     return new Promise((resolve) => window.setTimeout(resolve, ms));
   }
 
+  // ---- Editor camera controller ----
+  // Mirrors the play page's camera feel exactly: quarter-turn yaw eased over
+  // 400ms, and velocity-based tilt with acceleration/deceleration while held.
+  const EDITOR_CAM_TILT_MAX_SPEED = Math.PI * 0.72;
+  const EDITOR_CAM_TILT_ACCEL = Math.PI * 3.4;
+  const EDITOR_CAM_TILT_DECEL = Math.PI * 4.2;
+  const EDITOR_CAM_YAW_MS = 400;
+  const editorCam = {
+    frame: 0,
+    heldTiltKeys: new Set(),
+    lastMs: 0,
+    pointerTiltDir: 0,
+    tilt: 0.22,
+    tiltDir: 0,
+    tiltVel: 0,
+    yaw: 0,
+    yawAnim: null
+  };
+
+  function editorCamRendererApi() {
+    return editorRenderer.app?.threeRenderer || null;
+  }
+
+  function editorCamIdle() {
+    return !editorCam.yawAnim && !editorCam.tiltVel && !editorCam.tiltDir;
+  }
+
+  function editorCamSyncFromRenderer() {
+    const rendererApi = editorCamRendererApi();
+    if (rendererApi && typeof rendererApi.getDebugCameraYaw === "function") {
+      editorCam.yaw = rendererApi.getDebugCameraYaw();
+      editorCam.tilt = rendererApi.getDebugCameraTilt();
+    }
+  }
+
+  function clampEditorCamTilt(value) {
+    return Math.max(0, Math.min(Math.PI / 2, value));
+  }
+
+  function easeInOutQuadValue(progress) {
+    const value = Math.max(0, Math.min(1, progress));
+    return value < 0.5 ? 2 * value * value : 1 - Math.pow(-2 * value + 2, 2) / 2;
+  }
+
+  function easeTowardValue(current, target, maxDelta) {
+    if (current < target) {
+      return Math.min(target, current + maxDelta);
+    }
+    if (current > target) {
+      return Math.max(target, current - maxDelta);
+    }
+    return current;
+  }
+
+  function editorCamFrame(now) {
+    editorCam.frame = 0;
+    const rendererApi = editorCamRendererApi();
+    const app = editorRenderer.app;
+    if (!rendererApi || !app) {
+      editorCam.yawAnim = null;
+      editorCam.tiltVel = 0;
+      editorCam.lastMs = 0;
+      return;
+    }
+    const deltaSeconds = editorCam.lastMs
+      ? Math.min(0.05, Math.max(0.001, (now - editorCam.lastMs) / 1000))
+      : 1 / 60;
+    editorCam.lastMs = now;
+    let continueLoop = false;
+
+    if (editorCam.yawAnim) {
+      const progress = Math.min(1, (now - editorCam.yawAnim.startMs) / EDITOR_CAM_YAW_MS);
+      editorCam.yaw =
+        editorCam.yawAnim.startYaw +
+        (editorCam.yawAnim.targetYaw - editorCam.yawAnim.startYaw) * easeInOutQuadValue(progress);
+      if (progress >= 1) {
+        editorCam.yaw = editorCam.yawAnim.targetYaw;
+        editorCam.yawAnim = null;
+      } else {
+        continueLoop = true;
+      }
+    }
+
+    if (editorCam.tiltDir || editorCam.tiltVel) {
+      const targetVelocity = editorCam.tiltDir * EDITOR_CAM_TILT_MAX_SPEED;
+      const rate = editorCam.tiltDir ? EDITOR_CAM_TILT_ACCEL : EDITOR_CAM_TILT_DECEL;
+      editorCam.tiltVel = easeTowardValue(editorCam.tiltVel, targetVelocity, rate * deltaSeconds);
+      if (!editorCam.tiltDir && Math.abs(editorCam.tiltVel) < 0.002) {
+        editorCam.tiltVel = 0;
+      }
+      const previousTilt = editorCam.tilt;
+      editorCam.tilt = clampEditorCamTilt(editorCam.tilt + editorCam.tiltVel * deltaSeconds);
+      if (editorCam.tilt === previousTilt && editorCam.tiltVel !== 0 && !editorCam.tiltDir) {
+        editorCam.tiltVel = 0;
+      }
+      if (editorCam.tiltDir || editorCam.tiltVel) {
+        continueLoop = true;
+      }
+    }
+
+    rendererApi.setDebugCameraView({
+      yaw: editorCam.yaw,
+      tilt: editorCam.tilt,
+      mode: "perspective",
+      skipRender: true
+    });
+    app.render(now);
+
+    if (continueLoop) {
+      scheduleEditorCamFrame();
+    } else {
+      editorCam.lastMs = 0;
+    }
+  }
+
+  function scheduleEditorCamFrame() {
+    if (!editorCam.frame) {
+      editorCam.frame = window.requestAnimationFrame(editorCamFrame);
+    }
+  }
+
+  function editorCamRotate(direction) {
+    if (editorCamIdle()) {
+      editorCamSyncFromRenderer();
+    }
+    const fromYaw = editorCam.yawAnim ? editorCam.yawAnim.targetYaw : editorCam.yaw;
+    editorCam.yawAnim = {
+      startMs: performance.now(),
+      startYaw: editorCam.yaw,
+      targetYaw: fromYaw + direction * (Math.PI / 2)
+    };
+    scheduleEditorCamFrame();
+  }
+
+  function editorCamRecomputeTiltDirection() {
+    let direction = editorCam.pointerTiltDir;
+    if (!direction) {
+      if (editorCam.heldTiltKeys.has("s")) {
+        direction = 1;
+      }
+      if (editorCam.heldTiltKeys.has("w")) {
+        direction = -1;
+      }
+    }
+    if (direction && editorCamIdle()) {
+      editorCamSyncFromRenderer();
+    }
+    editorCam.tiltDir = direction;
+    if (direction) {
+      scheduleEditorCamFrame();
+    }
+  }
+
   function createAuxiliaryRenderApp(canvas, playData) {
     const modules = window.PlayModules || {};
     if (
@@ -1886,8 +2043,10 @@
   }
 
   function createPalettePreviewPlayData(tool) {
-    const width = 1;
-    const height = 1;
+    // A 3x3 floor board with the object centered: the swatch shows the piece
+    // in context, at the same angled camera the toolbox demos use.
+    const width = 3;
+    const height = 3;
     const cells = createBlankCells(width, height, authorData.defaultFloorToken);
     const kind = tool.type || tool.name;
 
@@ -1896,38 +2055,31 @@
     const previewToken =
       kind === "puncher" ? puncherTokenForDirection("down") || tool.token : tool.token;
 
-    cells[0][0] =
+    cells[1][1] =
       kind === "orange_button"
         ? appendCellToken(authorData.defaultFloorToken, previewToken)
         : previewToken;
 
-    return buildPlayData({
-      cameraView: { width, height },
-      cells,
-      gameId: authorData.game.id,
-      height,
-      includeGems: true,
-      levelId: "__palette_preview_" + encodeURIComponent(tool.token),
-      levelLabel: tool.label || tool.token,
-      width
-    });
+    return {
+      playData: buildPlayData({
+        cameraView: { width, height },
+        cells,
+        editorRender: true,
+        gameId: authorData.game.id,
+        height,
+        includeGems: true,
+        levelId: "level_AxA",
+        levelLabel: tool.label || tool.token,
+        width
+      }),
+      tall: kind === "tree" || kind === "shrub" || kind === "block_asset"
+    };
   }
 
-  function capturePalettePreview(sceneCanvas, tool = null) {
-    const outputSize = 96;
-    // Tall scenery (trees, shrubs, block stacks) overflows the default
-    // center crop; capture the full canvas height for those so the whole
-    // model lands in the swatch.
-    const kind = tool ? tool.type || tool.name : "";
-    const isTall = kind === "tree" || kind === "shrub" || kind === "block_asset";
-    const sourceSize = Math.max(
-      1,
-      isTall
-        ? Math.min(sceneCanvas.width, sceneCanvas.height)
-        : Math.round(Math.min(sceneCanvas.width, sceneCanvas.height) * 0.64)
-    );
-    const sourceX = Math.max(0, Math.round(sceneCanvas.width / 2 - sourceSize / 2));
-    const sourceY = Math.max(0, Math.round(sceneCanvas.height / 2 - sourceSize / 2));
+  function captureSquarePreview(sourceCanvas, outputSize) {
+    if (!sourceCanvas || !sourceCanvas.width || !sourceCanvas.height) {
+      return "";
+    }
     const previewCanvas = document.createElement("canvas");
     const previewContext = previewCanvas.getContext("2d");
 
@@ -1939,14 +2091,13 @@
     previewCanvas.height = outputSize;
     previewContext.imageSmoothingEnabled = true;
     previewContext.imageSmoothingQuality = "high";
-    previewContext.fillStyle = "#d6bd94";
-    previewContext.fillRect(0, 0, outputSize, outputSize);
+    const cropSize = Math.min(sourceCanvas.width, sourceCanvas.height);
     previewContext.drawImage(
-      sceneCanvas,
-      sourceX,
-      sourceY,
-      sourceSize,
-      sourceSize,
+      sourceCanvas,
+      Math.round((sourceCanvas.width - cropSize) / 2),
+      Math.round((sourceCanvas.height - cropSize) / 2),
+      cropSize,
+      cropSize,
       0,
       0,
       outputSize,
@@ -1979,13 +2130,15 @@
         return;
       }
 
-      const previewPlayDataByToken = new Map(
+      const previewEntriesByToken = new Map(
         paletteTools.map((tool) => [tool.token, createPalettePreviewPlayData(tool)])
       );
-      const firstPlayData = previewPlayDataByToken.get(paletteTools[0].token);
+      const firstEntry = previewEntriesByToken.get(paletteTools[0].token);
       const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 512;
       const app = modules.createPlayCore({
-        playData: firstPlayData,
+        playData: firstEntry.playData,
         canvas,
         playShell: null,
         playHeader: null,
@@ -2000,9 +2153,11 @@
       }
 
       modules.registerRenderFunctions(app);
+      app.setupCanvas();
+      app.syncCameraTarget?.(true);
       await Promise.all(
-        Array.from(previewPlayDataByToken.values()).map((playData) =>
-          app.preloadImagesForLevelState(playData)
+        Array.from(previewEntriesByToken.values()).map((entry) =>
+          app.preloadImagesForLevelState(entry.playData)
         )
       );
 
@@ -2011,15 +2166,15 @@
       }
 
       const previewsByToken = new Map();
-      for (const [token, playData] of previewPlayDataByToken.entries()) {
+      for (const [token, entry] of previewEntriesByToken.entries()) {
         // Model-backed tools (gem, trees, blocks) wait for their GLB so the
         // swatch shows the real 3D asset, never a fallback primitive.
         try {
-          await app.threeRenderer?.whenLevelStateModelsReady?.(playData);
+          await app.threeRenderer?.whenLevelStateModelsReady?.(entry.playData);
         } catch {
           // Failed loads keep their fallback and do not block the capture.
         }
-        app.applyLevelState(playData, {
+        app.applyLevelState(entry.playData, {
           deferRender: true,
           immediateCamera: true,
           resetHistory: true,
@@ -2030,9 +2185,18 @@
         app.syncGateAnimationTargets(0);
         app.syncOrangeWallAnimationTargets(0);
         app.syncPlayerLiftAnimationTargets(0);
-        app.renderCompositor.drawScene(0);
+        // Same angled vantage as the toolbox demo scenes; tall scenery pulls
+        // back so the whole model is in frame.
+        app.threeRenderer?.setDebugCameraView?.({
+          yaw: 0,
+          tilt: 0.62,
+          zoom: entry.tall ? 0.55 : 1.35,
+          mode: "perspective",
+          skipRender: true
+        });
+        app.render();
 
-        const previewUrl = capturePalettePreview(app.sceneCanvas, toolForToken(token));
+        const previewUrl = captureSquarePreview(canvas, 96);
 
         if (previewUrl) {
           previewsByToken.set(token, previewUrl);
@@ -4325,17 +4489,17 @@
       return;
     }
 
-    if (key === "q" || key === "e") {
-      const renderer = editorRenderer.app?.threeRenderer;
-      if (renderer && typeof renderer.setDebugCameraView === "function") {
+    if (key === "w" || key === "s") {
+      event.preventDefault();
+      editorCam.heldTiltKeys.add(key);
+      editorCamRecomputeTiltDirection();
+      return;
+    }
+
+    if (key === "a" || key === "d") {
+      if (!event.repeat) {
         event.preventDefault();
-        const currentZoom =
-          typeof renderer.getDebugCameraZoom === "function" ? renderer.getDebugCameraZoom() : 1;
-        renderer.setDebugCameraView({
-          animate: true,
-          durationMs: 200,
-          zoom: key === "e" ? currentZoom * 1.3 : currentZoom / 1.3
-        });
+        editorCamRotate(key === "a" ? -1 : 1);
       }
       return;
     }
@@ -4728,6 +4892,40 @@
         selectToken(slot.dataset.token);
       }
     });
+
+    const camPad = document.getElementById("author-cam-pad");
+    if (camPad) {
+      const endCameraHold = (event) => {
+        const button = event.target.closest("[data-camera]");
+        button?.classList.remove("is-active");
+        if (editorCam.pointerTiltDir) {
+          editorCam.pointerTiltDir = 0;
+          editorCamRecomputeTiltDirection();
+        }
+      };
+      camPad.addEventListener("pointerdown", (event) => {
+        const button = event.target.closest("[data-camera]");
+        if (!button) {
+          return;
+        }
+        event.preventDefault();
+        try {
+          button.setPointerCapture?.(event.pointerId);
+        } catch {
+          // Synthetic or already-released pointers can't be captured.
+        }
+        button.classList.add("is-active");
+        const move = button.dataset.camera;
+        if (move === "left" || move === "right") {
+          editorCamRotate(move === "left" ? -1 : 1);
+        } else {
+          editorCam.pointerTiltDir = move === "up" ? -1 : 1;
+          editorCamRecomputeTiltDirection();
+        }
+      });
+      camPad.addEventListener("pointerup", endCameraHold);
+      camPad.addEventListener("pointercancel", endCameraHold);
+    }
     document.getElementById("hotbar-backpack")?.addEventListener("click", () => {
       setInventoryOpen(!isInventoryOpen());
     });
@@ -4754,6 +4952,130 @@
     window.setTimeout(() => {
       primeLocalWorldThumbs().catch(() => {});
     }, 2400);
+
+    // Publish-time hero: the page's publish flow calls this to compose the
+    // social card from a true 3D render of the world's start room.
+    window.__MAZEBENCH_RENDER_WORLD_HERO__ = (options) =>
+      renderWorldHeroCardDataUrl(options || {});
+  }
+
+  // Renders the saved (canonical) start room at card size on a throwaway
+  // app, then composes the neon title treatment over it. Returned as a
+  // 1200x630 PNG data URL — the standard social-card aspect.
+  async function renderWorldHeroCardDataUrl(options) {
+    const meta = authorData.worldMeta;
+    if (!meta) {
+      return null;
+    }
+    let level = null;
+    try {
+      const response = await fetch(meta.apiUrl, { headers: { Accept: "application/json" } });
+      const payload = await response.json();
+      const levels = payload?.world?.editor_state?.levels || [];
+      level =
+        levels.find((entry) => entry?.id === String(options.levelId || "")) || levels[0] || null;
+    } catch {
+      level = null;
+    }
+    if (!level || !Array.isArray(level.cells)) {
+      return null;
+    }
+
+    const sceneCanvas = document.createElement("canvas");
+    sceneCanvas.width = 1200;
+    sceneCanvas.height = 630;
+    const playData = buildPlayData({
+      cameraView: { width: level.width, height: level.height },
+      cells: level.cells.map((row) => row.slice()),
+      editorRender: true,
+      gameId: authorData.game.id,
+      height: level.height,
+      includeGems: true,
+      levelId: "level_AxA",
+      levelLabel: meta.title || "World",
+      width: level.width
+    });
+    const app = createAuxiliaryRenderApp(sceneCanvas, playData);
+    if (!app) {
+      return null;
+    }
+
+    try {
+      if (app.threeRendererReady && typeof app.threeRendererReady.then === "function") {
+        await app.threeRendererReady;
+      }
+      try {
+        await app.preloadImagesForLevelState(playData);
+        await app.threeRenderer?.whenLevelStateModelsReady?.(playData);
+      } catch {
+        // Fallback primitives are still better than no card.
+      }
+      app.threeRenderer?.setDebugCameraView?.({
+        yaw: 0,
+        tilt: 0.85,
+        zoom: 1.1,
+        mode: "perspective",
+        skipRender: true
+      });
+      app.render();
+
+      const card = document.createElement("canvas");
+      card.width = 1200;
+      card.height = 630;
+      const context = card.getContext("2d");
+      if (!context) {
+        return null;
+      }
+      context.fillStyle = "#05060e";
+      context.fillRect(0, 0, card.width, card.height);
+      // Cover-fit the rendered scene.
+      const scale = Math.max(card.width / sceneCanvas.width, card.height / sceneCanvas.height);
+      const drawWidth = sceneCanvas.width * scale;
+      const drawHeight = sceneCanvas.height * scale;
+      context.drawImage(
+        sceneCanvas,
+        (card.width - drawWidth) / 2,
+        (card.height - drawHeight) / 2,
+        drawWidth,
+        drawHeight
+      );
+      // Bottom gradient + neon title treatment.
+      const gradient = context.createLinearGradient(0, card.height * 0.45, 0, card.height);
+      gradient.addColorStop(0, "rgba(5, 6, 14, 0)");
+      gradient.addColorStop(1, "rgba(5, 6, 14, 0.92)");
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, card.width, card.height);
+      const title = String(options.title || meta.title || "Maze Bench World").toUpperCase();
+      context.textBaseline = "alphabetic";
+      context.shadowColor = "rgba(111, 220, 255, 0.85)";
+      context.shadowBlur = 26;
+      context.fillStyle = "#eaffff";
+      context.font = "700 64px Orbitron, Inter, system-ui, sans-serif";
+      context.fillText(title, 56, card.height - 96, card.width - 112);
+      context.shadowBlur = 0;
+      context.fillStyle = "rgba(231, 234, 255, 0.75)";
+      context.font = "500 26px 'Space Mono', Menlo, monospace";
+      const gems = Number(options.gems || 0);
+      context.fillText(
+        (gems > 0 ? gems + " GEMS · " : "") + "PLAY IT ON MAZEBENCH.COM",
+        58,
+        card.height - 44,
+        card.width - 116
+      );
+      return card.toDataURL("image/png");
+    } finally {
+      try {
+        app.threeRenderer?.dispose?.();
+        const gl = app.gl;
+        const loseContext =
+          gl && typeof gl.getExtension === "function" ? gl.getExtension("WEBGL_lose_context") : null;
+        loseContext?.loseContext?.();
+      } catch {
+        // Best-effort cleanup.
+      }
+      sceneCanvas.width = 0;
+      sceneCanvas.height = 0;
+    }
   }
 
   renderLevelSelectors();
@@ -4846,6 +5168,18 @@
   elements.undoLevel.addEventListener("click", undoLastEdit);
   elements.saveLevel.addEventListener("click", saveLevel);
   document.addEventListener("keydown", handleEditorKeydown);
+  document.addEventListener("keyup", function (event) {
+    const key = String(event.key || "").toLowerCase();
+    if (key === "w" || key === "s") {
+      editorCam.heldTiltKeys.delete(key);
+      editorCamRecomputeTiltDirection();
+    }
+  });
+  window.addEventListener("blur", function () {
+    editorCam.heldTiltKeys.clear();
+    editorCam.pointerTiltDir = 0;
+    editorCamRecomputeTiltDirection();
+  });
 
   elements.levelNeighbors.addEventListener("click", function (event) {
     const button = event.target.closest("[data-level-id]");
