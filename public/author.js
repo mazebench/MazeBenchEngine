@@ -1480,6 +1480,11 @@
       const demoClass = demoClassForTool(tool);
       stage.className = "author-inventory__stage" + (demoClass ? " " + demoClass : "");
     }
+    // Live 3D scene when the toolbox is showing; the CSS demo classes above
+    // only surface if the scene renderer is unavailable.
+    if (isInventoryOpen()) {
+      runDemoScene(tool).catch(() => {});
+    }
   }
 
   function isInventoryOpen() {
@@ -1496,6 +1501,8 @@
     document.getElementById("hotbar-backpack")?.setAttribute("aria-expanded", open ? "true" : "false");
     if (open) {
       renderInventoryDetail();
+    } else {
+      stopDemoScene();
     }
   }
 
@@ -1510,15 +1517,379 @@
     hotbarToolnameTimer = window.setTimeout(() => el.classList.remove("is-visible"), 1400);
   }
 
+  function sleepMs(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  function createAuxiliaryRenderApp(canvas, playData) {
+    const modules = window.PlayModules || {};
+    if (
+      !canvas ||
+      typeof modules.createPlayCore !== "function" ||
+      typeof modules.registerRenderFunctions !== "function"
+    ) {
+      return null;
+    }
+    const app = modules.createPlayCore({
+      playData,
+      canvas,
+      playShell: null,
+      playHeader: null,
+      playStage: null,
+      mazeFrame: null,
+      fuzzyToggle: null,
+      enableCameraControls: false
+    });
+    if (!app) {
+      return null;
+    }
+    modules.registerRenderFunctions(app);
+    if (typeof modules.registerGameplayFunctions === "function") {
+      modules.registerGameplayFunctions(app);
+    }
+    app.setupCanvas();
+    app.syncCameraTarget?.(true);
+    return app;
+  }
+
+  function demoPlayData(cells, label) {
+    const height = cells.length;
+    const width = cells[0].length;
+    return buildPlayData({
+      cameraView: { width, height },
+      cells: cells.map((row) => row.slice()),
+      // editorRender keeps the app in author-style rules: actors come from
+      // the painted board (no play-entry snapshots) and gems always show.
+      editorRender: true,
+      gameId: authorData.game.id,
+      height,
+      includeGems: true,
+      levelId: "level_AxA",
+      levelLabel: label || "Demo",
+      width
+    });
+  }
+
+  // ---- Live 3D demo scenes for the toolbox detail pane ----
+  // Each scene is a tiny board plus a scripted move loop played by the real
+  // engine on a dedicated offscreen app, so tools demonstrate their actual
+  // behavior (slides, punches, toggles, collection) with real models.
+  function demoSceneForTool(tool) {
+    const kind = tool.name || tool.type || "";
+    const t = tool.token;
+    switch (kind) {
+      case "floor":
+        return { cells: [[".", ".", "."], [".", "p", "."], [".", ".", "."]], moves: "RL" };
+      case "ice":
+        return { cells: [[".", ".", ".", ".", "."], ["p", "i", "i", "i", "."], [".", ".", ".", ".", "."]], moves: "R" };
+      case "wall":
+        return { cells: [[".", ".", "."], ["p", "#", "."], [".", ".", "."]], moves: "RR" };
+      case "ice_block":
+        return { cells: [[".", ".", "."], ["p", "I", "."], [".", ".", "."]], moves: "RR" };
+      case "ice_slope":
+        return { cells: [["p", "i", "Sr", "I", "I"]], moves: "R" };
+      case "player":
+        return { cells: [[".", ".", "."], [".", "p", "."], [".", ".", "."]], moves: "RL" };
+      case "clone":
+        return { cells: [["p", ".", "."], [".", ".", "."], [t, ".", "."]], moves: "RL" };
+      case "gem":
+        return { cells: [["p", ".", "G"]], moves: "RR" };
+      case "player_gate":
+        return { cells: [["p", "g", ".", "."]], moves: "RRR" };
+      case "player_lift":
+        return { cells: [["p", t, "."]], moves: "RR" };
+      case "orange_wall":
+      case "orange_button":
+        return {
+          cells: [["p", appendCellToken(authorData.defaultFloorToken, "o"), ".", "O", "."]],
+          moves: "RRRR"
+        };
+      case "puncher":
+        return { cells: [["pr", ".", ".", "p"]], moves: "LL" };
+      case "weightless_box":
+        return { cells: [["p", t, ".", "."]], moves: "RR" };
+      case "floating_floor":
+        return { cells: [["p", "f", ".", "."]], moves: "RR" };
+      case "tree":
+      case "shrub":
+      case "block_asset":
+        return { cells: [[".", t, "."], [".", ".", "p"]], moves: "" };
+      default:
+        return null;
+    }
+  }
+
+  const demoSceneRenderer = { activeKey: null, rafId: 0, ready: null, runToken: 0 };
+
+  function ensureDemoApp() {
+    if (demoSceneRenderer.ready) {
+      return demoSceneRenderer.ready;
+    }
+    demoSceneRenderer.ready = (async () => {
+      const canvas = document.getElementById("inventory-demo-canvas");
+      const app = createAuxiliaryRenderApp(
+        canvas,
+        demoPlayData([[".", ".", "."], [".", "p", "."], [".", ".", "."]], "Demo")
+      );
+      if (!app) {
+        return null;
+      }
+      if (app.threeRendererReady && typeof app.threeRendererReady.then === "function") {
+        await app.threeRendererReady;
+      }
+      // Diagnostic handle, matching the other __MAZEBENCH_* globals.
+      window.__MAZEBENCH_AUTHOR_DEMO__ = app;
+      return app;
+    })().catch(() => null);
+    return demoSceneRenderer.ready;
+  }
+
+  function stopDemoScene() {
+    demoSceneRenderer.runToken += 1;
+    demoSceneRenderer.activeKey = null;
+    if (demoSceneRenderer.rafId) {
+      window.cancelAnimationFrame(demoSceneRenderer.rafId);
+      demoSceneRenderer.rafId = 0;
+    }
+  }
+
+  async function runDemoScene(tool) {
+    // Re-renders of the detail pane for the SAME tool must not restart the
+    // demo: a duplicate half-started run clears the canvas under the live one.
+    const sceneKey = tool ? tool.token : null;
+    if (sceneKey && sceneKey === demoSceneRenderer.activeKey) {
+      return;
+    }
+    stopDemoScene();
+    demoSceneRenderer.activeKey = sceneKey;
+    const stage = document.getElementById("inventory-detail-stage");
+    const scene = tool ? demoSceneForTool(tool) : null;
+    if (!scene) {
+      stage?.classList.remove("has-demo");
+      return;
+    }
+    const token = demoSceneRenderer.runToken;
+    const app = await ensureDemoApp();
+    if (!app || token !== demoSceneRenderer.runToken) {
+      if (token === demoSceneRenderer.runToken) {
+        stage?.classList.remove("has-demo");
+      }
+      return;
+    }
+    stage?.classList.add("has-demo");
+    const playData = demoPlayData(scene.cells, tool.label);
+    try {
+      await app.preloadImagesForLevelState(playData);
+    } catch {
+      // Missing imagery keeps fallback primitives; the demo still runs.
+    }
+    if (token !== demoSceneRenderer.runToken) {
+      return;
+    }
+    app.setupCanvas();
+    const renderTick = (now) => {
+      if (token !== demoSceneRenderer.runToken) {
+        return;
+      }
+      // Plain render(): renderOncePerFrame's coalesced path draws a blank
+      // frame on auxiliary apps, and this tick is already rAF-paced.
+      app.render(now);
+      demoSceneRenderer.rafId = window.requestAnimationFrame(renderTick);
+    };
+    demoSceneRenderer.rafId = window.requestAnimationFrame(renderTick);
+    const moves = String(scene.moves || "")
+      .split("")
+      .map((letter) => solutionDirections[letter])
+      .filter(Boolean);
+    // Loop: reset the board, breathe, play the scripted moves, repeat.
+    for (;;) {
+      if (token !== demoSceneRenderer.runToken) {
+        return;
+      }
+      app.applyLevelState(playData, {
+        deferRender: true,
+        immediateCamera: true,
+        resetHistory: true,
+        resetLevelEntry: true
+      });
+      app.threeRenderer?.setDebugCameraView?.({
+        yaw: 0,
+        tilt: 0.6,
+        zoom: 1.05,
+        mode: "perspective",
+        skipRender: true
+      });
+      app.render();
+      if (!moves.length) {
+        return; // Static scene: idle render loop keeps native animations alive.
+      }
+      await sleepMs(700);
+      for (const move of moves) {
+        if (token !== demoSceneRenderer.runToken) {
+          return;
+        }
+        try {
+          await performSolutionMove(app, move);
+        } catch {
+          break;
+        }
+        await sleepMs(260);
+      }
+      await sleepMs(1200);
+    }
+  }
+
+  // ---- Local world-map thumbnails ----
+  // Rendered client-side with a dedicated offscreen app and kept live as the
+  // board is painted. Nothing uploads while editing; the server regenerates
+  // the public listing thumbnails when the world is published.
+  const worldThumbRenderer = { canvas: null, ready: null };
+  const localLevelThumbs = new Map();
+  let currentLevelThumbTimer = 0;
+
+  function ensureThumbApp() {
+    if (worldThumbRenderer.ready) {
+      return worldThumbRenderer.ready;
+    }
+    worldThumbRenderer.ready = (async () => {
+      worldThumbRenderer.canvas = document.createElement("canvas");
+      worldThumbRenderer.canvas.width = 512;
+      worldThumbRenderer.canvas.height = 512;
+      const app = createAuxiliaryRenderApp(
+        worldThumbRenderer.canvas,
+        demoPlayData([[".", "p"]], "Thumb")
+      );
+      if (!app) {
+        return null;
+      }
+      if (app.threeRendererReady && typeof app.threeRendererReady.then === "function") {
+        await app.threeRendererReady;
+      }
+      return app;
+    })().catch(() => null);
+    return worldThumbRenderer.ready;
+  }
+
+  function applyLocalThumbToMapTile(levelId, url) {
+    const tile = elements.existingLevels?.querySelector(
+      '[data-level-id="' + levelId + '"]'
+    );
+    if (!tile) {
+      return;
+    }
+    let img = tile.querySelector(".author-level-pill__thumb");
+    if (!img) {
+      img = document.createElement("img");
+      img.className = "author-level-pill__thumb";
+      img.alt = "";
+      tile.prepend(img);
+    }
+    img.src = url;
+  }
+
+  async function renderLevelThumbFromCells(levelId, cells, width, height) {
+    if (!levelId || !Array.isArray(cells) || !cells.length) {
+      return;
+    }
+    const app = await ensureThumbApp();
+    if (!app) {
+      return;
+    }
+    const playData = buildPlayData({
+      cameraView: { width, height },
+      cells: cells.map((row) => row.slice()),
+      editorRender: true,
+      gameId: authorData.game.id,
+      height,
+      includeGems: true,
+      levelId,
+      levelLabel: levelId,
+      width
+    });
+    app.applyLevelState(playData, {
+      deferRender: true,
+      immediateCamera: true,
+      resetHistory: true,
+      resetLevelEntry: true
+    });
+    try {
+      await app.preloadImagesForLevelState(playData);
+    } catch {
+      // Fallback primitives still make a recognizable thumbnail.
+    }
+    app.threeRenderer?.useLevelPreviewCamera?.();
+    app.render();
+    const source = worldThumbRenderer.canvas;
+    if (!source || !source.width || !source.height) {
+      return;
+    }
+    const thumb = document.createElement("canvas");
+    thumb.width = 128;
+    thumb.height = 128;
+    const context = thumb.getContext("2d");
+    if (!context) {
+      return;
+    }
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    const cropSize = Math.min(source.width, source.height);
+    context.drawImage(
+      source,
+      Math.round((source.width - cropSize) / 2),
+      Math.round((source.height - cropSize) / 2),
+      cropSize,
+      cropSize,
+      0,
+      0,
+      128,
+      128
+    );
+    const url = thumb.toDataURL("image/png");
+    localLevelThumbs.set(levelId, url);
+    applyLocalThumbToMapTile(levelId, url);
+  }
+
+  function scheduleCurrentLevelThumbRefresh(delayMs = 700) {
+    window.clearTimeout(currentLevelThumbTimer);
+    currentLevelThumbTimer = window.setTimeout(() => {
+      renderLevelThumbFromCells(state.levelId, state.cells, state.width, state.height).catch(
+        () => {}
+      );
+    }, delayMs);
+  }
+
+  async function primeLocalWorldThumbs() {
+    for (const level of authorData.existingLevels) {
+      if (localLevelThumbs.has(level.id)) {
+        continue;
+      }
+      const isCurrent = level.id === state.levelId;
+      const cells = isCurrent ? state.cells : level.cells;
+      const width = isCurrent ? state.width : level.width || cells?.[0]?.length;
+      const height = isCurrent ? state.height : level.height || cells?.length;
+      if (!Array.isArray(cells) || !cells.length) {
+        continue;
+      }
+      await renderLevelThumbFromCells(level.id, cells, width, height).catch(() => {});
+      await sleepMs(80);
+    }
+  }
+
   function createPalettePreviewPlayData(tool) {
     const width = 1;
     const height = 1;
     const cells = createBlankCells(width, height, authorData.defaultFloorToken);
+    const kind = tool.type || tool.name;
+
+    // The puncher preview faces the camera (south) so its punching face is
+    // visible; orientation is picked at placement time anyway.
+    const previewToken =
+      kind === "puncher" ? puncherTokenForDirection("down") || tool.token : tool.token;
 
     cells[0][0] =
-      (tool.type || tool.name) === "orange_button"
-        ? appendCellToken(authorData.defaultFloorToken, tool.token)
-        : tool.token;
+      kind === "orange_button"
+        ? appendCellToken(authorData.defaultFloorToken, previewToken)
+        : previewToken;
 
     return buildPlayData({
       cameraView: { width, height },
@@ -1532,11 +1903,18 @@
     });
   }
 
-  function capturePalettePreview(sceneCanvas) {
+  function capturePalettePreview(sceneCanvas, tool = null) {
     const outputSize = 96;
+    // Tall scenery (trees, shrubs, block stacks) overflows the default
+    // center crop; capture the full canvas height for those so the whole
+    // model lands in the swatch.
+    const kind = tool ? tool.type || tool.name : "";
+    const isTall = kind === "tree" || kind === "shrub" || kind === "block_asset";
     const sourceSize = Math.max(
       1,
-      Math.round(Math.min(sceneCanvas.width, sceneCanvas.height) * 0.64)
+      isTall
+        ? Math.min(sceneCanvas.width, sceneCanvas.height)
+        : Math.round(Math.min(sceneCanvas.width, sceneCanvas.height) * 0.64)
     );
     const sourceX = Math.max(0, Math.round(sceneCanvas.width / 2 - sourceSize / 2));
     const sourceY = Math.max(0, Math.round(sceneCanvas.height / 2 - sourceSize / 2));
@@ -1637,7 +2015,7 @@
         app.syncPlayerLiftAnimationTargets(0);
         app.renderCompositor.drawScene(0);
 
-        const previewUrl = capturePalettePreview(app.sceneCanvas);
+        const previewUrl = capturePalettePreview(app.sceneCanvas, toolForToken(token));
 
         if (previewUrl) {
           previewsByToken.set(token, previewUrl);
@@ -1899,6 +2277,12 @@
     elements.existingLevels.style.setProperty("--author-world-columns", String(worldColumns.length));
 
     const previewFor = (levelId) => {
+      // Local live render first; server thumbnails only bridge the gap until
+      // the local pass lands.
+      const local = localLevelThumbs.get(levelId);
+      if (local) {
+        return local;
+      }
       const fromWorld = authorData.worldPreviewUrls && authorData.worldPreviewUrls[levelId];
       return fromWorld || levelsById.get(levelId)?.previewUrl || null;
     };
@@ -1986,6 +2370,8 @@
     clearHillClimbResults();
     state.isDirty = true;
     renderStatus();
+    // Keep the world-map tile for this room live while painting.
+    scheduleCurrentLevelThumbRefresh();
 
     if (isPaintStrokeActive()) {
       // Raw output and solver button syncing are flushed once when the paint
@@ -2919,49 +3305,16 @@
       if (state.solverSolutionCellsKey !== serializeCells()) {
         clearSolverSolution();
       }
-      let previewMessage = payload.message || "Saved.";
-      let previewTone = "success";
-
-      if (
-        refreshPreview &&
-        levelPreviewRenderer &&
-        typeof levelPreviewRenderer.savePreview === "function"
-      ) {
-        try {
-          const playResponse = await fetch(
-            (authorData.playApiBaseUrl
-              ? authorData.playApiBaseUrl.replace(/\/+$/, "")
-              : "/api/play/" + encodeURIComponent(authorData.game.id)) +
-              "/" + encodeURIComponent(state.levelId),
-            { headers: { Accept: "application/json" } }
-          );
-          const playPayload = await playResponse.json();
-
-          if (!playResponse.ok) {
-            throw new Error(playPayload.error || "Could not load the saved level preview.");
-          }
-
-          const previewPayload = await levelPreviewRenderer.savePreview({
-            levelId: state.levelId,
-            playData: playPayload,
-            previewApiBaseUrl: authorData.previewApiBaseUrl || authorData.authorApiBaseUrl
-          });
-          previewMessage =
-            (payload.message || "Saved the level.") +
-            " " +
-            (previewPayload.message || "Refreshed its preview.");
-        } catch (previewError) {
-          previewMessage =
-            (payload.message || "Saved the level.") +
-            " Preview refresh failed: " +
-            (previewError instanceof Error ? previewError.message : "Unknown error.");
-          previewTone = "warning";
-        }
+      // Thumbnails are local while editing (no upload churn): refresh this
+      // room's world-map tile from the just-saved cells. The server rebuilds
+      // the public listing thumbnails when the world is published.
+      if (refreshPreview) {
+        scheduleCurrentLevelThumbRefresh(0);
       }
 
       if (updateStatus) {
-        state.message = previewMessage;
-        state.messageTone = previewTone;
+        state.message = payload.message || "Saved.";
+        state.messageTone = "success";
       }
       syncLevelSelectors();
       if (renderAfterSave) {
@@ -4074,7 +4427,19 @@
     return event.target instanceof Node && elements.grid.contains(event.target);
   }
 
+  // The hotbar and toolbox float over the canvas; pointer events on them are
+  // UI interactions, never paint strokes.
+  function eventTargetsAuthorOverlay(event) {
+    return (
+      event.target instanceof Element &&
+      Boolean(event.target.closest("#author-inventory, #author-hotbar"))
+    );
+  }
+
   function handleDocumentGridPointerDown(event) {
+    if (eventTargetsAuthorOverlay(event)) {
+      return;
+    }
     if (eventTargetsEditorGrid(event) || !fallbackPaintTargetFromPoint(event.clientX, event.clientY)) {
       return;
     }
@@ -4084,7 +4449,9 @@
 
   function processDocumentGridPointerMove(event) {
     const isActivePaintPointer = state.paintPointerId === event.pointerId;
-    const isOverGrid = Boolean(fallbackPaintTargetFromPoint(event.clientX, event.clientY));
+    const isOverGrid =
+      !eventTargetsAuthorOverlay(event) &&
+      Boolean(fallbackPaintTargetFromPoint(event.clientX, event.clientY));
 
     if (!isActivePaintPointer && !isOverGrid) {
       clearEditorHoverTarget();
@@ -4347,6 +4714,12 @@
         }
       }
     });
+
+    // Populate every world-map tile with a locally rendered thumbnail once
+    // the boot choreography has had time to finish.
+    window.setTimeout(() => {
+      primeLocalWorldThumbs().catch(() => {});
+    }, 2400);
   }
 
   renderLevelSelectors();
