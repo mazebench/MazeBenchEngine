@@ -169,11 +169,20 @@
   const iceSlopePaletteTool = canonicalIceSlopeToken
     ? {
         ...iceSlopeTools[0],
+        description:
+          "An icy ramp that carries a slide between heights. It aims to match the camera — turn the camera to change which way it climbs.",
         displayToken: "S",
         label: "Ice Slope",
         token: canonicalIceSlopeToken
       }
     : null;
+
+  function toolDescription(tool) {
+    if (!tool) return "";
+    if (tool.token === noopToken) return "Inspect and select cells without painting anything.";
+    if (tool.token === eraserToken) return "Clear the cell back to plain floor.";
+    return typeof tool.description === "string" ? tool.description : "";
+  }
   const worldColumns =
     Array.isArray(authorData.worldColumns) && authorData.worldColumns.length > 0
       ? authorData.worldColumns
@@ -1066,10 +1075,83 @@
   }
 
   function renderStatus() {
-    const dirtySuffix = state.isDirty ? " Unsaved changes." : "";
-    elements.status.textContent = state.message + dirtySuffix;
+    elements.status.textContent = state.message;
     elements.status.className = "author-status is-" + state.messageTone;
+    // The Save button carries the dirty state: amber + pulsing dot while
+    // there are unsaved changes, quiet "Saved" once everything is stored.
+    if (elements.saveLevel) {
+      elements.saveLevel.disabled = !state.isDirty;
+      elements.saveLevel.textContent = state.isDirty ? "Save" : "Saved";
+      elements.saveLevel.classList.toggle("has-unsaved", state.isDirty);
+    }
+    renderWorldStats();
     syncUndoButtonState();
+  }
+
+  function currentLevelGemCount() {
+    let count = 0;
+    state.cells.forEach((row) => {
+      row.forEach((cell) => {
+        String(cell || "")
+          .split(/[+\s]+/)
+          .forEach((token) => {
+            if (token === "G") {
+              count += 1;
+            }
+          });
+      });
+    });
+    return count;
+  }
+
+  function formatWorldUpdatedAt(value) {
+    if (!value) {
+      return "--";
+    }
+    const parsed = new Date(String(value).replace(" ", "T") + (String(value).includes("Z") ? "" : "Z"));
+    if (Number.isNaN(parsed.getTime())) {
+      return String(value);
+    }
+    return parsed.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function renderWorldStats() {
+    const meta = authorData.worldMeta;
+    const sizeEl = document.getElementById("world-stat-size");
+    if (!meta || !sizeEl) {
+      return;
+    }
+    const gemsByLevel = { ...meta.gemsByLevel, [state.levelId]: currentLevelGemCount() };
+    const roomIds = new Set(Object.keys(meta.gemsByLevel));
+    roomIds.add(state.levelId);
+    const totalGems = Object.values(gemsByLevel).reduce((sum, value) => sum + (value || 0), 0);
+    sizeEl.textContent = meta.width + " × " + meta.height + " rooms";
+    const roomsEl = document.getElementById("world-stat-rooms");
+    if (roomsEl) {
+      roomsEl.textContent = roomIds.size + " / " + meta.width * meta.height;
+    }
+    const gemsEl = document.getElementById("world-stat-gems");
+    if (gemsEl) {
+      gemsEl.textContent = String(totalGems);
+    }
+    const statusEl = document.getElementById("world-stat-status");
+    if (statusEl) {
+      statusEl.textContent =
+        meta.status === "published"
+          ? meta.reviewStatus === "approved"
+            ? "Published v" + (meta.publishVersion || 1)
+            : "Published (in review)"
+          : "Draft";
+    }
+    const updatedEl = document.getElementById("world-stat-updated");
+    if (updatedEl) {
+      updatedEl.textContent = state.isDirty
+        ? "Unsaved changes"
+        : meta.savedThisSession
+          ? "Just now"
+          : formatWorldUpdatedAt(meta.updatedAt);
+      updatedEl.classList.toggle("is-dirty", state.isDirty);
+    }
   }
 
   function syncSolverButtonState() {
@@ -1219,14 +1301,15 @@
           tool.token === noopToken
             ? tool.label
             : tool.label + " (" + accessibleToken + ")";
-        const tokenLabel =
-          tool.token === noopToken
-            ? "Select"
-            : tool.token === eraserToken
-              ? "Erase"
-              : tool.displayToken || tool.token;
+        // Real names up front; the raw token rides along as a small badge
+        // (client-only tools have no board token to show).
+        const tokenBadge =
+          tool.token === noopToken || tool.token === eraserToken
+            ? ""
+            : '<span class="palette__token">' + escapeHtml(accessibleToken) + "</span>";
 
         return (
+          '<div class="palette__item">' +
           '<button class="tool-button palette__button' +
           (tool.token === state.selectedToken ? " is-active" : "") +
           '" type="button" data-token="' +
@@ -1239,13 +1322,40 @@
           '<span class="palette__swatch">' +
           swatchContents +
           "</span>" +
-          '<span class="palette__token">' +
-          escapeHtml(tokenLabel) +
+          '<span class="palette__name">' +
+          escapeHtml(tool.label || tool.token) +
           "</span>" +
-          "</button>"
+          tokenBadge +
+          "</button>" +
+          '<button class="palette__info" type="button" data-info-token="' +
+          escapeHtml(tool.token) +
+          '" aria-label="' +
+          escapeHtml("About " + (tool.label || tool.token)) +
+          '">i</button>' +
+          "</div>"
         );
       })
       .join("");
+  }
+
+  function showPaletteToolInfo(token) {
+    const infoPanel = document.getElementById("palette-info");
+    if (!infoPanel) {
+      return;
+    }
+    const tool = selectablePaletteTools().find((entry) => entry.token === token);
+    if (!tool) {
+      return;
+    }
+    const nameEl = document.getElementById("palette-info-name");
+    const textEl = document.getElementById("palette-info-text");
+    if (nameEl) {
+      nameEl.textContent = tool.label || tool.token;
+    }
+    if (textEl) {
+      textEl.textContent = toolDescription(tool) || "No description yet.";
+    }
+    infoPanel.hidden = false;
   }
 
   function createPalettePreviewPlayData(tool) {
@@ -1396,7 +1506,15 @@
     const isIceSlope = isIceSlopeToken(state.selectedToken);
 
     elements.selectedToolLabel.textContent =
-      isNoop ? "Select" : isEraser ? "Erase" : isIceSlope ? "S" : state.selectedToken;
+      isNoop
+        ? "Select"
+        : isEraser
+          ? "Erase"
+          : isIceSlope
+            ? "Ice Slope"
+            : tool
+              ? tool.label
+              : state.selectedToken;
     elements.selectedToolLabel.title =
       isNoop
         ? noopTool.label
@@ -2607,6 +2725,10 @@
       state.levelId = payload.levelId;
       state.width = payload.width;
       state.savedBoardSignature = boardSignature(state.width, state.height, state.cells);
+      if (authorData.worldMeta) {
+        authorData.worldMeta.gemsByLevel[state.levelId] = currentLevelGemCount();
+        authorData.worldMeta.savedThisSession = true;
+      }
       if (state.solverSolutionCellsKey !== serializeCells()) {
         clearSolverSolution();
       }
@@ -3804,6 +3926,8 @@
     body.style.height = "";
     body.style.opacity = "";
     body.style.overflow = "";
+    body.style.paddingTop = "";
+    body.style.paddingBottom = "";
   }
 
   function setDisclosureOpen(details, shouldOpen) {
@@ -3847,22 +3971,37 @@
 
     body.addEventListener("transitionend", handleTransitionEnd);
 
+    // Animate padding alongside height so the collapse lands at a true 0px
+    // instead of popping over the body's padding at the end.
     if (shouldOpen) {
       details.setAttribute("open", "");
+      const computed = window.getComputedStyle(body);
+      const targetHeight = body.scrollHeight;
+      const targetPaddingTop = computed.paddingTop;
+      const targetPaddingBottom = computed.paddingBottom;
       body.style.height = "0px";
       body.style.opacity = "0";
+      body.style.paddingTop = "0px";
+      body.style.paddingBottom = "0px";
 
       window.requestAnimationFrame(() => {
-        body.style.height = body.scrollHeight + "px";
+        body.style.height = targetHeight + "px";
         body.style.opacity = "1";
+        body.style.paddingTop = targetPaddingTop;
+        body.style.paddingBottom = targetPaddingBottom;
       });
     } else {
+      const computed = window.getComputedStyle(body);
       body.style.height = body.scrollHeight + "px";
       body.style.opacity = "1";
+      body.style.paddingTop = computed.paddingTop;
+      body.style.paddingBottom = computed.paddingBottom;
 
       window.requestAnimationFrame(() => {
         body.style.height = "0px";
         body.style.opacity = "0";
+        body.style.paddingTop = "0px";
+        body.style.paddingBottom = "0px";
       });
     }
 
@@ -3878,12 +4017,119 @@
         return;
       }
 
-      details.removeAttribute("open");
+      // Panels marked data-open="1" start expanded (no animation on load);
+      // everything else starts collapsed.
+      if (details.dataset.open === "1") {
+        details.setAttribute("open", "");
+      } else {
+        details.removeAttribute("open");
+      }
       resetDisclosureBodyStyles(body);
       summary.addEventListener("click", function (event) {
         event.preventDefault();
         setDisclosureOpen(details, !details.hasAttribute("open"));
       });
+
+      const infoButton = summary.querySelector("[data-panel-info]");
+      const note = body.querySelector(".author-panel__note");
+
+      if (infoButton && note) {
+        infoButton.addEventListener("click", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          const showNote = note.hidden;
+          note.hidden = !showNote;
+          infoButton.setAttribute("aria-expanded", showNote ? "true" : "false");
+          if (showNote && !details.hasAttribute("open")) {
+            setDisclosureOpen(details, true);
+          }
+        });
+      }
+    });
+  }
+
+  function initializeAuthorPageExtras() {
+    const meta = authorData.worldMeta;
+    const titleInput = document.getElementById("world-title-input");
+    const titleSave = document.getElementById("world-title-save");
+
+    if (meta && titleInput && titleSave) {
+      titleInput.value = meta.title || "";
+      const rename = async () => {
+        const title = titleInput.value.trim();
+        if (!title || title === meta.title) {
+          return;
+        }
+        titleSave.disabled = true;
+        try {
+          const response = await fetch(meta.apiUrl, {
+            body: JSON.stringify({ title }),
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            method: "PATCH"
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.error || "Could not rename the world.");
+          }
+          meta.title = payload.world?.title || title;
+          titleInput.value = meta.title;
+          const heading = document.querySelector(".author-topbar h1");
+          if (heading) {
+            heading.textContent = meta.title;
+          }
+          document.title = meta.title + " — Maze Bench Editor";
+          setStatus("World renamed.", "success");
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : "Could not rename the world.", "error");
+        } finally {
+          titleSave.disabled = false;
+        }
+      };
+      titleSave.addEventListener("click", rename);
+      titleInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          rename();
+        }
+      });
+    }
+
+    // Entering test mode always saves first, so the run you play is the run
+    // you just painted.
+    const testLink = document.getElementById("author-test-link");
+    if (testLink) {
+      testLink.addEventListener("click", async (event) => {
+        if (!state.isDirty) {
+          return;
+        }
+        event.preventDefault();
+        setStatus("Saving before test...", "success");
+        const saved = await saveLevel({ refreshPreview: false });
+        if (saved) {
+          window.location.assign(testLink.href);
+        }
+      });
+    }
+
+    document.getElementById("palette-info-close")?.addEventListener("click", () => {
+      const infoPanel = document.getElementById("palette-info");
+      if (infoPanel) {
+        infoPanel.hidden = true;
+      }
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        String(event.key).toLowerCase() === "s"
+      ) {
+        event.preventDefault();
+        if (state.isDirty && !state.isSolverBusy) {
+          saveLevel();
+        }
+      }
     });
   }
 
@@ -3892,8 +4138,16 @@
   renderPalettePreviews();
   renderAll();
   initializeAuthorDisclosures();
+  initializeAuthorPageExtras();
 
   elements.palette.addEventListener("click", function (event) {
+    const infoButton = event.target.closest("[data-info-token]");
+
+    if (infoButton) {
+      showPaletteToolInfo(infoButton.getAttribute("data-info-token"));
+      return;
+    }
+
     const button = event.target.closest("[data-token]");
 
     if (!button) {
