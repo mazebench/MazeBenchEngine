@@ -145,7 +145,7 @@
   const noopToken = "__select_only__";
   const noopTool = {
     imageUrl: null,
-    label: "Select without painting",
+    label: "Select",
     name: "select_only",
     selectable: true,
     token: noopToken,
@@ -1123,7 +1123,10 @@
     }
     const gemsByLevel = { ...meta.gemsByLevel, [state.levelId]: currentLevelGemCount() };
     const roomIds = new Set(Object.keys(meta.gemsByLevel));
-    roomIds.add(state.levelId);
+    // Fresh rooms only count as built once they have actually been saved.
+    if (state.exists) {
+      roomIds.add(state.levelId);
+    }
     const totalGems = Object.values(gemsByLevel).reduce((sum, value) => sum + (value || 0), 0);
     sizeEl.textContent = meta.width + " × " + meta.height + " rooms";
     const roomsEl = document.getElementById("world-stat-rooms");
@@ -1286,76 +1289,225 @@
     return tools;
   }
 
-  function renderPalette() {
-    elements.palette.innerHTML = selectablePaletteTools()
-      .map((tool) => {
-        const previewUrl = palettePreviewRenderer.previewsByToken.get(tool.token);
-        const swatchContents =
-          tool.token === noopToken
-            ? '<span class="palette__swatch-glyph" aria-hidden="true">-</span>'
-            : previewUrl
-              ? '<img src="' + escapeHtml(previewUrl) + '" alt="">'
-              : '<span class="palette__swatch-placeholder" aria-hidden="true"></span>';
-        const accessibleToken = tool.displayToken || tool.token;
-        const accessibleLabel =
-          tool.token === noopToken
-            ? tool.label
-            : tool.label + " (" + accessibleToken + ")";
-        // Real names up front; the raw token rides along as a small badge
-        // (client-only tools have no board token to show).
-        const tokenBadge =
-          tool.token === noopToken || tool.token === eraserToken
-            ? ""
-            : '<span class="palette__token">' + escapeHtml(accessibleToken) + "</span>";
+  // ---- Toolbox (inventory) + bottom hotbar ----
+  const INVENTORY_GROUPS = [
+    { match: (tool) => ["select_only", "eraser", "floor", "ice", "wall", "ice_block"].includes(tool.name), name: "Basics" },
+    {
+      match: (tool) =>
+        ["ice_slope", "player_gate", "player_lift", "orange_wall", "orange_button", "puncher", "floating_floor", "weightless_box"].includes(tool.name),
+      name: "Mechanisms"
+    },
+    { match: (tool) => ["player", "clone", "gem"].includes(tool.name), name: "Players & Goals" },
+    { match: () => true, name: "Scenery" }
+  ];
+  const HOTBAR_BASE_TOKENS = [
+    noopToken,
+    eraserToken,
+    authorData.defaultFloorToken,
+    "i",
+    authorData.defaultWallToken,
+    canonicalIceSlopeToken,
+    "G",
+    "p"
+  ].filter(Boolean);
+  let hotbarExtraToken = "g";
+  let hotbarToolnameTimer = 0;
 
+  function toolForToken(token) {
+    if (token === noopToken) {
+      return noopTool;
+    }
+    if (token === eraserToken) {
+      return eraserTool;
+    }
+    if (iceSlopePaletteTool && token === iceSlopePaletteTool.token) {
+      return iceSlopePaletteTool;
+    }
+    return toolByToken.get(token) || null;
+  }
+
+  function hotbarTokens() {
+    const tokens = HOTBAR_BASE_TOKENS.slice();
+    if (hotbarExtraToken && !tokens.includes(hotbarExtraToken) && toolForToken(hotbarExtraToken)) {
+      tokens.push(hotbarExtraToken);
+    }
+    return tokens;
+  }
+
+  function toolSwatchMarkup(tool) {
+    if (tool.token === noopToken) {
+      return '<span class="palette__swatch-glyph" aria-hidden="true">-</span>';
+    }
+    if (tool.token === eraserToken) {
+      return '<span class="palette__swatch-glyph" aria-hidden="true">&times;</span>';
+    }
+    const previewUrl = palettePreviewRenderer.previewsByToken.get(tool.token);
+    return previewUrl
+      ? '<img src="' + escapeHtml(previewUrl) + '" alt="">'
+      : '<span class="palette__swatch-placeholder" aria-hidden="true"></span>';
+  }
+
+  function renderPalette() {
+    if (!elements.palette) {
+      return;
+    }
+    const tools = selectablePaletteTools();
+    const used = new Set();
+    elements.palette.innerHTML = INVENTORY_GROUPS.map((group) => {
+      const groupTools = tools.filter((tool) => !used.has(tool.token) && group.match(tool));
+      groupTools.forEach((tool) => used.add(tool.token));
+      if (!groupTools.length) {
+        return "";
+      }
+      return (
+        '<section class="author-inv-group"><h4>' +
+        escapeHtml(group.name) +
+        "</h4>" +
+        '<div class="author-inv-group__items">' +
+        groupTools
+          .map(
+            (tool) =>
+              '<button class="author-inv-item' +
+              (tool.token === state.selectedToken ? " is-active" : "") +
+              '" type="button" data-token="' +
+              escapeHtml(tool.token) +
+              '" title="' +
+              escapeHtml(tool.label || tool.token) +
+              '">' +
+              '<span class="palette__swatch">' +
+              toolSwatchMarkup(tool) +
+              "</span>" +
+              '<span class="author-inv-item__name">' +
+              escapeHtml(tool.label || tool.token) +
+              "</span>" +
+              "</button>"
+          )
+          .join("") +
+        "</div></section>"
+      );
+    }).join("");
+    renderHotbar();
+    renderInventoryDetail();
+  }
+
+  function renderHotbar() {
+    const slots = document.getElementById("hotbar-slots");
+    if (!slots) {
+      return;
+    }
+    slots.innerHTML = hotbarTokens()
+      .map((token, index) => {
+        const tool = toolForToken(token);
+        if (!tool) {
+          return "";
+        }
         return (
-          '<div class="palette__item">' +
-          '<button class="tool-button palette__button' +
-          (tool.token === state.selectedToken ? " is-active" : "") +
+          '<button class="author-hotbar__slot' +
+          (token === state.selectedToken ? " is-active" : "") +
           '" type="button" data-token="' +
-          escapeHtml(tool.token) +
-          '" aria-label="' +
-          escapeHtml(accessibleLabel) +
+          escapeHtml(token) +
           '" title="' +
-          escapeHtml(accessibleLabel) +
-          '">' +
-          '<span class="palette__swatch">' +
-          swatchContents +
-          "</span>" +
-          '<span class="palette__name">' +
-          escapeHtml(tool.label || tool.token) +
-          "</span>" +
-          tokenBadge +
-          "</button>" +
-          '<button class="palette__info" type="button" data-info-token="' +
-          escapeHtml(tool.token) +
+          escapeHtml((tool.label || token) + " (" + (index + 1) + ")") +
           '" aria-label="' +
-          escapeHtml("About " + (tool.label || tool.token)) +
-          '">i</button>' +
-          "</div>"
+          escapeHtml(tool.label || token) +
+          '">' +
+          '<span class="author-hotbar__key" aria-hidden="true">' +
+          (index + 1) +
+          "</span>" +
+          '<span class="palette__swatch">' +
+          toolSwatchMarkup(tool) +
+          "</span>" +
+          "</button>"
         );
       })
       .join("");
   }
 
-  function showPaletteToolInfo(token) {
-    const infoPanel = document.getElementById("palette-info");
-    if (!infoPanel) {
+  function demoClassForTool(tool) {
+    const kind = tool.name || tool.type || "";
+    if (kind === "gem") {
+      return "demo-gem";
+    }
+    if (kind === "ice" || kind === "ice_block" || kind === "ice_slope") {
+      return "demo-shimmer";
+    }
+    if (kind === "puncher") {
+      return "demo-jab";
+    }
+    if (kind === "player_lift" || kind === "player_gate" || kind === "orange_wall" || kind === "orange_button") {
+      return "demo-rise";
+    }
+    if (kind === "weightless_box" || kind === "floating_floor") {
+      return "demo-slide";
+    }
+    if (kind === "player" || kind === "clone") {
+      return "demo-hop";
+    }
+    return "";
+  }
+
+  function renderInventoryDetail() {
+    const nameEl = document.getElementById("inventory-detail-name");
+    if (!nameEl) {
       return;
     }
-    const tool = selectablePaletteTools().find((entry) => entry.token === token);
+    const tool = toolForToken(state.selectedToken);
+    const stage = document.getElementById("inventory-detail-stage");
+    const swatch = document.getElementById("inventory-detail-swatch");
+    const tokenEl = document.getElementById("inventory-detail-token");
+    const textEl = document.getElementById("inventory-detail-text");
     if (!tool) {
+      nameEl.textContent = "Pick a tool";
+      if (textEl) {
+        textEl.textContent = "Click any tool to see what it does.";
+      }
       return;
     }
-    const nameEl = document.getElementById("palette-info-name");
-    const textEl = document.getElementById("palette-info-text");
-    if (nameEl) {
-      nameEl.textContent = tool.label || tool.token;
+    nameEl.textContent = tool.label || tool.token;
+    if (tokenEl) {
+      tokenEl.textContent =
+        tool.token === noopToken || tool.token === eraserToken
+          ? ""
+          : "Board token: " + (tool.displayToken || tool.token);
     }
     if (textEl) {
       textEl.textContent = toolDescription(tool) || "No description yet.";
     }
-    infoPanel.hidden = false;
+    if (swatch) {
+      swatch.innerHTML = toolSwatchMarkup(tool);
+    }
+    if (stage) {
+      const demoClass = demoClassForTool(tool);
+      stage.className = "author-inventory__stage" + (demoClass ? " " + demoClass : "");
+    }
+  }
+
+  function isInventoryOpen() {
+    const inventory = document.getElementById("author-inventory");
+    return Boolean(inventory && !inventory.hidden);
+  }
+
+  function setInventoryOpen(open) {
+    const inventory = document.getElementById("author-inventory");
+    if (!inventory) {
+      return;
+    }
+    inventory.hidden = !open;
+    document.getElementById("hotbar-backpack")?.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      renderInventoryDetail();
+    }
+  }
+
+  function flashHotbarToolname(label) {
+    const el = document.getElementById("hotbar-toolname");
+    if (!el || !label) {
+      return;
+    }
+    el.textContent = label;
+    el.classList.add("is-visible");
+    window.clearTimeout(hotbarToolnameTimer);
+    hotbarToolnameTimer = window.setTimeout(() => el.classList.remove("is-visible"), 1400);
   }
 
   function createPalettePreviewPlayData(tool) {
@@ -1500,6 +1652,9 @@
   }
 
   function renderSelectedTool() {
+    if (!elements.selectedToolLabel) {
+      return;
+    }
     const tool = toolByToken.get(state.selectedToken);
     const isNoop = state.selectedToken === noopToken;
     const isEraser = state.selectedToken === eraserToken;
@@ -1724,33 +1879,59 @@
       return;
     }
 
-    const levelIds = new Set(authorData.existingLevels.map((level) => level.id));
+    const levelsById = new Map(authorData.existingLevels.map((level) => [level.id, level]));
 
-    if (state.exists && !levelIds.has(state.levelId)) {
-      authorData.existingLevels.push({
+    if (state.exists && !levelsById.has(state.levelId)) {
+      const created = {
         authorUrl: "/author/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId),
         id: state.levelId,
         label: state.levelId.replace("level_", "Level "),
         playUrl: "/play/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId)
-      });
+      };
+      authorData.existingLevels.push(created);
       authorData.existingLevels.sort((left, right) => left.id.localeCompare(right.id));
+      levelsById.set(created.id, created);
     }
 
-    elements.existingLevels.innerHTML = authorData.existingLevels
-      .map((level) => {
-        return (
+    // The tray is the WHOLE world map: every room of the NxM grid renders as
+    // a tile (thumbnail when the room has been built, dimmed placeholder when
+    // it hasn't), and clicking any tile switches the editor to that room.
+    elements.existingLevels.style.setProperty("--author-world-columns", String(worldColumns.length));
+
+    const previewFor = (levelId) => {
+      const fromWorld = authorData.worldPreviewUrls && authorData.worldPreviewUrls[levelId];
+      return fromWorld || levelsById.get(levelId)?.previewUrl || null;
+    };
+
+    const tiles = [];
+    worldRows.forEach((rowLetter) => {
+      worldColumns.forEach((columnLetter) => {
+        const levelId = "level_" + columnLetter + "x" + rowLetter;
+        const exists = levelsById.has(levelId);
+        const isActive = levelId === state.levelId;
+        const preview = previewFor(levelId);
+        const coordinateLabel = columnLetter + "x" + rowLetter;
+        tiles.push(
           '<a class="author-level-pill' +
-          (level.id === state.levelId ? " is-active" : "") +
-          '" href="' +
-          escapeHtml(level.authorUrl) +
+          (isActive ? " is-active" : "") +
+          (exists || isActive ? "" : " is-empty") +
+          '" href="?level=' +
+          encodeURIComponent(levelId) +
           '" data-level-id="' +
-          escapeHtml(level.id) +
+          escapeHtml(levelId) +
+          '" title="' +
+          escapeHtml((exists || isActive ? "Edit room " : "Start room ") + coordinateLabel) +
           '">' +
-          escapeHtml(level.id.replace("level_", "")) +
+          (preview ? '<img class="author-level-pill__thumb" src="' + escapeHtml(preview) + '" alt="">' : "") +
+          '<span class="author-level-pill__label">' +
+          escapeHtml(coordinateLabel) +
+          "</span>" +
           "</a>"
         );
-      })
-      .join("");
+      });
+    });
+
+    elements.existingLevels.innerHTML = tiles.join("");
   }
 
   function renderAll(options = {}) {
@@ -1772,8 +1953,14 @@
     }
 
     state.selectedToken = token;
+    // Tools picked from the toolbox that aren't hotbar staples take over the
+    // last hotbar slot (most-recently-used, Minecraft style).
+    if (!HOTBAR_BASE_TOKENS.includes(token)) {
+      hotbarExtraToken = token;
+    }
     renderPalette();
     renderSelectedTool();
+    flashHotbarToolname(toolForToken(token)?.label || "");
   }
 
   function selectCell(x, y) {
@@ -3752,6 +3939,29 @@
 
     const key = String(event.key || "").toLowerCase();
 
+    if (key === "escape") {
+      if (isInventoryOpen()) {
+        event.preventDefault();
+        setInventoryOpen(false);
+      }
+      return;
+    }
+
+    if (key === "e") {
+      event.preventDefault();
+      setInventoryOpen(!isInventoryOpen());
+      return;
+    }
+
+    if (/^[1-9]$/.test(key)) {
+      const token = hotbarTokens()[Number(key) - 1];
+      if (token) {
+        event.preventDefault();
+        selectToken(token);
+      }
+      return;
+    }
+
     if (key !== "u" && key !== "z") {
       return;
     }
@@ -4111,11 +4321,17 @@
       });
     }
 
-    document.getElementById("palette-info-close")?.addEventListener("click", () => {
-      const infoPanel = document.getElementById("palette-info");
-      if (infoPanel) {
-        infoPanel.hidden = true;
+    document.getElementById("hotbar-slots")?.addEventListener("click", (event) => {
+      const slot = event.target.closest("[data-token]");
+      if (slot) {
+        selectToken(slot.dataset.token);
       }
+    });
+    document.getElementById("hotbar-backpack")?.addEventListener("click", () => {
+      setInventoryOpen(!isInventoryOpen());
+    });
+    document.getElementById("inventory-close")?.addEventListener("click", () => {
+      setInventoryOpen(false);
     });
 
     window.addEventListener("keydown", (event) => {
@@ -4141,13 +4357,6 @@
   initializeAuthorPageExtras();
 
   elements.palette.addEventListener("click", function (event) {
-    const infoButton = event.target.closest("[data-info-token]");
-
-    if (infoButton) {
-      showPaletteToolInfo(infoButton.getAttribute("data-info-token"));
-      return;
-    }
-
     const button = event.target.closest("[data-token]");
 
     if (!button) {
