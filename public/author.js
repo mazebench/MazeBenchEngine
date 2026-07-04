@@ -4959,25 +4959,72 @@
       renderWorldHeroCardDataUrl(options || {});
   }
 
-  // Renders the saved (canonical) start room at card size on a throwaway
-  // app, then composes the neon title treatment over it. Returned as a
-  // 1200x630 PNG data URL — the standard social-card aspect.
+  // Stitch every room of the world into one continuous board (rooms sit
+  // edge-to-edge in grid order). Bails when a room is missing or rooms are
+  // not uniform 16x16, or when the combined board would be unreasonably big.
+  function stitchWorldCells(levels, columns, rows) {
+    if (!columns || !rows) {
+      return null;
+    }
+    const roomWidth = 16;
+    const roomHeight = 16;
+    if (columns * roomWidth > 96 || rows * roomHeight > 96) {
+      return null;
+    }
+    const levelsById = new Map((levels || []).map((level) => [level?.id, level]));
+    const cells = Array.from({ length: rows * roomHeight }, () => []);
+    for (let rowIndex = 0; rowIndex < rows; rowIndex += 1) {
+      for (let columnIndex = 0; columnIndex < columns; columnIndex += 1) {
+        const levelId =
+          "level_" + String.fromCharCode(65 + columnIndex) + "x" + String.fromCharCode(65 + rowIndex);
+        const level = levelsById.get(levelId);
+        if (
+          !level ||
+          !Array.isArray(level.cells) ||
+          level.width !== roomWidth ||
+          level.height !== roomHeight
+        ) {
+          return null;
+        }
+        for (let y = 0; y < roomHeight; y += 1) {
+          const targetRow = cells[rowIndex * roomHeight + y];
+          for (let x = 0; x < roomWidth; x += 1) {
+            targetRow[columnIndex * roomWidth + x] = level.cells[y][x];
+          }
+        }
+      }
+    }
+    return { cells, height: rows * roomHeight, width: columns * roomWidth };
+  }
+
+  // Renders the saved (canonical) world at card size on a throwaway app —
+  // the WHOLE stitched world when possible, otherwise the start room — then
+  // composes the neon title treatment over it. Returned as a 1200x630 PNG
+  // data URL, the standard social-card aspect.
   async function renderWorldHeroCardDataUrl(options) {
     const meta = authorData.worldMeta;
     if (!meta) {
       return null;
     }
-    let level = null;
+    let board = null;
     try {
       const response = await fetch(meta.apiUrl, { headers: { Accept: "application/json" } });
       const payload = await response.json();
       const levels = payload?.world?.editor_state?.levels || [];
-      level =
-        levels.find((entry) => entry?.id === String(options.levelId || "")) || levels[0] || null;
+      const stitched = stitchWorldCells(levels, meta.width, meta.height);
+      if (stitched) {
+        board = stitched;
+      } else {
+        const level =
+          levels.find((entry) => entry?.id === String(options.levelId || "")) || levels[0] || null;
+        if (level && Array.isArray(level.cells)) {
+          board = { cells: level.cells, height: level.height, width: level.width };
+        }
+      }
     } catch {
-      level = null;
+      board = null;
     }
-    if (!level || !Array.isArray(level.cells)) {
+    if (!board) {
       return null;
     }
 
@@ -4985,15 +5032,15 @@
     sceneCanvas.width = 1200;
     sceneCanvas.height = 630;
     const playData = buildPlayData({
-      cameraView: { width: level.width, height: level.height },
-      cells: level.cells.map((row) => row.slice()),
+      cameraView: { width: board.width, height: board.height },
+      cells: board.cells.map((row) => row.slice()),
       editorRender: true,
       gameId: authorData.game.id,
-      height: level.height,
+      height: board.height,
       includeGems: true,
       levelId: "level_AxA",
       levelLabel: meta.title || "World",
-      width: level.width
+      width: board.width
     });
     const app = createAuxiliaryRenderApp(sceneCanvas, playData);
     if (!app) {
