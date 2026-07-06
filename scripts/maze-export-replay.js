@@ -23,9 +23,10 @@ const DIRECTIONS = new Set(["up", "down", "left", "right"]);
 const VIEW_NAMES = ["top", "top-diagonal", "diagonal", "side-diagonal", "side"];
 
 function usage() {
-  return `Usage: npm run maze:replay -- [results-dir-or-results.jsonl] [options]
+  return `Usage: npm run maze:replay -- [results-dir | results.jsonl | session.json | session-dir] [options]
 
-Creates maze_scorecard.json, maze_actions.txt, and maze_replay.mp4 from a mazebench eval.
+Creates maze_scorecard.json, maze_actions.txt, and maze_replay.mp4 from a mazebench
+eval (results.jsonl) or from a local agent run (session.json written by codex-play.js).
 
 Options:
   --index <n>          Rollout row to export from results.jsonl. Default: 0.
@@ -241,20 +242,91 @@ function latestResultsPath() {
   return candidates[0];
 }
 
-function resolveResults(input) {
+function resolveInput(input) {
   const resolvedInput = input ? path.resolve(input) : latestResultsPath();
   const stats = fs.statSync(resolvedInput);
-  const resultsPath = stats.isDirectory()
-    ? path.join(resolvedInput, "results.jsonl")
-    : resolvedInput;
 
-  if (!fs.existsSync(resultsPath)) {
-    throw new Error(`Could not find results.jsonl at ${resultsPath}`);
+  if (stats.isDirectory()) {
+    const resultsPath = path.join(resolvedInput, "results.jsonl");
+    const sessionPath = path.join(resolvedInput, "session.json");
+
+    if (fs.existsSync(resultsPath)) {
+      return { mode: "results", resultsDir: resolvedInput, resultsPath };
+    }
+
+    if (fs.existsSync(sessionPath)) {
+      return { mode: "session", sessionDir: resolvedInput, sessionPath };
+    }
+
+    throw new Error(`No results.jsonl or session.json found in ${resolvedInput}`);
+  }
+
+  if (path.basename(resolvedInput) === "session.json") {
+    return {
+      mode: "session",
+      sessionDir: path.dirname(resolvedInput),
+      sessionPath: resolvedInput
+    };
   }
 
   return {
-    resultsDir: path.dirname(resultsPath),
-    resultsPath
+    mode: "results",
+    resultsDir: path.dirname(resolvedInput),
+    resultsPath: resolvedInput
+  };
+}
+
+function canonicalFromBridgeMessage(message) {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+
+  if (message.command === "move") {
+    return String(message.direction || "");
+  }
+
+  if (message.command === "rotate_camera") {
+    return `rotate camera ${message.direction}`;
+  }
+
+  if (message.command === "goto_level") {
+    return `go to level ${message.x} ${message.y}`;
+  }
+
+  if (message.command === "reset_level") {
+    return "reset";
+  }
+
+  return String(message.command || "");
+}
+
+// Adapt a local codex-play.js session.json into the same row shape the eval
+// path produces, so extractActions/extractMazeOptions/existingScorecard work.
+function rowFromSession(session) {
+  const actions = (session.actions || [])
+    .map((action) => ({
+      command: canonicalFromBridgeMessage(action.message) || String(action.command_text || "").trim(),
+      valid: true
+    }))
+    .filter((action) => action.command);
+  const scorecard = session.scorecard && Object.keys(session.scorecard).length > 0
+    ? session.scorecard
+    : {};
+
+  return {
+    maze_actions: actions,
+    maze_scorecard: scorecard,
+    maze_replay: {
+      game_id: session.gameId || "maze",
+      game_won_gem_count: Number(session.gameWonGemCount) || 100,
+      start_level_id: session.levelId || "level_HxI",
+      target_gems: 0,
+      initial: {
+        view: session.view || "top-diagonal",
+        yaw: Number(session.yaw) || 0
+      },
+      scorecard
+    }
   };
 }
 
@@ -1372,16 +1444,34 @@ function humanSize(filePath) {
 
 async function main() {
   const options = parseCli(process.argv.slice(2));
-  const { resultsDir, resultsPath } = resolveResults(options.resultsInput);
-  const rows = readJsonl(resultsPath);
-  const metadata = readMetadata(resultsDir);
+  const input = resolveInput(options.resultsInput);
+  let rows;
+  let metadata;
+  let sourceDir;
+  let sourceLabel;
+
+  if (input.mode === "session") {
+    const session = JSON.parse(fs.readFileSync(input.sessionPath, "utf8"));
+    rows = [rowFromSession(session)];
+    metadata = {};
+    sourceDir = input.sessionDir;
+    sourceLabel = input.sessionPath;
+  } else {
+    rows = readJsonl(input.resultsPath);
+    metadata = readMetadata(input.resultsDir);
+    sourceDir = input.resultsDir;
+    sourceLabel = input.resultsPath;
+  }
+
   const row = rows[options.index];
 
   if (!row) {
-    throw new Error(`No rollout row at index ${options.index}; results.jsonl has ${rows.length}`);
+    throw new Error(
+      `No rollout row at index ${options.index}; ${sourceLabel} has ${rows.length}`
+    );
   }
 
-  const outDir = options.outDir || resultsDir;
+  const outDir = options.outDir || sourceDir;
   const mazeOptions = extractMazeOptions(row, metadata);
   const actions = extractActions(row);
 
@@ -1394,7 +1484,7 @@ async function main() {
   const scorecard = existingScorecard(row) || replayScorecard(actions, mazeOptions);
   const written = writeSidecarFiles(outDir, actions, scorecard);
 
-  console.log(`Results: ${resultsPath}`);
+  console.log(`Source: ${sourceLabel}`);
   console.log(`Wrote ${written.scorecardPath}`);
   console.log(`Wrote ${written.actionsPath}`);
 

@@ -1,10 +1,30 @@
 [project]
 name = "maze-bench"
 version = "0.1.0"
-description = "Browser maze game and Prime Intellect verifier experiments."
+description = "Browser maze game, local coding-agent runner, and Prime Intellect verifier experiments."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11,<3.14"
-dependencies = [
+# The `mazebench` CLI is a launcher that shells out to the repo's Node scripts
+# (game engine, local-agent runner, replay/video) and, for the Prime path, to
+# the `prime`/`uv` CLIs. It has no hard Python dependencies; install the extra
+# below only when you want the Prime Intellect Verifiers integration.
+dependencies = []
+
+[project.optional-dependencies]
+prime = [
     "verifiers @ git+https://github.com/PrimeIntellect-ai/verifiers.git@main",
 ]
+
+[project.scripts]
+mazebench = "mazebench_cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["mazebench_cli"]
