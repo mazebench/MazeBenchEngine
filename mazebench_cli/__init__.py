@@ -24,11 +24,16 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import webbrowser
 from pathlib import Path
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 USAGE = """mazebench — run the MazeBench maze game
+
+Launch the website (Play / Build / Agent modes in your browser):
+  mazebench launch [port=3000 host=127.0.0.1 open=true]
 
 Interactive setup (pick options with arrow keys):
   mazebench wizard
@@ -96,6 +101,59 @@ def find_repo_root() -> Path:
         "scripts/maze-bridge.js).\nRun from inside the checkout or set "
         "MAZEBENCH_REPO_ROOT=/path/to/PixelGameTest."
     )
+
+
+def _packaged_runtime() -> Path | None:
+    """The Node runtime bundled into the wheel (mazebench_cli/_runtime)."""
+    candidate = Path(__file__).resolve().parent / "_runtime"
+    return candidate if _is_repo_root(candidate) else None
+
+
+def _workspace_dir() -> Path:
+    return Path(os.environ.get("MAZEBENCH_HOME", "~/.mazebench")).expanduser() / "site"
+
+
+def _materialize_workspace(runtime: Path) -> Path:
+    """Copy the packaged runtime into a writable workspace (~/.mazebench/site).
+
+    The site writes next to its root (draft worlds under games/, run artifacts
+    under outputs/, account state under data/), so it cannot run from
+    site-packages. Runtime code is refreshed whenever the packaged version
+    changes; user content (games/draft-*, outputs/, data/, and any master-world
+    edits) is left alone.
+    """
+    workspace = _workspace_dir()
+    version_file = workspace / ".runtime-version"
+    packaged_version = (runtime / ".runtime-version").read_text().strip() if (runtime / ".runtime-version").is_file() else __version__
+    current_version = version_file.read_text().strip() if version_file.is_file() else ""
+
+    if current_version != packaged_version or not _is_repo_root(workspace):
+        workspace.mkdir(parents=True, exist_ok=True)
+        for name in ("server", "public", "scripts", "vendor"):
+            source = runtime / name
+            if source.is_dir():
+                shutil.copytree(source, workspace / name, dirs_exist_ok=True)
+        for name in ("server.js", "package.json"):
+            shutil.copy2(runtime / name, workspace / name)
+        # The master world is seeded once and then owned by the user (it is
+        # editable in Build Mode); draft worlds are never touched.
+        if not (workspace / "games" / "maze").is_dir():
+            shutil.copytree(runtime / "games" / "maze", workspace / "games" / "maze")
+        version_file.write_text(f"{packaged_version}\n")
+        print(f"mazebench: workspace ready at {workspace}", file=sys.stderr)
+
+    return workspace
+
+
+def resolve_root() -> Path:
+    """A repo checkout if we are in one, else the pip-installed workspace."""
+    try:
+        return find_repo_root()
+    except CliError:
+        runtime = _packaged_runtime()
+        if runtime is None:
+            raise
+        return _materialize_workspace(runtime)
 
 
 def parse_args(argv: list[str]) -> tuple[list[str], dict[str, str], list[str]]:
@@ -174,6 +232,29 @@ def run_play(root: Path, pairs: dict[str, str], flags: list[str]) -> int:
         cmd.extend(["--view", pairs["view"]])
     cmd.extend(flags)
     return _run(cmd, root)
+
+
+def run_launch(root: Path, pairs: dict[str, str], flags: list[str]) -> int:
+    """Serve the website (Play / Build / Agent modes) from `root`."""
+    _require(_node_bin(), "Install Node.js (the site and maze engine run on Node).")
+    port = pairs.get("port", "3000")
+    host = pairs.get("host", "127.0.0.1")
+    url = f"http://{'localhost' if host in ('0.0.0.0', '::') else host}:{port}"
+
+    env = dict(os.environ, PORT=str(port), HOST=host)
+    open_browser = pairs.get("open", "true").lower() not in ("off", "false", "0", "no")
+
+    if open_browser:
+        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+
+    print(f"mazebench: serving {url}  (Ctrl-C to stop)", file=sys.stderr)
+    cmd = [_node_bin(), str(root / "server.js"), *flags]
+    print(f"$ {' '.join(cmd)}", file=sys.stderr)
+
+    try:
+        return subprocess.call(cmd, cwd=str(root), env=env)
+    except KeyboardInterrupt:
+        return 0
 
 
 def run_wizard(root: Path) -> int:
@@ -263,12 +344,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        root = find_repo_root()
+        root = resolve_root()
         command = words[0].lower() if words else ""
 
         if command in ("help", "-h", "--help"):
             print(USAGE)
             return 0
+        if command in ("launch", "serve", "site", "web"):
+            return run_launch(root, pairs, flags)
         if command in ("wizard", "setup"):
             return run_wizard(root)
         if command == "build":

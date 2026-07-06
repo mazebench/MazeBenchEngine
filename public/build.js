@@ -32,13 +32,6 @@
     renderWorlds();
   }
 
-  function linkList(links) {
-    return links
-      .filter(([, href]) => Boolean(href))
-      .map(([label, href]) => `<a class="back-link" href="${href}">${label}</a>`)
-      .join("");
-  }
-
   function escapeText(value) {
     const el = document.createElement("span");
     el.textContent = String(value ?? "");
@@ -51,67 +44,85 @@
     return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
   }
 
+  function mosaic(previewUrls) {
+    const urls = (previewUrls || []).slice(0, 4);
+    if (!urls.length) {
+      return '<div class="screen-nosignal"><span class="glyph">\u25a6</span></div>';
+    }
+    return `<div class="screen-mosaic">${urls
+      .map((url) => `<img class="mosaic-cell" src="${escapeText(url)}" alt="" loading="lazy">`)
+      .join("")}</div>`;
+  }
+
   function renderMaster() {
     if (!masterEl) return;
 
     if (!data.master) {
-      masterEl.innerHTML = `<p class="author-panel__copy">Master world not found.</p>`;
+      masterEl.innerHTML = `<div class="empty-state"><span class="glyph">?</span><p>Master world not found.</p></div>`;
       return;
     }
 
     masterEl.innerHTML = `
-      <article class="build-card">
-        <div class="build-card__head">
-          <h3>${escapeText(data.master.name)} <span class="author-panel__badge">master</span></h3>
-          <p class="author-panel__copy">${data.master.level_count} levels &middot; the world agents are benchmarked on</p>
+      <div class="world-card">
+        <a class="card-screen" href="${escapeText(data.master.play_url)}" aria-label="Play ${escapeText(data.master.name)}">
+          ${mosaic(data.master.preview_urls)}
+          <div class="screen-fx"></div>
+          <div class="screen-badges"><span class="badge">MASTER</span></div>
+          <div class="screen-play">PLAY</div>
+        </a>
+        <div class="card-body">
+          <h3 class="card-title">${escapeText(data.master.name)}</h3>
+          <p class="card-by">The world agents are benchmarked on</p>
+          <div class="card-stats"><span><b>${data.master.level_count}</b> levels</span></div>
+          <div class="card-actions">
+            <a class="button" href="${escapeText(data.master.author_url)}">Edit Levels</a>
+            <a class="button" href="${escapeText(data.master.world_map_url)}">World Map</a>
+            <a class="button" href="${escapeText(data.master.flyover_url)}">Flyover</a>
+          </div>
         </div>
-        <div class="build-card__links">${linkList([
-          ["Play", data.master.play_url],
-          ["Edit Levels", data.master.author_url],
-          ["World Map", data.master.world_map_url],
-          ["Flyover", data.master.flyover_url]
-        ])}</div>
-      </article>`;
+      </div>`;
   }
 
   function worldCard(world) {
-    const remoteBadge = world.remote_id
-      ? `<span class="author-panel__badge" title="Linked to ${escapeText(world.remote_id)} on mazebench.com">synced</span>`
-      : "";
-    const kindBadge = world.kind === "online" ? `<span class="author-panel__badge">online copy</span>` : "";
+    const tags = [world.kind === "online" ? "ONLINE COPY" : "DRAFT"];
+    if (world.remote_id) tags.push("SYNCED");
 
     return `
-      <article class="build-card" data-world-id="${escapeText(world.id)}">
-        <div class="build-card__head">
-          <h3 class="build-card__title" data-role="title">${escapeText(world.title)} ${kindBadge} ${remoteBadge}</h3>
-          <p class="author-panel__copy">${world.world_width}&times;${world.world_height} world &middot; ${world.level_count} level${world.level_count === 1 ? "" : "s"}${world.updated_at ? ` &middot; updated ${escapeText(formatWhen(world.updated_at))}` : ""}</p>
+      <div class="world-card" data-world-id="${escapeText(world.id)}">
+        <a class="card-screen" href="${escapeText(world.play_url)}" aria-label="Play ${escapeText(world.title)}">
+          ${mosaic(world.preview_urls)}
+          <div class="screen-fx"></div>
+          <div class="screen-badges"><span class="badge">SIZE ${world.world_width}x${world.world_height}</span></div>
+          <div class="screen-play">PLAY</div>
+        </a>
+        <div class="card-body">
+          <h3 class="card-title" data-role="title">${escapeText(world.title)}</h3>
+          <p class="card-by">${world.updated_at ? `Updated ${escapeText(formatWhen(world.updated_at))}` : ""}</p>
+          <div class="card-stats"><span><b>${world.level_count}</b> level${world.level_count === 1 ? "" : "s"}</span></div>
+          <div class="tags">${tags.map((tag) => `<span class="tag">${escapeText(tag)}</span>`).join("")}</div>
+          <div class="card-actions">
+            <a class="button" href="${escapeText(world.author_url)}">Edit</a>
+            <a class="button" href="${escapeText(world.world_map_url)}">Map</a>
+            <button type="button" data-action="rename">Rename</button>
+            <a class="button" href="${world.export_url}" download="${escapeText(world.title || world.id)}.json">Export</a>
+            <span data-role="sync-actions"></span>
+            <button type="button" data-action="delete">Delete</button>
+          </div>
         </div>
-        <div class="build-card__links">${linkList([
-          ["Play", world.play_url],
-          ["Edit Levels", world.author_url],
-          ["World Map", world.world_map_url],
-          ["Flyover", world.flyover_url]
-        ])}</div>
-        <div class="build-card__actions">
-          <button class="tool-button" type="button" data-action="rename">Rename</button>
-          <a class="tool-button" href="${world.export_url}" download="${escapeText(world.title || world.id)}.json">Export JSON</a>
-          <span data-role="sync-actions"></span>
-          <button class="tool-button tool-button--danger" type="button" data-action="delete">Delete</button>
-        </div>
-      </article>`;
+      </div>`;
   }
 
   function renderWorlds() {
     if (!worldsEl) return;
 
     if (!data.worlds.length) {
-      worldsEl.innerHTML = `<p class="author-panel__copy">No local worlds yet. Create one below, copy the master world, or import a JSON export.</p>`;
+      worldsEl.innerHTML = `<div class="empty-state"><span class="glyph">\u25a6</span><p>No local worlds yet. Create one below, copy the master world, or import a JSON export.</p></div>`;
       return;
     }
 
     worldsEl.innerHTML = data.worlds.map(worldCard).join("");
 
-    worldsEl.querySelectorAll(".build-card").forEach((card) => {
+    worldsEl.querySelectorAll(".world-card").forEach((card) => {
       const worldId = card.dataset.worldId;
       const world = data.worlds.find((entry) => entry.id === worldId);
 
@@ -147,7 +158,6 @@
       if (syncHost && data.remote && data.remote.connected) {
         const pushButton = document.createElement("button");
         pushButton.type = "button";
-        pushButton.className = "tool-button";
         pushButton.textContent = world.remote_id ? "Push Update" : "Push to Site";
         pushButton.addEventListener("click", async () => {
           try {
@@ -167,7 +177,6 @@
         if (world.remote_id) {
           const pullButton = document.createElement("button");
           pullButton.type = "button";
-          pullButton.className = "tool-button";
           pullButton.textContent = "Pull Latest";
           pullButton.addEventListener("click", async () => {
             if (!window.confirm(`Overwrite the local copy of "${world.title}" with the site version?`)) return;
@@ -196,17 +205,17 @@
 
     if (!remote.connected) {
       remoteEl.innerHTML = `
-        <p class="author-panel__copy">Connect your ${escapeText(remote.origin || "mazebench.com")} account to sync drafts both ways. Drafts stay private — publishing is a separate step on the site.</p>
-        <div class="author-control-row">
-          <button id="remote-link" class="tool-button tool-button--primary" type="button">Connect via Browser</button>
+        <p class="muted">Connect your ${escapeText(remote.origin || "mazebench.com")} account to sync drafts both ways. Drafts stay private — publishing is a separate step on the site.</p>
+        <div class="card-actions">
+          <button id="remote-link" class="button--primary" type="button">Connect via Browser</button>
         </div>
-        <details>
-          <summary class="author-panel__copy">Or paste a session token manually</summary>
-          <div class="author-control-row">
+        <details style="margin-top: 12px">
+          <summary class="muted" style="cursor: pointer">Or paste a session token manually</summary>
+          <div class="form-grid" style="margin-top: 10px; grid-template-columns: minmax(0, 1fr) auto">
             <label class="field"><span>Session token (mazebench_session cookie)</span><input id="remote-token" type="password" autocomplete="off"></label>
-            <button id="remote-connect" class="tool-button" type="button">Connect</button>
+            <button id="remote-connect" type="button">Connect</button>
           </div>
-          <p class="author-panel__copy">On ${escapeText(remote.origin || "the site")}, sign in, open DevTools &rarr; Application &rarr; Cookies, and copy the <code>mazebench_session</code> value.</p>
+          <p class="muted">On ${escapeText(remote.origin || "the site")}, sign in, open DevTools &rarr; Application &rarr; Cookies, and copy the <code>mazebench_session</code> value.</p>
         </details>`;
 
       document.getElementById("remote-link")?.addEventListener("click", async () => {
@@ -236,14 +245,14 @@
     }
 
     remoteEl.innerHTML = `
-      <p class="author-panel__copy">Connected to ${escapeText(remote.origin)} as <strong>${escapeText(
+      <p class="muted">Connected to ${escapeText(remote.origin)} as <strong>${escapeText(
         remote.user?.display_name || remote.user?.name || remote.user?.mazebench_user_id || "you"
       )}</strong>.</p>
-      <div class="author-control-row">
-        <button id="remote-refresh" class="tool-button" type="button">Show My Site Drafts</button>
-        <button id="remote-disconnect" class="tool-button tool-button--danger" type="button">Disconnect</button>
+      <div class="card-actions">
+        <button id="remote-refresh" type="button">Show My Site Drafts</button>
+        <button id="remote-disconnect" class="button--coral" type="button">Disconnect</button>
       </div>
-      <div id="remote-worlds" class="build-card-list"></div>`;
+      <div id="remote-worlds" class="remote-world-list"></div>`;
 
     document.getElementById("remote-disconnect")?.addEventListener("click", async () => {
       try {
@@ -266,18 +275,19 @@
         host.innerHTML = worlds.length
           ? worlds
               .map(
-                (world) => `<article class="build-card" data-remote-id="${escapeText(world.id)}">
-                  <div class="build-card__head">
-                    <h3>${escapeText(world.title)} ${linkedRemoteIds.has(world.id) ? '<span class="author-panel__badge">linked</span>' : ""}</h3>
-                    <p class="author-panel__copy">${world.world_width && world.world_height ? `${world.world_width}&times;${world.world_height} world &middot; ` : ""}${world.updated_at ? `updated ${escapeText(formatWhen(world.updated_at))}` : ""}</p>
+                (world) => `<div class="world-card" data-remote-id="${escapeText(world.id)}">
+                  <div class="card-body">
+                    <h3 class="card-title">${escapeText(world.title)}</h3>
+                    <p class="card-by">${world.world_width && world.world_height ? `${world.world_width}&times;${world.world_height} world &middot; ` : ""}${world.updated_at ? `updated ${escapeText(formatWhen(world.updated_at))}` : ""}</p>
+                    ${linkedRemoteIds.has(world.id) ? '<div class="tags"><span class="tag">LINKED</span></div>' : ""}
+                    <div class="card-actions">
+                      <button type="button" data-action="pull">${linkedRemoteIds.has(world.id) ? "Pull Latest" : "Pull to Local"}</button>
+                    </div>
                   </div>
-                  <div class="build-card__links">
-                    <button class="tool-button" type="button" data-action="pull">${linkedRemoteIds.has(world.id) ? "Pull Latest" : "Pull to Local"}</button>
-                  </div>
-                </article>`
+                </div>`
               )
               .join("")
-          : '<p class="author-panel__copy">No drafts on the site yet. Push a local world up!</p>';
+          : '<p class="muted">No drafts on the site yet. Push a local world up!</p>';
         host.querySelectorAll('[data-action="pull"]').forEach((button) => {
           button.addEventListener("click", async (event) => {
             const remoteId = event.target.closest("[data-remote-id]").dataset.remoteId;

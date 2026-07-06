@@ -47,53 +47,56 @@ Even then, set `MAZEBENCH_REPO_ROOT` (or run from a checkout) so the CLI can
 reach the Node runtime — a bare Git install of just the Python package does not
 ship `scripts/`, `server/`, or `public/`.
 
-## Mode B — build and publish to PyPI
+## Mode B — the self-contained PyPI wheel (implemented)
 
-You can build and upload wheels/sdists today:
+The published `mazebench` distribution bundles the whole Node site/runtime as
+package data, so `pip install mazebench && mazebench launch` works without a
+checkout. The pieces:
+
+1. **Runtime staging** — `node scripts/build-python-runtime.js` copies
+   `server.js`, `package.json`, `server/`, `public/`, `scripts/`,
+   `games/maze/`, and the three.js vendor files (from `node_modules`) into
+   `mazebench_cli/_runtime/` (gitignored). `server/app.js` falls back to the
+   staged `vendor/` dir when `node_modules` is absent.
+2. **Build** — `[tool.hatch.build.targets.wheel] artifacts` forces the staged
+   (gitignored) runtime into the wheel/sdist. `python -m build` or `uv build`.
+3. **Runtime resolution** — `mazebench_cli.resolve_root()` prefers a repo
+   checkout; otherwise it materializes a writable workspace at
+   `~/.mazebench/site` (override with `MAZEBENCH_HOME`) from the packaged
+   runtime. Runtime code refreshes on version upgrades; user content
+   (`games/draft-*`, master-world edits, `outputs/`, `data/`) is preserved.
+4. **Launch** — `mazebench launch [port= host= open=]` runs `node server.js`
+   from the resolved root and opens the browser.
+
+### Publishing
+
+`.github/workflows/publish.yml` builds and uploads on every GitHub Release
+using PyPI **trusted publishing** (no stored tokens). One-time setup:
+
+1. On PyPI: *Account → Publishing → Add a new pending publisher* with project
+   `mazebench`, this repo, workflow `publish.yml`, environment `pypi`.
+2. On GitHub: create an environment named `pypi` in the repo settings.
+3. Release flow: bump `version` in `pyproject.toml`, publish a GitHub Release.
+
+Manual fallback:
 
 ```bash
-uv build                       # writes dist/*.whl and dist/*.tar.gz
-# or: python -m build
-
-uv publish                     # or: twine upload dist/*
+npm ci
+node scripts/build-python-runtime.js
+python -m build                # or: uv build
+twine upload dist/*            # or: uv publish
 ```
 
-Before publishing, decide on a few things:
+Notes:
 
-- **Distribution name.** The `[project].name` is currently `maze-bench`. Check
-  availability on PyPI (`maze-bench`, `mazebench`, etc. may be taken) and pick a
-  unique one. The *command* stays `mazebench` regardless of the dist name.
-- **The `prime` extra uses a direct Git URL.** PyPI rejects direct-reference
-  URLs in `[project.dependencies]`, and `allow-direct-references` only helps for
-  local builds. If you publish, either drop `verifiers` from the extra (and tell
-  users to `pip install verifiers` / `prime lab setup` themselves) or depend on
-  a released `verifiers` version once one exists on PyPI.
-- **Trusted publishing.** The modern path is a PyPI "trusted publisher" (OIDC)
-  wired to a GitHub Actions workflow, so no API token is stored. Otherwise
-  create a PyPI API token and `twine upload -u __token__`.
-
-### Making a published wheel self-contained (bigger lift)
-
-A plain `pip install mazebench` from PyPI installs only `mazebench_cli/`, so the
-Node scripts are missing and the CLI will error with "Could not locate the
-MazeBench repo." To make the *local play* + *replay* features work from a PyPI
-install alone, you would need to:
-
-1. Ship the Node runtime as package data. A curated subset already exists at
-   `environments/mazebench/mazebench/runtime/` (kept in sync by
-   `npm run sync-runtime`); include the equivalent of `scripts/`, `server/`,
-   `public/`, and `games/maze/` in the wheel via `[tool.hatch.build]`.
-2. Teach `find_repo_root()` to fall back to that packaged runtime dir when no
-   checkout is found (e.g. `importlib.resources`).
-3. Document the remaining external prerequisites the wheel cannot bundle:
-   **Node.js**, **ffmpeg**, and a **browser** for video, plus the `codex` /
-   `claude` CLIs for local agent runs.
-
-Even fully bundled, the replay-video feature depends on Node + ffmpeg + a
-browser being installed on the user's machine, so a "pure `pip install` and it
-just works everywhere" experience is not achievable for the video path. For a
-benchmark/dev tool, Mode A (checkout + editable install) is the pragmatic and
-honest recommendation; publish to PyPI mainly as a convenience alias.
+- The dist name is **`mazebench`** (both `mazebench` and `maze-bench` were
+  free on PyPI as of 2026-07); the command is `mazebench` either way.
+- The `prime` extra now depends on `verifiers>=0.1.14` from PyPI (the old
+  direct Git URL would have been rejected by PyPI).
+- External prerequisites the wheel cannot bundle: **Node.js** (always),
+  **ffmpeg + a Chromium-family browser** (replay videos), **codex / claude
+  CLIs** (agent runs), **Docker** (containerized runs), **prime / uv**
+  (Verifiers path).
 
 ## Note on the two `mazebench` packages
 

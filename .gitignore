@@ -16,3 +16,7 @@ __pycache__/
 /games/draft-*/
 /games/online-*/
 /data/
+
+# staged by scripts/build-python-runtime.js before building the wheel
+/mazebench_cli/_runtime/
+/dist/

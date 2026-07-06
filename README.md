@@ -5,10 +5,30 @@ coding agent (Codex CLI or Claude Code), and through Prime Intellect Verifiers
 v1. The Verifiers integration includes both normal multi-turn chat-model runs
 and Codex CLI runs.
 
+## Install from PyPI and launch
+
+```bash
+pip install mazebench     # or: uv tool install mazebench
+mazebench launch          # serves the site and opens your browser
+```
+
+The wheel bundles the whole Node site/runtime; `mazebench launch` materializes
+a writable workspace at `~/.mazebench/site` (drafts, run outputs, and account
+state live there) and serves it. Node.js must be installed; `ffmpeg` + a
+Chromium-family browser are needed for replay videos, and the `codex` /
+`claude` CLIs for agent runs. Options: `mazebench launch port=3000
+host=127.0.0.1 open=false`. From a repo checkout, `mazebench launch` serves the
+checkout instead (same as `npm run dev`).
+
+Releases are published by `.github/workflows/publish.yml` (PyPI trusted
+publishing) whenever a GitHub Release is created; see
+[docs/packaging.md](docs/packaging.md).
+
 ## The local site: Play, Build, and Agent modes
 
-`npm run dev` serves the full site at `http://localhost:3000` with three modes
-on the home page:
+`npm run dev` (or `mazebench launch`) serves the full site at
+`http://localhost:3000` with three modes on the home page (the frontend design
+matches mazebench.com — the chrome is ported from the MazeJam repo):
 
 - **Play Mode** (`/play`) — play the master world (the 256-room world agents
   are benchmarked on), any local draft world, or downloaded online worlds.

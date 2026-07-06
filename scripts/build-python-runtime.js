@@ -1,0 +1,133 @@
+#!/usr/bin/env node
+
+// Stage the Node site/runtime into mazebench_cli/_runtime/ so the Python wheel
+// is self-contained: `pip install mazebench` then `mazebench launch` serves the
+// full site without a repo checkout. Run this before `python -m build`;
+// .github/workflows/publish.yml does it automatically.
+//
+// The staged tree mirrors a minimal checkout:
+//   server.js, package.json, server/, public/, scripts/, games/maze/,
+//   vendor/ (the three.js files normally served from node_modules)
+//
+// Node.js remains a runtime prerequisite on the user's machine (plus ffmpeg +
+// a Chromium-family browser for replay videos, and codex/claude for agents).
+
+const fs = require("fs");
+const path = require("path");
+
+const ROOT_DIR = path.resolve(__dirname, "..");
+const RUNTIME_DIR = path.join(ROOT_DIR, "mazebench_cli", "_runtime");
+
+const COPY_DIRECTORIES = [
+  "server",
+  "public",
+  "scripts",
+  "games/maze/levels",
+  "games/maze/images",
+  "games/maze/assets_3d",
+  "games/maze/previews"
+];
+
+const COPY_FILES = [
+  "server.js",
+  "package.json",
+  "games/maze/config.json",
+  "games/maze/level_parsing.json",
+  "games/maze/world_map.json",
+  "games/maze/world_parsing.json"
+];
+
+const VENDOR_FILES = [
+  ["three/build/three.module.js", "three.module.js"],
+  ["three/build/three.core.js", "three.core.js"],
+  ["three/examples/jsm/loaders/GLTFLoader.js", "GLTFLoader.js"],
+  ["three/examples/jsm/utils/BufferGeometryUtils.js", "BufferGeometryUtils.js"],
+  ["three/examples/jsm/utils/SkeletonUtils.js", "SkeletonUtils.js"]
+];
+
+function isIgnoredName(name) {
+  return name.startsWith(".") || name === "__pycache__" || name.endsWith(".pyc");
+}
+
+function copyDirectory(sourceDir, targetDir) {
+  fs.mkdirSync(targetDir, { recursive: true });
+  fs.readdirSync(sourceDir, { withFileTypes: true }).forEach((entry) => {
+    if (isIgnoredName(entry.name)) {
+      return;
+    }
+
+    const sourcePath = path.join(sourceDir, entry.name);
+    const targetPath = path.join(targetDir, entry.name);
+
+    if (entry.isDirectory()) {
+      copyDirectory(sourcePath, targetPath);
+    } else if (entry.isFile()) {
+      fs.copyFileSync(sourcePath, targetPath);
+    }
+  });
+}
+
+function readPackageVersion() {
+  const pyproject = fs.readFileSync(path.join(ROOT_DIR, "pyproject.toml"), "utf8");
+  const match = pyproject.match(/^version\s*=\s*"([^"]+)"/m);
+  return match ? match[1] : "0.0.0";
+}
+
+function buildRuntime() {
+  fs.rmSync(RUNTIME_DIR, { recursive: true, force: true });
+  fs.mkdirSync(RUNTIME_DIR, { recursive: true });
+
+  COPY_DIRECTORIES.forEach((relative) => {
+    const source = path.join(ROOT_DIR, ...relative.split("/"));
+
+    if (!fs.existsSync(source)) {
+      throw new Error(`Missing directory: ${relative}`);
+    }
+
+    copyDirectory(source, path.join(RUNTIME_DIR, ...relative.split("/")));
+  });
+
+  COPY_FILES.forEach((relative) => {
+    const source = path.join(ROOT_DIR, ...relative.split("/"));
+
+    if (!fs.existsSync(source)) {
+      throw new Error(`Missing file: ${relative}`);
+    }
+
+    const target = path.join(RUNTIME_DIR, ...relative.split("/"));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(source, target);
+  });
+
+  const vendorDir = path.join(RUNTIME_DIR, "vendor");
+  fs.mkdirSync(vendorDir, { recursive: true });
+  VENDOR_FILES.forEach(([relative, name]) => {
+    const source = path.join(ROOT_DIR, "node_modules", ...relative.split("/"));
+
+    if (!fs.existsSync(source)) {
+      throw new Error(`Missing vendor file (run npm install first): node_modules/${relative}`);
+    }
+
+    fs.copyFileSync(source, path.join(vendorDir, name));
+  });
+
+  const version = readPackageVersion();
+  fs.writeFileSync(path.join(RUNTIME_DIR, ".runtime-version"), `${version}\n`, "utf8");
+
+  let fileCount = 0;
+  const walk = (dir) => {
+    fs.readdirSync(dir, { withFileTypes: true }).forEach((entry) => {
+      if (entry.isDirectory()) walk(path.join(dir, entry.name));
+      else fileCount += 1;
+    });
+  };
+  walk(RUNTIME_DIR);
+
+  console.log(`build-python-runtime: staged ${fileCount} files at ${path.relative(ROOT_DIR, RUNTIME_DIR)} (version ${version})`);
+}
+
+if (require.main === module) {
+  buildRuntime();
+}
+
+module.exports = { RUNTIME_DIR, buildRuntime };

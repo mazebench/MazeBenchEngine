@@ -91,17 +91,17 @@
       `${run.gem_count ?? 0} gems${run.solved ? " — solved!" : ""}`
     ].join(" &middot; ");
 
-    return `<article class="build-card agent-run-card" data-run-id="${escapeText(run.id)}">
-      <div class="build-card__head">
-        <h3><span class="agent-chip ${statusClass}">${escapeText(run.status)}</span> ${escapeText(run.model)} on ${escapeText(run.game_title || run.game_id)}</h3>
-        <p class="author-panel__copy">${summary}<br>${escapeText(new Date(run.created_at).toLocaleString())}</p>
+    return `<div class="world-card agent-run-card" data-run-id="${escapeText(run.id)}">
+      <div class="card-body">
+        <h3 class="card-title"><span class="agent-chip ${statusClass}">${escapeText(run.status)}</span> ${escapeText(run.model)} on ${escapeText(run.game_title || run.game_id)}</h3>
+        <p class="card-by">${summary}<br>${escapeText(new Date(run.created_at).toLocaleString())}</p>
+        <div class="card-actions">
+          <a class="button" href="${escapeText(run.url)}">Watch</a>
+          ${run.has_video ? `<a class="button" href="/agent-runs/${encodeURIComponent(run.id)}/files/maze_replay.mp4">Video</a>` : ""}
+          ${run.status === "running" ? '<button class="button--coral" type="button" data-action="stop">Stop</button>' : ""}
+        </div>
       </div>
-      <div class="build-card__links">
-        <a class="back-link" href="${escapeText(run.url)}">Watch</a>
-        ${run.has_video ? `<a class="back-link" href="/agent-runs/${encodeURIComponent(run.id)}/files/maze_replay.mp4">Video</a>` : ""}
-        ${run.status === "running" ? '<button class="tool-button tool-button--danger" type="button" data-action="stop">Stop</button>' : ""}
-      </div>
-    </article>`;
+    </div>`;
   }
 
   let refreshTimer = null;
@@ -112,10 +112,10 @@
       const runs = payload.runs || [];
       runsEl.innerHTML = runs.length
         ? runs.map(runCard).join("")
-        : '<p class="author-panel__copy">No runs yet. Launch one above — you can watch it live.</p>';
+        : '<div class="empty-state"><span class="glyph">▶</span><p>No runs yet. Launch one above — you can watch it live.</p></div>';
       runsEl.querySelectorAll('[data-action="stop"]').forEach((button) => {
         button.addEventListener("click", async (event) => {
-          const runId = event.target.closest(".agent-run-card").dataset.runId;
+          const runId = event.target.closest("[data-run-id]").dataset.runId;
           try {
             await api(`${data.apiUrl}/${encodeURIComponent(runId)}/stop`, { method: "POST" });
             setStatus(`Stopping ${runId}…`);
@@ -181,18 +181,18 @@
       onlineWorldsEl.innerHTML = worlds.length
         ? worlds
             .map(
-              (world) => `<article class="build-card" data-remote-id="${escapeText(world.id)}">
-                <div class="build-card__head">
-                  <h3>${escapeText(world.title)}</h3>
-                  <p class="author-panel__copy">${world.world_width && world.world_height ? `${world.world_width}&times;${world.world_height} world &middot; ` : ""}${world.creator ? `by ${escapeText(world.creator)}` : ""}</p>
+              (world) => `<div class="world-card" data-remote-id="${escapeText(world.id)}">
+                <div class="card-body">
+                  <h3 class="card-title">${escapeText(world.title)}</h3>
+                  <p class="card-by">${world.world_width && world.world_height ? `${world.world_width}&times;${world.world_height} world &middot; ` : ""}${world.creator ? `by ${escapeText(world.creator)}` : ""}</p>
+                  <div class="card-actions">
+                    <button type="button" data-action="pull">Download for Agent Runs</button>
+                  </div>
                 </div>
-                <div class="build-card__links">
-                  <button class="tool-button" type="button" data-action="pull">Download for Agent Runs</button>
-                </div>
-              </article>`
+              </div>`
             )
             .join("")
-        : '<p class="author-panel__copy">No community worlds found.</p>';
+        : '<p class="muted">No community worlds found.</p>';
       onlineWorldsEl.querySelectorAll('[data-action="pull"]').forEach((button) => {
         button.addEventListener("click", async (event) => {
           const remoteId = event.target.closest("[data-remote-id]").dataset.remoteId;

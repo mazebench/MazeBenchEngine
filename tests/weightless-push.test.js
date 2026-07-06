@@ -1861,10 +1861,15 @@ asyncTests.push(
     worldRows: Array.from("ABCDEFGHIJKLMNOP")
   });
 
-  assert.equal(app.adjacentWorldLevelId("level_AxA", -1, 0), "level_PxA");
-  assert.equal(app.adjacentWorldLevelId("level_AxA", 0, -1), "level_AxP");
-  assert.equal(app.adjacentWorldLevelId("level_PxP", 1, 0), "level_AxP");
-  assert.equal(app.adjacentWorldLevelId("level_PxP", 0, 1), "level_PxA");
+  // World edges do not wrap (the torus wrap was removed in c74950a): stepping
+  // off the map returns null, and in-range neighbors resolve normally.
+  assert.equal(app.adjacentWorldLevelId("level_AxA", -1, 0), null);
+  assert.equal(app.adjacentWorldLevelId("level_AxA", 0, -1), null);
+  assert.equal(app.adjacentWorldLevelId("level_PxP", 1, 0), null);
+  assert.equal(app.adjacentWorldLevelId("level_PxP", 0, 1), null);
+  assert.equal(app.adjacentWorldLevelId("level_AxA", 1, 0), "level_BxA");
+  assert.equal(app.adjacentWorldLevelId("level_PxP", -1, 0), "level_OxP");
+  assert.equal(app.adjacentWorldLevelId("level_AxA", 0, 1), "level_AxB");
 }
 
 asyncTests.push((async () => {

@@ -48,30 +48,49 @@ const PUBLIC_FILE_ROUTES = new Map(
     "/level-preview.js",
     "/build.js",
     "/agent.js",
-    "/agent-run.js"
+    "/agent-run.js",
+    "/site.css",
+    "/build-theme.css",
+    "/author-theme.css",
+    "/play-theme.css",
+    "/local-site.css",
+    "/favicon.svg"
   ].map((routePath) => [routePath, path.join(PUBLIC_DIR, routePath.slice(1))])
 );
 
+// Vendor JS ships from node_modules in a checkout; the packaged runtime that
+// `pip install mazebench` unpacks has no node_modules, so scripts/
+// build-python-runtime.js stages the same files under vendor/ instead.
+function vendorFilePath(nodeModulesRelative, vendorName) {
+  const nodeModulesPath = path.join(ROOT_DIR, "node_modules", ...nodeModulesRelative);
+
+  if (fs.existsSync(nodeModulesPath)) {
+    return nodeModulesPath;
+  }
+
+  return path.join(ROOT_DIR, "vendor", vendorName);
+}
+
 PUBLIC_FILE_ROUTES.set(
   "/vendor/three.module.js",
-  path.join(ROOT_DIR, "node_modules", "three", "build", "three.module.js")
+  vendorFilePath(["three", "build", "three.module.js"], "three.module.js")
 );
 PUBLIC_FILE_ROUTES.set(
   "/vendor/three.core.js",
-  path.join(ROOT_DIR, "node_modules", "three", "build", "three.core.js")
+  vendorFilePath(["three", "build", "three.core.js"], "three.core.js")
 );
 PUBLIC_FILE_ROUTES.set(
   "/vendor/GLTFLoader.js",
-  path.join(ROOT_DIR, "node_modules", "three", "examples", "jsm", "loaders", "GLTFLoader.js")
+  vendorFilePath(["three", "examples", "jsm", "loaders", "GLTFLoader.js"], "GLTFLoader.js")
 );
 // GLTFLoader's relative "../utils/x.js" imports resolve against /vendor/.
 PUBLIC_FILE_ROUTES.set(
   "/utils/BufferGeometryUtils.js",
-  path.join(ROOT_DIR, "node_modules", "three", "examples", "jsm", "utils", "BufferGeometryUtils.js")
+  vendorFilePath(["three", "examples", "jsm", "utils", "BufferGeometryUtils.js"], "BufferGeometryUtils.js")
 );
 PUBLIC_FILE_ROUTES.set(
   "/utils/SkeletonUtils.js",
-  path.join(ROOT_DIR, "node_modules", "three", "examples", "jsm", "utils", "SkeletonUtils.js")
+  vendorFilePath(["three", "examples", "jsm", "utils", "SkeletonUtils.js"], "SkeletonUtils.js")
 );
 
 function buildGameAssetUrl(gameId, relativePath) {

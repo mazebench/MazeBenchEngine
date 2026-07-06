@@ -433,6 +433,10 @@ function createLocalBuildWorldService({
       id: gameId,
       title: game.name,
       kind: gameId.startsWith("online-") ? "online" : "draft",
+      preview_urls: (game.worldMap?.levels || [])
+        .map((level) => level.previewUrl)
+        .filter(Boolean)
+        .slice(0, 4),
       world_width: config.worldSize.width,
       world_height: config.worldSize.height,
       level_count: game.worldMap.levels.length,

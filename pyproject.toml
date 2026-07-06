@@ -1,19 +1,34 @@
 [project]
-name = "maze-bench"
-version = "0.1.0"
-description = "Browser maze game, local coding-agent runner, and Prime Intellect verifier experiments."
+name = "mazebench"
+version = "0.2.0"
+description = "MazeBench: ice-maze puzzle site, world editor, and coding-agent benchmark runner. `mazebench launch` serves the website locally."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11,<3.14"
-# The `mazebench` CLI is a launcher that shells out to the repo's Node scripts
-# (game engine, local-agent runner, replay/video) and, for the Prime path, to
-# the `prime`/`uv` CLIs. It has no hard Python dependencies; install the extra
-# below only when you want the Prime Intellect Verifiers integration.
+keywords = ["maze", "benchmark", "agents", "game", "puzzle"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Games/Entertainment :: Puzzle Games",
+    "Topic :: Software Development :: Testing",
+]
+# The `mazebench` CLI is a launcher that shells out to the bundled Node runtime
+# (game engine, website, local-agent runner, replay/video) and, for the Prime
+# path, to the `prime`/`uv` CLIs. It has no hard Python dependencies; Node.js
+# must be installed on the machine. Install the extra below only when you want
+# the Prime Intellect Verifiers integration.
 dependencies = []
+
+[project.urls]
+Homepage = "https://mazebench.com"
+Source = "https://github.com/mazebench/MazeBench"
 
 [project.optional-dependencies]
 prime = [
-    "verifiers @ git+https://github.com/PrimeIntellect-ai/verifiers.git@main",
+    "verifiers>=0.1.14",
 ]
 
 [project.scripts]
@@ -23,8 +38,12 @@ mazebench = "mazebench_cli:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.hatch.metadata]
-allow-direct-references = true
-
 [tool.hatch.build.targets.wheel]
 packages = ["mazebench_cli"]
+# The staged Node runtime (scripts/build-python-runtime.js writes it) is
+# gitignored, so it must be forced into the build as artifacts.
+artifacts = ["mazebench_cli/_runtime/**"]
+
+[tool.hatch.build.targets.sdist]
+include = ["mazebench_cli/**", "README.md", "LICENSE"]
+artifacts = ["mazebench_cli/_runtime/**"]
