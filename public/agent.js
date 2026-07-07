@@ -762,7 +762,7 @@
     return `<div class="world-card agent-run-card" data-run-id="${escapeText(run.id)}">
       <div class="card-body">
         <h3 class="card-title"><span class="agent-chip ${runStatusClass(run.status)}">${escapeText(statusLabel)}</span> ${escapeText(run.model)} on ${escapeText(run.game_title || run.game_id)}</h3>
-        <p class="card-by">${summary}<br>${escapeText(new Date(run.created_at).toLocaleString())}${run.continue_of ? " &middot; continued" : ""}</p>
+        <p class="card-by">${summary}<br>${escapeText(new Date(run.created_at).toLocaleString())}${run.continued ? ` &middot; continued ×${run.continued}` : run.continue_of ? " &middot; continued" : ""}</p>
         <div class="card-actions">${actions}</div>
       </div>
     </div>`;

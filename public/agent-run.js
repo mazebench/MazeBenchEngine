@@ -52,6 +52,7 @@
       run.moves ? `${run.moves} move budget` : null,
       run.mode,
       run.reasoning ? `reasoning ${run.reasoning}` : null,
+      run.continued ? `continued ×${run.continued}` : null,
       run.kind === "local" ? (run.container ? "container" : "host") : "prime verifiers",
       run.note || ""
     ].filter(Boolean);

@@ -870,6 +870,12 @@ function createAgentRunService({
       }
     }
 
+    // In-place continue: the session.json already lives in this run's dir, so
+    // just resume the conversation (which also implies skipping the fresh start).
+    if (params.resume_id) {
+      args.push(`resume=${String(params.resume_id)}`);
+    }
+
     return { args, model, levelId, moves, gems, view };
   }
 
@@ -1002,8 +1008,16 @@ function createAgentRunService({
       throw error;
     }
 
-    child.unref();
     fs.closeSync(logFd);
+    attachRunChild(runId, child);
+    writeRunMeta(runId, meta);
+    return summarizeRun(runId);
+  }
+
+  // Track a spawned run child and resolve its final status on exit. Shared by a
+  // fresh launch and an in-place continue (which re-spawns into the same dir).
+  function attachRunChild(runId, child) {
+    child.unref();
     liveChildren.set(runId, child);
     child.on("exit", (code) => {
       liveChildren.delete(runId);
@@ -1042,9 +1056,6 @@ function createAgentRunService({
     child.on("error", () => {
       liveChildren.delete(runId);
     });
-
-    writeRunMeta(runId, meta);
-    return summarizeRun(runId);
   }
 
   // Strip internal orchestration keys so meta.launch_params holds just the
@@ -1167,6 +1178,71 @@ function createAgentRunService({
     };
   }
 
+  // The CLI conversation id captured in a run's event stream — codex emits
+  // `thread.started` with a thread_id, claude tags every event with session_id.
+  function readConversationId(runId) {
+    const eventsPath = path.join(runDirFor(runId), "agent-events.jsonl");
+
+    if (!fs.existsSync(eventsPath)) {
+      return "";
+    }
+
+    for (const line of fs.readFileSync(eventsPath, "utf8").split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      try {
+        const event = JSON.parse(trimmed);
+        const id = event.thread_id || event.session_id;
+        if (id) return String(id);
+      } catch (_error) {
+        /* skip non-JSON lines */
+      }
+    }
+
+    return "";
+  }
+
+  // A true continue: re-spawn the agent into the SAME run dir with the CLI
+  // conversation resumed, so the model keeps its full memory and the maze keeps
+  // its state (both live here). The run itself is extended in place.
+  function continueLocalInPlace(runId, meta, add, conversationId) {
+    const runDir = runDirFor(runId);
+    const params = meta.launch_params || reconstructParams(meta);
+    const game = normalizedGameForRun(params.game_id);
+    const { args } = buildLocalRunArgs(runId, { ...params, moves: add, resume_id: conversationId }, game);
+
+    const logFd = fs.openSync(path.join(runDir, "launcher.log"), "a");
+    let child;
+
+    try {
+      child = spawn(process.execPath, [runnerScript, ...args], {
+        cwd: rootDir,
+        detached: true,
+        env: enrichedPathEnv(),
+        stdio: ["ignore", logFd, logFd]
+      });
+    } finally {
+      fs.closeSync(logFd);
+    }
+
+    writeRunMeta(runId, {
+      ...meta,
+      status: "running",
+      pid: child.pid,
+      moves: (Number(meta.moves) || 0) + add,
+      continued: (meta.continued || 0) + 1,
+      command: ["node", "scripts/maze-agent-local.js", ...args].join(" "),
+      exit_code: undefined,
+      finished_at: undefined,
+      pause_reason: undefined,
+      pause_message: undefined,
+      paused_at: undefined
+    });
+    attachRunChild(runId, child);
+    return summarizeRun(runId);
+  }
+
   function continueRun(runId, additionalMoves) {
     const meta = readRunMeta(runId);
 
@@ -1175,20 +1251,30 @@ function createAgentRunService({
     }
 
     const add = Math.max(1, Math.min(500, Math.floor(Number(additionalMoves) || 20)));
-    const base = { ...(meta.launch_params || reconstructParams(meta)), continue_of: runId };
 
     if (meta.kind === "prime") {
       // Verifiers plays one fresh rollout per run, so "continue" gives the model
       // a bigger total budget on the same maze rather than resuming mid-state.
-      base.kind = "prime";
+      const base = { ...(meta.launch_params || reconstructParams(meta)), continue_of: runId, kind: "prime" };
       base.max_turns = Math.max(1, Math.min(500, (Number(meta.moves) || 0) + add));
       return launchRun(base);
     }
 
-    // Local runs resume the exact maze state by seeding from the prior session.
-    base.kind = "local";
-    base.moves = add;
-    base.seed_run = runId;
+    // Local: a TRUE continue resumes the same conversation in place (model keeps
+    // its memory). Only host runs qualify — container runs discard the CLI
+    // session on exit, so they fall back to a maze-state-only continue.
+    const conversationId = meta.container === false ? readConversationId(runId) : "";
+    if (conversationId) {
+      return continueLocalInPlace(runId, meta, add, conversationId);
+    }
+
+    const base = {
+      ...(meta.launch_params || reconstructParams(meta)),
+      continue_of: runId,
+      kind: "local",
+      moves: add,
+      seed_run: runId
+    };
     return launchRun(base);
   }
 

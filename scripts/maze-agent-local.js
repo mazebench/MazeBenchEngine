@@ -151,7 +151,17 @@ Repo root:    ${ROOT_DIR}
 Helper:       ${HELPER}
 Session file: ${config.sessionFile}
 
-${config.seed
+${config.resume
+    ? `You are CONTINUING the SAME MazeBench game you were just playing — you already
+have the full history in memory and know the helper. The session file is still
+${config.sessionFile}. Do NOT run "start"; that would erase the progress.
+
+Your FIRST shell command must re-read the current observation:
+
+  node "${HELPER}" observe --state "${config.sessionFile}"
+
+Then play up to ${config.moves} MORE maze action(s) from where you left off,`
+    : config.seed
     ? `This maze is ALREADY IN PROGRESS: earlier moves were made and the game state
 is saved in the session file. Do NOT run "start" — that would erase the progress.
 
@@ -202,9 +212,19 @@ function agentCommand(config, prompt) {
     const inContainer = process.env.MAZEBENCH_IN_CONTAINER === "1";
     const bypass = config.tools || inContainer;
     // --json streams structured events (agent messages, reasoning, shell calls)
-    // on stdout so we can build a per-move reasoning log.
-    const argv = ["exec", "--json", "--skip-git-repo-check", "-C", config.tools ? ROOT_DIR : config.outDir];
-    if (bypass) {
+    // on stdout so we can build a per-move reasoning log. `exec resume <id>`
+    // continues a prior conversation (the model keeps its full memory).
+    const argv = config.resume
+      ? ["exec", "resume", config.resume, "--json", "--skip-git-repo-check"]
+      : ["exec", "--json", "--skip-git-repo-check", "-C", config.tools ? ROOT_DIR : config.outDir];
+    if (config.resume) {
+      // `resume` doesn't accept --sandbox/-C; it keeps the resumed session's
+      // own sandbox policy (workspace-write scoped to the original run dir, which
+      // in-place continue reuses). Only re-assert bypass for container/tools runs.
+      if (bypass) {
+        argv.push("--dangerously-bypass-approvals-and-sandbox");
+      }
+    } else if (bypass) {
       argv.push("--dangerously-bypass-approvals-and-sandbox");
     } else {
       // `codex exec` is non-interactive and has no approval flag; --sandbox
@@ -239,6 +259,10 @@ function agentCommand(config, prompt) {
       "-p", prompt,
       "--output-format", "stream-json", "--verbose", "--include-partial-messages"
     ];
+    // Resume the prior conversation so the model keeps its full memory.
+    if (config.resume) {
+      argv.push("--resume", config.resume);
+    }
     if (config.tools) {
       argv.push("--permission-mode", "bypassPermissions");
     } else {
@@ -481,7 +505,11 @@ function runAgent(config, prompt) {
   // sit unflushed in a stream buffer until the very end.
   const distill = config.model === "codex" ? distillCodexEvents : distillClaudeEvents;
   const eventsPath = path.join(config.outDir, "agent-events.jsonl");
-  fs.writeFileSync(eventsPath, "");
+  // On a resume we keep the prior run's events and append the new turns, so the
+  // reasoning feed shows the whole journey. A fresh run starts the file empty.
+  if (!config.resume) {
+    fs.writeFileSync(eventsPath, "");
+  }
 
   return new Promise((resolve) => {
     const child = spawn(bin, argv, { cwd: ROOT_DIR, stdio: ["ignore", "pipe", "inherit"] });
@@ -500,7 +528,17 @@ function runAgent(config, prompt) {
       resolve();
     });
     child.on("close", (code) => {
-      if (raw.trim()) writeReasoningArtifacts(config, raw, distill(raw), { skipEvents: true });
+      // On resume, distill the whole file (prior turns + the new ones) so the
+      // feed keeps the earlier moves' reasoning too.
+      let full = raw;
+      if (config.resume) {
+        try {
+          full = fs.readFileSync(eventsPath, "utf8");
+        } catch (_error) {
+          full = raw;
+        }
+      }
+      if (full.trim()) writeReasoningArtifacts(config, full, distill(full), { skipEvents: true });
       if (code !== 0) {
         console.warn(`\n(agent exited with status ${code}; continuing to export whatever it played)`);
       }
@@ -997,9 +1035,12 @@ async function main() {
     codexFast: isTruthy(raw.codex_fast, false),
     moves: positiveInt(raw.moves, 20),
     outDir,
-    // Continue a prior run: the session.json (with its action history) has been
-    // copied into outDir, so resume from it instead of starting fresh.
-    seed: isTruthy(raw.seed, false),
+    // Continue a prior run. seed=true means the session.json (action history) is
+    // present in outDir so we resume the maze from it instead of starting fresh.
+    // resume=<conversation-id> additionally resumes the CLI conversation so the
+    // model keeps its full memory (a true continue). resume implies seed.
+    resume: String(raw.resume || "").trim(),
+    seed: isTruthy(raw.seed, false) || Boolean(String(raw.resume || "").trim()),
     sessionFile,
     video: isTruthy(raw.video, true) && !isTruthy(raw.no_video, false),
     view,
