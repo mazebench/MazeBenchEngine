@@ -66,6 +66,7 @@ function createAgentRunService({
 }) {
   const runsDir = path.join(rootDir, "outputs", "maze-local", "site");
   const runnerScript = path.join(rootDir, "scripts", "maze-agent-local.js");
+  const primeRunnerScript = path.join(rootDir, "scripts", "maze-prime-run.js");
   const renderFrameScript = path.join(rootDir, "scripts", "maze-render-frame.js");
   const liveChildren = new Map();
   const liveFrameLocks = new Map();
@@ -670,19 +671,39 @@ function createAgentRunService({
     return { args, model, levelId, moves, gems, view };
   }
 
-  function buildPrimeCommand(params) {
+  // Prime runs go through scripts/maze-prime-run.js, which runs the v1 taskset
+  // via `uv run eval` and then renders a replay video + move feed from the eval
+  // results (see that script). We fix examples/rollouts at 1 — a Prime run here
+  // is "one maze, make N moves, stop" — so the only knob is the turn budget
+  // (plus an optional vision/image-input mode for models that accept images).
+  function buildPrimeCommand(params, runDir) {
     const model = String(params.model_name || params.model || "").trim();
-    const n = Math.max(1, Math.min(50, Number(params.n) || 1));
-    const r = Math.max(1, Math.min(10, Number(params.r) || 1));
-    const maxTurns = Math.max(1, Math.min(200, Number(params.max_turns) || 8));
-    const argv = ["eval", "run", "mazebench"];
+    const maxTurns = Math.max(1, Math.min(500, Number(params.max_turns) || 20));
+    const vision = params.vision === true || params.vision === "true";
+    const wantVideo = !(params.video === false || params.video === "false");
+    const envDir = path.join(rootDir, "environments", "mazebench");
+
+    const argv = [primeRunnerScript, "--env-dir", envDir, "--out", runDir, "--max-turns", String(maxTurns)];
 
     if (model) {
-      argv.push("-m", model);
+      argv.push("--model", model);
     }
 
-    argv.push("-n", String(n), "-r", String(r), "-s", "--max-turns", String(maxTurns), "-d");
-    return { bin: "prime", argv, model, n, r, maxTurns };
+    if (vision) {
+      argv.push("--vision");
+    }
+
+    if (!wantVideo) {
+      argv.push("--no-video");
+    }
+
+    // A readable command string for the run page / logs (not the resolved path).
+    const display = ["node", "scripts/maze-prime-run.js", "--out", "<run>", "--max-turns", String(maxTurns)]
+      .concat(model ? ["--model", model] : [])
+      .concat(vision ? ["--vision"] : [])
+      .join(" ");
+
+    return { bin: process.execPath, argv, display, model, maxTurns, vision, video: wantVideo };
   }
 
   function launchRun(params = {}) {
@@ -699,7 +720,7 @@ function createAgentRunService({
 
     try {
       if (kind === "prime") {
-        const command = buildPrimeCommand(params);
+        const command = buildPrimeCommand(params, runDir);
 
         child = spawn(command.bin, command.argv, {
           cwd: rootDir,
@@ -713,15 +734,17 @@ function createAgentRunService({
           created_at: new Date().toISOString(),
           status: "running",
           pid: child.pid,
-          command: [command.bin, ...command.argv].join(" "),
+          command: command.display,
           model: "prime",
           model_name: command.model || "(prime default)",
           game_id: "maze",
-          game_title: "Maze (master)",
+          game_title: "Maze Bench Environment",
           level_id: "level_HxI",
           moves: command.maxTurns,
-          mode: "text",
-          note: "Prime Verifiers run — artifacts land under environments/mazebench/outputs/evals/."
+          mode: command.vision ? "vision" : "text",
+          vision: command.vision,
+          video: command.video,
+          note: "Prime Verifiers v1 eval (uv run eval). Progress, scores, and errors stream in the runner log; a replay video renders after the eval finishes."
         };
       } else {
         const game = normalizedGameForRun(params.game_id);

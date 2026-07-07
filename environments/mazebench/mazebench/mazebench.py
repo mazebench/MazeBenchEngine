@@ -994,8 +994,13 @@ class MazeBenchTask(vf.Task):
     yaw: int = DEFAULT_YAW
 
 
+# verifiers renamed the env-id type from `EnvId` to `ID` on main (both are the
+# same Annotated[str, id-validator]); use whichever the installed version has.
+_EnvId = getattr(vf, "EnvId", None) or getattr(vf, "ID", str)
+
+
 class MazeBenchConfig(vf.TasksetConfig):
-    id: vf.EnvId = "mazebench"
+    id: _EnvId = "mazebench"
     num_examples: int = 1
     level_ids: str | list[str] | None = None
     start_level_id: str = DEFAULT_START_LEVEL_ID

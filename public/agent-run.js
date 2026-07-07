@@ -2,6 +2,9 @@
   const initial = window.__AGENT_RUN__ || {};
   const runId = initial.id;
   const isVision = initial.mode === "vision";
+  // Prime Verifiers runs have no local maze board / frames / per-move reasoning;
+  // the page shows a log-centric view, so skip all maze-specific rendering.
+  const isPrime = initial.kind === "prime" || initial.model === "prime";
   const statusEl = document.getElementById("run-status");
   const boardEl = document.getElementById("run-board");
   const boardWrap = document.getElementById("run-board-wrap");
@@ -51,13 +54,21 @@
   }
 
   function renderStats(run) {
-    const chips = [
-      ["status", run.status],
-      ["moves", `${run.turns}/${run.moves}`],
-      ["gems", String(run.gem_count ?? 0)],
-      ["room", levelLabel(run.current_room)],
-      run.solved ? ["result", "SOLVED"] : null
-    ].filter(Boolean);
+    const chips = isPrime
+      ? [
+          ["status", run.status],
+          ["turn budget", String(run.moves ?? "")],
+          run.turns ? ["moves", String(run.turns)] : null,
+          run.turns ? ["gems", String(run.gem_count ?? 0)] : null,
+          run.solved ? ["result", "SOLVED"] : null
+        ].filter(Boolean)
+      : [
+          ["status", run.status],
+          ["moves", `${run.turns}/${run.moves}`],
+          ["gems", String(run.gem_count ?? 0)],
+          ["room", levelLabel(run.current_room)],
+          run.solved ? ["result", "SOLVED"] : null
+        ].filter(Boolean);
     document.getElementById("run-stats").innerHTML = chips
       .map(
         ([label, value]) =>
@@ -223,14 +234,25 @@
 
       describeRun(progress.run);
       renderStats(progress.run);
-      ingestActions(progress.actions || []);
-      ingestReasoning(progress.reasoning || []);
-      renderFeed();
 
-      if (isVision && progress.vision_frame_url) {
-        showImage(progress.vision_frame_url, state.afterTurn);
-      } else if (!isVision) {
-        maybeRenderTextFrame();
+      if (isPrime) {
+        // Prime has no live board; the move feed + replay video are built from
+        // the eval results once it finishes, so just ingest whatever is there.
+        ingestActions(progress.actions || []);
+        renderFeed();
+        updateReplay(progress.run, progress.replay_progress);
+      } else {
+        ingestActions(progress.actions || []);
+        ingestReasoning(progress.reasoning || []);
+        renderFeed();
+
+        if (isVision && progress.vision_frame_url) {
+          showImage(progress.vision_frame_url, state.afterTurn);
+        } else if (!isVision) {
+          maybeRenderTextFrame();
+        }
+
+        updateReplay(progress.run, progress.replay_progress);
       }
 
       if (progress.log_chunk) {
@@ -239,26 +261,42 @@
       }
       state.logOffset = progress.log_offset;
 
-      updateReplay(progress.run, progress.replay_progress);
-
       const running = progress.run.status === "running" || progress.run.status === "stopping";
-      const waitingForVideo = !running && progress.run.video && !progress.run.has_video;
+      // Prime renders its replay inside the same process, so the run stays
+      // "running" while the video builds; don't treat a terminal-without-video
+      // Prime run as still-rendering (the video step is best-effort there).
+      const waitingForVideo = !isPrime && !running && progress.run.video && !progress.run.has_video;
       if (running) {
-        setStatus(progress.run.status === "stopping" ? "Stopping…" : "Live — the agent is playing.");
+        if (progress.run.status === "stopping") {
+          setStatus("Stopping…");
+        } else if (isPrime) {
+          const rp = progress.replay_progress;
+          setStatus(
+            rp && rp.phase && rp.phase !== "done"
+              ? `Rendering replay video… ${rp.percent ?? 0}%`
+              : "Live — Prime's Verifiers eval is running."
+          );
+        } else {
+          setStatus("Live — the agent is playing.");
+        }
         state.timer = setTimeout(poll, 1500);
       } else if (waitingForVideo) {
         setStatus("Run finished — rendering the replay video…");
         state.timer = setTimeout(poll, 2000);
       } else {
         setStatus(
-          progress.run.status === "finished"
-            ? `Finished — ${progress.run.gem_count ?? 0} gems in ${progress.run.turns} moves${progress.run.solved ? " (solved!)" : ""}.`
-            : `Run ${progress.run.status}.`,
+          progress.run.status !== "finished"
+            ? `Run ${progress.run.status}.`
+            : isPrime
+              ? `Eval finished — ${progress.run.turns || 0} move${progress.run.turns === 1 ? "" : "s"}${
+                  progress.run.has_video ? ", replay video above" : ""
+                }; see the runner log for rewards and scores.`
+              : `Finished — ${progress.run.gem_count ?? 0} gems in ${progress.run.turns} moves${progress.run.solved ? " (solved!)" : ""}.`,
           progress.run.status === "failed"
         );
         // The text-mode image renders async and lags the board; keep polling
         // until it catches up to the final move so the two end up in sync.
-        if (!isVision && state.lastRenderedTurn < state.afterTurn) {
+        if (!isPrime && !isVision && state.lastRenderedTurn < state.afterTurn) {
           maybeRenderTextFrame();
           state.timer = setTimeout(poll, 1200);
         }
@@ -280,7 +318,7 @@
 
   // In vision mode the ASCII board is irrelevant (the agent only sees images),
   // so show just the image, centered.
-  if (isVision) {
+  if (!isPrime && isVision) {
     boardWrap.hidden = true;
     document.getElementById("run-live-grid").classList.add("is-image-only");
   }

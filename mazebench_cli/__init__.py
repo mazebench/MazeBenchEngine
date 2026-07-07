@@ -278,19 +278,21 @@ def run_prime(root: Path, words: list[str], pairs: dict[str, str], flags: list[s
         return _run(["prime", "env", "install", "mazebench"], root)
 
     if action == "eval":
-        _require("prime", "Install the Prime CLI: https://docs.primeintellect.ai")
+        # mazebench is a Verifiers v1 taskset — run it with the v1 `eval` CLI via
+        # uv (not `prime eval run`, the legacy env-module loader, which cannot
+        # load a v1 taskset). `--max-turns` is the per-rollout move budget.
+        _require("uv", "Install uv: https://docs.astral.sh/uv/")
         model = pairs.get("model", "openai/gpt-5-nano")
         cmd = [
-            "prime", "eval", "run", "mazebench",
+            "uv", "run", "eval", "mazebench",
             "-m", model,
             "-n", pairs.get("n", "1"),
             "-r", pairs.get("r", "1"),
-            "-s",
-            "--max-turns", pairs.get("max_turns", "8"),
-            "-d",
+            "--max-turns", pairs.get("max_turns", "20"),
+            "--rich", "false",
             *flags,
         ]
-        return _run(cmd, root)
+        return _run(cmd, env_dir)
 
     if action == "codex":
         _require("uv", "Install uv: https://docs.astral.sh/uv/")

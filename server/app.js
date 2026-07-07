@@ -247,7 +247,10 @@ function agentEnvironment(options = {}) {
     docker: docker.running,
     docker_installed: docker.installed,
     docker_running: docker.running,
-    prime: probe("prime")
+    // Prime v1 evals run via `uv run eval`; the `prime` CLI is only needed for
+    // the model catalog / login, so `uv` is what gates launching a Prime run.
+    prime: probe("prime"),
+    uv: probe("uv")
   };
 
   agentEnvironmentCache = { at: Date.now(), value };

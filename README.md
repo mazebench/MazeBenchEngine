@@ -369,11 +369,26 @@ Install the local environment from `./environments/mazebench`:
 prime env install mazebench
 ```
 
-Run a small eval:
+Run a small eval. MazeBench is a Verifiers **v1 taskset**, so run it with the
+v1 `eval` CLI via `uv` (from the environment directory) — **not**
+`prime eval run`, which is the legacy env-module loader and can't load a v1
+taskset:
 
 ```bash
-prime eval run mazebench -m openai/gpt-5-nano -n 1 -r 1 -s --max-turns 8 -d
+cd environments/mazebench
+uv run eval mazebench -m openai/gpt-5-nano -n 1 -r 1 --max-turns 20 --rich false
 ```
+
+`--max-turns` is the per-rollout move budget (how many moves the agent gets
+before the rollout stops), `-n` the number of examples, `-r` the rollouts per
+example. Results save under `environments/mazebench/outputs/`. Agent Mode on the
+website launches exactly this command for a Prime run.
+
+> **Note (verifiers is unpinned):** the environment depends on
+> `verifiers @ git+…@main`. Prime Intellect's Verifiers v1 is being finalized on
+> the `feat/nano-as-v1` branch; if a `main` snapshot ever breaks the env, pin
+> `verifiers` to that branch (or the v1 release tag once it lands) in
+> `environments/mazebench/pyproject.toml`.
 
 Use your own configured model after `-m`, or omit `-m` to use your Prime
 default. The terminal prints the run summary. MazeBench v1 stores replay

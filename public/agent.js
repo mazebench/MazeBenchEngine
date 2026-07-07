@@ -27,8 +27,8 @@
     {
       id: "prime",
       name: "Prime Intellect",
-      sub: "Verifiers evals via Prime Inference",
-      envKey: "prime",
+      sub: "Verifiers v1 eval (uv run eval)",
+      envKey: "uv",
       logo: '<img src="/logos/prime.png" alt="" loading="lazy">'
     }
   ];
@@ -569,7 +569,7 @@
     const env = data.environment || {};
     const found = [];
     const missing = [];
-    [["codex", "Codex CLI"], ["claude", "Claude Code"], ["prime", "Prime CLI"]].forEach(
+    [["codex", "Codex CLI"], ["claude", "Claude Code"], ["uv", "uv (Prime evals)"]].forEach(
       ([key, label]) => (env[key] ? found : missing).push(label)
     );
     // Docker has three states: ready, installed-but-stopped, and absent.
@@ -604,9 +604,9 @@
         ? {
             kind: "prime",
             model_name: resolvedModelName(),
-            n: Number(document.getElementById("run-prime-n").value) || 1,
-            r: Number(document.getElementById("run-prime-r").value) || 1,
-            max_turns: Number(document.getElementById("run-prime-turns").value) || 8
+            max_turns: Number(document.getElementById("run-prime-turns").value) || 20,
+            vision: document.getElementById("run-prime-vision").checked,
+            video: true
           }
         : {
             kind: "local",

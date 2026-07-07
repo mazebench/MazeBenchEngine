@@ -808,10 +808,17 @@ function createPageRenderer({
             </div>
             <div id="docker-action" class="docker-action" hidden></div>
           </div>
-          <div id="prime-settings" class="settings-row" hidden>
-            <label class="field field--narrow"><span>Examples (n)</span><input id="run-prime-n" type="number" min="1" max="50" value="1"></label>
-            <label class="field field--narrow"><span>Rollouts (r)</span><input id="run-prime-r" type="number" min="1" max="10" value="1"></label>
-            <label class="field field--narrow"><span>Max turns</span><input id="run-prime-turns" type="number" min="1" max="200" value="8"></label>
+          <div id="prime-settings" hidden>
+            <div class="settings-row">
+              <label class="field field--narrow"><span>Max turns</span><input id="run-prime-turns" type="number" min="1" max="200" value="20" inputmode="numeric"></label>
+            </div>
+            <div class="settings-row switches-row">
+              <label class="switch">
+                <input id="run-prime-vision" type="checkbox">
+                <span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span>
+                <span class="switch__label">Image inputs<small>send rendered PNGs — needs a vision model</small></span>
+              </label>
+            </div>
           </div>
 
           <div class="card-actions launch-row">
@@ -829,20 +836,27 @@ function createPageRenderer({
   }
 
   function renderAgentRunPage(run) {
-    return renderSitePage({
-      title: `Run ${run.id} — Maze Bench`,
-      main: `<div class="page-head run-head">
-          <div class="page-actions">
-            <h1 style="margin: 0">Agent Run</h1>
-            <button id="stop-run" class="button--coral" type="button" hidden>Stop Run</button>
+    const isPrime = run.kind === "prime" || run.model === "prime";
+    // Prime Verifiers plays the maze headlessly inside the eval, so there is no
+    // live board to stream. Instead we reuse the same replay + moves markup the
+    // local runner uses: maze-prime-run.js renders a replay video and a move
+    // feed from the eval results once it finishes, and the client fills them in.
+    const mazeSections = isPrime
+      ? `<section class="panel" id="run-replay-section" hidden>
+          <h2>Replay</h2>
+          <div id="run-replay-progress" class="replay-progress" hidden>
+            <div class="replay-progress__track"><div id="run-replay-bar" class="replay-progress__fill"></div></div>
+            <span id="run-replay-label" class="muted"></span>
           </div>
-          <h2 id="run-title" class="run-title"></h2>
-          <p id="run-meta" class="muted"></p>
-          <div id="run-stats" class="agent-stats"></div>
-          <p id="run-status" class="author-status" role="status" aria-live="polite"></p>
-        </div>
+          <video id="run-video" controls playsinline hidden style="max-width: 100%; border-radius: 9px"></video>
+        </section>
 
-        <section class="panel run-live">
+        <section class="panel">
+          <h2>Moves</h2>
+          <p class="muted">The agent plays inside Prime's Verifiers eval; its moves appear here once the eval finishes. Full progress, rewards, and scores stream in the runner log below.</p>
+          <div id="run-feed" class="agent-feed"></div>
+        </section>`
+      : `<section class="panel run-live">
           <h2>Live view</h2>
           <div id="run-live-grid" class="run-live__grid">
             <figure class="run-live__frame">
@@ -872,7 +886,22 @@ function createPageRenderer({
         <section class="panel">
           <h2>Moves &amp; reasoning</h2>
           <div id="run-feed" class="agent-feed"></div>
-        </section>
+        </section>`;
+
+    return renderSitePage({
+      title: `Run ${run.id} — Maze Bench`,
+      main: `<div class="page-head run-head">
+          <div class="page-actions">
+            <h1 style="margin: 0">Agent Run</h1>
+            <button id="stop-run" class="button--coral" type="button" hidden>Stop Run</button>
+          </div>
+          <h2 id="run-title" class="run-title"></h2>
+          <p id="run-meta" class="muted"></p>
+          <div id="run-stats" class="agent-stats"></div>
+          <p id="run-status" class="author-status" role="status" aria-live="polite"></p>
+        </div>
+
+        ${mazeSections}
 
         <section class="panel">
           <h2>Runner log</h2>
