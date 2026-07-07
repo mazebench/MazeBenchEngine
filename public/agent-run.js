@@ -47,6 +47,7 @@
       run.level_id ? `level ${levelLabel(run.level_id)}` : null,
       run.moves ? `${run.moves} move budget` : null,
       run.mode,
+      run.reasoning ? `reasoning ${run.reasoning}` : null,
       run.kind === "local" ? (run.container ? "container" : "host") : "prime verifiers",
       run.note || ""
     ].filter(Boolean);

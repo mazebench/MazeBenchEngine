@@ -22,7 +22,7 @@ const ROOT_DIR = path.resolve(__dirname, "..");
 const EXPORT_REPLAY = path.join(ROOT_DIR, "scripts", "maze-export-replay.js");
 
 function parseArgs(argv) {
-  const opts = { envDir: "", outDir: "", model: "", maxTurns: 20, vision: false, video: true };
+  const opts = { envDir: "", outDir: "", model: "", maxTurns: 20, vision: false, reasoning: "", video: true };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -33,6 +33,7 @@ function parseArgs(argv) {
     else if (arg === "--model") opts.model = next();
     else if (arg === "--max-turns") opts.maxTurns = Math.max(1, Math.min(500, Number(next()) || 20));
     else if (arg === "--vision") opts.vision = true;
+    else if (arg === "--reasoning") opts.reasoning = String(next() || "").trim();
     else if (arg === "--no-video") opts.video = false;
   }
 
@@ -70,6 +71,13 @@ function runEval(opts) {
 
   if (opts.vision) {
     argv.push("--taskset.observation-mode", "vision");
+  }
+
+  // Ask the model for reasoning tokens. OpenAI reasoning models and Claude
+  // (extended thinking) emit reasoning_content when this is set; models that
+  // don't support it ignore the knob. Without it, Claude returns no reasoning.
+  if (opts.reasoning) {
+    argv.push("--sampling.reasoning-effort", opts.reasoning);
   }
 
   console.log(`[mazebench] uv ${argv.join(" ")}`);

@@ -731,6 +731,11 @@ function createAgentRunService({
     const maxTurns = Math.max(1, Math.min(500, Number(params.max_turns) || 20));
     const vision = params.vision === true || params.vision === "true";
     const wantVideo = !(params.video === false || params.video === "false");
+    // Reasoning effort → --sampling.reasoning-effort. OpenAI reasoning models and
+    // Claude (extended thinking) honor it; others ignore it. "" = don't send one.
+    const reasoning = ["low", "medium", "high"].includes(String(params.reasoning))
+      ? String(params.reasoning)
+      : "";
     const envDir = path.join(rootDir, "environments", "mazebench");
 
     const argv = [primeRunnerScript, "--env-dir", envDir, "--out", runDir, "--max-turns", String(maxTurns)];
@@ -743,6 +748,10 @@ function createAgentRunService({
       argv.push("--vision");
     }
 
+    if (reasoning) {
+      argv.push("--reasoning", reasoning);
+    }
+
     if (!wantVideo) {
       argv.push("--no-video");
     }
@@ -751,9 +760,10 @@ function createAgentRunService({
     const display = ["node", "scripts/maze-prime-run.js", "--out", "<run>", "--max-turns", String(maxTurns)]
       .concat(model ? ["--model", model] : [])
       .concat(vision ? ["--vision"] : [])
+      .concat(reasoning ? ["--reasoning", reasoning] : [])
       .join(" ");
 
-    return { bin: process.execPath, argv, display, model, maxTurns, vision, video: wantVideo };
+    return { bin: process.execPath, argv, display, model, maxTurns, vision, reasoning, video: wantVideo };
   }
 
   function launchRun(params = {}) {
@@ -793,6 +803,7 @@ function createAgentRunService({
           moves: command.maxTurns,
           mode: command.vision ? "vision" : "text",
           vision: command.vision,
+          reasoning: command.reasoning,
           video: command.video,
           note: "Prime Verifiers v1 eval (uv run eval). Progress, scores, and errors stream in the runner log; a replay video renders after the eval finishes."
         };

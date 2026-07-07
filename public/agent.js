@@ -108,7 +108,10 @@
     state.provider = providerId;
     state.modelId = null;
     state.customModel = "";
-    state.reasoning = "";
+    // Codex/Claude default to the model's own reasoning; Prime models only emit
+    // reasoning when we ask for it (esp. Claude's extended thinking), so default
+    // Prime to a real effort level so the reasoning feed populates out of the box.
+    state.reasoning = providerId === "prime" ? "medium" : "";
     document.getElementById("run-codex-fast").checked = false;
 
     const isPrime = providerId === "prime";
@@ -228,7 +231,9 @@
       chip.addEventListener("click", () => {
         state.modelId = chip.dataset.modelId;
         if (state.modelId !== "__custom__") state.customModel = "";
-        state.reasoning = "";
+        // Codex reasoning levels are per-model, so reset on model change; Claude
+        // and Prime effort is provider-wide, so keep the current choice.
+        if (state.provider === "codex") state.reasoning = "";
         renderModels();
       });
     });
@@ -247,6 +252,13 @@
   // per model (from its cache); Claude Code's `--effort` accepts a fixed set.
   function reasoningOptions() {
     const catalog = state.catalogs[state.provider] || {};
+
+    if (state.provider === "prime") {
+      // Passed through to the eval as --sampling.reasoning-effort. OpenAI
+      // reasoning models and Claude (extended thinking) honor it; models that
+      // don't support reasoning simply ignore it. "" = off (no effort sent).
+      return { levels: ["low", "medium", "high"], defaultLevel: "" };
+    }
 
     if (state.provider === "claude") {
       return {
@@ -273,17 +285,20 @@
     const host = document.getElementById("reasoning-picker");
     const fastSwitch = document.getElementById("fast-switch");
 
-    if (state.provider !== "codex" && state.provider !== "claude") {
+    if (state.provider !== "codex" && state.provider !== "claude" && state.provider !== "prime") {
       row.hidden = true;
       return;
     }
 
     const model = selectedModel();
     const { levels, defaultLevel } = reasoningOptions();
+    // The "" chip means "no reasoning effort". For Codex/Claude that's the
+    // model's own default; for Prime it means reasoning is off entirely.
+    const offLabel = state.provider === "prime" ? "off" : defaultLevel ? `default (${defaultLevel})` : "default";
 
     row.hidden = false;
     host.innerHTML = [
-      { id: "", label: defaultLevel ? `default (${defaultLevel})` : "default" },
+      { id: "", label: offLabel },
       ...levels.map((level) => ({ id: level, label: level }))
     ]
       .map(
@@ -652,6 +667,7 @@
             model_name: resolvedModelName(),
             max_turns: Number(document.getElementById("run-prime-turns").value) || 20,
             vision: state.mode === "vision",
+            reasoning: state.reasoning,
             video: true
           }
         : {
