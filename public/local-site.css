@@ -1194,3 +1194,12 @@ body.play-body {
   border-top: 1px solid var(--line, rgba(124, 143, 255, 0.22));
   padding: 10px 12px 12px;
 }
+
+.switch.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.switch.is-disabled .switch__track {
+  cursor: not-allowed;
+}

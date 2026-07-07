@@ -51,10 +51,46 @@ const SERVABLE_RUN_FILES = new Set([
   "maze_replay.mp4"
 ]);
 
-function createAgentRunService({ ensureDirectory, getGame, buildWorlds, loadJson, rootDir, worldMaps }) {
+function createAgentRunService({
+  agentEnvironment,
+  ensureDirectory,
+  getGame,
+  buildWorlds,
+  loadJson,
+  rootDir,
+  worldMaps
+}) {
   const runsDir = path.join(rootDir, "outputs", "maze-local", "site");
   const runnerScript = path.join(rootDir, "scripts", "maze-agent-local.js");
   const liveChildren = new Map();
+
+  // Container mode needs Docker installed AND its daemon running. Prefer the
+  // shared (cached) environment probe; fall back to a direct check otherwise.
+  function dockerAvailable() {
+    if (typeof agentEnvironment === "function") {
+      return Boolean(agentEnvironment().docker);
+    }
+
+    if (spawnSync("sh", ["-c", "command -v docker"], { encoding: "utf8", env: enrichedPathEnv() }).status !== 0) {
+      return false;
+    }
+
+    const info = spawnSync("docker", ["info", "--format", "{{.ServerVersion}}"], {
+      encoding: "utf8",
+      env: enrichedPathEnv(),
+      timeout: 8000
+    });
+    const version = String(info.stdout || "").trim();
+    return info.status === 0 && version.length > 0 && version !== "<no value>";
+  }
+
+  function dockerInstalled() {
+    if (typeof agentEnvironment === "function") {
+      return Boolean(agentEnvironment().docker_installed);
+    }
+
+    return spawnSync("sh", ["-c", "command -v docker"], { encoding: "utf8", env: enrichedPathEnv() }).status === 0;
+  }
 
   function timestampSlug() {
     return new Date().toISOString().replace(/[:.]/g, "-").replace(/Z$/, "");
@@ -381,6 +417,17 @@ function createAgentRunService({ ensureDirectory, getGame, buildWorlds, loadJson
         ? Math.max(1, Math.min(1000, Number(params.gems) || 100))
         : Math.max(1, buildWorlds.countWorldGems(game) || 1);
     const view = VIEW_NAMES.includes(String(params.view)) ? String(params.view) : "top-diagonal";
+    const wantContainer = !(params.container === false || params.container === "false");
+
+    // Safety net for the UI toggle: container mode needs Docker installed AND
+    // its daemon running.
+    if (wantContainer && !dockerAvailable()) {
+      throw new Error(
+        dockerInstalled()
+          ? "Container mode needs the Docker daemon running. Start Docker, or turn off the Container toggle to run on the host sandbox."
+          : "Container mode needs Docker, which is not installed. Turn off the Container toggle to run on the host sandbox, or install Docker."
+      );
+    }
     const args = [
       `model=${model}`,
       `game=${game.id}`,

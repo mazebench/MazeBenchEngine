@@ -185,6 +185,7 @@ const buildWorlds = createLocalBuildWorldService({
 });
 
 const agentRuns = createAgentRunService({
+  agentEnvironment,
   buildWorlds,
   ensureDirectory,
   getGame,
@@ -201,13 +202,35 @@ const remote = createRemoteService({
   rootDir: ROOT_DIR
 });
 
-// Which agent/runtime CLIs are on PATH — shown on the Agent page so users know
-// what they can launch. Cached briefly; a page load should not probe 4 binaries
-// every time.
+// Which agent/runtime CLIs are usable — shown on the Agent page so users know
+// what they can launch. Cached briefly (15s: short enough that starting Docker
+// then reloading picks it up, long enough to keep page loads snappy).
 let agentEnvironmentCache = null;
 
+// A container run needs BOTH the docker binary AND a reachable daemon. Report
+// them separately so the UI can say "install Docker" vs "start Docker".
+function dockerState() {
+  const installed =
+    spawnSync("sh", ["-c", "command -v docker"], { encoding: "utf8", env: enrichedPathEnv() }).status === 0;
+
+  if (!installed) {
+    return { installed: false, running: false };
+  }
+
+  // `docker info` fails fast when the daemon is down; the format keeps it tiny.
+  const info = spawnSync("docker", ["info", "--format", "{{.ServerVersion}}"], {
+    encoding: "utf8",
+    env: enrichedPathEnv(),
+    timeout: 8000
+  });
+  const version = String(info.stdout || "").trim();
+  const running = info.status === 0 && version.length > 0 && version !== "<no value>";
+
+  return { installed: true, running };
+}
+
 function agentEnvironment() {
-  if (agentEnvironmentCache && Date.now() - agentEnvironmentCache.at < 60000) {
+  if (agentEnvironmentCache && Date.now() - agentEnvironmentCache.at < 15000) {
     return agentEnvironmentCache.value;
   }
 
@@ -216,10 +239,14 @@ function agentEnvironment() {
       encoding: "utf8",
       env: enrichedPathEnv()
     }).status === 0;
+  const docker = dockerState();
   const value = {
     codex: probe("codex"),
     claude: probe("claude"),
-    docker: probe("docker"),
+    // `docker` means "ready for a container run" — installed AND daemon up.
+    docker: docker.running,
+    docker_installed: docker.installed,
+    docker_running: docker.running,
     prime: probe("prime")
   };
 

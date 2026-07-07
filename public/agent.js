@@ -422,17 +422,58 @@
     });
   });
 
+  // Container mode requires Docker installed AND its daemon running. Otherwise
+  // force the toggle off and lock it so a run can never be launched that would
+  // immediately fail.
+  function syncContainerAvailability() {
+    const input = document.getElementById("run-container");
+    if (!input) return;
+    const label = input.closest(".switch");
+    const hint = label ? label.querySelector(".switch__label small") : null;
+    const env = data.environment || {};
+    const ready = Boolean(env.docker);
+
+    input.disabled = !ready;
+    if (label) label.classList.toggle("is-disabled", !ready);
+
+    if (ready) {
+      if (hint) hint.textContent = "isolated from your files";
+      if (label) label.removeAttribute("title");
+      return;
+    }
+
+    input.checked = false;
+    if (env.docker_installed) {
+      if (hint) hint.textContent = "needs Docker running — start Docker";
+      if (label) {
+        label.title =
+          "Docker is installed but its daemon isn't running. Start Docker, then reload. Until then, runs use the per-CLI host sandbox.";
+      }
+    } else {
+      if (hint) hint.textContent = "needs Docker — not installed";
+      if (label) {
+        label.title =
+          "Install Docker to isolate agent runs. Without it, runs use the per-CLI host sandbox instead.";
+      }
+    }
+  }
+
   function describeEnvironment() {
     const env = data.environment || {};
     const found = [];
     const missing = [];
-    [["codex", "Codex CLI"], ["claude", "Claude Code"], ["docker", "Docker"], ["prime", "Prime CLI"]].forEach(
+    [["codex", "Codex CLI"], ["claude", "Claude Code"], ["prime", "Prime CLI"]].forEach(
       ([key, label]) => (env[key] ? found : missing).push(label)
     );
+    // Docker has three states: ready, installed-but-stopped, and absent.
+    if (env.docker) found.push("Docker");
+    else if (env.docker_installed) missing.push("Docker (installed, daemon not running)");
+    else missing.push("Docker");
+
     const parts = [];
     if (found.length) parts.push(`Available: ${found.join(", ")}.`);
-    if (missing.length) parts.push(`Not on PATH: ${missing.join(", ")}.`);
-    if (!env.docker) parts.push("Without Docker, switch Container off to run on the host sandbox.");
+    if (missing.length) parts.push(`Not available: ${missing.join(", ")}.`);
+    if (!env.docker) parts.push("Without Docker, agents run on the per-CLI host sandbox.");
     document.getElementById("agent-environment").textContent = parts.join(" ");
   }
 
@@ -548,6 +589,7 @@
   const firstAvailable = PROVIDERS.find((provider) => data.environment?.[provider.envKey]);
   renderWorlds();
   renderLevelSummary();
+  syncContainerAvailability();
   describeEnvironment();
   refreshRuns();
   selectProvider((firstAvailable || PROVIDERS[0]).id);
