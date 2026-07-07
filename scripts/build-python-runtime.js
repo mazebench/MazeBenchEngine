@@ -112,8 +112,13 @@ function buildRuntime() {
     fs.copyFileSync(source, path.join(vendorDir, name));
   });
 
+  // Stamp the version PLUS a content hash of the staged runtime. The installed
+  // CLI refreshes its ~/.mazebench/site workspace whenever this stamp changes,
+  // so a code change *within* the same version (not just a version bump) still
+  // propagates — otherwise an edited server.js/public file would be ignored.
   const version = readPackageVersion();
-  fs.writeFileSync(path.join(RUNTIME_DIR, ".runtime-version"), `${version}\n`, "utf8");
+  const stamp = `${version}+${runtimeHash(RUNTIME_DIR)}`;
+  fs.writeFileSync(path.join(RUNTIME_DIR, ".runtime-version"), `${stamp}\n`, "utf8");
 
   let fileCount = 0;
   const walk = (dir) => {
@@ -124,7 +129,30 @@ function buildRuntime() {
   };
   walk(RUNTIME_DIR);
 
-  console.log(`build-python-runtime: staged ${fileCount} files at ${path.relative(ROOT_DIR, RUNTIME_DIR)} (version ${version})`);
+  console.log(`build-python-runtime: staged ${fileCount} files at ${path.relative(ROOT_DIR, RUNTIME_DIR)} (${stamp})`);
+}
+
+// A stable fingerprint of the staged runtime: sha256 over every file's path +
+// contents (sorted, excluding the stamp file itself), truncated for brevity.
+function runtimeHash(dir) {
+  const files = [];
+  const collect = (current) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const entryPath = path.join(current, entry.name);
+      if (entry.isDirectory()) collect(entryPath);
+      else files.push(entryPath);
+    }
+  };
+  collect(dir);
+
+  const hash = crypto.createHash("sha256");
+  for (const file of files.sort()) {
+    const relative = path.relative(dir, file);
+    if (relative === ".runtime-version") continue;
+    hash.update(relative);
+    hash.update(fs.readFileSync(file));
+  }
+  return hash.digest("hex").slice(0, 12);
 }
 
 if (require.main === module) {
