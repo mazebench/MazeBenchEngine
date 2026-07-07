@@ -155,7 +155,7 @@ function createPageRenderer({
           game: masterGame,
           title: masterGame.name,
           subtitle: "The world agents are benchmarked on",
-          badges: ["MASTER"],
+          badges: ["ENVIRONMENT"],
           stats: [[String(masterGame.worldMap?.levels?.length || 0), "levels"]],
           playUrl: `/play/maze/${encodeURIComponent(masterLevel)}`,
           actions: [
@@ -631,28 +631,33 @@ function createPageRenderer({
   }
 
   function renderBuildPage() {
-    const masterGame = getGame("maze");
-    const masterLevelId = masterGame ? defaultLevelIdForGame(masterGame) : null;
     const buildData = {
       apiUrl: "/api/build/worlds",
-      master: masterGame
-        ? {
-            id: masterGame.id,
-            name: masterGame.name,
-            level_count: masterGame.worldMap?.levels?.length || 0,
-            preview_urls: (masterGame.worldMap?.levels || [])
-              .map((level) => level.previewUrl)
-              .filter(Boolean)
-              .slice(0, 4),
-            play_url: `/play/maze/${encodeURIComponent(masterLevelId)}`,
-            author_url: `/author/maze/${encodeURIComponent(masterLevelId)}`,
-            world_map_url: "/world-map/maze",
-            flyover_url: `/flyover/maze/${encodeURIComponent(masterLevelId)}`
-          }
-        : null,
       worlds: buildWorlds.listLocalWorlds(),
       remote: remoteStatusSafe()
     };
+
+    const masterGame = getGame("maze");
+    const masterSection = masterGame
+      ? `<section class="panel" aria-label="Maze Bench Environment">
+          <h2>Maze Bench Environment</h2>
+          <p class="muted" style="margin-top: -4px">The master benchmark world. Edits here change the world agents are scored on.</p>
+          <div class="world-grid">${worldCard({
+            game: masterGame,
+            title: masterGame.name,
+            subtitle: "The world agents are benchmarked on",
+            badges: ["ENVIRONMENT"],
+            stats: [[String(masterGame.worldMap?.levels?.length || 0), "levels"]],
+            playUrl: `/play/maze/${encodeURIComponent(defaultLevelIdForGame(masterGame))}`,
+            actions: [
+              ["Edit Levels", `/author/maze/${encodeURIComponent(defaultLevelIdForGame(masterGame))}`],
+              ["World Map", "/world-map/maze"],
+              ["Play", `/play/maze/${encodeURIComponent(defaultLevelIdForGame(masterGame))}`],
+              ["Flyover", `/flyover/maze/${encodeURIComponent(defaultLevelIdForGame(masterGame))}`]
+            ]
+          })}</div>
+        </section>`
+      : "";
 
     return renderSitePage({
       title: "Build — Maze Bench",
@@ -661,10 +666,7 @@ function createPageRenderer({
           <p class="page-sub">Worlds live in this repo under <span class="mono">games/</span> and never publish anywhere unless you push them.</p>
           <p id="build-status" class="author-status" role="status" aria-live="polite"></p>
         </div>
-        <section class="panel" aria-label="Master world">
-          <h2>Master World</h2>
-          <div id="build-master" class="world-grid"></div>
-        </section>
+        ${masterSection}
         <section class="panel" aria-label="My worlds">
           <h2>My Worlds</h2>
           <div id="build-worlds" class="world-grid"></div>
@@ -678,14 +680,16 @@ function createPageRenderer({
             <button id="create-world" class="button--primary" type="button">Create World</button>
           </div>
           <div class="card-actions" style="margin-top: 12px">
-            <button id="copy-master" type="button">Copy Master World to Draft</button>
+            <button id="copy-master" type="button">Duplicate Maze Bench Environment</button>
             <button id="import-world" type="button">Import World JSON</button>
             <input id="import-world-file" type="file" accept="application/json,.json" hidden>
           </div>
-        </section>
-        <section id="build-remote-section" class="panel" aria-label="MazeBench account" hidden>
-          <h2>MazeBench.com Account</h2>
-          <div id="build-remote"></div>
+          <div class="online-pull" style="margin-top: 14px">
+            <label class="field"><span>Or download a published world from ${escapeHtml(
+              (remoteStatusSafe().origin || "https://dev.mazebench.com").replace(/^https?:\/\//, "")
+            )} by id to edit</span><input id="download-world-id" type="text" placeholder="mbw_…" autocomplete="off" spellcheck="false"></label>
+            <button id="download-world" type="button">Download &amp; Edit</button>
+          </div>
         </section>
         <script>window.__BUILD_DATA__ = ${serializeForScript(buildData)};</script>
         <script src="/build.js" defer></script>`
@@ -703,7 +707,7 @@ function createPageRenderer({
 
     return {
       id: game.id,
-      title: game.id === "maze" ? `${game.name} (master)` : game.name,
+      title: game.name,
       is_master: game.id === "maze",
       world_width: config.worldSize.width,
       world_height: config.worldSize.height,
@@ -802,6 +806,7 @@ function createPageRenderer({
                 <span class="switch__label">Full tool access<small>off = maze commands only</small></span>
               </label>
             </div>
+            <div id="docker-action" class="docker-action" hidden></div>
           </div>
           <div id="prime-settings" class="settings-row" hidden>
             <label class="field field--narrow"><span>Examples (n)</span><input id="run-prime-n" type="number" min="1" max="50" value="1"></label>
@@ -826,36 +831,50 @@ function createPageRenderer({
   function renderAgentRunPage(run) {
     return renderSitePage({
       title: `Run ${run.id} — Maze Bench`,
-      main: `<div class="page-head">
+      main: `<div class="page-head run-head">
           <div class="page-actions">
             <h1 style="margin: 0">Agent Run</h1>
             <button id="stop-run" class="button--coral" type="button" hidden>Stop Run</button>
           </div>
-          <p id="run-status" class="author-status" role="status" aria-live="polite"></p>
-        </div>
-        <section class="panel">
-          <h2 id="run-title"></h2>
+          <h2 id="run-title" class="run-title"></h2>
           <p id="run-meta" class="muted"></p>
           <div id="run-stats" class="agent-stats"></div>
+          <p id="run-status" class="author-status" role="status" aria-live="polite"></p>
+        </div>
+
+        <section class="panel run-live">
+          <h2>Live view</h2>
+          <div id="run-live-grid" class="run-live__grid">
+            <figure class="run-live__frame">
+              <img id="run-live-image" alt="Live maze view" hidden>
+              <div id="run-live-placeholder" class="run-live__placeholder">
+                <span class="inline-spinner" aria-hidden="true"></span>
+                <span>Waiting for the first frame…</span>
+              </div>
+            </figure>
+            <div id="run-board-wrap" class="run-live__board" hidden>
+              <div class="run-live__board-label">ASCII board (what the agent reads)</div>
+              <pre id="run-board" class="agent-board"></pre>
+            </div>
+          </div>
         </section>
-        <section class="panel" id="run-video-section" hidden>
+
+        <section class="panel" id="run-replay-section" hidden>
           <h2>Replay</h2>
-          <video id="run-video" controls playsinline style="max-width: 100%; border-radius: 9px"></video>
+          <div id="run-replay-progress" class="replay-progress" hidden>
+            <div class="replay-progress__track"><div id="run-replay-bar" class="replay-progress__fill"></div></div>
+            <span id="run-replay-label" class="muted"></span>
+          </div>
+          <video id="run-video" controls playsinline hidden style="max-width: 100%; border-radius: 9px"></video>
         </section>
+
         <section class="panel">
-          <h2>Board</h2>
-          <pre id="run-board" class="agent-board">(waiting for the first action&hellip;)</pre>
+          <h2>Moves &amp; reasoning</h2>
+          <div id="run-feed" class="agent-feed"></div>
         </section>
+
         <section class="panel">
-          <h2>Moves</h2>
-          <div id="run-turns" class="agent-turns"></div>
-        </section>
-        <section class="panel" id="run-reasoning-section" hidden>
-          <h2>Agent Reasoning</h2>
-          <div id="run-reasoning" class="agent-turns"></div>
-        </section>
-        <section class="panel">
-          <h2>Runner Log</h2>
+          <h2>Runner log</h2>
           <pre id="run-log" class="agent-log"></pre>
         </section>
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)};</script>

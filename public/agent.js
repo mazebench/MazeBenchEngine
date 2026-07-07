@@ -33,6 +33,9 @@
     }
   ];
 
+  const MODELS_LOADING_MARKUP =
+    '<div class="models-loading"><span class="inline-spinner" aria-hidden="true"></span><span class="muted">Loading models…</span></div>';
+
   const state = {
     provider: null,
     modelId: null,
@@ -127,7 +130,7 @@
     }
 
     const host = document.getElementById("model-picker");
-    host.innerHTML = '<span class="muted">Loading models…</span>';
+    host.innerHTML = MODELS_LOADING_MARKUP;
 
     try {
       const catalog = await api(`${data.modelsApiBase}/${encodeURIComponent(providerId)}`);
@@ -439,23 +442,107 @@
     if (ready) {
       if (hint) hint.textContent = "isolated from your files";
       if (label) label.removeAttribute("title");
+    } else {
+      input.checked = false;
+      if (env.docker_installed) {
+        if (hint) hint.textContent = "needs Docker running — start Docker";
+        if (label) {
+          label.title =
+            "Docker is installed but its daemon isn't running. Start it below, or run on the per-CLI host sandbox.";
+        }
+      } else {
+        if (hint) hint.textContent = "needs Docker — not installed";
+        if (label) {
+          label.title =
+            "Install Docker to isolate agent runs. Without it, runs use the per-CLI host sandbox instead.";
+        }
+      }
+    }
+
+    renderDockerAction();
+  }
+
+  let dockerStarting = false;
+
+  // Show a "Start Docker" button only when Docker is installed but stopped.
+  function renderDockerAction() {
+    const host = document.getElementById("docker-action");
+    if (!host) return;
+    const env = data.environment || {};
+
+    if (env.docker || !env.docker_installed) {
+      host.hidden = true;
+      host.innerHTML = "";
       return;
     }
 
-    input.checked = false;
-    if (env.docker_installed) {
-      if (hint) hint.textContent = "needs Docker running — start Docker";
-      if (label) {
-        label.title =
-          "Docker is installed but its daemon isn't running. Start Docker, then reload. Until then, runs use the per-CLI host sandbox.";
-      }
-    } else {
-      if (hint) hint.textContent = "needs Docker — not installed";
-      if (label) {
-        label.title =
-          "Install Docker to isolate agent runs. Without it, runs use the per-CLI host sandbox instead.";
-      }
+    host.hidden = false;
+    if (dockerStarting) {
+      host.innerHTML = `<span class="docker-action__spinner" aria-hidden="true"></span><span class="docker-action__text">Starting Docker… this can take up to a minute.</span>`;
+      return;
     }
+
+    host.innerHTML = `<button id="start-docker" type="button" class="button--sky">Start Docker</button>
+      <span class="docker-action__text muted">Docker is installed but not running.</span>`;
+    document.getElementById("start-docker").addEventListener("click", startDocker);
+  }
+
+  async function refreshEnvironment() {
+    const env = await api("/api/agent/environment");
+    data.environment = env;
+    return env;
+  }
+
+  async function startDocker() {
+    dockerStarting = true;
+    renderDockerAction();
+    setStatus("Starting Docker…");
+
+    let result;
+    try {
+      result = await api("/api/agent/docker/start", { method: "POST" });
+    } catch (error) {
+      dockerStarting = false;
+      renderDockerAction();
+      setStatus(error.message, true);
+      return;
+    }
+
+    if (!result.started) {
+      // The server could not auto-start it (e.g. Linux) — show its guidance.
+      dockerStarting = false;
+      renderDockerAction();
+      setStatus(result.message, true);
+      return;
+    }
+
+    // Poll the environment until the daemon is reachable (up to ~90s).
+    const deadline = Date.now() + 90000;
+    const poll = async () => {
+      try {
+        const env = await refreshEnvironment();
+        if (env.docker) {
+          dockerStarting = false;
+          const input = document.getElementById("run-container");
+          if (input) input.checked = true; // the user clearly wants containers
+          syncContainerAvailability();
+          describeEnvironment();
+          setStatus("Docker is running — container mode enabled.");
+          return;
+        }
+      } catch (error) {
+        /* transient — keep polling */
+      }
+
+      if (Date.now() < deadline) {
+        setTimeout(poll, 3000);
+      } else {
+        dockerStarting = false;
+        renderDockerAction();
+        setStatus("Docker is taking a while to start — reload once it's ready.", true);
+      }
+    };
+    setTimeout(poll, 3000);
   }
 
   function describeEnvironment() {

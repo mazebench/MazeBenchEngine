@@ -1203,3 +1203,242 @@ body.play-body {
 .switch.is-disabled .switch__track {
   cursor: not-allowed;
 }
+
+/* ---- Start Docker action ---- */
+
+.docker-action {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.docker-action__text {
+  font-size: 12.5px;
+}
+
+.docker-action__spinner {
+  animation: docker-spin 0.7s linear infinite;
+  border: 2px solid rgba(124, 143, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: var(--cyan, #34e7f0);
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+}
+
+@keyframes docker-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- inline loading spinner (model catalog fetch, etc.) ---- */
+
+.models-loading {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.inline-spinner {
+  animation: docker-spin 0.7s linear infinite;
+  border: 2px solid rgba(124, 143, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: var(--cyan, #34e7f0);
+  display: inline-block;
+  flex-shrink: 0;
+  height: 15px;
+  width: 15px;
+}
+
+/* ---- Agent run: live view ---- */
+
+.run-head .run-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 0.04em;
+  margin: 10px 0 2px;
+}
+
+.run-live__grid {
+  align-items: start;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.run-live__grid.is-image-only {
+  grid-template-columns: minmax(0, 640px);
+  justify-content: center;
+}
+
+@media (max-width: 780px) {
+  .run-live__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.run-live__frame {
+  align-items: center;
+  aspect-ratio: 1;
+  background: #05070f;
+  border: 1px solid var(--line, rgba(124, 143, 255, 0.22));
+  border-radius: var(--radius, 9px);
+  display: flex;
+  justify-content: center;
+  margin: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.run-live__frame img {
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
+.run-live__placeholder {
+  align-items: center;
+  color: var(--muted, #9aa3c7);
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  gap: 12px;
+  text-align: center;
+}
+
+.run-live__board {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.run-live__board-label {
+  color: var(--muted, #9aa3c7);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.run-live__board .agent-board {
+  flex: 1;
+  margin: 0;
+}
+
+/* ---- combined moves + reasoning feed ---- */
+
+.agent-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 440px;
+  overflow: auto;
+}
+
+.agent-feed__row {
+  background: var(--panel, rgba(16, 20, 44, 0.66));
+  border: 1px solid var(--line, rgba(124, 143, 255, 0.22));
+  border-left: 3px solid rgba(52, 231, 240, 0.55);
+  border-radius: var(--radius-sm, 6px);
+  padding: 8px 12px;
+}
+
+.agent-feed__head {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.agent-feed__num {
+  color: var(--muted, #9aa3c7);
+  font-weight: 700;
+  min-width: 20px;
+}
+
+.agent-feed__action {
+  color: var(--cyan, #34e7f0);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-weight: 700;
+}
+
+.agent-feed__meta {
+  color: var(--muted, #9aa3c7);
+  font-size: 12px;
+}
+
+.agent-feed__reasoning {
+  color: var(--ink, #e7eaff);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 6px 0 0;
+  opacity: 0.9;
+}
+
+/* ---- replay progress bar ---- */
+
+.replay-progress {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.replay-progress__track {
+  background: rgba(124, 143, 255, 0.16);
+  border: 1px solid var(--line, rgba(124, 143, 255, 0.22));
+  border-radius: 999px;
+  flex: 1;
+  height: 12px;
+  min-width: 200px;
+  overflow: hidden;
+}
+
+.replay-progress__fill {
+  background: linear-gradient(90deg, var(--cyan, #34e7f0), var(--violet, #8b7bff));
+  border-radius: 999px;
+  height: 100%;
+  transition: width 400ms ease;
+  width: 0;
+}
+
+/* ---- Agent page: centering + separation (task 3) ---- */
+
+.picker-label {
+  border-top: 1px solid var(--line, rgba(124, 143, 255, 0.18));
+  margin-top: 26px;
+  padding-top: 20px;
+}
+
+.picker-label:first-of-type {
+  border-top: 0;
+  margin-top: 6px;
+  padding-top: 0;
+}
+
+.provider-grid {
+  gap: 14px;
+  margin: 0 auto;
+  max-width: 640px;
+}
+
+.launch-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 24px;
+}
+
+.launch-row .button--primary {
+  min-width: 220px;
+  padding: 12px 28px;
+}
+
+#agent-environment {
+  margin-top: 14px;
+  text-align: center;
+}

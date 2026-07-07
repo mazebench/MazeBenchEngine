@@ -406,12 +406,15 @@ function distillClaudeEvents(raw) {
   return { entries, transcript: transcript.join("\n\n"), finalMessage };
 }
 
-function writeReasoningArtifacts(config, raw, distilled) {
+function writeReasoningArtifacts(config, raw, distilled, options = {}) {
   try {
-    fs.writeFileSync(
-      path.join(config.outDir, "agent-events.jsonl"),
-      raw.endsWith("\n") ? raw : `${raw}\n`
-    );
+    // When the caller already streamed agent-events.jsonl live, don't rewrite it.
+    if (!options.skipEvents) {
+      fs.writeFileSync(
+        path.join(config.outDir, "agent-events.jsonl"),
+        raw.endsWith("\n") ? raw : `${raw}\n`
+      );
+    }
     const { entries, transcript, finalMessage } = distilled;
     fs.writeFileSync(path.join(config.outDir, "reasoning.json"), `${JSON.stringify(entries, null, 2)}\n`);
     fs.writeFileSync(
@@ -451,20 +454,35 @@ function runAgent(config, prompt) {
   );
 
   // Both agents emit a structured JSONL event stream on stdout (codex --json /
-  // claude --output-format stream-json). Capture it for the reasoning log; the
-  // human banner/progress stays on stderr (inherited), so the terminal is live.
+  // claude --output-format stream-json). Stream it to agent-events.jsonl AS IT
+  // ARRIVES so the web UI can distill live per-move reasoning while the agent is
+  // still playing; the human banner/progress stays on stderr (inherited).
   const distill = config.model === "codex" ? distillCodexEvents : distillClaudeEvents;
-  const result = spawnSync(bin, argv, {
-    cwd: ROOT_DIR,
-    stdio: ["ignore", "pipe", "inherit"],
-    maxBuffer: 256 * 1024 * 1024
+  const eventsStream = fs.createWriteStream(path.join(config.outDir, "agent-events.jsonl"), { flags: "w" });
+
+  return new Promise((resolve) => {
+    const child = spawn(bin, argv, { cwd: ROOT_DIR, stdio: ["ignore", "pipe", "inherit"] });
+    let raw = "";
+
+    child.stdout.on("data", (chunk) => {
+      raw += chunk.toString();
+      eventsStream.write(chunk);
+    });
+    child.on("error", (error) => {
+      eventsStream.end();
+      console.error(error instanceof Error ? error.message : String(error));
+      resolve();
+    });
+    child.on("close", (code) => {
+      eventsStream.end(() => {
+        if (raw.trim()) writeReasoningArtifacts(config, raw, distill(raw), { skipEvents: true });
+        if (code !== 0) {
+          console.warn(`\n(agent exited with status ${code}; continuing to export whatever it played)`);
+        }
+        resolve();
+      });
+    });
   });
-  if (result.error) throw result.error;
-  const raw = result.stdout ? result.stdout.toString() : "";
-  if (raw.trim()) writeReasoningArtifacts(config, raw, distill(raw));
-  if (result.status !== 0) {
-    console.warn(`\n(agent exited with status ${result.status}; continuing to export whatever it played)`);
-  }
 }
 
 function ensureScorecard(config) {
@@ -984,7 +1002,7 @@ async function main() {
     return;
   }
 
-  runAgent(config, prompt);
+  await runAgent(config, prompt);
 
   const finalized = ensureScorecard(config);
   if (!finalized) {
@@ -993,6 +1011,19 @@ async function main() {
         "start command. Nothing to export."
     );
     process.exit(1);
+  }
+
+  // Signal the rendering phase so the web UI can show a replay progress bar
+  // (maze-export-replay.js updates replay-progress.json as it works).
+  if (config.video) {
+    try {
+      fs.writeFileSync(
+        path.join(config.outDir, "replay-progress.json"),
+        `${JSON.stringify({ phase: "starting", percent: 0 })}\n`
+      );
+    } catch (_error) {
+      /* best effort */
+    }
   }
 
   exportReplay(config);

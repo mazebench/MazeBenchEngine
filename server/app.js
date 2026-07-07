@@ -229,8 +229,8 @@ function dockerState() {
   return { installed: true, running };
 }
 
-function agentEnvironment() {
-  if (agentEnvironmentCache && Date.now() - agentEnvironmentCache.at < 15000) {
+function agentEnvironment(options = {}) {
+  if (!options.fresh && agentEnvironmentCache && Date.now() - agentEnvironmentCache.at < 15000) {
     return agentEnvironmentCache.value;
   }
 

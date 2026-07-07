@@ -3,7 +3,11 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
-const { loadCodexModels } = require("../scripts/maze-agent-local");
+const {
+  distillClaudeEvents,
+  distillCodexEvents,
+  loadCodexModels
+} = require("../scripts/maze-agent-local");
 
 // GUI-launched servers (editors, preview harnesses) often get a minimal PATH
 // that misses the dirs where codex/claude/docker/prime live. Enrich the PATH
@@ -62,7 +66,9 @@ function createAgentRunService({
 }) {
   const runsDir = path.join(rootDir, "outputs", "maze-local", "site");
   const runnerScript = path.join(rootDir, "scripts", "maze-agent-local.js");
+  const renderFrameScript = path.join(rootDir, "scripts", "maze-render-frame.js");
   const liveChildren = new Map();
+  const liveFrameLocks = new Map();
 
   // Container mode needs Docker installed AND its daemon running. Prefer the
   // shared (cached) environment probe; fall back to a direct check otherwise.
@@ -90,6 +96,48 @@ function createAgentRunService({
     }
 
     return spawnSync("sh", ["-c", "command -v docker"], { encoding: "utf8", env: enrichedPathEnv() }).status === 0;
+  }
+
+  function getEnvironment(options = {}) {
+    return typeof agentEnvironment === "function" ? agentEnvironment(options) : {};
+  }
+
+  // Launch the Docker daemon when it is installed but stopped. The daemon takes
+  // ~30-60s to become reachable, so this only kicks off the launch; the client
+  // polls the environment until docker_running flips true.
+  function startDocker() {
+    if (dockerAvailable()) {
+      return { started: true, running: true, message: "Docker is already running." };
+    }
+
+    if (!dockerInstalled()) {
+      throw new Error("Docker is not installed.");
+    }
+
+    const spawnDetached = (bin, args) => {
+      const child = spawn(bin, args, { detached: true, stdio: "ignore", env: enrichedPathEnv() });
+      child.on("error", () => {});
+      child.unref();
+    };
+
+    if (process.platform === "darwin") {
+      const app = process.env.MAZEBENCH_DOCKER_APP || "Docker";
+      spawnDetached("open", ["-a", app]);
+      return { started: true, running: false, message: `Starting ${app}… this can take up to a minute.` };
+    }
+
+    if (process.platform === "win32") {
+      spawnDetached("cmd", ["/c", "start", "", "Docker Desktop"]);
+      return { started: true, running: false, message: "Starting Docker Desktop… this can take up to a minute." };
+    }
+
+    // Linux: the daemon is usually a privileged system service we should not
+    // guess at (systemctl needs sudo; Docker Desktop is a user service).
+    return {
+      started: false,
+      running: false,
+      message: "Start Docker manually (e.g. `systemctl start docker` or launch Docker Desktop), then reload."
+    };
   }
 
   function timestampSlug() {
@@ -244,6 +292,157 @@ function createAgentRunService({
       .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
   }
 
+  // Per-move reasoning, live. reasoning.json exists only once the run finishes;
+  // while it runs we distill the streamed agent-events.jsonl on the fly so the
+  // web UI shows each move's thoughts as they arrive.
+  function readReasoning(runId, model) {
+    const runDir = runDirFor(runId);
+    const finalPath = path.join(runDir, "reasoning.json");
+
+    if (fs.existsSync(finalPath)) {
+      return loadJson(finalPath, []);
+    }
+
+    const eventsPath = path.join(runDir, "agent-events.jsonl");
+
+    if (!fs.existsSync(eventsPath)) {
+      return [];
+    }
+
+    try {
+      const raw = fs.readFileSync(eventsPath, "utf8");
+      const distilled = model === "claude" ? distillClaudeEvents(raw) : distillCodexEvents(raw);
+      return distilled.entries || [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  // The rendered image the human watches: in vision mode the agent's own frames
+  // (frames/frame-NNN.png) already exist; in text mode the run page asks the
+  // frame endpoint to render one on demand.
+  function latestVisionFrame(runId) {
+    const framesDir = path.join(runDirFor(runId), "frames");
+
+    if (!fs.existsSync(framesDir)) {
+      return null;
+    }
+
+    const frames = fs
+      .readdirSync(framesDir)
+      .filter((name) => /^frame-\d+\.png$/.test(name))
+      .sort();
+    const latest = frames[frames.length - 1];
+    return latest ? `/agent-runs/${encodeURIComponent(runId)}/files/frames/${latest}` : null;
+  }
+
+  function readReplayProgress(runId) {
+    return loadJson(path.join(runDirFor(runId), "replay-progress.json"), null);
+  }
+
+  function canonicalActionText(message) {
+    if (!message || typeof message !== "object") {
+      return "";
+    }
+
+    if (message.command === "move") return String(message.direction || "");
+    if (message.command === "rotate_camera") return `rotate camera ${message.direction}`;
+    if (message.command === "goto_level") return `go to level ${message.x} ${message.y}`;
+    if (message.command === "reset_level") return "reset";
+    return String(message.command || "");
+  }
+
+  // Render a maze image for the human watching a text-mode run (vision runs
+  // already have real frames). Replays the first `turn` actions through the same
+  // headless renderer the vision taskset uses, caches the PNG, and returns its
+  // url. One render per run at a time — booting a browser is heavy.
+  async function renderLiveFrame(runId, turn) {
+    const runDir = runDirFor(runId);
+    const framesDir = path.join(runDir, "frames");
+    const fileName = `live-${String(turn).padStart(3, "0")}.png`;
+    const target = path.join(framesDir, fileName);
+    const url = `/agent-runs/${encodeURIComponent(runId)}/files/frames/${fileName}`;
+
+    if (fs.existsSync(target)) {
+      return { url, cached: true };
+    }
+
+    if (liveFrameLocks.has(runId)) {
+      return { url: null, pending: true };
+    }
+
+    const session = loadJson(path.join(runDir, "session.json"), null);
+
+    if (!session) {
+      return { url: null, error: "The run has not started playing yet." };
+    }
+
+    const actions = (session.actions || [])
+      .slice(0, Number(turn) || 0)
+      .map((action) => canonicalActionText(action.message))
+      .filter(Boolean);
+    const payload = {
+      actions,
+      draft: true,
+      fast: true,
+      gameId: session.gameId || "maze",
+      levelId: session.levelId || "level_HxI",
+      width: 640,
+      height: 640,
+      yaw: session.yaw || 0
+    };
+
+    const lock = new Promise((resolve) => {
+      const child = spawn(process.execPath, [renderFrameScript], {
+        cwd: rootDir,
+        env: enrichedPathEnv()
+      });
+      let out = "";
+      let err = "";
+
+      child.stdout.on("data", (chunk) => {
+        out += chunk.toString();
+      });
+      child.stderr.on("data", (chunk) => {
+        err += chunk.toString();
+      });
+      child.on("error", () => resolve({ url: null, error: "Could not start the frame renderer." }));
+      child.on("close", (code) => {
+        if (code !== 0) {
+          resolve({ url: null, error: err.trim().split("\n")[0] || "The frame renderer failed." });
+          return;
+        }
+
+        try {
+          const parsed = JSON.parse(out);
+          const dataUrl = String(parsed.data_url || "");
+          const prefix = "data:image/png;base64,";
+
+          if (!dataUrl.startsWith(prefix)) {
+            resolve({ url: null, error: "The renderer returned no image." });
+            return;
+          }
+
+          fs.mkdirSync(framesDir, { recursive: true });
+          fs.writeFileSync(target, Buffer.from(dataUrl.slice(prefix.length), "base64"));
+          resolve({ url });
+        } catch (error) {
+          resolve({ url: null, error: "The renderer returned an unreadable frame." });
+        }
+      });
+      child.stdin.write(JSON.stringify(payload));
+      child.stdin.end();
+    });
+
+    liveFrameLocks.set(runId, lock);
+
+    try {
+      return await lock;
+    } finally {
+      liveFrameLocks.delete(runId);
+    }
+  }
+
   function getRunProgress(runId, { afterTurn = 0, logOffset = 0 } = {}) {
     const summary = summarizeRun(runId);
 
@@ -252,18 +451,15 @@ function createAgentRunService({
     }
 
     const log = readLogChunk(runId, logOffset);
-    const runDir = runDirFor(runId);
-    const reasoning =
-      summary.status !== "running" && fs.existsSync(path.join(runDir, "reasoning.json"))
-        ? loadJson(path.join(runDir, "reasoning.json"), [])
-        : null;
 
     return {
       run: summary,
       actions: readActions(runId, Number(afterTurn) || 0),
       log_chunk: log.chunk,
       log_offset: log.offset,
-      reasoning
+      reasoning: readReasoning(runId, summary.model),
+      vision_frame_url: summary.mode === "vision" ? latestVisionFrame(runId) : null,
+      replay_progress: summary.has_video ? { phase: "done", percent: 100 } : readReplayProgress(runId)
     };
   }
 
@@ -298,14 +494,19 @@ function createAgentRunService({
   }
 
   function claudeModelCatalog() {
+    // Claude Code publishes no machine-readable catalog (unlike Codex's
+    // ~/.codex/models_cache.json), so these are the tier aliases its `--model`
+    // flag accepts — each resolves to the latest model in that tier. Any full
+    // model id also works via the Custom… box. Ordered strongest-first.
     return {
       models: [
-        { id: "opus", label: "Opus", description: "Most capable" },
+        { id: "fable", label: "Fable", description: "Most capable — Claude 5 / Mythos tier" },
+        { id: "opus", label: "Opus", description: "High capability" },
         { id: "sonnet", label: "Sonnet", description: "Balanced speed and smarts" },
         { id: "haiku", label: "Haiku", description: "Fastest" }
       ],
-      default_model_id: "opus",
-      note: ""
+      default_model_id: "fable",
+      note: "Aliases — each maps to the latest model in its tier. Claude Code has no reasoning-effort setting, so there's nothing to choose there. Use Custom… for a full model id."
     };
   }
 
@@ -610,7 +811,7 @@ function createAgentRunService({
 
   function resolveRunFilePath(runId, fileName) {
     const runDir = runDirFor(runId);
-    const isFrame = /^frames\/frame-\d+\.png$/.test(fileName);
+    const isFrame = /^frames\/(frame|live)-\d+\.png$/.test(fileName);
 
     if (!SERVABLE_RUN_FILES.has(fileName) && !isFrame) {
       return null;
@@ -621,11 +822,14 @@ function createAgentRunService({
   }
 
   return {
+    getEnvironment,
     getRunProgress,
     launchRun,
     listProviderModels,
     listRuns,
+    renderLiveFrame,
     resolveRunFilePath,
+    startDocker,
     stopRun,
     summarizeRun
   };

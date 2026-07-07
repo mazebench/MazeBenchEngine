@@ -60,6 +60,7 @@ function pageHead({ title, description = "", extraHeadHtml = "" } = {}) {
 }
 
 function accountActionsHtml(remoteStatus) {
+  // Only surface the account icon once connected; no "Connect" prompt when not.
   if (remoteStatus?.connected) {
     const name =
       remoteStatus.user?.name || remoteStatus.user?.display_name || remoteStatus.user?.mazebench_user_id || "Account";
@@ -68,7 +69,7 @@ function accountActionsHtml(remoteStatus) {
     )}">${ACCOUNT_ICON_SVG}</a>`;
   }
 
-  return `<a class="nav-link" href="/build" title="Connect your mazebench.com account in Build Mode">Connect</a>`;
+  return "";
 }
 
 function topbar({ rightHtml = "", extraNavHtml = "", extraHtml = "" } = {}) {

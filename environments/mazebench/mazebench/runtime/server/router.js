@@ -125,6 +125,28 @@ function createRequestRouter({
       return;
     }
 
+    if (segments.length === 3 && segments[0] === "api" && segments[1] === "agent" && segments[2] === "environment") {
+      if (request.method !== "GET") {
+        response.writeHead(405, { Allow: "GET" });
+        response.end();
+        return;
+      }
+
+      sendJson(response, 200, agentRuns.getEnvironment({ fresh: true }));
+      return;
+    }
+
+    if (segments.length === 4 && segments[0] === "api" && segments[1] === "agent" && segments[2] === "docker" && segments[3] === "start") {
+      if (request.method !== "POST") {
+        response.writeHead(405, { Allow: "POST" });
+        response.end();
+        return;
+      }
+
+      sendJson(response, 200, agentRuns.startDocker());
+      return;
+    }
+
     if (segments.length === 3 && segments[0] === "api" && segments[1] === "agent" && segments[2] === "runs") {
       if (request.method === "GET") {
         sendJson(response, 200, { runs: agentRuns.listRuns() });
@@ -163,6 +185,12 @@ function createRequestRouter({
 
       if (segments[4] === "stop" && request.method === "POST") {
         sendJson(response, 200, { run: agentRuns.stopRun(runId) });
+        return;
+      }
+
+      if (segments[4] === "frame" && request.method === "GET") {
+        const turn = Math.max(0, Number(url.searchParams.get("turn")) || 0);
+        sendJson(response, 200, await agentRuns.renderLiveFrame(runId, turn));
         return;
       }
 

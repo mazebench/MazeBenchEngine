@@ -817,13 +817,17 @@ function createMazeLevelService({
 
     const levelFiles = listTopLevelFiles(levelsDir);
     const draftMeta = loadJson(path.join(gameDir, "draft.json"), null);
+    // The master maze IS the benchmark world; name it accordingly everywhere.
+    const name =
+      gameId === "maze"
+        ? "Maze Bench Environment"
+        : typeof draftMeta?.title === "string" && draftMeta.title.trim()
+          ? draftMeta.title.trim()
+          : titleCase(gameId);
     const baseGame = {
       id: gameId,
       levelFiles,
-      name:
-        typeof draftMeta?.title === "string" && draftMeta.title.trim()
-          ? draftMeta.title.trim()
-          : titleCase(gameId),
+      name,
       draft: draftMeta || null,
       player: fs.existsSync(path.join(gameDir, "player.py")) ? "Python Player" : "Unknown Player",
       parser: loadJson(parserPath, {}),

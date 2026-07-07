@@ -831,7 +831,23 @@ function humanBytes(bytes) {
   return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
-function createProgressReporter({ estimateBytes = 0, label, total, unit = "frames" }) {
+// Set by renderReplayVideo so progress reporters can publish a machine-readable
+// percent the web UI polls for a replay progress bar.
+let replayProgressFile = null;
+
+function writeReplayProgress(payload) {
+  if (!replayProgressFile) {
+    return;
+  }
+
+  try {
+    fs.writeFileSync(replayProgressFile, `${JSON.stringify(payload)}\n`);
+  } catch (_error) {
+    /* best effort — the bar just won't update */
+  }
+}
+
+function createProgressReporter({ estimateBytes = 0, label, total, unit = "frames", phase = "" }) {
   const startedAtMs = Date.now();
   const tty = Boolean(process.stdout.isTTY);
   const safeTotal = Math.max(1, Number(total) || 1);
@@ -871,6 +887,15 @@ function createProgressReporter({ estimateBytes = 0, label, total, unit = "frame
     } else {
       console.log(line);
     }
+
+    writeReplayProgress({
+      phase: phase || label,
+      percent: Math.round(percent * 100),
+      current: Math.round(current),
+      total: Math.round(safeTotal),
+      unit,
+      eta_ms: Number.isFinite(etaMs) ? Math.round(etaMs) : null
+    });
 
     lastWriteMs = now;
   }
@@ -967,6 +992,7 @@ async function encodeVideo(ffmpegArgs, { durationSeconds, estimateBytes }) {
   const progress = createProgressReporter({
     estimateBytes,
     label: "Encoding video",
+    phase: "encoding",
     total: Math.max(0.1, durationSeconds),
     unit: "seconds"
   });
@@ -1020,6 +1046,9 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
   if (ffmpegCheck.error || ffmpegCheck.status !== 0) {
     throw new Error("ffmpeg is required to render maze_replay video");
   }
+
+  replayProgressFile = path.join(outDir, "replay-progress.json");
+  writeReplayProgress({ phase: "starting", percent: 0 });
 
   const { chromium } = await import("playwright-core");
   const server = await startServer();
@@ -1286,6 +1315,7 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
     captureProgress = createProgressReporter({
       estimateBytes: estimatedBytes,
       label: "Capturing replay frames",
+      phase: "capturing",
       total: estimatedFrames
     });
     captureProgress.render(0, { force: true });
@@ -1414,6 +1444,7 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
     fs.rmSync(framesDir, { force: true, recursive: true });
   }
 
+  writeReplayProgress({ phase: "done", percent: 100 });
   return { videoPath };
 }
 
