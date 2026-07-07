@@ -1522,29 +1522,11 @@
       return;
     }
     const gemsByLevel = { ...meta.gemsByLevel, [state.levelId]: currentLevelGemCount() };
-    const roomIds = new Set(Object.keys(meta.gemsByLevel));
-    // Fresh rooms only count as built once they have actually been saved.
-    if (state.exists) {
-      roomIds.add(state.levelId);
-    }
     const totalGems = Object.values(gemsByLevel).reduce((sum, value) => sum + (value || 0), 0);
     sizeEl.textContent = meta.width + " × " + meta.height + " rooms";
-    const roomsEl = document.getElementById("world-stat-rooms");
-    if (roomsEl) {
-      roomsEl.textContent = roomIds.size + " / " + meta.width * meta.height;
-    }
     const gemsEl = document.getElementById("world-stat-gems");
     if (gemsEl) {
       gemsEl.textContent = String(totalGems);
-    }
-    const statusEl = document.getElementById("world-stat-status");
-    if (statusEl) {
-      statusEl.textContent =
-        meta.status === "published"
-          ? meta.reviewStatus === "approved"
-            ? "Published v" + (meta.publishVersion || 1)
-            : "Published (in review)"
-          : "Draft";
     }
     const updatedEl = document.getElementById("world-stat-updated");
     if (updatedEl) {
@@ -4114,6 +4096,7 @@
       if (authorData.worldMeta) {
         authorData.worldMeta.gemsByLevel[state.levelId] = currentLevelGemCount();
         authorData.worldMeta.savedThisSession = true;
+        authorData.worldMeta.walkthroughVerified = false;
       }
       if (state.solverSolutionCellsKey !== serializeCells()) {
         clearSolverSolution();
@@ -5108,8 +5091,7 @@
       return;
     }
 
-    // B toggles the toolbox (E belongs to the camera: Q/E zoom, W/S tilt,
-    // A/D rotate — WASD is handled by the renderer's own camera bindings).
+    // B toggles the toolbox; nearby camera keys stay with the renderer.
     if (key === "b") {
       event.preventDefault();
       setInventoryOpen(!isInventoryOpen());
@@ -5496,16 +5478,6 @@
       });
     }
 
-    const verifiedStat = document.getElementById("world-stat-verified");
-    const syncVerifiedStat = () => {
-      if (!verifiedStat || !meta) {
-        return;
-      }
-      verifiedStat.textContent = meta.walkthroughVerified ? "Verified ✓" : "Required";
-      verifiedStat.style.color = meta.walkthroughVerified ? "var(--green)" : "var(--muted)";
-    };
-    syncVerifiedStat();
-
     // Details: the starting room the world boots into. Saved immediately,
     // like renames; the server validates the id against saved rooms.
     const startSelect = document.getElementById("world-start-select");
@@ -5542,7 +5514,6 @@
           }
           meta.startLevelId = payload.world?.editor_state?.start_level_id || startLevelId;
           meta.walkthroughVerified = payload.world?.walkthrough_verified === true;
-          syncVerifiedStat();
           setStatus("Starting room set to " + meta.startLevelId.replace("level_", "") + ".", "success");
         } catch (error) {
           startSelect.value = meta.startLevelId || "";
@@ -5584,7 +5555,7 @@
           roomsMissingPlayer.push(level.id);
         }
       });
-      const verified = meta?.walkthroughVerified === true;
+      const verified = false;
       return {
         ok: totalGems > 0 && roomsMissingPlayer.length === 0 && verified,
         roomsMissingPlayer,

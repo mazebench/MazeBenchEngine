@@ -4727,6 +4727,46 @@
         const gridX = Math.floor((groundPoint.x - renderOffsetX()) / unit);
         const gridY = Math.floor((groundPoint.z - renderOffsetZ()) / unit);
 
+        // Editor world view: a tap that lands on a NEIGHBOR room resolves to
+        // a level-switch pick. The author page maps the room delta to that
+        // room's level id and switches editing to it.
+        if (
+          app.editorWorldView === true &&
+          !renderIsInsideBoard(gridX, gridY)
+        ) {
+          const roomWidth = Math.max(1, Number(app.state?.width) || 16) * unit;
+          const roomHeight = Math.max(1, Number(app.state?.height) || 16) * unit;
+          const roomDx = Math.floor((groundPoint.x - renderOffsetX()) / roomWidth);
+          const roomDy = Math.floor((groundPoint.z - renderOffsetZ()) / roomHeight);
+
+          if (roomDx !== 0 || roomDy !== 0) {
+            const left = renderOffsetX() + roomDx * roomWidth;
+            const top = renderOffsetZ() + roomDy * roomHeight;
+
+            return {
+              bottomY: -floorThickness,
+              bounds: {
+                left,
+                right: left + roomWidth,
+                top,
+                bottom: top + roomHeight
+              },
+              dx: roomDx,
+              dy: roomDy,
+              face: "top",
+              kind: "levelSwitch",
+              levelId: null,
+              paintLayer: null,
+              paintX: gridX,
+              paintY: gridY,
+              sourceLayer: 0,
+              sourceX: gridX,
+              sourceY: gridY,
+              topY: 0
+            };
+          }
+        }
+
         if (renderIsInsideBoard(gridX, gridY)) {
           const left = gridX * unit + renderOffsetX();
           const top = gridY * unit + renderOffsetZ();
