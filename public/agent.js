@@ -122,6 +122,7 @@
     renderProviders();
     renderModels();
     loadModels(providerId);
+    syncBatch();
   }
 
   // ---- model picker ---------------------------------------------------------
@@ -685,25 +686,56 @@
             tools: document.getElementById("run-tools").checked
           };
 
+    body.count = Math.max(1, Math.min(8, Math.floor(Number(document.getElementById("run-batch").value) || 1)));
+
     try {
-      setStatus("Launching…");
+      setStatus(body.count > 1 ? `Launching ${body.count} runs…` : "Launching…");
       const payload = await api(data.apiUrl, { method: "POST", body: JSON.stringify(body) });
       setStatus(payload.message);
-      window.location.href = payload.run.url;
+      // A batch stays on this page and surfaces in the runs list; a single run
+      // jumps straight to its live view.
+      if ((payload.runs || []).length > 1) {
+        runsView.page = 1;
+        refreshRuns();
+        document.querySelector('[aria-label="Runs"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        window.location.href = payload.run.url;
+      }
     } catch (error) {
       setStatus(error.message, true);
     }
   });
 
+  // Claude Code can't run multiple concurrent instances, so lock its batch to 1.
+  function syncBatch() {
+    const input = document.getElementById("run-batch");
+    const note = document.getElementById("batch-note");
+    if (!input) return;
+    const isClaude = state.provider === "claude";
+    input.disabled = isClaude;
+    if (isClaude) input.value = "1";
+    note.textContent = isClaude ? "Claude Code runs one at a time — batch is limited to a single run." : "";
+    note.hidden = !isClaude;
+  }
+
   // ---- runs list (unchanged behavior) ---------------------------------------
 
+  const runsView = { page: 1, pageSize: 10, provider: "", model: "", query: "", sort: "newest" };
+
+  function runStatusClass(status) {
+    if (status === "running" || status === "stopping") return "agent-chip--running";
+    if (status === "paused") return "agent-chip--paused";
+    if (status === "finished") return "agent-chip--done";
+    return "agent-chip--failed";
+  }
+
   function runCard(run) {
-    const statusClass =
-      run.status === "running" || run.status === "stopping"
-        ? "agent-chip--running"
-        : run.status === "finished"
-          ? "agent-chip--done"
-          : "agent-chip--failed";
+    const statusLabel =
+      run.status === "paused"
+        ? run.pause_reason === "quota"
+          ? "paused · out of funds"
+          : "paused"
+        : run.status;
     const summary = [
       run.model_name || run.model,
       `${escapeText(run.game_title || run.game_id)} / ${escapeText(levelLabel(run.level_id))}`,
@@ -711,46 +743,164 @@
       `${run.gem_count ?? 0} gems${run.solved ? " — solved!" : ""}`
     ].join(" &middot; ");
 
+    const actions = [
+      `<a class="button" href="${escapeText(run.url)}">Watch</a>`,
+      run.has_video
+        ? `<a class="button" href="/agent-runs/${encodeURIComponent(run.id)}/files/maze_replay.mp4">Video</a>`
+        : "",
+      run.pausable ? '<button class="button" type="button" data-action="pause">Pause</button>' : "",
+      run.resumable ? '<button class="button--primary" type="button" data-action="resume">Resume</button>' : "",
+      run.continuable ? '<button class="button" type="button" data-action="continue">Continue</button>' : "",
+      run.status === "running" || run.status === "stopping"
+        ? '<button class="button--coral" type="button" data-action="stop">Stop</button>'
+        : "",
+      '<button class="button--ghost run-trash" type="button" data-action="delete" title="Delete run" aria-label="Delete run">🗑</button>'
+    ]
+      .filter(Boolean)
+      .join("");
+
     return `<div class="world-card agent-run-card" data-run-id="${escapeText(run.id)}">
       <div class="card-body">
-        <h3 class="card-title"><span class="agent-chip ${statusClass}">${escapeText(run.status)}</span> ${escapeText(run.model)} on ${escapeText(run.game_title || run.game_id)}</h3>
-        <p class="card-by">${summary}<br>${escapeText(new Date(run.created_at).toLocaleString())}</p>
-        <div class="card-actions">
-          <a class="button" href="${escapeText(run.url)}">Watch</a>
-          ${run.has_video ? `<a class="button" href="/agent-runs/${encodeURIComponent(run.id)}/files/maze_replay.mp4">Video</a>` : ""}
-          ${run.status === "running" ? '<button class="button--coral" type="button" data-action="stop">Stop</button>' : ""}
-        </div>
+        <h3 class="card-title"><span class="agent-chip ${runStatusClass(run.status)}">${escapeText(statusLabel)}</span> ${escapeText(run.model)} on ${escapeText(run.game_title || run.game_id)}</h3>
+        <p class="card-by">${summary}<br>${escapeText(new Date(run.created_at).toLocaleString())}${run.continue_of ? " &middot; continued" : ""}</p>
+        <div class="card-actions">${actions}</div>
       </div>
     </div>`;
+  }
+
+  function runsQuery() {
+    const params = new URLSearchParams({
+      page: String(runsView.page),
+      page_size: String(runsView.pageSize),
+      sort: runsView.sort
+    });
+    if (runsView.provider) params.set("provider", runsView.provider);
+    if (runsView.model) params.set("model", runsView.model);
+    if (runsView.query) params.set("q", runsView.query);
+    return params.toString();
+  }
+
+  function syncFilterSelect(id, values, current, allLabel) {
+    const select = document.getElementById(id);
+    if (!select) return;
+    select.innerHTML = [`<option value="">${allLabel}</option>`]
+      .concat(values.map((value) => `<option value="${escapeText(value)}">${escapeText(value)}</option>`))
+      .join("");
+    select.value = values.includes(current) ? current : "";
+  }
+
+  const ACTION_LABELS = { pause: "Paused", resume: "Resumed", stop: "Stopping" };
+
+  function wireRunActions() {
+    runsEl.querySelectorAll("[data-action]").forEach((button) => {
+      button.addEventListener("click", async (event) => {
+        const runId = event.target.closest("[data-run-id]").dataset.runId;
+        const action = button.dataset.action;
+        try {
+          if (action === "delete") {
+            if (!window.confirm("Delete this run and its artifacts? This can't be undone.")) return;
+            await api(`${data.apiUrl}/${encodeURIComponent(runId)}`, { method: "DELETE" });
+            setStatus(`Deleted ${runId}.`);
+          } else if (action === "continue") {
+            const answer = window.prompt("How many more moves should it run?", "10");
+            if (answer === null) return;
+            const moves = Math.max(1, Math.min(500, Math.floor(Number(answer) || 0)));
+            if (!moves) {
+              setStatus("Enter a positive number of moves.", true);
+              return;
+            }
+            const payload = await api(`${data.apiUrl}/${encodeURIComponent(runId)}/continue`, {
+              method: "POST",
+              body: JSON.stringify({ moves })
+            });
+            setStatus(payload.message);
+            window.location.href = payload.run.url;
+            return;
+          } else {
+            const payload = await api(`${data.apiUrl}/${encodeURIComponent(runId)}/${action}`, { method: "POST" });
+            // A quota resume relaunches as a new continuation run — go watch it.
+            if (action === "resume" && payload.run && payload.run.id !== runId) {
+              setStatus(`Resuming as run ${payload.run.id}…`);
+              window.location.href = payload.run.url;
+              return;
+            }
+            setStatus(`${ACTION_LABELS[action] || action} ${runId}.`);
+          }
+          refreshRuns();
+        } catch (error) {
+          setStatus(error.message, true);
+        }
+      });
+    });
   }
 
   let refreshTimer = null;
 
   async function refreshRuns() {
     try {
-      const payload = await api(data.apiUrl);
+      const payload = await api(`${data.apiUrl}?${runsQuery()}`);
       const runs = payload.runs || [];
+      const total = payload.total ?? runs.length;
+
+      document.getElementById("runs-total").textContent = total ? `${total} run${total === 1 ? "" : "s"}` : "";
+      syncFilterSelect("runs-provider", payload.providers || [], runsView.provider, "All providers");
+      syncFilterSelect("runs-model", payload.models || [], runsView.model, "All models");
+
       runsEl.innerHTML = runs.length
         ? runs.map(runCard).join("")
-        : '<div class="empty-state"><span class="glyph">▶</span><p>No runs yet. Launch one above — you can watch it live.</p></div>';
-      runsEl.querySelectorAll('[data-action="stop"]').forEach((button) => {
-        button.addEventListener("click", async (event) => {
-          const runId = event.target.closest("[data-run-id]").dataset.runId;
-          try {
-            await api(`${data.apiUrl}/${encodeURIComponent(runId)}/stop`, { method: "POST" });
-            setStatus(`Stopping ${runId}…`);
-            refreshRuns();
-          } catch (error) {
-            setStatus(error.message, true);
-          }
-        });
-      });
-      const anyRunning = runs.some((run) => run.status === "running" || run.status === "stopping");
+        : total
+          ? '<div class="empty-state"><span class="glyph">▤</span><p>No runs match your filters.</p></div>'
+          : '<div class="empty-state"><span class="glyph">▶</span><p>No runs yet. Launch one above — you can watch it live.</p></div>';
+      wireRunActions();
+
+      const pages = payload.pages || 1;
+      const pager = document.getElementById("runs-pager");
+      pager.hidden = pages <= 1;
+      document.getElementById("runs-page-label").textContent = `Page ${payload.page || 1} of ${pages}`;
+      document.getElementById("runs-prev").disabled = (payload.page || 1) <= 1;
+      document.getElementById("runs-next").disabled = (payload.page || 1) >= pages;
+
+      const active = payload.active || runs.some((run) => run.status === "running" || run.status === "stopping");
       clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(refreshRuns, anyRunning ? 3000 : 15000);
+      refreshTimer = setTimeout(refreshRuns, active ? 3000 : 15000);
     } catch (error) {
       setStatus(error.message, true);
     }
+  }
+
+  function wireRunsToolbar() {
+    const search = document.getElementById("runs-search");
+    let searchTimer = null;
+    search?.addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        runsView.query = search.value.trim();
+        runsView.page = 1;
+        refreshRuns();
+      }, 300);
+    });
+
+    const onFilter = (id, key, cast) =>
+      document.getElementById(id)?.addEventListener("change", (event) => {
+        runsView[key] = cast ? cast(event.target.value) : event.target.value;
+        runsView.page = 1;
+        refreshRuns();
+      });
+    onFilter("runs-provider", "provider");
+    onFilter("runs-model", "model");
+    onFilter("runs-sort", "sort");
+    onFilter("runs-page-size", "pageSize", (value) => Number(value) || 10);
+
+    document.getElementById("runs-prev")?.addEventListener("click", () => {
+      if (runsView.page > 1) {
+        runsView.page -= 1;
+        refreshRuns();
+      }
+    });
+    document.getElementById("runs-next")?.addEventListener("click", () => {
+      runsView.page += 1;
+      refreshRuns();
+    });
   }
 
   // ---- boot -----------------------------------------------------------------
@@ -760,6 +910,7 @@
   renderLevelSummary();
   syncContainerAvailability();
   describeEnvironment();
+  wireRunsToolbar();
   refreshRuns();
   selectProvider((firstAvailable || PROVIDERS[0]).id);
 })();

@@ -11,6 +11,10 @@
   const feedEl = document.getElementById("run-feed");
   const logEl = document.getElementById("run-log");
   const stopButton = document.getElementById("stop-run");
+  const pauseButton = document.getElementById("pause-run");
+  const resumeButton = document.getElementById("resume-run");
+  const continueButton = document.getElementById("continue-run");
+  const deleteButton = document.getElementById("delete-run");
   const liveImage = document.getElementById("run-live-image");
   const livePlaceholder = document.getElementById("run-live-placeholder");
 
@@ -76,7 +80,14 @@
           `<span class="agent-stat"><span class="agent-stat__label">${escapeText(label)}</span> ${escapeText(value)}</span>`
       )
       .join("");
+    renderControls(run);
+  }
+
+  function renderControls(run) {
     stopButton.hidden = !(run.status === "running" || run.status === "stopping");
+    pauseButton.hidden = !run.pausable;
+    resumeButton.hidden = !run.resumable;
+    continueButton.hidden = !run.continuable;
   }
 
   // ---- combined moves + reasoning feed --------------------------------------
@@ -290,6 +301,17 @@
       } else if (waitingForVideo) {
         setStatus("Run finished — rendering the replay video…");
         state.timer = setTimeout(poll, 2000);
+      } else if (progress.run.status === "paused") {
+        setStatus(
+          progress.run.pause_reason === "quota"
+            ? `Paused — out of funds/credits/usage${
+                progress.run.pause_message ? `: ${progress.run.pause_message}` : ""
+              }. Resume once you have credits.`
+            : "Paused. Resume to pick up where it left off.",
+          progress.run.pause_reason === "quota"
+        );
+        // Keep polling slowly so the page reflects a resume from elsewhere.
+        state.timer = setTimeout(poll, 4000);
       } else {
         setStatus(
           progress.run.status !== "finished"
@@ -314,10 +336,81 @@
     }
   }
 
+  async function runAction(action) {
+    const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/${action}`, { method: "POST" });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || `Request failed (${response.status}).`);
+    }
+    return response.json();
+  }
+
   stopButton?.addEventListener("click", async () => {
     try {
-      await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" });
+      await runAction("stop");
       setStatus("Stopping…");
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  });
+
+  pauseButton?.addEventListener("click", async () => {
+    try {
+      const payload = await runAction("pause");
+      setStatus("Paused. Resume to pick up where it left off.");
+      renderControls(payload.run || {});
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  });
+
+  resumeButton?.addEventListener("click", async () => {
+    try {
+      const payload = await runAction("resume");
+      // A quota resume relaunches as a new continuation run — go watch it.
+      if (payload.run && payload.run.id !== runId && payload.run.url) {
+        window.location.href = payload.run.url;
+        return;
+      }
+      setStatus("Resumed.");
+      clearTimeout(state.timer);
+      poll();
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  });
+
+  continueButton?.addEventListener("click", async () => {
+    const answer = window.prompt("How many more moves should it run?", "10");
+    if (answer === null) return;
+    const moves = Math.max(1, Math.min(500, Math.floor(Number(answer) || 0)));
+    if (!moves) {
+      setStatus("Enter a positive number of moves.", true);
+      return;
+    }
+    try {
+      const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/continue`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ moves })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);
+      window.location.href = payload.run.url;
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  });
+
+  deleteButton?.addEventListener("click", async () => {
+    if (!window.confirm("Delete this run and its artifacts? This can't be undone.")) return;
+    try {
+      const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}`, { method: "DELETE" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `Request failed (${response.status}).`);
+      }
+      window.location.href = "/agent";
     } catch (error) {
       setStatus(error.message, true);
     }

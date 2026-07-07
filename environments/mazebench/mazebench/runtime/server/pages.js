@@ -820,13 +820,39 @@ function createPageRenderer({
           </div>
 
           <div class="card-actions launch-row">
+            <label class="field field--narrow" id="batch-field"><span>How many runs</span><input id="run-batch" type="number" min="1" max="8" value="1" inputmode="numeric"></label>
             <button id="launch-run" class="button--primary" type="button">Launch Run</button>
           </div>
+          <p id="batch-note" class="muted" hidden></p>
           <p id="agent-environment" class="muted" style="margin-bottom: 0"></p>
         </section>
         <section class="panel" aria-label="Runs">
-          <h2>Runs</h2>
+          <div class="runs-head">
+            <h2>Runs</h2>
+            <span id="runs-total" class="muted"></span>
+          </div>
+          <div class="runs-toolbar">
+            <input id="runs-search" type="search" placeholder="Search runs…" autocomplete="off" spellcheck="false">
+            <select id="runs-provider" aria-label="Filter by provider"><option value="">All providers</option></select>
+            <select id="runs-model" aria-label="Filter by model"><option value="">All models</option></select>
+            <select id="runs-sort" aria-label="Sort">
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="status">By status</option>
+            </select>
+            <select id="runs-page-size" aria-label="Per page">
+              <option value="10">10 / page</option>
+              <option value="20">20 / page</option>
+              <option value="50">50 / page</option>
+              <option value="100">100 / page</option>
+            </select>
+          </div>
           <div id="agent-runs"></div>
+          <div id="runs-pager" class="runs-pager" hidden>
+            <button id="runs-prev" class="button" type="button">← Prev</button>
+            <span id="runs-page-label" class="muted"></span>
+            <button id="runs-next" class="button" type="button">Next →</button>
+          </div>
         </section>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
         <script src="/agent.js" defer></script>`
@@ -900,7 +926,11 @@ function createPageRenderer({
       main: `<div class="page-head run-head">
           <div class="page-actions">
             <h1 style="margin: 0">Agent Run</h1>
+            <button id="pause-run" class="button" type="button" hidden>Pause</button>
+            <button id="resume-run" class="button--primary" type="button" hidden>Resume</button>
+            <button id="continue-run" class="button" type="button" hidden>Continue</button>
             <button id="stop-run" class="button--coral" type="button" hidden>Stop Run</button>
+            <button id="delete-run" class="button--ghost" type="button" title="Delete run">🗑 Delete</button>
           </div>
           <h2 id="run-title" class="run-title"></h2>
           <p id="run-meta" class="muted"></p>

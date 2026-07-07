@@ -1065,13 +1065,28 @@ a.save-button:focus-visible {
 }
 /* Bottom prompt carries its own scrim so it reads over bright edges. */
 .home-boot-footer {
+  /* Track the MAZE BENCH lockup instead of the viewport: the SVG scene is a
+     1200x800 viewBox letterboxed with "meet", so the lockup's bottom edge
+     (y≈672 of 800, i.e. 0.34 scene-heights below center) lands at a height
+     that depends on BOTH viewport axes. Center the prompt in the gap left
+     below the sign so squat/wide windows can't push the two into overlap.
+     --mb-scene-scale mirrors the svg transform in the narrow media query. */
+  --mb-scene-scale: 1;
+  --mb-hero-h: calc(100dvh - var(--mazebench-topbar-height));
+  --mb-scene-h: min(var(--mb-hero-h), calc(100vw * 800 / 1200));
+  --mb-sign-gap: calc(var(--mb-hero-h) / 2 - var(--mb-scene-h) * 0.34 * var(--mb-scene-scale));
   position: absolute;
-  bottom: clamp(26px, 7vh, 74px);
+  bottom: clamp(8px, calc(var(--mb-sign-gap) / 2 - 24px), 74px);
   left: 0;
   right: 0;
   pointer-events: none;
   text-align: center;
   z-index: 4;
+}
+@media (max-width: 640px) {
+  .home-boot-footer {
+    --mb-scene-scale: 1.5;
+  }
 }
 .home-boot-status,
 .home-boot-continue {

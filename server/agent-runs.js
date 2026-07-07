@@ -191,11 +191,20 @@ function createAgentRunService({
     const succeeded =
       fs.existsSync(path.join(runDirFor(runId), "maze_scorecard.json")) ||
       fs.existsSync(path.join(runDirFor(runId), "scorecard.json"));
-    const updated = {
-      ...meta,
-      status: succeeded ? "finished" : "failed",
-      finished_at: meta.finished_at || new Date().toISOString()
-    };
+    const quota = succeeded ? null : detectQuotaPause(runId);
+    const updated = quota
+      ? {
+          ...meta,
+          status: "paused",
+          pause_reason: "quota",
+          pause_message: quota.message,
+          paused_at: meta.paused_at || new Date().toISOString()
+        }
+      : {
+          ...meta,
+          status: succeeded ? "finished" : "failed",
+          finished_at: meta.finished_at || new Date().toISOString()
+        };
     writeRunMeta(runId, updated);
     return updated;
   }
@@ -257,6 +266,66 @@ function createAgentRunService({
     }
   }
 
+  function readLogTail(runId, maxBytes = 16 * 1024) {
+    const logPath = path.join(runDirFor(runId), "launcher.log");
+
+    if (!fs.existsSync(logPath)) {
+      return "";
+    }
+
+    const size = fs.statSync(logPath).size;
+    const start = Math.max(0, size - maxBytes);
+    const fd = fs.openSync(logPath, "r");
+
+    try {
+      const buffer = Buffer.alloc(size - start);
+      fs.readSync(fd, buffer, 0, buffer.length, start);
+      return buffer.toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  // When a run exits non-zero we peek at the tail of its log for the tell-tale
+  // "you're out of money/credits/usage" messages so we can auto-pause it (and
+  // let the user resume once they top up) instead of marking it failed. Kept
+  // deliberately specific so a normal error isn't mistaken for a funds problem.
+  const QUOTA_PATTERNS = [
+    /insufficient (funds|credit|credits|balance|quota)/i,
+    /out of (funds|credit|credits)/i,
+    /(credit|account) balance is too low/i,
+    /add (funds|credits|more credits|to your balance)/i,
+    /payment required/i,
+    /\b402\b/,
+    /quota (exceeded|has been reached|exhausted)/i,
+    /you have (hit|reached|exceeded) your (usage|plan) limit/i,
+    /usage limit reached/i,
+    /(monthly|weekly|daily) (usage )?limit/i,
+    /billing (hard|soft) limit/i,
+    /exceeded your current quota/i
+  ];
+
+  function detectQuotaPause(runId) {
+    const tail = readLogTail(runId);
+
+    if (!tail) {
+      return null;
+    }
+
+    const pattern = QUOTA_PATTERNS.find((regex) => regex.test(tail));
+
+    if (!pattern) {
+      return null;
+    }
+
+    // Surface the actual offending line so the run page can explain the pause.
+    const line = tail
+      .split(/\r?\n/)
+      .reverse()
+      .find((entry) => pattern.test(entry));
+    return { reason: "quota", message: (line || "Out of funds/credits/usage.").trim().slice(0, 300) };
+  }
+
   function summarizeRun(runId) {
     const meta = finalizeStatus(runId, readRunMeta(runId));
 
@@ -276,11 +345,16 @@ function createAgentRunService({
       solved: Boolean(last && last.solved),
       has_video: fs.existsSync(path.join(runDir, "maze_replay.mp4")),
       has_reasoning: fs.existsSync(path.join(runDir, "reasoning.json")),
+      // Grouping key for the runs-list provider filter (codex | claude | prime).
+      provider: meta.kind === "prime" ? "prime" : meta.model,
+      pausable: meta.status === "running",
+      resumable: meta.status === "paused",
+      continuable: meta.status === "finished" || meta.status === "stopped",
       url: `/agent/runs/${encodeURIComponent(runId)}`
     };
   }
 
-  function listRuns() {
+  function allRunSummaries() {
     if (!fs.existsSync(runsDir)) {
       return [];
     }
@@ -291,6 +365,64 @@ function createAgentRunService({
       .map((entry) => summarizeRun(entry.name))
       .filter(Boolean)
       .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
+  }
+
+  // Paginated, filterable, sortable runs listing. Returns the requested page plus
+  // the totals and the facet lists (providers/models present across ALL runs) so
+  // the UI can offer stable filter dropdowns. With no options it behaves like the
+  // old full list (page 1), so existing callers keep working.
+  function listRuns(options = {}) {
+    const all = allRunSummaries();
+    const provider = String(options.provider || "").trim();
+    const model = String(options.model || "").trim();
+    const query = String(options.query || "").trim().toLowerCase();
+    const sort = String(options.sort || "newest");
+
+    const providers = [...new Set(all.map((run) => run.provider).filter(Boolean))].sort();
+    const models = [...new Set(all.map((run) => run.model_name).filter(Boolean))].sort();
+
+    let filtered = all;
+
+    if (provider) {
+      filtered = filtered.filter((run) => run.provider === provider);
+    }
+
+    if (model) {
+      filtered = filtered.filter((run) => (run.model_name || "") === model);
+    }
+
+    if (query) {
+      filtered = filtered.filter((run) =>
+        [run.id, run.model, run.model_name, run.provider, run.game_title, run.game_id, run.status]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(query)
+      );
+    }
+
+    if (sort === "oldest") {
+      filtered = [...filtered].reverse();
+    } else if (sort === "status") {
+      filtered = [...filtered].sort((left, right) => String(left.status).localeCompare(String(right.status)));
+    }
+
+    const total = filtered.length;
+    const pageSize = Math.max(1, Math.min(100, Math.floor(Number(options.pageSize) || 10)));
+    const pages = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.max(1, Math.min(pages, Math.floor(Number(options.page) || 1)));
+    const start = (page - 1) * pageSize;
+
+    return {
+      runs: filtered.slice(start, start + pageSize),
+      total,
+      page,
+      pages,
+      page_size: pageSize,
+      providers,
+      models,
+      active: all.some((run) => run.status === "running" || run.status === "stopping")
+    };
   }
 
   // Per-move reasoning, live. reasoning.json exists only once the run finishes;
@@ -718,6 +850,26 @@ function createAgentRunService({
       args.push("draft=true");
     }
 
+    // Continue: resume the maze from a prior run's exact state. Both the runner
+    // and the bridge rebuild state by replaying the action list, so copying the
+    // prior session (and its per-move log) is enough — maze-agent-local.js sees
+    // seed=true, skips the fresh `start`, and plays `moves` more from there.
+    if (params.seed_run) {
+      const priorDir = runDirFor(String(params.seed_run));
+      const priorSession = path.join(priorDir, "session.json");
+
+      if (fs.existsSync(priorSession)) {
+        fs.copyFileSync(priorSession, path.join(runDirFor(runId), "session.json"));
+
+        const priorActions = path.join(priorDir, "actions.jsonl");
+        if (fs.existsSync(priorActions)) {
+          fs.copyFileSync(priorActions, path.join(runDirFor(runId), "actions.jsonl"));
+        }
+
+        args.push("seed=true");
+      }
+    }
+
     return { args, model, levelId, moves, gems, view };
   }
 
@@ -805,6 +957,8 @@ function createAgentRunService({
           vision: command.vision,
           reasoning: command.reasoning,
           video: command.video,
+          launch_params: launchParamsOf(params),
+          continue_of: params.continue_of || null,
           note: "Prime Verifiers v1 eval (uv run eval). Progress, scores, and errors stream in the runner log; a replay video renders after the eval finishes."
         };
       } else {
@@ -836,7 +990,10 @@ function createAgentRunService({
           mode: String(params.mode) === "vision" ? "vision" : "text",
           tools: params.tools === true || params.tools === "true",
           container: !(params.container === false || params.container === "false"),
-          video: !(params.video === false || params.video === "false")
+          video: !(params.video === false || params.video === "false"),
+          launch_params: launchParamsOf(params),
+          continue_of: params.continue_of || null,
+          seeded: Boolean(params.seed_run)
         };
       }
     } catch (error) {
@@ -852,14 +1009,35 @@ function createAgentRunService({
       liveChildren.delete(runId);
       const current = readRunMeta(runId);
 
-      if (current) {
-        writeRunMeta(runId, {
-          ...current,
-          status: code === 0 ? "finished" : current.status === "stopping" ? "stopped" : "failed",
-          exit_code: code,
-          finished_at: new Date().toISOString()
-        });
+      if (!current) {
+        return;
       }
+
+      // A manual pause SIGSTOPs the process without killing it; ignore any exit
+      // that races with that (the resume path drives the status instead).
+      if (current.status === "paused") {
+        return;
+      }
+
+      if (code === 0) {
+        writeRunMeta(runId, { ...current, status: "finished", exit_code: code, finished_at: new Date().toISOString() });
+        return;
+      }
+
+      if (current.status === "stopping") {
+        writeRunMeta(runId, { ...current, status: "stopped", exit_code: code, finished_at: new Date().toISOString() });
+        return;
+      }
+
+      // Non-zero exit that isn't a user stop: if it's an out-of-funds/credits/
+      // usage error, auto-pause (resumable) rather than fail it outright.
+      const quota = detectQuotaPause(runId);
+      writeRunMeta(
+        runId,
+        quota
+          ? { ...current, status: "paused", pause_reason: "quota", pause_message: quota.message, exit_code: code, paused_at: new Date().toISOString() }
+          : { ...current, status: "failed", exit_code: code, finished_at: new Date().toISOString() }
+      );
     });
     child.on("error", () => {
       liveChildren.delete(runId);
@@ -867,6 +1045,173 @@ function createAgentRunService({
 
     writeRunMeta(runId, meta);
     return summarizeRun(runId);
+  }
+
+  // Strip internal orchestration keys so meta.launch_params holds just the
+  // config, ready to relaunch verbatim for a Continue.
+  function launchParamsOf(params) {
+    const { count, seed_run, continue_of, ...rest } = params || {};
+    return rest;
+  }
+
+  // Launch N runs of the same config at once. Claude Code can't safely run
+  // multiple concurrent instances (one login / one sandbox), so it's capped at 1.
+  function launchRuns(params = {}) {
+    const kind = String(params.kind || "local");
+    const model = String(params.model || "").toLowerCase();
+    let count = Math.max(1, Math.min(8, Math.floor(Number(params.count) || 1)));
+
+    if (kind === "local" && model === "claude") {
+      count = 1;
+    }
+
+    const runs = [];
+    for (let index = 0; index < count; index += 1) {
+      runs.push(launchRun(params));
+    }
+    return runs;
+  }
+
+  function pauseRun(runId) {
+    const meta = readRunMeta(runId);
+
+    if (!meta) {
+      throw new Error(`Unknown run "${runId}".`);
+    }
+
+    if (meta.status !== "running") {
+      return summarizeRun(runId);
+    }
+
+    // SIGSTOP the whole process group so the agent (and any docker/node children)
+    // freeze in place; SIGCONT on resume picks up exactly where it left off.
+    try {
+      process.kill(-meta.pid, "SIGSTOP");
+    } catch (error) {
+      try {
+        process.kill(meta.pid, "SIGSTOP");
+      } catch (innerError) {
+        /* already gone — fall through and mark it paused anyway */
+      }
+    }
+
+    writeRunMeta(runId, { ...meta, status: "paused", pause_reason: "manual", paused_at: new Date().toISOString() });
+    return summarizeRun(runId);
+  }
+
+  function resumeRun(runId) {
+    const meta = readRunMeta(runId);
+
+    if (!meta) {
+      throw new Error(`Unknown run "${runId}".`);
+    }
+
+    if (meta.status !== "paused") {
+      return summarizeRun(runId);
+    }
+
+    // A manually-paused run still has a live (stopped) process — just continue it.
+    if (meta.pause_reason !== "quota" && pidAlive(meta.pid)) {
+      try {
+        process.kill(-meta.pid, "SIGCONT");
+      } catch (error) {
+        try {
+          process.kill(meta.pid, "SIGCONT");
+        } catch (innerError) {
+          /* the process died while paused — fall through to a continuation */
+        }
+      }
+
+      if (pidAlive(meta.pid)) {
+        const { pause_reason, pause_message, paused_at, ...rest } = meta;
+        writeRunMeta(runId, { ...rest, status: "running" });
+        return summarizeRun(runId);
+      }
+    }
+
+    // A quota pause (or a process that died while paused) has no process to
+    // resume, so relaunch a continuation from where it left off with whatever
+    // move budget remains.
+    const summary = summarizeRun(runId);
+    const remaining = Math.max(1, (Number(meta.moves) || 20) - (summary.turns || 0));
+    return continueRun(runId, remaining);
+  }
+
+  // Rebuild launch params from a run's own metadata — the fallback for runs
+  // created before launch_params was recorded, so any run can still be continued.
+  function reconstructParams(meta) {
+    if (meta.kind === "prime") {
+      const model = meta.model_name && meta.model_name !== "(prime default)" ? meta.model_name : "";
+      return {
+        kind: "prime",
+        model_name: model,
+        vision: meta.mode === "vision",
+        reasoning: meta.reasoning || "",
+        video: meta.video !== false
+      };
+    }
+
+    return {
+      kind: "local",
+      model: meta.model,
+      model_name: meta.model_name || "",
+      game_id: meta.game_id,
+      level_id: meta.level_id,
+      mode: meta.mode,
+      reasoning: meta.reasoning || "",
+      container: meta.container !== false,
+      video: meta.video !== false,
+      tools: Boolean(meta.tools),
+      gems: meta.gems,
+      view: meta.view
+    };
+  }
+
+  function continueRun(runId, additionalMoves) {
+    const meta = readRunMeta(runId);
+
+    if (!meta) {
+      throw new Error(`Unknown run "${runId}".`);
+    }
+
+    const add = Math.max(1, Math.min(500, Math.floor(Number(additionalMoves) || 20)));
+    const base = { ...(meta.launch_params || reconstructParams(meta)), continue_of: runId };
+
+    if (meta.kind === "prime") {
+      // Verifiers plays one fresh rollout per run, so "continue" gives the model
+      // a bigger total budget on the same maze rather than resuming mid-state.
+      base.kind = "prime";
+      base.max_turns = Math.max(1, Math.min(500, (Number(meta.moves) || 0) + add));
+      return launchRun(base);
+    }
+
+    // Local runs resume the exact maze state by seeding from the prior session.
+    base.kind = "local";
+    base.moves = add;
+    base.seed_run = runId;
+    return launchRun(base);
+  }
+
+  function deleteRun(runId) {
+    const meta = readRunMeta(runId);
+    const runDir = runDirFor(runId);
+
+    // Kill any still-live (or paused) process before removing its directory.
+    if (meta && meta.pid && pidAlive(meta.pid)) {
+      try {
+        process.kill(-meta.pid, "SIGKILL");
+      } catch (error) {
+        try {
+          process.kill(meta.pid, "SIGKILL");
+        } catch (innerError) {
+          /* already gone */
+        }
+      }
+    }
+
+    liveChildren.delete(runId);
+    fs.rmSync(runDir, { recursive: true, force: true });
+    return { id: runId, deleted: true };
   }
 
   function stopRun(runId) {
@@ -910,13 +1255,18 @@ function createAgentRunService({
   }
 
   return {
+    continueRun,
+    deleteRun,
     getEnvironment,
     getRunProgress,
     launchRun,
+    launchRuns,
     listProviderModels,
     listRuns,
+    pauseRun,
     renderLiveFrame,
     resolveRunFilePath,
+    resumeRun,
     startDocker,
     stopRun,
     summarizeRun

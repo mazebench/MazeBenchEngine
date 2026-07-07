@@ -3070,16 +3070,35 @@
     }
 
     function setupCanvas() {
+      // Full-bleed hosts can render the 3D pipeline above CSS resolution
+      // (hostRenderPixelScale, e.g. 2 on high-DPI phones): boardRect and every
+      // canvas in the composite chain scale together, and the final present
+      // divides the scale back out of the device-pixel backing store. Without
+      // this the scene rasterizes at CSS pixels and gets upscaled by the
+      // device pixel ratio — blurry, with visibly thickened edge lines.
+      const renderScale =
+        !app.isFlyoverMode && app.hostFullBleedView === true
+          ? Math.max(1, Math.min(3, Number(app.hostRenderPixelScale) || 1))
+          : 1;
+
+      app.renderPixelScale = renderScale;
+
       if ((app.isFlyoverMode || app.hostFullBleedView === true) && app.mazeFrame) {
         const rect = app.mazeFrame.getBoundingClientRect();
-        const width = Math.max(1, Math.round(rect.width || window.innerWidth || app.boardRect.width));
-        const height = Math.max(1, Math.round(rect.height || window.innerHeight || app.boardRect.height));
+        const width = Math.max(
+          1,
+          Math.round((rect.width || window.innerWidth || app.boardRect.width / renderScale) * renderScale)
+        );
+        const height = Math.max(
+          1,
+          Math.round((rect.height || window.innerHeight || app.boardRect.height / renderScale) * renderScale)
+        );
 
         app.boardRect = { width, height };
         app.viewportRect = { width, height };
       }
 
-      const dpr = app.isFlyoverMode ? 1 : window.devicePixelRatio || 1;
+      const dpr = app.isFlyoverMode ? 1 : (window.devicePixelRatio || 1) / renderScale;
       app.canvas.width = Math.round(app.viewportRect.width * dpr);
       app.canvas.height = Math.round(app.viewportRect.height * dpr);
       app.canvas.style.aspectRatio = `${app.viewportRect.width} / ${app.viewportRect.height}`;

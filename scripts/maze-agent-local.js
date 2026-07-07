@@ -151,14 +151,24 @@ Repo root:    ${ROOT_DIR}
 Helper:       ${HELPER}
 Session file: ${config.sessionFile}
 
-Your FIRST shell command must start the session (run it exactly once):
+${config.seed
+    ? `This maze is ALREADY IN PROGRESS: earlier moves were made and the game state
+is saved in the session file. Do NOT run "start" — that would erase the progress.
+
+Your FIRST shell command must read the current observation to see where the maze
+stands right now:
+
+  node "${HELPER}" observe --state "${config.sessionFile}"
+
+Then continue playing up to ${config.moves} MORE maze action(s) from that state,`
+    : `Your FIRST shell command must start the session (run it exactly once):
 
   node "${HELPER}" start --repo-root "${ROOT_DIR}" --state "${config.sessionFile}" --game "${config.gameId}" --level "${config.levelId}" --view "${config.view}" --yaw "${config.yaw}" --game-won-gem-count "${config.gems}"${visionFlags}
 
-Then play up to ${config.moves} maze action(s), unless the game reaches a
-terminal state earlier. Do not stop right after start: choose and run at least
-one action while the budget is positive. After each action, read the observation
-(${config.mode === "vision" ? "the frame_image PNG plus the JSON status" : "the JSON board"}) and choose the next command.
+Then play up to ${config.moves} maze action(s),`} unless the game reaches a
+terminal state earlier. Do not stop right after the first command: choose and run
+at least one action while the budget is positive. After each action, read the
+observation (${config.mode === "vision" ? "the frame_image PNG plus the JSON status" : "the JSON board"}) and choose the next command.
 
 Before you run each action command, write one short sentence (as normal text,
 not a comment) explaining why you are choosing that move.
@@ -987,6 +997,9 @@ async function main() {
     codexFast: isTruthy(raw.codex_fast, false),
     moves: positiveInt(raw.moves, 20),
     outDir,
+    // Continue a prior run: the session.json (with its action history) has been
+    // copied into outDir, so resume from it instead of starting fresh.
+    seed: isTruthy(raw.seed, false),
     sessionFile,
     video: isTruthy(raw.video, true) && !isTruthy(raw.no_video, false),
     view,

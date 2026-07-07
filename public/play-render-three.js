@@ -132,6 +132,12 @@
     const trackedStaticActorCodes = new Map();
     // World-view play: merged per-room groups cached across scene rebuilds.
     const worldViewRoomGroups = new Map();
+    // Camera-flight rooms (the room a flight is diving into) cached the same
+    // way, keyed by levelId. Kept separate from worldViewRoomGroups because
+    // flight rooms can show players and render at role "camera-flight"; the
+    // cache lets the vector-glow tween re-skin them with material swaps
+    // instead of re-meshing the room once per glow step mid-flight.
+    const cameraFlightRoomGroups = new Map();
     // Set when the per-frame room-group build budget ran out; drives
     // follow-up renders until the whole world has been built.
     let worldViewRoomBuildPending = false;
@@ -4363,11 +4369,16 @@
     }
 
     function shouldRenderFloorGridLines() {
-      return !app.isFlyoverMode && activeRenderContext?.role !== "neighbor";
+      // The tan floor grid marks the room being PLAYED. Rooms seen from a
+      // distance — flyover, neighbor rooms, and the room a camera flight is
+      // zooming toward — must show only their edges, never the grid.
+      const role = activeRenderContext?.role;
+      return !app.isFlyoverMode && role !== "neighbor" && role !== "camera-flight";
     }
 
     function shouldRenderTileTopDetails() {
-      return activeRenderContext?.role !== "neighbor";
+      const role = activeRenderContext?.role;
+      return role !== "neighbor" && role !== "camera-flight";
     }
 
     function renderIsInsideBoard(x, y, state = renderState()) {
@@ -7595,6 +7606,7 @@
       // Cached world-view room groups survive rebuilds; detach them so
       // disposeScene doesn't free their merged geometry.
       detachWorldViewRoomGroups();
+      detachCameraFlightRoomGroups();
       // Retained home snapshots also survive rebuilds; only the consolidated
       // vista path should re-attach them for the current frame.
       detachWorldConsolidation();
@@ -7798,6 +7810,20 @@
       return parts.length > 0 ? `flyover-fade:${parts.join("|")}` : "";
     }
 
+    function vectorGlowContentSignature() {
+      const glow = currentVectorGlow();
+
+      if (glow <= 0.001) {
+        return "off";
+      }
+
+      const hasImmediateThemedRender =
+        (app.worldViewVistaMode === true && app.worldViewDetachedVista !== true) ||
+        !usesRoomGroupWorld();
+
+      return hasImmediateThemedRender ? String(Math.round(glow * 32)) : "swap";
+    }
+
     function cameraFlightViewsSignature() {
       if (!Array.isArray(app.cameraFlightLevelViews) || app.cameraFlightLevelViews.length === 0) {
         return "";
@@ -7848,11 +7874,14 @@
         flyoverFadeAnimationSignature(now),
         // The world-shadow fade is applied by per-frame material swaps
         // (applyWorldShadowGlowSwapPass), never by rebuilds, so it has no
-        // signature term. The vector glow needs one: immediate-mode renders
-        // (the vista anchor room and camera-flight rooms) bake the glow into
-        // their materials at mesh time, so each 1/32 glow step must dirty
-        // the content once for those few rooms to re-mesh at the new value.
-        `vector-glow:${Math.round(currentVectorGlow() * 32)}`,
+        // signature term. The vector glow only needs one while an
+        // immediate-mode render bakes it into materials at mesh time (the
+        // legacy anchored vista, and worlds without room groups). Room-group
+        // worlds — including camera-flight rooms — re-skin via material swaps
+        // instead, so their glow tween must NOT dirty the content: each dirty
+        // forces a full scene rebuild, and 32 of those per flight was the
+        // biggest hitch source in the home-page swoop.
+        `vector-glow:${vectorGlowContentSignature()}`,
         app.worldViewVistaMode === true ? "vista-anchor" : "live-anchor",
         app.worldViewDetachedVista === true ? "detached-vista" : "room-vista",
         app.isFlyoverMode ? "flyover-selection" : "no-flyover-selection",
@@ -7989,6 +8018,52 @@
       return oneLayerCameraWorldHeight();
     }
 
+    // boardRect doubles as the "viewport-sized world box" for full-bleed
+    // vista fits; with hostRenderPixelScale the rect is in render pixels, so
+    // world-unit consumers divide the scale back out.
+    function boardWorldWidth() {
+      return app.boardRect.width / Math.max(1, Number(app.renderPixelScale) || 1);
+    }
+
+    function boardWorldHeight() {
+      return app.boardRect.height / Math.max(1, Number(app.renderPixelScale) || 1);
+    }
+
+    // Host-provided screen insets (CSS px) that the current room must be
+    // framed within — mobile play reserves the top HUD strip and the d-pad
+    // band while the canvas itself stays full screen. Implemented as a
+    // camera view offset so the world still renders edge to edge.
+    function activeViewFitInsets() {
+      if (app.isFlyoverMode || isEditorRenderMode() || isPalettePreviewRenderMode()) {
+        return null;
+      }
+
+      const insets = app.viewFitInsets;
+
+      if (!insets) {
+        return null;
+      }
+
+      const scale = Math.max(1, Number(app.renderPixelScale) || 1);
+      const top = Math.max(0, Number(insets.top) || 0) * scale;
+      const bottom = Math.max(0, Number(insets.bottom) || 0) * scale;
+      const left = Math.max(0, Number(insets.left) || 0) * scale;
+      const right = Math.max(0, Number(insets.right) || 0) * scale;
+
+      if (top + bottom + left + right < 1) {
+        return null;
+      }
+
+      const width = app.boardRect.width - left - right;
+      const height = app.boardRect.height - top - bottom;
+
+      if (width < 48 || height < 48) {
+        return null;
+      }
+
+      return { top, bottom, left, right, width, height };
+    }
+
     function cameraFlightFitOptions() {
       if (app.isFlyoverMode || isEditorRenderMode()) {
         return null;
@@ -8046,10 +8121,10 @@
         app.worldViewConsolidate !== true;
       const defaultMaxWorldX = fitCurrentRoomBounds
         ? Math.max(1, Number(app.state?.width) || 1) * unit
-        : app.boardRect.width;
+        : boardWorldWidth();
       const defaultMaxWorldZ = fitCurrentRoomBounds
         ? Math.max(1, Number(app.state?.height) || 1) * unit
-        : app.boardRect.height;
+        : boardWorldHeight();
       const minWorldX = options.minX ?? 0;
       const maxWorldX = options.maxX ?? defaultMaxWorldX;
       const minWorldZ = options.minZ ?? 0;
@@ -8063,8 +8138,43 @@
         options.centerY ?? stableHeight / 2,
         (options.centerZ ?? (minWorldZ + maxWorldZ) / 2) + worldPanOffsetZ
       );
-      const canvasWidth = Math.max(1, app.boardRect.width);
-      const canvasHeight = Math.max(1, app.boardRect.height);
+      // With host insets, the fit targets the inset sub-viewport: the fit
+      // itself runs against a "virtual canvas" of the inset size, and a
+      // camera view offset applied afterwards maps that virtual image onto
+      // the full canvas so the world keeps rendering edge to edge.
+      const fitViewInsets = activeViewFitInsets();
+
+      if (camera.view?.enabled) {
+        camera.clearViewOffset();
+      }
+
+      const canvasWidth = Math.max(1, fitViewInsets ? fitViewInsets.width : app.boardRect.width);
+      const canvasHeight = Math.max(1, fitViewInsets ? fitViewInsets.height : app.boardRect.height);
+
+      if (camera.isPerspectiveCamera) {
+        camera.aspect = canvasWidth / canvasHeight;
+      } else if (fitViewInsets) {
+        camera.left = -canvasWidth / 2;
+        camera.right = canvasWidth / 2;
+        camera.top = canvasHeight / 2;
+        camera.bottom = -canvasHeight / 2;
+      }
+
+      const applyViewFitOffset = () => {
+        if (!fitViewInsets) {
+          return;
+        }
+
+        camera.setViewOffset(
+          canvasWidth,
+          canvasHeight,
+          -fitViewInsets.left,
+          -fitViewInsets.top,
+          app.boardRect.width,
+          app.boardRect.height
+        );
+        camera.updateMatrixWorld(true);
+      };
       const worldWidth = Math.max(1, maxWorldX - minWorldX);
       const worldHeight = Math.max(1, maxWorldZ - minWorldZ);
       const maxSpan = Math.max(worldWidth, worldHeight, stableHeight, unit);
@@ -8122,6 +8232,7 @@
           Math.min(canvasWidth / projectedWidth, canvasHeight / projectedHeight) * 1.025
         ) * cameraZoom;
         camera.updateProjectionMatrix();
+        applyViewFitOffset();
         return;
       }
 
@@ -8135,12 +8246,18 @@
         camera.lookAt(center);
         camera.updateProjectionMatrix();
         camera.updateMatrixWorld(true);
+        applyViewFitOffset();
         return;
       }
 
       let distance = maxSpan * 1.65 + unit * 3;
 
-      for (let attempt = 0; attempt < 5; attempt += 1) {
+      // Converge tightly: camera flights re-run this fit every frame with
+      // smoothly-moving bounds, so any leftover solver error shows up as
+      // frame-to-frame distance wobble (visible zoom jitter mid-swoop). Apply
+      // the correction before checking convergence so the final scale always
+      // lands, then stop only when the step is imperceptible (0.2%).
+      for (let attempt = 0; attempt < 9; attempt += 1) {
         let maxProjected = 0;
 
         camera.position.copy(center).addScaledVector(viewDirection, distance);
@@ -8159,11 +8276,11 @@
 
         const scale = maxProjected / 0.94;
 
-        if (Math.abs(scale - 1) <= 0.015) {
+        distance *= Math.max(0.35, Math.min(2.4, scale));
+
+        if (Math.abs(scale - 1) <= 0.002) {
           break;
         }
-
-        distance *= Math.max(0.35, Math.min(2.4, scale));
       }
 
       camera.position.copy(center).addScaledVector(viewDirection, distance / cameraZoom);
@@ -8171,6 +8288,7 @@
       camera.lookAt(center);
       camera.updateProjectionMatrix();
       camera.updateMatrixWorld(true);
+      applyViewFitOffset();
     }
 
     function editorSurroundingFitOptions() {
@@ -8614,6 +8732,15 @@
       worldViewRoomGroups.forEach((entry) => {
         if (entry.group?.parent) {
           applyWorldViewRoomShadow(entry, worldViewRoomEntryShadowFactor(entry, factor));
+        }
+      });
+
+      // Camera-flight rooms stay at full brightness but track the glow, so
+      // the dive's look cross-fade advances on camera-only frames for them
+      // exactly like it does for the neighbor room groups.
+      cameraFlightRoomGroups.forEach((entry) => {
+        if (entry.group?.parent) {
+          applyWorldViewRoomShadow(entry, 1);
         }
       });
     }
@@ -9261,7 +9388,7 @@
       worldViewRoomGroups.clear();
     }
 
-    function buildWorldViewRoomEntry(view, brightness, signature, now) {
+    function buildWorldViewRoomEntry(view, brightness, signature, now, options = {}) {
       const group = new THREE.Group();
       const edgeGroup = new THREE.Group();
 
@@ -9279,11 +9406,11 @@
       homeThemeSuspendDepth += 1;
       try {
         renderLevelStateAt(view.levelState, { x: 0, z: 0 }, {
-          role: "neighbor",
+          role: options.role || "neighbor",
           brightness,
           dx: view.dx,
           dy: view.dy,
-          hidePlayers: true
+          hidePlayers: options.hidePlayers !== false
         }, now);
       } finally {
         homeThemeSuspendDepth -= 1;
@@ -10286,25 +10413,96 @@
       renderCameraFlightLevelViews(now, cameraFlightViews);
     }
 
+    function detachCameraFlightRoomGroups() {
+      cameraFlightRoomGroups.forEach((entry) => {
+        entry.group.parent?.remove(entry.group);
+        entry.edgeGroup.parent?.remove(entry.edgeGroup);
+      });
+    }
+
+    function disposeCameraFlightRoomGroups(keepLevelIds = null) {
+      cameraFlightRoomGroups.forEach((entry, levelId) => {
+        if (keepLevelIds?.has(levelId)) {
+          return;
+        }
+
+        disposeWorldViewRoomEntry(entry);
+        cameraFlightRoomGroups.delete(levelId);
+      });
+    }
+
     function renderCameraFlightLevelViews(now, views) {
       if (!Array.isArray(views) || views.length === 0) {
+        if (cameraFlightRoomGroups.size > 0) {
+          disposeCameraFlightRoomGroups();
+        }
         return;
       }
+
+      const activeLevelIds = new Set();
 
       views
         .slice()
         .sort((a, b) => Number(b.distance || 0) - Number(a.distance || 0))
         .forEach((view) => {
-          const brightness = flyoverLevelBrightness(view.levelId || view.levelState?.levelId, view.brightness ?? 1);
+          const levelId = String(view.levelId || view.levelState?.levelId || "");
+          const brightness = flyoverLevelBrightness(levelId, view.brightness ?? 1);
 
-          renderLevelStateAt(view.levelState, view.offset, {
-            role: view.role || "camera-flight",
-            brightness,
-            dx: view.dx,
-            dy: view.dy,
-            hidePlayers: view.hidePlayers === true
-          }, now);
+          if (
+            !levelId ||
+            !usesRoomGroupWorld() ||
+            !view.levelState?.width ||
+            !view.levelState?.height
+          ) {
+            renderLevelStateAt(view.levelState, view.offset, {
+              role: view.role || "camera-flight",
+              brightness,
+              dx: view.dx,
+              dy: view.dy,
+              hidePlayers: view.hidePlayers === true
+            }, now);
+            return;
+          }
+
+          // Flight rooms render as cached groups (like neighbor rooms) so the
+          // vector-glow tween that runs during vista dives re-skins them via
+          // applyWorldViewRoomShadow instead of re-meshing per glow step —
+          // the per-step full rebuild was the biggest hitch source in the
+          // home-page swoop.
+          const signature = [
+            levelId,
+            signatureToken(levelStateSignature(view.levelState)),
+            view.hidePlayers === true ? "hide" : "show",
+            Math.round(brightness * 1000),
+            edgeOutlinesEnabled() ? 1 : 0,
+            modelAssetsVersion,
+            boundaryNeighborStatesToken(levelId)
+          ].join(":");
+          let entry = cameraFlightRoomGroups.get(levelId);
+
+          if (!entry || entry.signature !== signature) {
+            if (entry) {
+              disposeWorldViewRoomEntry(entry);
+            }
+
+            entry = buildWorldViewRoomEntry(view, brightness, signature, now, {
+              role: view.role || "camera-flight",
+              hidePlayers: view.hidePlayers === true
+            });
+            cameraFlightRoomGroups.set(levelId, entry);
+          }
+
+          activeLevelIds.add(levelId);
+          entry.detachedVistaAnchor = false;
+          entry.group.position.set(view.offset.x, 0, view.offset.z);
+          entry.edgeGroup.position.set(view.offset.x, 0, view.offset.z);
+          entry.edgeGroup.userData.edgeBasePosition.set(view.offset.x, 0, view.offset.z);
+          scene.add(entry.group);
+          edgeScene.add(entry.edgeGroup);
+          applyWorldViewRoomShadow(entry, 1);
         });
+
+      disposeCameraFlightRoomGroups(activeLevelIds);
     }
 
     function renderFlyoverDepartingLevelViews(now) {
@@ -11411,17 +11609,22 @@
             addTerrainRegions(now);
             renderActorsForCurrentContext(now);
           });
-        } else if (app.worldViewVistaMode === true && app.worldViewDetachedVista !== true) {
+        } else if (app.worldViewVistaMode === true) {
           // Legacy anchored vista: render the technical anchor as a room.
           // Detached menu vistas draw it through surroundingLevelViews instead
-          // so the menu is not conceptually "inside" any room.
-          renderLevelStateAt(renderState(), { x: 0, z: 0 }, {
-            role: "neighbor",
-            brightness: 1,
-            dx: 0,
-            dy: 0,
-            hidePlayers: true
-          }, now);
+          // so the menu is not conceptually "inside" any room — rendering it
+          // here too would double-draw the anchor with the play-only floor
+          // grid and actors on top of the vista (tan grid lines over the
+          // blue wireframe world).
+          if (app.worldViewDetachedVista !== true) {
+            renderLevelStateAt(renderState(), { x: 0, z: 0 }, {
+              role: "neighbor",
+              brightness: 1,
+              dx: 0,
+              dy: 0,
+              hidePlayers: true
+            }, now);
+          }
         } else {
           addTerrainRegions(now);
           renderActorsForCurrentContext(now);
@@ -11479,6 +11682,7 @@
 
       disposeWorldConsolidation();
       disposeWorldViewRoomGroups();
+      disposeCameraFlightRoomGroups();
       disposeScene();
       geometryCache.forEach((geometry) => geometry.dispose());
       geometryCache.clear();

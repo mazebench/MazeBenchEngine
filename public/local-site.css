@@ -99,6 +99,60 @@
   color: var(--coral, #ff49d9);
 }
 
+.agent-chip--paused {
+  border-color: rgba(150, 170, 255, 0.7);
+  box-shadow: 0 0 14px rgba(120, 150, 255, 0.2);
+  color: #9db4ff;
+}
+
+/* Runs list: header, filter toolbar, pager, and the per-run delete button. */
+.runs-head {
+  align-items: baseline;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.runs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 0 16px;
+}
+
+.runs-toolbar input[type="search"] {
+  flex: 1 1 220px;
+  min-width: 160px;
+}
+
+.runs-toolbar select {
+  flex: 0 0 auto;
+}
+
+.runs-pager {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+.button--ghost {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--muted, #9aa4c7);
+}
+
+.button--ghost:hover {
+  border-color: rgba(255, 73, 217, 0.7);
+  color: var(--coral, #ff49d9);
+}
+
+.run-trash {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
 .agent-stats {
   display: flex;
   flex-wrap: wrap;

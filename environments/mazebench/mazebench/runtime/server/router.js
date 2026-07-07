@@ -149,18 +149,46 @@ function createRequestRouter({
 
     if (segments.length === 3 && segments[0] === "api" && segments[1] === "agent" && segments[2] === "runs") {
       if (request.method === "GET") {
-        sendJson(response, 200, { runs: agentRuns.listRuns() });
+        sendJson(
+          response,
+          200,
+          agentRuns.listRuns({
+            page: Number(url.searchParams.get("page")) || 1,
+            pageSize: Number(url.searchParams.get("page_size")) || 10,
+            provider: url.searchParams.get("provider") || "",
+            model: url.searchParams.get("model") || "",
+            query: url.searchParams.get("q") || "",
+            sort: url.searchParams.get("sort") || "newest"
+          })
+        );
         return;
       }
 
       if (request.method === "POST") {
         const payload = await readJsonBody(request);
-        const run = agentRuns.launchRun(payload);
-        sendJson(response, 201, { run, message: `Launched run ${run.id}.` });
+        const runs = agentRuns.launchRuns(payload);
+        sendJson(response, 201, {
+          run: runs[0],
+          runs,
+          message: runs.length === 1 ? `Launched run ${runs[0].id}.` : `Launched ${runs.length} runs.`
+        });
         return;
       }
 
       response.writeHead(405, { Allow: "GET, POST" });
+      response.end();
+      return;
+    }
+
+    if (segments.length === 4 && segments[0] === "api" && segments[1] === "agent" && segments[2] === "runs") {
+      const runId = decodeURIComponent(segments[3]);
+
+      if (request.method === "DELETE") {
+        sendJson(response, 200, agentRuns.deleteRun(runId));
+        return;
+      }
+
+      response.writeHead(405, { Allow: "DELETE" });
       response.end();
       return;
     }
@@ -185,6 +213,23 @@ function createRequestRouter({
 
       if (segments[4] === "stop" && request.method === "POST") {
         sendJson(response, 200, { run: agentRuns.stopRun(runId) });
+        return;
+      }
+
+      if (segments[4] === "pause" && request.method === "POST") {
+        sendJson(response, 200, { run: agentRuns.pauseRun(runId) });
+        return;
+      }
+
+      if (segments[4] === "resume" && request.method === "POST") {
+        sendJson(response, 200, { run: agentRuns.resumeRun(runId) });
+        return;
+      }
+
+      if (segments[4] === "continue" && request.method === "POST") {
+        const payload = await readJsonBody(request);
+        const run = agentRuns.continueRun(runId, payload?.moves);
+        sendJson(response, 201, { run, message: `Continuing as run ${run.id}.` });
         return;
       }
 
