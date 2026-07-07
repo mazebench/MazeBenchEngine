@@ -693,10 +693,23 @@ function createPageRenderer({
   }
 
   function agentWorldOption(game) {
+    const config = worldMaps.worldConfigForGame(game.id);
+    const levels = (game.worldMap?.levels || []).map((level) => ({
+      id: level.id,
+      column: level.column,
+      row: level.row,
+      preview_url: level.previewUrl || null
+    }));
+
     return {
       id: game.id,
       title: game.id === "maze" ? `${game.name} (master)` : game.name,
-      level_ids: (game.worldMap?.levels || []).map((level) => level.id),
+      is_master: game.id === "maze",
+      world_width: config.worldSize.width,
+      world_height: config.worldSize.height,
+      level_count: levels.length,
+      preview_urls: levels.map((level) => level.preview_url).filter(Boolean).slice(0, 4),
+      levels,
       default_level_id: defaultLevelIdForGame(game)
     };
   }
@@ -713,6 +726,7 @@ function createPageRenderer({
     ];
     const agentData = {
       apiUrl: "/api/agent/runs",
+      modelsApiBase: "/api/agent/models",
       worlds,
       environment: agentEnvironment(),
       remote: remoteStatusSafe()
@@ -727,61 +741,78 @@ function createPageRenderer({
         </div>
         <section class="panel" aria-label="Launch a run">
           <h2>New Run</h2>
-          <div class="form-row">
-            <label class="field"><span>Agent</span>
-              <select id="run-model">
-                <option value="codex">Codex CLI</option>
-                <option value="claude">Claude Code</option>
-                <option value="prime">Prime Verifiers</option>
-              </select>
+
+          <h3 class="picker-label">Agent</h3>
+          <div id="provider-picker" class="provider-grid" role="radiogroup" aria-label="Agent provider"></div>
+
+          <h3 class="picker-label">Model</h3>
+          <p id="model-note" class="muted picker-note" hidden></p>
+          <div id="model-picker" class="chip-row" role="radiogroup" aria-label="Model"></div>
+          <div id="model-custom" class="model-custom" hidden>
+            <label class="field"><span>Model id</span><input id="model-custom-input" type="text" placeholder="e.g. gpt-5.5 or openai/gpt-5-nano" autocomplete="off" spellcheck="false"></label>
+          </div>
+          <div id="reasoning-row" class="picker-subrow" hidden>
+            <span class="picker-sublabel">Reasoning</span>
+            <div id="reasoning-picker" class="chip-row chip-row--small" role="radiogroup" aria-label="Reasoning effort"></div>
+            <label id="fast-switch" class="switch" hidden>
+              <input id="run-codex-fast" type="checkbox">
+              <span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span>
+              <span class="switch__label">Fast mode</span>
             </label>
-            <label class="field"><span>World</span><select id="run-world"></select></label>
           </div>
-          <div class="form-row">
-            <label class="field"><span>Start level</span><select id="run-level"></select></label>
-            <label class="field"><span>Moves</span><input id="run-moves" type="number" min="1" max="500" value="20" inputmode="numeric"></label>
+
+          <div id="world-section">
+            <h3 class="picker-label">World</h3>
+            <div id="world-picker" class="world-tile-row" role="radiogroup" aria-label="World"></div>
+            <div class="online-pull">
+              <label class="field"><span>Or download a published world from ${escapeHtml(
+                (remoteStatusSafe().origin || "https://dev.mazebench.com").replace(/^https?:\/\//, "")
+              )} by id</span><input id="online-world-id" type="text" placeholder="mbw_…" autocomplete="off" spellcheck="false"></label>
+              <button id="online-world-pull" type="button">Download</button>
+            </div>
+
+            <h3 class="picker-label">Start level</h3>
+            <div id="level-summary" class="level-summary"></div>
+            <div id="level-picker" class="level-grid-wrap" hidden></div>
           </div>
-          <div class="form-row">
-            <label class="field"><span>Observation</span>
-              <select id="run-mode">
-                <option value="text">Text (ASCII board)</option>
-                <option value="vision">Vision (rendered PNGs)</option>
-              </select>
-            </label>
-            <label class="field"><span>Model id (optional)</span><input id="run-model-name" type="text" placeholder="agent default"></label>
+
+          <h3 class="picker-label">Run settings</h3>
+          <div id="local-settings">
+            <div class="settings-row">
+              <label class="field field--narrow"><span>Move budget</span><input id="run-moves" type="number" min="1" max="500" value="20" inputmode="numeric"></label>
+              <div class="segmented" id="mode-picker" role="radiogroup" aria-label="Observation mode">
+                <button type="button" class="segmented__option is-selected" data-mode="text" aria-pressed="true">Text<small>ASCII board</small></button>
+                <button type="button" class="segmented__option" data-mode="vision" aria-pressed="false">Vision<small>rendered PNGs</small></button>
+              </div>
+            </div>
+            <div class="settings-row switches-row">
+              <label class="switch">
+                <input id="run-container" type="checkbox" checked>
+                <span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span>
+                <span class="switch__label">Container<small>isolated from your files</small></span>
+              </label>
+              <label class="switch">
+                <input id="run-video" type="checkbox" checked>
+                <span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span>
+                <span class="switch__label">Replay video<small>rendered when the run ends</small></span>
+              </label>
+              <label class="switch">
+                <input id="run-tools" type="checkbox">
+                <span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span>
+                <span class="switch__label">Full tool access<small>off = maze commands only</small></span>
+              </label>
+            </div>
           </div>
-          <div class="form-row" data-codex-only>
-            <label class="field"><span>Reasoning</span>
-              <select id="run-reasoning">
-                <option value="">model default</option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-                <option value="xhigh">xhigh</option>
-              </select>
-            </label>
-            <label class="agent-check" style="align-self: end"><input id="run-codex-fast" type="checkbox"> Codex fast mode</label>
+          <div id="prime-settings" class="settings-row" hidden>
+            <label class="field field--narrow"><span>Examples (n)</span><input id="run-prime-n" type="number" min="1" max="50" value="1"></label>
+            <label class="field field--narrow"><span>Rollouts (r)</span><input id="run-prime-r" type="number" min="1" max="10" value="1"></label>
+            <label class="field field--narrow"><span>Max turns</span><input id="run-prime-turns" type="number" min="1" max="200" value="8"></label>
           </div>
-          <div class="agent-toggles" style="margin-top: 12px">
-            <label class="agent-check"><input id="run-container" type="checkbox" checked> Container (isolated)</label>
-            <label class="agent-check"><input id="run-video" type="checkbox" checked> Replay video</label>
-            <label class="agent-check"><input id="run-tools" type="checkbox"> Full tool access</label>
-          </div>
-          <div class="form-row" data-prime-only hidden style="margin-top: 12px">
-            <label class="field"><span>Examples (n)</span><input id="run-prime-n" type="number" min="1" max="50" value="1"></label>
-            <label class="field"><span>Rollouts (r)</span><input id="run-prime-r" type="number" min="1" max="10" value="1"></label>
-            <label class="field"><span>Max turns</span><input id="run-prime-turns" type="number" min="1" max="200" value="8"></label>
-          </div>
-          <div class="card-actions" style="margin-top: 14px">
+
+          <div class="card-actions launch-row">
             <button id="launch-run" class="button--primary" type="button">Launch Run</button>
-            <button id="add-online-world" type="button">Add Online World&hellip;</button>
           </div>
           <p id="agent-environment" class="muted" style="margin-bottom: 0"></p>
-        </section>
-        <section id="online-picker" class="panel" aria-label="Online worlds" hidden>
-          <h2>Online Worlds</h2>
-          <p class="muted">Published community worlds from <span id="online-origin"></span>. Picking one downloads a local copy agents can run on.</p>
-          <div id="online-worlds" class="world-grid"></div>
         </section>
         <section class="panel" aria-label="Runs">
           <h2>Runs</h2>

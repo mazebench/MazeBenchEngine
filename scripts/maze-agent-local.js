@@ -1015,6 +1015,7 @@ module.exports = {
   actionFromShellCommand,
   distillClaudeEvents,
   distillCodexEvents,
+  loadCodexModels,
   resultFromOutput
 };
 

@@ -2,7 +2,8 @@ const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
+const { loadCodexModels } = require("../scripts/maze-agent-local");
 
 // GUI-launched servers (editors, preview harnesses) often get a minimal PATH
 // that misses the dirs where codex/claude/docker/prime live. Enrich the PATH
@@ -230,6 +231,127 @@ function createAgentRunService({ ensureDirectory, getGame, buildWorlds, loadJson
     };
   }
 
+  // ---- provider model catalogs ------------------------------------------
+  // codex: the Codex app caches its model catalog on disk (rich metadata:
+  //        display names, reasoning levels, fast tier availability).
+  // claude: no local catalog exists; the CLI accepts the alias set.
+  // prime: `prime inference models --output json` (needs `prime login`);
+  //        results are cached and errors surface as a hint instead of a 500.
+  const providerModelCache = new Map();
+  const PROVIDER_MODEL_TTL_MS = 10 * 60 * 1000;
+  const PROVIDER_MODEL_ERROR_TTL_MS = 60 * 1000;
+
+  function codexModelCatalog() {
+    const models = loadCodexModels().map((model) => ({
+      id: model.slug,
+      label: model.displayName,
+      description: model.description,
+      reasoning_levels: model.reasoningLevels.map((level) => level.effort),
+      default_reasoning: model.defaultReasoning,
+      fast: Boolean(model.fast)
+    }));
+
+    return {
+      models,
+      // The Codex app orders its catalog strongest-first.
+      default_model_id: models[0]?.id || "",
+      note: models.length
+        ? ""
+        : "No Codex model cache found (~/.codex/models_cache.json) — run the Codex app once, or type a model id."
+    };
+  }
+
+  function claudeModelCatalog() {
+    return {
+      models: [
+        { id: "opus", label: "Opus", description: "Most capable" },
+        { id: "sonnet", label: "Sonnet", description: "Balanced speed and smarts" },
+        { id: "haiku", label: "Haiku", description: "Fastest" }
+      ],
+      default_model_id: "opus",
+      note: ""
+    };
+  }
+
+  function primeModelCatalog() {
+    const result = spawnSync("prime", ["--plain", "inference", "models", "--output", "json"], {
+      encoding: "utf8",
+      env: enrichedPathEnv(),
+      timeout: 15000,
+      maxBuffer: 16 * 1024 * 1024
+    });
+
+    if (result.error && result.error.code === "ENOENT") {
+      return {
+        models: [],
+        note: "The `prime` CLI is not installed — type a model id (e.g. openai/gpt-5-nano), or install it from docs.primeintellect.ai."
+      };
+    }
+
+    if (result.status !== 0) {
+      const detail = String(result.stderr || result.stdout || "").trim().split("\n")[0];
+      const authProblem = /401|token|login|unauthorized/i.test(detail);
+
+      return {
+        models: [],
+        note: authProblem
+          ? "Prime is not logged in — run `prime login` in a terminal, then reopen this page. You can still type a model id (e.g. openai/gpt-5-nano)."
+          : `Could not load the Prime model catalog (${detail || "unknown error"}). Type a model id instead.`
+      };
+    }
+
+    try {
+      const payload = JSON.parse(String(result.stdout || "{}"));
+      const rows = Array.isArray(payload.data) ? payload.data : Array.isArray(payload.models) ? payload.models : [];
+      const models = rows
+        .map((row) => {
+          const id = String(row.id || "");
+          const slash = id.indexOf("/");
+
+          return {
+            id,
+            label: slash === -1 ? id : id.slice(slash + 1),
+            description: "",
+            group: slash === -1 ? "other" : id.slice(0, slash)
+          };
+        })
+        .filter((model) => model.id);
+
+      return {
+        models,
+        default_model_id: models[0]?.id || "",
+        note: models.length ? "" : "The Prime catalog came back empty — type a model id instead."
+      };
+    } catch (error) {
+      return { models: [], note: "Could not parse the Prime model catalog — type a model id instead." };
+    }
+  }
+
+  function listProviderModels(provider) {
+    const normalized = String(provider || "").toLowerCase();
+
+    if (!["codex", "claude", "prime"].includes(normalized)) {
+      throw new Error(`Unknown provider "${provider}".`);
+    }
+
+    const cached = providerModelCache.get(normalized);
+
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.value;
+    }
+
+    const value =
+      normalized === "codex"
+        ? codexModelCatalog()
+        : normalized === "claude"
+          ? claudeModelCatalog()
+          : primeModelCatalog();
+    const ttl = value.models.length ? PROVIDER_MODEL_TTL_MS : PROVIDER_MODEL_ERROR_TTL_MS;
+
+    providerModelCache.set(normalized, { value, expiresAt: Date.now() + ttl });
+    return value;
+  }
+
   function normalizedGameForRun(gameId) {
     const game = getGame(String(gameId || "maze"));
 
@@ -454,6 +576,7 @@ function createAgentRunService({ ensureDirectory, getGame, buildWorlds, loadJson
   return {
     getRunProgress,
     launchRun,
+    listProviderModels,
     listRuns,
     resolveRunFilePath,
     stopRun,

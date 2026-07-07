@@ -114,6 +114,17 @@ function createRequestRouter({
       return;
     }
 
+    if (segments.length === 4 && segments[0] === "api" && segments[1] === "agent" && segments[2] === "models") {
+      if (request.method !== "GET") {
+        response.writeHead(405, { Allow: "GET" });
+        response.end();
+        return;
+      }
+
+      sendJson(response, 200, agentRuns.listProviderModels(decodeURIComponent(segments[3])));
+      return;
+    }
+
     if (segments.length === 3 && segments[0] === "api" && segments[1] === "agent" && segments[2] === "runs") {
       if (request.method === "GET") {
         sendJson(response, 200, { runs: agentRuns.listRuns() });

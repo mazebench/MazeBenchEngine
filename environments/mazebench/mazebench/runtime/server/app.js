@@ -54,7 +54,10 @@ const PUBLIC_FILE_ROUTES = new Map(
     "/author-theme.css",
     "/play-theme.css",
     "/local-site.css",
-    "/favicon.svg"
+    "/favicon.svg",
+    "/logos/codex.png",
+    "/logos/claude.png",
+    "/logos/prime.png"
   ].map((routePath) => [routePath, path.join(PUBLIC_DIR, routePath.slice(1))])
 );
 
