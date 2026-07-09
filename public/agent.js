@@ -759,8 +759,10 @@
         <strong>${escapeText(levelLabel(levelId))}</strong>
         <small>${isDefault ? "world default start" : "custom start level"}</small>
       </span>
-      <button type="button" id="level-change">${picker.hidden ? "Change…" : "Close"}</button>
-      ${!isDefault ? '<button type="button" id="level-reset">Use world default</button>' : ""}`;
+      <span class="level-summary__actions">
+        <button type="button" id="level-change">${picker.hidden ? "Change…" : "Close"}</button>
+        ${!isDefault ? '<button type="button" id="level-reset">Use world default</button>' : ""}
+      </span>`;
 
     document.getElementById("level-change").addEventListener("click", () => {
       const opening = picker.hidden;

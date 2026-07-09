@@ -710,7 +710,7 @@ function createAgentRunService({
   // ---- provider model catalogs ------------------------------------------
   // codex: the Codex app caches its model catalog on disk (rich metadata:
   //        display names, reasoning levels, fast tier availability).
-  // claude: no local catalog exists; the CLI accepts the alias set.
+  // claude: help aliases plus the installed /model picker's static metadata.
   // prime: `prime inference models --output json` (needs `prime login`);
   //        results are cached and errors surface as a hint instead of a 500.
   const providerModelCache = new Map();
@@ -755,9 +755,11 @@ function createAgentRunService({
   }
 
   function claudeModelCatalog() {
-    // Claude Code has no JSON model-catalog command, but its installed CLI help
-    // lists the aliases accepted by --model. Read those aliases on every fresh
-    // request so newly added tiers appear without a code change.
+    // Claude Code has no JSON model-catalog command. Its help lists most aliases,
+    // while the model picker metadata embedded in the installed CLI is more
+    // complete (for example, current builds expose Haiku in /model but omit it
+    // from the --model help example). Read both so this catalog follows the
+    // installed CLI instead of maintaining a stale model list here.
     const help = spawnSync("claude", ["--help"], {
       encoding: "utf8",
       env: enrichedPathEnv(),
@@ -769,7 +771,68 @@ function createAgentRunService({
     const detectedAliases = aliasExample
       ? [...aliasExample[1].matchAll(/['"]([a-z][a-z0-9-]*)['"]/gi)].map((match) => match[1].toLowerCase())
       : [];
-    const aliases = [...new Set(detectedAliases.length ? detectedAliases : ["fable", "opus", "sonnet"])]
+
+    const pickerLabels = new Map();
+    const executable = spawnSync("sh", ["-c", "command -v claude"], {
+      encoding: "utf8",
+      env: enrichedPathEnv(),
+      timeout: 2000
+    });
+    const executablePath = String(executable.stdout || "").trim();
+
+    if (executable.status === 0 && executablePath) {
+      // `strings` lets us read the same static labels used by /model without
+      // opening an interactive session, changing the user's default, or making
+      // an API request. The awk filter keeps the 200MB+ executable out of memory.
+      const pickerMetadata = spawnSync(
+        "sh",
+        [
+          "-c",
+          "LC_ALL=C strings \"$1\" | awk '/^Custom [[:alnum:]-]+ model$/ || /^[[:alnum:]-]+ [0-9]+([.][0-9]+)*([[:space:]]+-|[[:space:]]*$)/'",
+          "claude-model-catalog",
+          executablePath
+        ],
+        {
+          encoding: "utf8",
+          env: enrichedPathEnv(),
+          timeout: 5000,
+          maxBuffer: 2 * 1024 * 1024
+        }
+      );
+      const metadataLines = String(pickerMetadata.stdout || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const pickerFamilies = [...new Set(metadataLines.flatMap((line) => {
+        const match = line.match(/^Custom ([a-z][a-z0-9-]*) model$/i);
+        return match ? [match[1]] : [];
+      }))];
+
+      for (const family of pickerFamilies) {
+        const escapedFamily = family.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const versionPattern = new RegExp(`^${escapedFamily}\\s+(\\d+(?:\\.\\d+)*)\\s*(?:-|$)`, "i");
+        const versions = metadataLines.flatMap((line) => {
+          const match = line.match(versionPattern);
+          return match ? [match[1]] : [];
+        });
+        versions.sort((left, right) => {
+          const leftParts = left.split(".").map(Number);
+          const rightParts = right.split(".").map(Number);
+          const length = Math.max(leftParts.length, rightParts.length);
+          for (let index = 0; index < length; index += 1) {
+            const difference = (rightParts[index] || 0) - (leftParts[index] || 0);
+            if (difference) return difference;
+          }
+          return 0;
+        });
+
+        const alias = family.toLowerCase();
+        const version = versions[0];
+        if (version) pickerLabels.set(alias, `${family.charAt(0).toUpperCase()}${family.slice(1)} ${version}`);
+      }
+    }
+
+    const aliases = [...new Set([...detectedAliases, ...pickerLabels.keys()])]
       .filter((alias) => /^[a-z][a-z0-9-]*$/.test(alias));
     const descriptions = {
       fable: "Latest Fable tier — highest capability",
@@ -787,7 +850,7 @@ function createAgentRunService({
     return {
       models: aliases.map((alias) => ({
         id: alias,
-        label: `${alias.charAt(0).toUpperCase()}${alias.slice(1)} (latest)`,
+        label: pickerLabels.get(alias) || `${alias.charAt(0).toUpperCase()}${alias.slice(1)} (latest)`,
         description: descriptions[alias] || `Latest model behind the ${alias} alias`
       })),
       source: versionText ? `Claude Code ${versionText}` : "Installed Claude Code CLI",
@@ -797,9 +860,11 @@ function createAgentRunService({
       // CLI); it's provider-wide, not per model.
       reasoning_levels: ["low", "medium", "high", "xhigh", "max"],
       reasoning_default: "",
-      note: detectedAliases.length
-        ? "Aliases detected from the installed CLI; each automatically resolves to the latest model in that tier."
-        : "Claude did not expose its alias list, so the standard latest-model aliases are shown. Use Custom… for a full model id."
+      note: pickerLabels.size
+        ? "Models and display versions detected from this installed Claude Code build. Aliases stay dynamic when Claude rolls them forward."
+        : detectedAliases.length
+          ? "Aliases detected from the installed CLI; this build did not expose exact picker labels."
+          : "Claude Code did not expose a model list. Use Custom… for a full model id."
     };
   }
 

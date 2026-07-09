@@ -2041,7 +2041,40 @@ body.play-body {
 }
 
 .target-block--level .level-summary {
-  flex-wrap: nowrap;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 52px minmax(0, 1fr);
+  width: 100%;
+}
+
+.target-block--level .level-summary__thumb,
+.target-block--level .level-summary__text {
+  grid-row: 1;
+}
+
+.target-block--level .level-summary__text {
+  min-width: 0;
+}
+
+.level-summary__actions {
+  display: grid;
+  gap: 8px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.level-summary__actions > :only-child {
+  grid-column: 1 / -1;
+}
+
+.level-summary__actions button {
+  font-size: 12px;
+  line-height: 1.2;
+  min-height: 42px;
+  min-width: 0;
+  padding: 7px 10px;
+  white-space: normal;
+  width: 100%;
 }
 
 /* Animated settings deck */

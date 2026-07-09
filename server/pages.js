@@ -47,7 +47,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css">
-    <link rel="stylesheet" href="/local-site.css?v=20260709-agent-redesign-30">
+    <link rel="stylesheet" href="/local-site.css?v=20260709-agent-redesign-31">
     ${extraHeadHtml}`
     })}
   </head>
@@ -252,7 +252,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css">
-    <link rel="stylesheet" href="/local-site.css?v=20260709-agent-redesign-30">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260709-agent-redesign-31">`;
   }
 
   function renderPlayPage(game, level) {
@@ -364,7 +364,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    <link rel="stylesheet" href="/local-site.css?v=20260709-agent-redesign-30">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260709-agent-redesign-31">`;
   }
 
   function renderAuthorPage(game, level) {
@@ -904,7 +904,7 @@ function createPageRenderer({
           </div>
         </section>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
-        <script src="/agent.js?v=20260709-agent-redesign-30" defer></script>`
+        <script src="/agent.js?v=20260709-agent-redesign-31" defer></script>`
     });
   }
 
