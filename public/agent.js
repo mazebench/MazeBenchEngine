@@ -44,6 +44,7 @@
     worldId: data.worlds[0] ? data.worlds[0].id : null,
     levelId: null, // null = use the world's default from its metadata
     mode: "text",
+    isolation: "docker",
     catalogs: {},
     openFolders: new Set()
   };
@@ -462,6 +463,9 @@
       option.classList.toggle("is-selected", selected);
       option.setAttribute("aria-pressed", String(selected));
     });
+    // View distance only applies to rendered vision frames.
+    const viewField = document.getElementById("vision-view-field");
+    if (viewField) viewField.hidden = mode !== "vision";
   }
 
   document.querySelectorAll(".segmented__option[data-mode]").forEach((option) => {
@@ -507,38 +511,41 @@
     }
   }
 
-  // Container mode requires Docker installed AND its daemon running. Otherwise
-  // force the toggle off and lock it so a run can never be launched that would
-  // immediately fail.
-  function syncContainerAvailability() {
-    const input = document.getElementById("run-container");
-    if (!input) return;
-    const label = input.closest(".switch");
-    const hint = label ? label.querySelector(".switch__label small") : null;
+  // Isolation is a two-way choice — Docker (isolated container) or Full tools
+  // (full host access). There is no host-sandbox middle mode: the codex/claude
+  // workspace-write sandbox has no network, so it can't render vision frames.
+  function setIsolation(value) {
+    state.isolation = value === "full" ? "full" : "docker";
+    document.querySelectorAll(".segmented__option[data-isolation]").forEach((option) => {
+      const selected = option.dataset.isolation === state.isolation;
+      option.classList.toggle("is-selected", selected);
+      option.setAttribute("aria-pressed", String(selected));
+    });
+  }
+
+  // Docker mode needs Docker installed AND its daemon running. When it isn't,
+  // disable that option and fall back to Full tools so a run can never be
+  // launched that would immediately fail.
+  function syncIsolationPicker() {
+    const dockerOption = document.querySelector('.segmented__option[data-isolation="docker"]');
+    if (!dockerOption) return;
     const env = data.environment || {};
     const ready = Boolean(env.docker);
+    const hint = dockerOption.querySelector("small");
 
-    input.disabled = !ready;
-    if (label) label.classList.toggle("is-disabled", !ready);
+    dockerOption.disabled = !ready;
+    dockerOption.classList.toggle("is-disabled", !ready);
 
     if (ready) {
       if (hint) hint.textContent = "isolated from your files";
-      if (label) label.removeAttribute("title");
+      dockerOption.removeAttribute("title");
     } else {
-      input.checked = false;
-      if (env.docker_installed) {
-        if (hint) hint.textContent = "needs Docker running — start Docker";
-        if (label) {
-          label.title =
-            "Docker is installed but its daemon isn't running. Start it below, or run on the per-CLI host sandbox.";
-        }
-      } else {
-        if (hint) hint.textContent = "needs Docker — not installed";
-        if (label) {
-          label.title =
-            "Install Docker to isolate agent runs. Without it, runs use the per-CLI host sandbox instead.";
-        }
-      }
+      if (hint) hint.textContent = env.docker_installed ? "start Docker below" : "Docker not installed";
+      dockerOption.title = env.docker_installed
+        ? "Docker is installed but its daemon isn't running. Start it below, or use Full tools."
+        : "Install Docker to isolate agent runs, or use Full tools.";
+      // Never leave a run stuck on an unavailable Docker mode.
+      if (state.isolation === "docker") setIsolation("full");
     }
 
     renderDockerAction();
@@ -605,11 +612,10 @@
         const env = await refreshEnvironment();
         if (env.docker) {
           dockerStarting = false;
-          const input = document.getElementById("run-container");
-          if (input) input.checked = true; // the user clearly wants containers
-          syncContainerAvailability();
+          setIsolation("docker"); // the user clearly wants containers
+          syncIsolationPicker();
           describeEnvironment();
-          setStatus("Docker is running — container mode enabled.");
+          setStatus("Docker is running — Docker mode enabled.");
           return;
         }
       } catch (error) {
@@ -642,7 +648,7 @@
     const parts = [];
     if (found.length) parts.push(`Available: ${found.join(", ")}.`);
     if (missing.length) parts.push(`Not available: ${missing.join(", ")}.`);
-    if (!env.docker) parts.push("Without Docker, agents run on the per-CLI host sandbox.");
+    if (!env.docker) parts.push("Without Docker, runs need Full tool access (there is no host-sandbox mode).");
     document.getElementById("agent-environment").textContent = parts.join(" ");
   }
 
@@ -678,12 +684,13 @@
             level_id: effectiveLevelId(),
             moves: Number(document.getElementById("run-moves").value) || 20,
             mode: state.mode,
+            vision_view: state.mode === "vision" ? document.getElementById("run-vision-view")?.value || "" : "",
             model_name: resolvedModelName(),
             reasoning: state.provider === "codex" || state.provider === "claude" ? state.reasoning : "",
             codex_fast: state.provider === "codex" && document.getElementById("run-codex-fast").checked,
-            container: document.getElementById("run-container").checked,
+            container: state.isolation === "docker",
             video: document.getElementById("run-video").checked,
-            tools: document.getElementById("run-tools").checked
+            tools: state.isolation === "full"
           };
 
     body.count = Math.max(1, Math.min(8, Math.floor(Number(document.getElementById("run-batch").value) || 1)));
@@ -762,7 +769,7 @@
     return `<div class="world-card agent-run-card" data-run-id="${escapeText(run.id)}">
       <div class="card-body">
         <h3 class="card-title"><span class="agent-chip ${runStatusClass(run.status)}">${escapeText(statusLabel)}</span> ${escapeText(run.model)} on ${escapeText(run.game_title || run.game_id)}</h3>
-        <p class="card-by">${summary}<br>${escapeText(new Date(run.created_at).toLocaleString())}${run.continued ? ` &middot; continued ×${run.continued}` : run.continue_of ? " &middot; continued" : ""}</p>
+        <p class="card-by">${summary}<br>${escapeText(run.created_at ? new Date(run.created_at).toLocaleString() : "")}${run.continued ? ` &middot; continued ×${run.continued}` : run.continue_of ? " &middot; continued" : ""}</p>
         <div class="card-actions">${actions}</div>
       </div>
     </div>`;
@@ -908,7 +915,13 @@
   const firstAvailable = PROVIDERS.find((provider) => data.environment?.[provider.envKey]);
   renderWorlds();
   renderLevelSummary();
-  syncContainerAvailability();
+  document.querySelectorAll(".segmented__option[data-isolation]").forEach((option) => {
+    option.addEventListener("click", () => {
+      if (option.disabled) return;
+      setIsolation(option.dataset.isolation);
+    });
+  });
+  syncIsolationPicker();
   describeEnvironment();
   wireRunsToolbar();
   refreshRuns();

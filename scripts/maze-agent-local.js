@@ -24,6 +24,8 @@
 //                worlds created in Build Mode use their games/<id> dirs)
 //   level        world level id, e.g. HxI or level_HxI       (default level_HxI)
 //   vision_width, vision_height   PNG size in vision mode     (default 512)
+//   vision_view  how far vision frames see: 1-26 rings of neighbor rooms
+//                or "world"                                   (default 1 = 3x3)
 //   view         top | top-diagonal | diagonal | side-diagonal | side
 //   yaw          0-3 camera yaw                               (default 0)
 //   gems         unique gems required for game_won            (default 100)
@@ -119,15 +121,16 @@ function timestampSlug() {
 
 function buildPrompt(config) {
   const visionFlags = config.mode === "vision"
-    ? ` --vision --vision-width ${config.visionWidth} --vision-height ${config.visionHeight}`
+    ? ` --vision --vision-width ${config.visionWidth} --vision-height ${config.visionHeight}` +
+      (config.visionView ? ` --vision-view ${config.visionView}` : "")
     : "";
   const observation = config.mode === "vision"
     ? `This is VISION mode. Every helper command prints JSON containing a
 "frame_image" field: an absolute path to a PNG of the current maze view. OPEN
 and LOOK AT that image to decide your next move — there is NO ASCII board. The
 JSON also carries a short text status (current_room, gem_count, player
-x/y/elevation, allowed_commands). Rendering runs a headless browser, so each
-command takes a few seconds.`
+x/y/elevation, allowed_commands). The first command boots a headless browser
+(a few seconds); later commands render quickly.`
     : `This is TEXT mode. Every helper command prints a JSON observation with an
 ASCII board in the "level" field plus a short status. Read the JSON to choose
 your next move.`;
@@ -652,7 +655,7 @@ function runInContainer(config, raw) {
   const forwardKeys = [
     "model", "moves", "mode", "tools", "game", "level", "view", "yaw", "gems",
     "video", "no_video", "fast", "draft", "width", "height", "fps",
-    "vision_width", "vision_height", "model_name", "llm",
+    "vision_width", "vision_height", "vision_view", "model_name", "llm",
     "reasoning", "effort", "codex_fast",
     "codex_bin", "claude_bin", "claude_allowed_tools"
   ];
@@ -1045,10 +1048,26 @@ async function main() {
     video: isTruthy(raw.video, true) && !isTruthy(raw.no_video, false),
     view,
     visionHeight: positiveInt(raw.vision_height, 512),
+    // 1-26 rings or "world"; empty = codex-play's default (1 = classic 3x3).
+    visionView: String(raw.vision_view || "").trim().toLowerCase(),
     visionWidth: positiveInt(raw.vision_width, 512),
     width: raw.width ? positiveInt(raw.width, undefined) : undefined,
     yaw: ((positiveInt(raw.yaw, 0) % 4) + 4) % 4
   };
+
+  // A run is isolated by a container OR granted Full tool access — never the
+  // host workspace-write sandbox in between (no network, so it can't render
+  // vision frames, and it's weaker isolation than a container). The
+  // in-container re-exec runs with container=false on the container's host, so
+  // it's exempt (the container IS the isolation).
+  if (!config.container && !config.tools && process.env.MAZEBENCH_IN_CONTAINER !== "1") {
+    console.error(
+      "A run needs either container mode or full tool access (tools=true).\n" +
+        "The host sandbox in between can't render vision frames and isn't supported.\n" +
+        "Re-run with container=true (default) or tools=true."
+    );
+    process.exit(2);
+  }
 
   // Default: isolate the whole run inside a container. `container=false` (or the
   // in-container re-exec, flagged by MAZEBENCH_IN_CONTAINER) runs on the host.

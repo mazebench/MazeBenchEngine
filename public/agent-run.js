@@ -26,7 +26,9 @@
     moves: new Map(), // move# -> { action, room, gems, flags }
     reasoning: new Map(), // move# -> reasoning text
     lastRenderedTurn: 0,
+    lastImageUrl: null,
     frameRendering: false,
+    frameFailures: 0,
     videoShown: false
   };
 
@@ -164,7 +166,13 @@
 
   function showImage(url, turn) {
     if (!url) return;
-    liveImage.src = url + (url.includes("?") ? "" : `?t=${Date.now()}`);
+    // Each turn gets its own frame URL, so only touch the <img> when the URL
+    // actually changes — the poll loop calls this every tick, and resetting
+    // src re-downloads the frame and makes it flicker.
+    if (url !== state.lastImageUrl) {
+      state.lastImageUrl = url;
+      liveImage.src = url;
+    }
     liveImage.hidden = false;
     livePlaceholder.hidden = true;
     if (captionEl && turn != null) {
@@ -185,13 +193,17 @@
       const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/frame?turn=${latest}`);
       const payload = await response.json();
       if (payload.url) {
+        state.frameFailures = 0;
         showImage(payload.url, latest);
         state.lastRenderedTurn = latest;
-      } else if (payload.error && livePlaceholder && !liveImage.src) {
-        livePlaceholder.querySelector("span:last-child").textContent = payload.error;
+      } else if (payload.error) {
+        state.frameFailures += 1;
+        if (livePlaceholder && !liveImage.src) {
+          livePlaceholder.querySelector("span:last-child").textContent = payload.error;
+        }
       }
     } catch (error) {
-      /* transient — try again next tick */
+      state.frameFailures += 1;
     } finally {
       state.frameRendering = false;
     }
@@ -326,7 +338,9 @@
         );
         // The text-mode image renders async and lags the board; keep polling
         // until it catches up to the final move so the two end up in sync.
-        if (!isPrime && !isVision && state.lastRenderedTurn < state.afterTurn) {
+        // Give up after a few consecutive renderer failures — otherwise a
+        // finished run whose renderer keeps erroring polls forever.
+        if (!isPrime && !isVision && state.lastRenderedTurn < state.afterTurn && state.frameFailures < 5) {
           maybeRenderTextFrame();
           state.timer = setTimeout(poll, 1200);
         }

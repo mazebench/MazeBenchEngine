@@ -194,6 +194,20 @@ async function captureFrame(page) {
   });
 }
 
+// The view window: 1..26 rings of neighbor rooms around the player (1 = the
+// classic 3x3 neighborhood) or "world" for the whole map, mirroring the
+// ?view= query parameter that public/play.js understands.
+function normalizeViewOption(value) {
+  const raw = String(value ?? "1").trim().toLowerCase();
+
+  if (raw === "world") {
+    return "world";
+  }
+
+  const rings = Number(raw);
+  return Number.isFinite(rings) ? Math.max(1, Math.min(26, Math.floor(rings))) : 1;
+}
+
 function normalizeRenderOptions(payload) {
   return {
     actions: Array.isArray(payload.actions) ? payload.actions : [],
@@ -202,11 +216,12 @@ function normalizeRenderOptions(payload) {
     cameraTiltDegrees: Number(payload.cameraTiltDegrees || 58),
     cameraZoom: Number(payload.cameraZoom || 1),
     draft: payload.draft !== false,
+    edges: payload.edges !== false,
     fast: payload.fast !== false,
     gameId: String(payload.gameId || "maze"),
     height: Number(payload.height || 512),
     levelId: String(payload.levelId || "level_HxI"),
-    view: Number(payload.view || 1),
+    view: normalizeViewOption(payload.view),
     width: Number(payload.width || 512),
     yaw: Number(payload.yaw || 0)
   };
@@ -245,12 +260,12 @@ async function createRenderSession(payload) {
       deviceScaleFactor: 1,
       viewport: { width: options.width, height: options.height }
     });
-    // Pin the classic 3x3 neighborhood so benchmark observations stay
-    // stable regardless of the browser default (whole-world view).
-    const viewRings = Number.isFinite(Number(options.view)) ? Number(options.view) : 1;
+    // Pin the view window (default: the classic 3x3 neighborhood) so benchmark
+    // observations stay stable regardless of the browser default. options.view
+    // is 1..26 rings or "world" — both understood by public/play.js.
     const levelUrl = `http://127.0.0.1:${server.port}/play/${encodeURIComponent(
       options.gameId
-    )}/${encodeURIComponent(options.levelId)}?view=${encodeURIComponent(viewRings)}`;
+    )}/${encodeURIComponent(options.levelId)}?view=${encodeURIComponent(options.view)}`;
 
     await page.addInitScript(() => {
       window.__PIXEL_GAME_DEBUG__ = true;
@@ -298,7 +313,7 @@ async function createRenderSession(payload) {
         }
       `
     });
-    await page.evaluate(async ({ draft, fast, height, width }) => {
+    await page.evaluate(async ({ draft, edges, fast, height, width }) => {
       const app = window.__PIXEL_GAME_APP__;
 
       if (draft) {
@@ -315,8 +330,11 @@ async function createRenderSession(payload) {
       window.dispatchEvent(new Event("resize"));
       app.syncPlayLayout?.();
       app.setupCanvas?.();
+      // Fuzzy (CRT noise) is a per-frame post effect — draft mode drops it for
+      // speed. Black edge outlines are part of how the game reads, so they stay
+      // on unless explicitly disabled; humans see them by default too.
       app.state.effects.fuzzyEnabled = !draft;
-      app.state.effects.edgeOutlinesEnabled = !draft;
+      app.state.effects.edgeOutlinesEnabled = edges;
       app.state.effects.noisePhase = 0;
 
       if (app.noiseFrameId !== null) {
@@ -352,6 +370,7 @@ async function createRenderSession(payload) {
     }, options);
 
     const session = {
+      appliedActions: [],
       browser,
       cameraTiltDegrees: options.cameraTiltDegrees,
       cameraYawTurns: ((options.yaw % 4) + 4) % 4,
@@ -430,6 +449,7 @@ async function applySessionAction(session, commandText) {
     await waitUntilSettled(page);
   }
 
+  session.appliedActions.push(String(commandText));
   return true;
 }
 
@@ -466,9 +486,42 @@ function writeLine(payload) {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
 }
 
-function runServeMode() {
+// Option fields that must match for a live session to be reused by a `render`
+// sync; a mismatch (different level, size, view, ...) forces a fresh session.
+const SESSION_OPTION_KEYS = [
+  "browser",
+  "cameraStepDegrees",
+  "cameraTiltDegrees",
+  "cameraZoom",
+  "draft",
+  "edges",
+  "fast",
+  "gameId",
+  "height",
+  "levelId",
+  "view",
+  "width",
+  "yaw"
+];
+
+function renderOptionsMatch(current, next) {
+  return SESSION_OPTION_KEYS.every((key) => current[key] === next[key]);
+}
+
+async function initSession(payload) {
+  const session = await createRenderSession(payload);
+
+  for (const commandText of session.options.actions) {
+    await applySessionAction(session, commandText);
+  }
+
+  return session;
+}
+
+// Shared message handling for the persistent modes (--serve on stdin, --listen
+// on a local socket). One render session at a time.
+function createServeHandler() {
   let session = null;
-  let queue = Promise.resolve();
 
   async function closeSession() {
     const current = session;
@@ -476,17 +529,41 @@ function runServeMode() {
     await closeRenderSession(current);
   }
 
+  // Reuse the live session when the requested action list extends what it has
+  // already applied — the common one-new-action-per-turn case. Anything else
+  // (rewritten history, changed options) rebuilds from scratch.
+  async function syncSession(message) {
+    const next = normalizeRenderOptions(message);
+    const wanted = next.actions.map(String).filter((text) => parseCommandLine(text));
+
+    if (session && renderOptionsMatch(session.options, next)) {
+      const applied = session.appliedActions;
+      const extendsApplied =
+        applied.length <= wanted.length && applied.every((text, index) => text === wanted[index]);
+
+      if (extendsApplied) {
+        for (const text of wanted.slice(applied.length)) {
+          await applySessionAction(session, text);
+        }
+        return;
+      }
+    }
+
+    await closeSession();
+    session = await initSession(message);
+  }
+
   async function handleMessage(message) {
     const command = String(message.command || "").trim().toLowerCase();
 
     if (command === "init") {
       await closeSession();
-      session = await createRenderSession(message);
+      session = await initSession(message);
+      return { ok: true, frame: await captureSessionFrame(session) };
+    }
 
-      for (const commandText of session.options.actions) {
-        await applySessionAction(session, commandText);
-      }
-
+    if (command === "render") {
+      await syncSession(message);
       return { ok: true, frame: await captureSessionFrame(session) };
     }
 
@@ -511,9 +588,16 @@ function runServeMode() {
     throw new Error(`unknown command: ${message.command}`);
   }
 
+  return { closeSession, handleMessage };
+}
+
+function runServeMode() {
+  const handler = createServeHandler();
+  let queue = Promise.resolve();
+
   function shutdown() {
     queue = queue
-      .then(() => closeSession())
+      .then(() => handler.closeSession())
       .catch(() => {})
       .finally(() => process.exit(0));
   }
@@ -535,7 +619,7 @@ function runServeMode() {
       let response;
 
       try {
-        response = await handleMessage(JSON.parse(line));
+        response = await handler.handleMessage(JSON.parse(line));
       } catch (error) {
         response = {
           ok: false,
@@ -554,24 +638,150 @@ function runServeMode() {
   rl.on("close", shutdown);
 }
 
+// Daemon mode: same JSON-line protocol as --serve, but over a 127.0.0.1 TCP
+// socket so short-lived callers (codex-play.js runs once per agent turn) can
+// share one long-lived browser. The chosen port is written to --port-file.
+function runListenMode({ idleSeconds = 600, portFile = "" } = {}) {
+  const net = require("node:net");
+  const handler = createServeHandler();
+  let queue = Promise.resolve();
+  let lastActivity = Date.now();
+  let closing = false;
+
+  function shutdown() {
+    if (closing) {
+      return;
+    }
+
+    closing = true;
+    clearInterval(idleTimer);
+    queue = queue
+      .then(() => handler.closeSession())
+      .catch(() => {})
+      .finally(() => {
+        if (portFile) {
+          fs.rmSync(portFile, { force: true });
+        }
+
+        server.close(() => process.exit(0));
+        setTimeout(() => process.exit(0), 1000).unref();
+      });
+  }
+
+  const server = net.createServer((socket) => {
+    socket.setEncoding("utf8");
+    let buffer = "";
+
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      let newline = buffer.indexOf("\n");
+
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+
+        if (!line) {
+          continue;
+        }
+
+        lastActivity = Date.now();
+        queue = queue.then(async () => {
+          let response;
+
+          try {
+            response = await handler.handleMessage(JSON.parse(line));
+          } catch (error) {
+            response = {
+              ok: false,
+              error: error instanceof Error ? error.message : String(error)
+            };
+          }
+
+          lastActivity = Date.now();
+
+          if (!socket.destroyed) {
+            socket.write(`${JSON.stringify(response)}\n`);
+          }
+
+          if (response.ok && response.closing) {
+            shutdown();
+          }
+        });
+      }
+    });
+    socket.on("error", () => {});
+  });
+
+  // A crashed or finished caller may never send close; exit once idle so
+  // headless browsers don't accumulate.
+  const idleTimer = setInterval(() => {
+    if (Date.now() - lastActivity > idleSeconds * 1000) {
+      shutdown();
+    }
+  }, 5000);
+
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+
+  // Binding a localhost port fails under a no-network sandbox (e.g. codex's
+  // workspace-write). Record the failure in the port file so the caller falls
+  // back immediately instead of waiting out its start-up timeout.
+  server.on("error", (error) => {
+    if (portFile) {
+      try {
+        fs.mkdirSync(path.dirname(portFile), { recursive: true });
+        fs.writeFileSync(portFile, `${JSON.stringify({ error: error.code || error.message })}\n`);
+      } catch (writeError) {
+        /* best effort */
+      }
+    }
+
+    writeLine({ ok: false, error: error.message });
+    process.exit(1);
+  });
+
+  server.listen(0, "127.0.0.1", () => {
+    const address = server.address();
+    const info = { pid: process.pid, port: address.port };
+
+    if (portFile) {
+      fs.mkdirSync(path.dirname(portFile), { recursive: true });
+      fs.writeFileSync(portFile, `${JSON.stringify(info)}\n`);
+    }
+
+    writeLine({ ok: true, listening: true, ...info });
+  });
+}
+
 function printUsage() {
-  process.stdout.write(`Usage: node scripts/maze-render-frame.js [--serve]
+  process.stdout.write(`Usage: node scripts/maze-render-frame.js [--serve | --listen]
 
 One-shot mode (default):
   Reads one JSON payload on stdin, replays payload.actions in a headless
   browser, then writes {"data_url":"data:image/png;base64,..."} on stdout.
   Payload fields: actions, browser, cameraStepDegrees, cameraTiltDegrees,
-  cameraZoom, draft, fast, gameId, height, levelId, width, yaw.
+  cameraZoom, draft, edges, fast, gameId, height, levelId, view, width, yaw.
+  view is 1..26 neighbor-room rings (default 1 = the classic 3x3 window)
+  or "world"; edges (default true) keeps the black outline pass on.
 
 Serve mode (--serve):
   Keeps one local server + headless browser alive and answers JSON lines
   on stdin, mirroring scripts/maze-bridge.js:
     {"command":"init","gameId":"maze","levelId":"level_HxI","width":512,"height":512,"yaw":0}
     {"command":"action","action":"up"}
+    {"command":"render","actions":["up","left"],...}   (sync to a full action
+      list; applies only the new suffix when it extends the live session)
     {"command":"frame"}
     {"command":"close"}
   Each response is one JSON line, {"ok":true,"frame":"data:image/png;base64,..."}
   or {"ok":false,"error":"..."}.
+
+Listen mode (--listen [--port-file <path>] [--idle-seconds <n>]):
+  Same protocol as --serve, but over a 127.0.0.1 TCP socket so one browser can
+  be shared across many short-lived callers (one agent turn each). Writes
+  {"pid","port"} to --port-file once listening, and exits by itself after
+  --idle-seconds (default 600) without a request.
 `);
 }
 
@@ -580,6 +790,17 @@ async function main() {
 
   if (argv.includes("--help") || argv.includes("-h")) {
     printUsage();
+    return;
+  }
+
+  if (argv.includes("--listen")) {
+    const portFileIndex = argv.indexOf("--port-file");
+    const idleIndex = argv.indexOf("--idle-seconds");
+    const portFileValue = portFileIndex >= 0 ? String(argv[portFileIndex + 1] || "") : "";
+    runListenMode({
+      idleSeconds: idleIndex >= 0 ? Math.max(30, Number(argv[idleIndex + 1]) || 600) : 600,
+      portFile: portFileValue ? path.resolve(portFileValue) : ""
+    });
     return;
   }
 
@@ -605,5 +826,7 @@ module.exports = {
   captureSessionFrame,
   closeRenderSession,
   createRenderSession,
+  createServeHandler,
+  normalizeRenderOptions,
   renderFrame
 };

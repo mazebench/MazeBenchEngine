@@ -788,22 +788,24 @@ function createPageRenderer({
                 <button type="button" class="segmented__option is-selected" data-mode="text" aria-pressed="true">Text<small>ASCII board</small></button>
                 <button type="button" class="segmented__option" data-mode="vision" aria-pressed="false">Vision<small>rendered PNGs</small></button>
               </div>
-            </div>
-            <div class="settings-row switches-row">
-              <label class="switch">
-                <input id="run-container" type="checkbox" checked>
-                <span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span>
-                <span class="switch__label">Container<small>isolated from your files</small></span>
+              <label class="field field--narrow" id="vision-view-field" hidden><span>Vision view distance</span>
+                <select id="run-vision-view">
+                  <option value="1" selected>3×3 rooms (default)</option>
+                  <option value="2">5×5 rooms</option>
+                  <option value="3">7×7 rooms</option>
+                  <option value="world">Whole world</option>
+                </select>
               </label>
+            </div>
+            <div class="settings-row">
+              <div class="segmented" id="isolation-picker" role="radiogroup" aria-label="Isolation">
+                <button type="button" class="segmented__option is-selected" data-isolation="docker" aria-pressed="true">Docker<small>isolated from your files</small></button>
+                <button type="button" class="segmented__option" data-isolation="full" aria-pressed="false">Full tools<small>full host access</small></button>
+              </div>
               <label class="switch">
                 <input id="run-video" type="checkbox" checked>
                 <span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span>
                 <span class="switch__label">Replay video<small>rendered when the run ends</small></span>
-              </label>
-              <label class="switch">
-                <input id="run-tools" type="checkbox">
-                <span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span>
-                <span class="switch__label">Full tool access<small>off = maze commands only</small></span>
               </label>
             </div>
             <div id="docker-action" class="docker-action" hidden></div>
@@ -861,6 +863,19 @@ function createPageRenderer({
 
   function renderAgentRunPage(run) {
     const isPrime = run.kind === "prime" || run.model === "prime";
+    // Shared building blocks for both layouts (Prime vs local runner).
+    const boardWrap = `<div id="run-board-wrap" class="run-live__board" hidden>
+            <div class="run-live__board-label">ASCII board (what the agent reads)</div>
+            <pre id="run-board" class="agent-board"></pre>
+          </div>`;
+    const replaySection = `<section class="panel" id="run-replay-section" hidden>
+          <h2>Replay</h2>
+          <div id="run-replay-progress" class="replay-progress" hidden>
+            <div class="replay-progress__track"><div id="run-replay-bar" class="replay-progress__fill"></div></div>
+            <span id="run-replay-label" class="muted"></span>
+          </div>
+          <video id="run-video" class="run-video" controls playsinline hidden></video>
+        </section>`;
     // Prime Verifiers plays the maze headlessly inside the eval, so there is no
     // live board to stream. Instead we reuse the same replay + moves markup the
     // local runner uses: maze-prime-run.js renders a replay video and a move
@@ -868,21 +883,11 @@ function createPageRenderer({
     const mazeSections = isPrime
       ? `<section class="panel" id="run-see-section">
           <h2>What the agent sees</h2>
-          <div id="run-board-wrap" class="run-live__board" hidden>
-            <div class="run-live__board-label">ASCII board (what the agent reads)</div>
-            <pre id="run-board" class="agent-board"></pre>
-          </div>
+          ${boardWrap}
           <p id="run-see-empty" class="muted">Prime plays the maze headlessly; the exact board the model reads appears here once the eval finishes.</p>
         </section>
 
-        <section class="panel" id="run-replay-section" hidden>
-          <h2>Replay</h2>
-          <div id="run-replay-progress" class="replay-progress" hidden>
-            <div class="replay-progress__track"><div id="run-replay-bar" class="replay-progress__fill"></div></div>
-            <span id="run-replay-label" class="muted"></span>
-          </div>
-          <video id="run-video" controls playsinline hidden style="max-width: 100%; border-radius: 9px"></video>
-        </section>
+        ${replaySection}
 
         <section class="panel">
           <h2>Moves &amp; reasoning</h2>
@@ -900,21 +905,11 @@ function createPageRenderer({
               </div>
               <figcaption id="run-live-caption" class="run-live__caption" hidden></figcaption>
             </figure>
-            <div id="run-board-wrap" class="run-live__board" hidden>
-              <div class="run-live__board-label">ASCII board (what the agent reads)</div>
-              <pre id="run-board" class="agent-board"></pre>
-            </div>
+            ${boardWrap}
           </div>
         </section>
 
-        <section class="panel" id="run-replay-section" hidden>
-          <h2>Replay</h2>
-          <div id="run-replay-progress" class="replay-progress" hidden>
-            <div class="replay-progress__track"><div id="run-replay-bar" class="replay-progress__fill"></div></div>
-            <span id="run-replay-label" class="muted"></span>
-          </div>
-          <video id="run-video" controls playsinline hidden style="max-width: 100%; border-radius: 9px"></video>
-        </section>
+        ${replaySection}
 
         <section class="panel">
           <h2>Moves &amp; reasoning</h2>

@@ -31,6 +31,9 @@ DEFAULT_TARGET_GEMS = 0
 DEFAULT_OBSERVATION_MODE = "ascii"
 DEFAULT_VISION_HEIGHT = 512
 DEFAULT_VISION_WIDTH = 512
+# How far vision frames see: 1..26 rings of neighbor rooms (1 = the classic
+# 3x3 benchmark window) or "world" for the whole map.
+DEFAULT_VISION_VIEW = "1"
 DEFAULT_GAME_WON_GEM_COUNT = 100
 GAME_CONFIG_RELATIVE_PATH = Path("games") / "maze" / "config.json"
 ROOM_EXPLORATION_REWARD_WEIGHT = 0.1
@@ -393,6 +396,7 @@ def render_vision_frame_data_url(
         "gameId": task.game_id,
         "height": int(task.vision_height),
         "levelId": task.level_id,
+        "view": str(getattr(task, "vision_view", DEFAULT_VISION_VIEW)),
         "width": int(task.vision_width),
         "yaw": int(task.yaw),
     }
@@ -599,6 +603,7 @@ class VisionSession:
             "gameId": task.game_id,
             "height": int(task.vision_height),
             "levelId": task.level_id,
+            "view": str(getattr(task, "vision_view", DEFAULT_VISION_VIEW)),
             "width": int(task.vision_width),
             "yaw": int(task.yaw),
         }
@@ -990,6 +995,7 @@ class MazeBenchTask(vf.Task):
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     view: str = DEFAULT_VIEW
     vision_height: int = DEFAULT_VISION_HEIGHT
+    vision_view: str = DEFAULT_VISION_VIEW
     vision_width: int = DEFAULT_VISION_WIDTH
     yaw: int = DEFAULT_YAW
 
@@ -1013,6 +1019,7 @@ class MazeBenchConfig(vf.TasksetConfig):
     target_gems: int = DEFAULT_TARGET_GEMS
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     vision_height: int = DEFAULT_VISION_HEIGHT
+    vision_view: str = DEFAULT_VISION_VIEW
     vision_width: int = DEFAULT_VISION_WIDTH
     system_prompt: str = MULTITURN_SYSTEM_PROMPT
     user: vf.UserConfig = Field(default_factory=vf.UserConfig)
@@ -1251,6 +1258,7 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
                 timeout_seconds=int(row["timeout_seconds"]),
                 view=str(row["view"]),
                 vision_height=int(self.config.vision_height),
+                vision_view=str(self.config.vision_view),
                 vision_width=int(self.config.vision_width),
                 yaw=int(row["yaw"]),
             )

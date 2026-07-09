@@ -37,12 +37,15 @@ Options:
   --height <px>        Output video height. Default: 400.
   --fps <n>            Video frames per second. Default: 20.
   --fast               Capture only settled states, not animation tweens.
-  --draft              Lower replay DPR and disable effects for faster capture.
+  --draft              Lower replay DPR and disable the fuzzy effect for
+                       faster capture.
+  --no-edges           Drop the black outline pass (on by default, matching
+                       how the game looks in the browser).
   --move-speed <n>     Movement animation speed multiplier. Default: 5.
   --camera-speed <n>   Camera animation speed multiplier. Default: 2.
   --speed <n>          Uniform speed multiplier for movement and camera.
   --crf <n>            x264 CRF; lower is larger/higher quality. Default: 21.
-  --preset <name>      x264 preset. Default: veryslow.
+  --preset <name>      x264 preset. Default: veryfast.
   --camera-tilt <deg>  Perspective camera tilt from top-down. Default: 58.
   --camera-step <deg>  Tilt delta for rotate camera up/down. Default: 18.
   --camera-zoom <n>    Perspective camera zoom multiplier. Default: 1.
@@ -93,6 +96,10 @@ function parseCli(argv) {
       options.draft = true;
     } else if (arg === "--no-draft") {
       options.draft = false;
+    } else if (arg === "--edges") {
+      options.edges = true;
+    } else if (arg === "--no-edges") {
+      options.edges = false;
     } else if (arg === "--speed") {
       const speed = Number(next());
       options.cameraSpeed = speed;
@@ -142,6 +149,7 @@ function defaultReplayOptions() {
     cameraSpeed: 2,
     crf: 21,
     draft: false,
+    edges: true,
     fps: 20,
     fast: false,
     format: "mp4",
@@ -150,10 +158,11 @@ function defaultReplayOptions() {
     keepFrames: false,
     moveSpeed: 5,
     outDir: "",
-    preset: "veryslow",
+    // veryfast encodes these small clips an order of magnitude quicker than
+    // veryslow for a marginal size difference; pass --preset to override.
+    preset: "veryfast",
     resultsInput: "",
     video: true,
-    videoBitrate: 24000000,
     motionScale: 4,
     tailSeconds: 0.45,
     width: 400
@@ -1119,7 +1128,7 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
         }
       `
     });
-    await page.evaluate(async ({ draft, fast, fps, height, motionScale, moveSpeed, width }) => {
+    await page.evaluate(async ({ draft, edges, fast, fps, height, motionScale, moveSpeed, width }) => {
       const app = window.__PIXEL_GAME_APP__;
 
       if (draft) {
@@ -1137,8 +1146,11 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
       app.syncPlayLayout?.();
       app.setupCanvas?.();
       app.replayAnimationFrameStepMs = 1000 / fps;
+      // Draft trades the fuzzy (CRT noise) post effect for capture speed, but
+      // the black edge outlines stay on unless --no-edges: they're part of how
+      // the game reads in the browser, and replays should match it.
       app.state.effects.fuzzyEnabled = !draft;
-      app.state.effects.edgeOutlinesEnabled = !draft;
+      app.state.effects.edgeOutlinesEnabled = edges;
       app.state.effects.noisePhase = 0;
 
       if (app.noiseFrameId !== null) {
@@ -1174,6 +1186,7 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
       app.render?.();
     }, {
       draft: Boolean(options.draft),
+      edges: options.edges !== false,
       fast: Boolean(options.fast),
       fps: options.fps,
       height: options.height,

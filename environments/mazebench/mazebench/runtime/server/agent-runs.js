@@ -485,10 +485,140 @@ function createAgentRunService({
     return String(message.command || "");
   }
 
+  // ---- live frame renderers -------------------------------------------------
+  // One persistent maze-render-frame.js --serve child per watched run, spawned
+  // lazily and reaped after idling. Its "render" command syncs to the run's
+  // action list incrementally, so rendering turn N+1 applies one new action
+  // instead of booting a browser and replaying the whole run per frame.
+
+  const liveRenderers = new Map();
+  const LIVE_RENDERER_IDLE_MS = 3 * 60 * 1000;
+
+  function stopLiveRenderer(runId) {
+    const entry = liveRenderers.get(runId);
+
+    if (!entry) {
+      return;
+    }
+
+    liveRenderers.delete(runId);
+    clearTimeout(entry.idleTimer);
+    entry.waiters.splice(0).forEach((waiter) => waiter.reject(new Error("The frame renderer stopped.")));
+
+    try {
+      entry.child.stdin.write(`${JSON.stringify({ command: "close" })}\n`);
+    } catch (error) {
+      /* stdin already gone */
+    }
+
+    const child = entry.child;
+    setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch (error) {
+        /* already exited */
+      }
+    }, 5000).unref();
+  }
+
+  function liveRendererFor(runId) {
+    const existing = liveRenderers.get(runId);
+
+    if (existing && existing.child.exitCode === null && !existing.child.killed) {
+      return existing;
+    }
+
+    if (existing) {
+      stopLiveRenderer(runId);
+    }
+
+    const child = spawn(process.execPath, [renderFrameScript, "--serve"], {
+      cwd: rootDir,
+      env: enrichedPathEnv(),
+      stdio: ["pipe", "pipe", "ignore"]
+    });
+    const entry = { child, waiters: [], buffer: "", idleTimer: null };
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      entry.buffer += chunk;
+      let newline = entry.buffer.indexOf("\n");
+
+      while (newline >= 0) {
+        const line = entry.buffer.slice(0, newline).trim();
+        entry.buffer = entry.buffer.slice(newline + 1);
+        newline = entry.buffer.indexOf("\n");
+
+        if (line) {
+          entry.waiters.shift()?.resolve(line);
+        }
+      }
+    });
+
+    const fail = () => {
+      if (liveRenderers.get(runId) === entry) {
+        liveRenderers.delete(runId);
+      }
+
+      clearTimeout(entry.idleTimer);
+      entry.waiters.splice(0).forEach((waiter) => waiter.reject(new Error("The frame renderer exited.")));
+    };
+    child.on("error", fail);
+    child.on("close", fail);
+
+    liveRenderers.set(runId, entry);
+    return entry;
+  }
+
+  function liveRendererRequest(runId, message, timeoutMs = 120000) {
+    const entry = liveRendererFor(runId);
+
+    clearTimeout(entry.idleTimer);
+    entry.idleTimer = setTimeout(() => stopLiveRenderer(runId), LIVE_RENDERER_IDLE_MS);
+    entry.idleTimer.unref?.();
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const index = entry.waiters.indexOf(waiter);
+
+        if (index >= 0) {
+          entry.waiters.splice(index, 1);
+        }
+
+        // A stuck renderer would stall every later frame too — recycle it.
+        stopLiveRenderer(runId);
+        reject(new Error("The frame renderer timed out."));
+      }, timeoutMs);
+      const waiter = {
+        resolve: (line) => {
+          clearTimeout(timer);
+
+          try {
+            resolve(JSON.parse(line));
+          } catch (error) {
+            reject(new Error("The renderer returned an unreadable response."));
+          }
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        }
+      };
+
+      entry.waiters.push(waiter);
+
+      try {
+        entry.child.stdin.write(`${JSON.stringify(message)}\n`);
+      } catch (error) {
+        waiter.reject(error);
+      }
+    });
+  }
+
   // Render a maze image for the human watching a text-mode run (vision runs
-  // already have real frames). Replays the first `turn` actions through the same
-  // headless renderer the vision taskset uses, caches the PNG, and returns its
-  // url. One render per run at a time — booting a browser is heavy.
+  // already have real frames). Syncs the run's persistent renderer to the first
+  // `turn` actions, caches the PNG, and returns its url. One render per run at
+  // a time so requests never pile up behind a slow frame.
   async function renderLiveFrame(runId, turn) {
     const runDir = runDirFor(runId);
     const framesDir = path.join(runDir, "frames");
@@ -510,12 +640,12 @@ function createAgentRunService({
       return { url: null, error: "The run has not started playing yet." };
     }
 
-    const actions = (session.actions || [])
-      .slice(0, Number(turn) || 0)
-      .map((action) => canonicalActionText(action.message))
-      .filter(Boolean);
     const payload = {
-      actions,
+      command: "render",
+      actions: (session.actions || [])
+        .slice(0, Number(turn) || 0)
+        .map((action) => canonicalActionText(action.message))
+        .filter(Boolean),
       draft: true,
       fast: true,
       gameId: session.gameId || "maze",
@@ -525,47 +655,28 @@ function createAgentRunService({
       yaw: session.yaw || 0
     };
 
-    const lock = new Promise((resolve) => {
-      const child = spawn(process.execPath, [renderFrameScript], {
-        cwd: rootDir,
-        env: enrichedPathEnv()
-      });
-      let out = "";
-      let err = "";
+    const lock = (async () => {
+      try {
+        const response = await liveRendererRequest(runId, payload);
 
-      child.stdout.on("data", (chunk) => {
-        out += chunk.toString();
-      });
-      child.stderr.on("data", (chunk) => {
-        err += chunk.toString();
-      });
-      child.on("error", () => resolve({ url: null, error: "Could not start the frame renderer." }));
-      child.on("close", (code) => {
-        if (code !== 0) {
-          resolve({ url: null, error: err.trim().split("\n")[0] || "The frame renderer failed." });
-          return;
+        if (!response || response.ok !== true || !response.frame) {
+          return { url: null, error: (response && response.error) || "The frame renderer failed." };
         }
 
-        try {
-          const parsed = JSON.parse(out);
-          const dataUrl = String(parsed.data_url || "");
-          const prefix = "data:image/png;base64,";
+        const dataUrl = String(response.frame);
+        const prefix = "data:image/png;base64,";
 
-          if (!dataUrl.startsWith(prefix)) {
-            resolve({ url: null, error: "The renderer returned no image." });
-            return;
-          }
-
-          fs.mkdirSync(framesDir, { recursive: true });
-          fs.writeFileSync(target, Buffer.from(dataUrl.slice(prefix.length), "base64"));
-          resolve({ url });
-        } catch (error) {
-          resolve({ url: null, error: "The renderer returned an unreadable frame." });
+        if (!dataUrl.startsWith(prefix)) {
+          return { url: null, error: "The renderer returned no image." };
         }
-      });
-      child.stdin.write(JSON.stringify(payload));
-      child.stdin.end();
-    });
+
+        fs.mkdirSync(framesDir, { recursive: true });
+        fs.writeFileSync(target, Buffer.from(dataUrl.slice(prefix.length), "base64"));
+        return { url };
+      } catch (error) {
+        return { url: null, error: error.message || "The frame renderer failed." };
+      }
+    })();
 
     liveFrameLocks.set(runId, lock);
 
@@ -806,14 +917,28 @@ function createAgentRunService({
         : Math.max(1, buildWorlds.countWorldGems(game) || 1);
     const view = VIEW_NAMES.includes(String(params.view)) ? String(params.view) : "top-diagonal";
     const wantContainer = !(params.container === false || params.container === "false");
+    const wantTools = params.tools === true || params.tools === "true";
+
+    // Every run must be isolated by a container OR granted Full tool access —
+    // there is no host-sandbox middle mode. The codex/claude workspace-write
+    // sandbox has no network, so it can't render vision frames (the browser
+    // can't bind a local server) and offers weaker isolation than a container
+    // anyway. See [[mazebench-perf-overhaul]] round 6.
+    if (!wantContainer && !wantTools) {
+      throw new Error(
+        "A run needs either Container mode or Full tool access. The host sandbox " +
+          "in between can't render vision frames and isn't a supported mode — " +
+          "turn on Container (start Docker if needed) or Full tool access."
+      );
+    }
 
     // Safety net for the UI toggle: container mode needs Docker installed AND
     // its daemon running.
     if (wantContainer && !dockerAvailable()) {
       throw new Error(
         dockerInstalled()
-          ? "Container mode needs the Docker daemon running. Start Docker, or turn off the Container toggle to run on the host sandbox."
-          : "Container mode needs Docker, which is not installed. Turn off the Container toggle to run on the host sandbox, or install Docker."
+          ? "Container mode needs the Docker daemon running. Start Docker, or switch on Full tool access to run on the host."
+          : "Container mode needs Docker, which is not installed. Switch on Full tool access to run on the host, or install Docker."
       );
     }
     const args = [
@@ -829,6 +954,23 @@ function createAgentRunService({
       `video=${params.video === false || params.video === "false" ? "off" : "on"}`,
       `out=${runDirFor(runId)}`
     ];
+
+    // Vision view distance: 1-26 rings of neighbor rooms or "world". Unset
+    // keeps the classic 3x3 window the benchmark defaults to.
+    if (params.vision_view !== undefined && String(params.vision_view).trim() !== "") {
+      const rawView = String(params.vision_view).trim().toLowerCase();
+      const rings = Number(rawView);
+      const visionView =
+        rawView === "world"
+          ? "world"
+          : Number.isFinite(rings)
+            ? Math.max(1, Math.min(26, Math.floor(rings)))
+            : null;
+
+      if (visionView !== null) {
+        args.push(`vision_view=${visionView}`);
+      }
+    }
 
     if (params.model_name) {
       args.push(`model_name=${String(params.model_name)}`);
@@ -1296,6 +1438,7 @@ function createAgentRunService({
     }
 
     liveChildren.delete(runId);
+    stopLiveRenderer(runId);
     fs.rmSync(runDir, { recursive: true, force: true });
     return { id: runId, deleted: true };
   }
