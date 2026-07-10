@@ -2461,6 +2461,18 @@ body.play-body {
   box-shadow: 0 0 18px rgba(255, 209, 92, 0.12);
 }
 
+#tool-use-picker.is-second .segmented__glider {
+  background: rgba(124, 143, 255, 0.13);
+  border-color: rgba(124, 143, 255, 0.72);
+  box-shadow: 0 0 18px rgba(124, 143, 255, 0.16);
+}
+
+#orchestration-picker.is-second .segmented__glider {
+  background: rgba(164, 116, 255, 0.14);
+  border-color: rgba(181, 137, 255, 0.74);
+  box-shadow: 0 0 20px rgba(153, 96, 255, 0.18);
+}
+
 .animated-segmented .segmented__option {
   align-items: center;
   background: transparent;

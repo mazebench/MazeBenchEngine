@@ -17,7 +17,9 @@
 //   image        container image tag                         (default mazebench-agent)
 //   docker_bin   container runtime                           (default docker)
 //   codex_auth / claude_auth   host auth dir to mount read-only (subscription logins)
-//   tools        false (sandboxed: maze only) | true (full)  (default false)
+//   tool_use     read-only | offline | full (full is host-only; default read-only)
+//   tools        legacy boolean alias (false=read-only, true=offline in Docker)
+//   swarm        true lets the lead spawn identical-model workers (Docker + offline only)
 //   mode         text (ASCII board) | vision (rendered PNGs) (default text)
 //   moves        maze action budget shown to the agent       (default 20)
 //   game         game directory under games/ (default maze; draft/online
@@ -49,6 +51,7 @@ const { spawn, spawnSync } = require("node:child_process");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const HELPER = path.join(ROOT_DIR, "scripts", "codex-play.js");
+const MAZE_MCP_SERVER = path.join(ROOT_DIR, "scripts", "maze-mcp-server.js");
 const EXPORT_REPLAY = path.join(ROOT_DIR, "scripts", "maze-export-replay.js");
 const VIEW_NAMES = ["top", "top-diagonal", "diagonal", "side-diagonal", "side"];
 
@@ -119,7 +122,66 @@ function timestampSlug() {
   return new Date().toISOString().replace(/[:.]/g, "-").replace(/Z$/, "");
 }
 
+function buildMcpPrompt(config) {
+  const observation = config.mode === "vision"
+    ? `This is VISION mode. Maze observations contain a frame_image path. Open
+and inspect that PNG before choosing a move; the status also includes the room,
+gems, player position, and allowed commands.`
+    : `This is TEXT mode. Maze observations contain an ASCII board in the level
+field plus the current status.`;
+  const capability = config.toolUse === "offline"
+    ? `You have full local file, coding, and execution tools inside a persistent
+Docker workspace at ${config.workspaceDir}. Outbound network access is disabled.`
+    : `This is READ ONLY tool-use. You may inspect and search local files, but
+you cannot edit files or run general shell commands.`;
+  const firstStep = config.resume || config.seed
+    ? `Call maze_observe with no clone_id first. This is the same primary game;
+do not call maze_start.`
+    : `Call maze_start exactly once as your first MazeBench tool call.`;
+  const workerSpawnRule = config.model === "codex"
+    ? "Use the Codex collaboration spawn tool to spawn the custom maze-worker agent without a full-history fork. Its model and reasoning effort are pinned to yours."
+    : "Use the Task/Agent tool to spawn the configured maze-worker subagent type. Do not call maze_clone yourself; the subagent does that. Its model and effort are pinned to yours.";
+  const swarm = config.swarm
+    ? `
+SWARM IS ENABLED. You are the superior lead and retain control of the primary
+maze. ${workerSpawnRule} Every worker uses the exact same model and reasoning
+effort as you and inherits the same offline coding capabilities.
+
+Each worker must begin by calling maze_clone with a unique worker_id. That tool
+creates an independent copy of the maze and returns a private persistent coding
+workspace. The worker must include that clone_id in every maze_observe,
+maze_action, and maze_scorecard call, may explore freely and write/run any local
+code it finds useful, then report its findings to you. Workers must never act on
+the primary maze. You decide which findings to use and make every primary move
+yourself by omitting clone_id. Spawn at least one worker before your first
+primary move; beyond that, spawn, steer, stop, or wait for workers at your
+discretion. Gather their reports before finishing.`
+    : "";
+
+  return `You are playing MazeBench, a 3D grid maze. Control maze state only
+through the MazeBench MCP tools: maze_start, maze_observe, maze_action,
+maze_scorecard, and (in Swarm) maze_clone. Never edit session JSON directly.
+
+${observation}
+${capability}
+${swarm}
+
+${firstStep}
+
+Then play up to ${config.moves} ${config.resume || config.seed ? "MORE " : ""}primary maze actions unless the game reaches a terminal state earlier. Do not
+stop after the first observation while budget remains. Before every primary
+maze_action, write one short sentence explaining the choice. Valid action
+strings include up, down, left, right, rotate camera left/right/up/down, undo,
+reset, quit, and go to level H I.
+
+After every action, inspect the returned ${config.mode === "vision" ? "frame and status" : "board and status"} before choosing the next move. Collect as many
+unique gems as possible. If the player dies, recover with undo, reset, or a room
+change. Before finishing, always call maze_scorecard on the primary maze and
+give a one-line summary of the route and gems collected.`;
+}
+
 function buildPrompt(config) {
+  if (config.mcpEnabled) return buildMcpPrompt(config);
   const visionFlags = config.mode === "vision"
     ? ` --vision --vision-width ${config.visionWidth} --vision-height ${config.visionHeight}` +
       (config.visionView ? ` --vision-view ${config.visionView}` : "")
@@ -204,37 +266,216 @@ Before you finish, ALWAYS write the final scorecard:
 Finish with a one-line summary of the path you took and how many gems you got.`;
 }
 
+function mcpEnvironment(config, workerOnly = false) {
+  return {
+    MAZEBENCH_REPO_ROOT: ROOT_DIR,
+    MAZEBENCH_RUN_DIR: config.outDir,
+    MAZEBENCH_SESSION_FILE: config.sessionFile,
+    MAZEBENCH_SWARM_DIR: config.swarmDir,
+    MAZEBENCH_GAME_ID: config.gameId,
+    MAZEBENCH_LEVEL_ID: config.levelId,
+    MAZEBENCH_VIEW: config.view,
+    MAZEBENCH_YAW: String(config.yaw),
+    MAZEBENCH_GEMS: String(config.gems),
+    MAZEBENCH_MOVE_BUDGET: String(config.moves),
+    MAZEBENCH_MODE: config.mode,
+    MAZEBENCH_VISION_WIDTH: String(config.visionWidth),
+    MAZEBENCH_VISION_HEIGHT: String(config.visionHeight),
+    MAZEBENCH_VISION_VIEW: config.visionView || "",
+    ...(workerOnly ? { MAZEBENCH_WORKER_ONLY: "1" } : {})
+  };
+}
+
+function tomlString(value) {
+  return JSON.stringify(String(value));
+}
+
+function codexWorkerConfig(config, name) {
+  const rows = [
+    `name = ${tomlString(name)}`,
+    `description = ${tomlString("A full-capability MazeBench exploration and coding worker controlled by the lead.")}`
+  ];
+  if (config.modelName) rows.push(`model = ${tomlString(config.modelName)}`);
+  if (config.reasoning) rows.push(`model_reasoning_effort = ${tomlString(config.reasoning)}`);
+  rows.push(
+    'sandbox_mode = "workspace-write"',
+    `developer_instructions = ${tomlString(
+      "You are a MazeBench swarm worker. Use the identical model and reasoning effort inherited from the lead. " +
+      "First call maze_clone with a unique worker_id, then use that clone_id for every maze tool call. " +
+      "Explore only your private maze, write and execute any useful local code in the returned workspace, and report findings to the lead. " +
+      "Never act on the primary maze and never change your model or reasoning effort."
+    )}`,
+    "",
+    "[mcp_servers.mazebench]",
+    `command = ${tomlString(process.execPath)}`,
+    `args = [${tomlString(MAZE_MCP_SERVER)}]`,
+    'default_tools_approval_mode = "approve"',
+    "startup_timeout_sec = 15",
+    "tool_timeout_sec = 300",
+    `env = { ${Object.entries(mcpEnvironment(config, true)).map(([key, value]) => `${key} = ${tomlString(value)}`).join(", ")} }`
+  );
+  return `${rows.join("\n")}\n`;
+}
+
+function prepareCodexRuntime(config) {
+  const codexHome = path.join(process.env.HOME || "/home/pwuser", ".codex");
+  const envEntries = Object.entries(mcpEnvironment(config))
+    .map(([key, value]) => `${key} = ${tomlString(value)}`)
+    .join(", ");
+  const configRows = [
+    `approval_policy = "never"`,
+    `sandbox_mode = ${tomlString(config.toolUse === "offline" ? "workspace-write" : "read-only")}`,
+    "",
+    "[features]",
+    `multi_agent = ${config.swarm ? "true" : "false"}`,
+    "",
+    "[tools]",
+    "web_search = false",
+    "",
+    "[sandbox_workspace_write]",
+    "network_access = false",
+    `writable_roots = [${[config.workspaceDir, config.swarmDir].map(tomlString).join(", ")}]`,
+    "",
+    "[mcp_servers.mazebench]",
+    `command = ${tomlString(process.execPath)}`,
+    `args = [${tomlString(MAZE_MCP_SERVER)}]`,
+    'default_tools_approval_mode = "approve"',
+    "startup_timeout_sec = 15",
+    "tool_timeout_sec = 300",
+    `env = { ${envEntries} }`,
+    ""
+  ];
+
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.writeFileSync(path.join(codexHome, "config.toml"), configRows.join("\n"));
+
+  if (config.swarm) {
+    const agentsDir = path.join(codexHome, "agents");
+    fs.mkdirSync(agentsDir, { recursive: true });
+    for (const name of ["default", "worker", "explorer", "maze-worker"]) {
+      fs.writeFileSync(path.join(agentsDir, `${name}.toml`), codexWorkerConfig(config, name));
+    }
+  }
+}
+
+function claudeMcpConfig(config) {
+  return JSON.stringify({
+    mcpServers: {
+      mazebench: {
+        command: process.execPath,
+        args: [MAZE_MCP_SERVER],
+        env: mcpEnvironment(config)
+      }
+    }
+  });
+}
+
+function claudeSandboxSettings(config) {
+  const workerAllow = config.swarm
+    ? [
+        "Bash(*)", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "Skill",
+        "mcp__mazebench_worker__maze_clone",
+        "mcp__mazebench_worker__maze_observe",
+        "mcp__mazebench_worker__maze_action",
+        "mcp__mazebench_worker__maze_scorecard",
+        "mcp__mazebench_worker__maze_workers"
+      ]
+    : [];
+  return JSON.stringify({
+    sandbox: {
+      enabled: true,
+      autoAllowBashIfSandboxed: config.toolUse === "offline",
+      allowUnsandboxedCommands: false,
+      failIfUnavailable: true,
+      enableWeakerNestedSandbox: true,
+      filesystem: {
+        allowWrite: config.toolUse === "offline" ? [config.workspaceDir, config.swarmDir] : [],
+        denyRead: ["/home/pwuser/.codex", "/home/pwuser/.claude"]
+      },
+      network: { allowedDomains: [] },
+      credentials: {
+        envVars: [
+          { name: "OPENAI_API_KEY", mode: "deny" },
+          { name: "ANTHROPIC_API_KEY", mode: "deny" },
+          { name: "CLAUDE_CODE_OAUTH_TOKEN", mode: "deny" }
+        ]
+      }
+    },
+    permissions: {
+      // Custom-agent `tools` controls what the worker can see. Under dontAsk,
+      // these names must also be pre-approved or Claude silently denies them.
+      // Bubblewrap still confines every write to the run's Docker directories.
+      allow: workerAllow,
+      deny: [
+        "WebFetch",
+        "WebSearch",
+        "Read(/home/pwuser/.codex/**)",
+        "Read(/home/pwuser/.claude/**)"
+      ]
+    }
+  });
+}
+
+function claudeAgents(config) {
+  if (!config.swarm) return "";
+  const worker = {
+    description: "Explore a private MazeBench clone, use unrestricted offline coding tools, and report to the lead.",
+    prompt:
+      "You are a MazeBench swarm worker controlled by the superior lead. First call maze_clone with a unique worker_id. " +
+      "Use the returned clone_id for all maze calls, work only in its private workspace, and report findings to the lead. " +
+      "Never act on the primary maze and never switch model or reasoning effort.",
+    model: config.modelName || "inherit",
+    permissionMode: "dontAsk",
+    background: true,
+    tools: [
+      "Bash", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "Skill", "TaskOutput", "TaskStop",
+      "mcp__mazebench_worker__maze_clone",
+      "mcp__mazebench_worker__maze_observe",
+      "mcp__mazebench_worker__maze_action",
+      "mcp__mazebench_worker__maze_scorecard",
+      "mcp__mazebench_worker__maze_workers"
+    ],
+    mcpServers: [{
+      mazebench_worker: {
+        type: "stdio",
+        command: process.execPath,
+        args: [MAZE_MCP_SERVER],
+        env: mcpEnvironment(config, true)
+      }
+    }]
+  };
+  if (config.reasoning) worker.effort = config.reasoning;
+  return JSON.stringify({ "maze-worker": worker });
+}
+
+function prepareAgentRuntime(config) {
+  if (!config.mcpEnabled) return;
+  fs.mkdirSync(config.workspaceDir, { recursive: true });
+  fs.mkdirSync(config.swarmDir, { recursive: true });
+  if (config.model === "codex") prepareCodexRuntime(config);
+}
+
 function agentCommand(config, prompt) {
-  const maxTurns = String(config.moves * 2 + 15);
+  const maxTurns = String(config.swarm ? config.moves + 30 : config.moves + 10);
 
   if (config.model === "codex") {
-    // Inside our container, the container IS the sandbox, and Codex's own
-    // workspace-write sandbox (bubblewrap) cannot create user namespaces under
-    // Docker — so bypass it (this is the documented "externally sandboxed" case).
-    // On the host, tools=false uses Codex's workspace-write sandbox instead.
-    const inContainer = process.env.MAZEBENCH_IN_CONTAINER === "1";
-    const bypass = config.tools || inContainer;
+    // Full host access still uses Codex's explicit bypass. Docker read-only and
+    // offline modes use the real nested sandbox; runInContainer relaxes only
+    // Docker's user-namespace seccomp rule so bubblewrap can enforce it.
+    const bypass = config.toolUse === "full";
+    const commandRoot = config.toolUse === "offline" ? config.workspaceDir : ROOT_DIR;
     // --json streams structured events (agent messages, reasoning, shell calls)
     // on stdout so we can build a per-move reasoning log. `exec resume <id>`
     // continues a prior conversation (the model keeps its full memory).
     const argv = config.resume
       ? ["exec", "resume", config.resume, "--json", "--skip-git-repo-check"]
-      : ["exec", "--json", "--skip-git-repo-check", "-C", config.tools ? ROOT_DIR : config.outDir];
-    if (config.resume) {
-      // `resume` doesn't accept --sandbox/-C; it keeps the resumed session's
-      // own sandbox policy (workspace-write scoped to the original run dir, which
-      // in-place continue reuses). Only re-assert bypass for container/tools runs.
-      if (bypass) {
-        argv.push("--dangerously-bypass-approvals-and-sandbox");
-      }
-    } else if (bypass) {
+      : ["exec", "--json", "--skip-git-repo-check", "-C", commandRoot];
+    if (bypass) {
       argv.push("--dangerously-bypass-approvals-and-sandbox");
-    } else {
-      // `codex exec` is non-interactive and has no approval flag; --sandbox
-      // workspace-write confines writes to the run dir (-C) and disables network
-      // by default, and exec auto-runs commands within that sandbox.
-      argv.push("--sandbox", "workspace-write");
+    } else if (!config.resume) {
+      argv.push("--sandbox", config.toolUse === "offline" ? "workspace-write" : "read-only");
     }
+    argv.push(config.swarm ? "--enable" : "--disable", "multi_agent");
     // Ask Codex for fuller reasoning summaries (it emits `reasoning` items in
     // the JSON stream). Codex only ever exposes summaries — never raw
     // chain-of-thought — but "detailed" is richer than the terse default.
@@ -266,7 +507,41 @@ function agentCommand(config, prompt) {
     if (config.resume) {
       argv.push("--resume", config.resume);
     }
-    if (config.tools) {
+    if (config.mcpEnabled) {
+      const mcpTools = [
+        "mcp__mazebench__maze_start",
+        "mcp__mazebench__maze_observe",
+        "mcp__mazebench__maze_action",
+        "mcp__mazebench__maze_scorecard",
+        "mcp__mazebench__maze_clone",
+        "mcp__mazebench__maze_workers"
+      ];
+      const localTools = config.toolUse === "offline"
+        ? ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "Skill", "TaskOutput", "TaskStop"]
+        : ["Read", "Glob", "Grep"];
+      // Claude Code has called this built-in both `Task` and `Agent` across
+      // releases. Permit both names so the lead can delegate, while the
+      // worker definition itself deliberately omits either tool.
+      if (config.swarm) localTools.push("Task", "Agent");
+
+      argv.push(
+        "--mcp-config", claudeMcpConfig(config),
+        "--strict-mcp-config",
+        "--settings", claudeSandboxSettings(config),
+        "--permission-mode", "dontAsk",
+        "--tools", config.toolUse === "offline" ? "default" : "Read,Glob,Grep,ToolSearch",
+        "--allowedTools", [...localTools, ...mcpTools].join(","),
+        "--disallowedTools", [
+          "WebFetch", "WebSearch",
+          ...(config.toolUse === "read-only" ? ["Bash", "Edit", "Write", "NotebookEdit"] : []),
+          ...(config.swarm ? [] : ["Task", "Agent"])
+        ].join(","),
+        "--add-dir", ROOT_DIR,
+        "--add-dir", config.swarmDir
+      );
+      const agents = claudeAgents(config);
+      if (agents) argv.push("--agents", agents);
+    } else if (config.tools) {
       argv.push("--permission-mode", "bypassPermissions");
     } else {
       // dontAsk auto-denies every tool not on the allowlist (no prompt, run
@@ -367,6 +642,25 @@ function actionFromShellCommand(command) {
   return actionsFromShellCommand(command)[0] || null;
 }
 
+function parsedToolInput(input) {
+  if (input && typeof input === "object") return input;
+  try {
+    return JSON.parse(String(input || "{}"));
+  } catch (_error) {
+    return {};
+  }
+}
+
+function actionsFromToolCall(name, input) {
+  if (!/(?:^|__)maze_action$/.test(String(name || ""))) return [];
+  const args = parsedToolInput(input);
+  // Private worker explorations are intentionally absent from the lead run's
+  // move counter, token chart, and reasoning feed.
+  if (args.clone_id) return [];
+  const action = String(args.action || "").trim();
+  return action ? [action] : [];
+}
+
 function resultShape(status) {
   return {
     moved: status.moved,
@@ -465,6 +759,20 @@ function distillCodexEvents(raw) {
         });
         commentary = [];
       }
+    } else if (kind === "mcp_tool_call") {
+      const name = item.tool || item.name || item.tool_name;
+      const input = item.arguments || item.input || {};
+      const actions = actionsFromToolCall(name, input);
+      transcript.push(`[tool] ${name || "mcp"} ${JSON.stringify(input)}`);
+      if (actions.length && item.status !== "failed" && !item.error) {
+        const reasoning = commentary.join("\n\n").trim();
+        const results = resultsFromOutput(toolResultText(item.result || item.output || item.content));
+        actions.forEach((action, index) => {
+          move += 1;
+          entries.push({ move, action, reasoning, ...(results[index] || {}) });
+        });
+        commentary = [];
+      }
     }
   }
 
@@ -475,6 +783,11 @@ function toolResultText(content) {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content.map((part) => (typeof part === "string" ? part : String(part?.text || ""))).join("\n");
+  }
+  if (content && typeof content === "object") {
+    if (content.content) return toolResultText(content.content);
+    if (content.structuredContent) return JSON.stringify(content.structuredContent);
+    return JSON.stringify(content);
   }
   return "";
 }
@@ -517,7 +830,9 @@ function distillClaudeEvents(raw) {
         if (block.type !== "tool_use") continue;
         const command = block.name === "Bash" ? String(block.input?.command || "") : "";
         transcript.push(`$ ${command || block.name}`);
-        const actions = actionsFromShellCommand(command);
+        const actions = command
+          ? actionsFromShellCommand(command)
+          : actionsFromToolCall(block.name, block.input);
         if (actions.length) {
           hasActions = true;
           if (reasoning) transcript.push(`[reasoning] ${reasoning}`);
@@ -530,6 +845,11 @@ function distillClaudeEvents(raw) {
         if (block.type === "tool_result" && pending.has(block.tool_use_id)) {
           const output = toolResultText(block.content);
           const batch = pending.get(block.tool_use_id);
+          if (block.is_error) {
+            if (output) transcript.push(`[tool error] ${output}`);
+            pending.delete(block.tool_use_id);
+            continue;
+          }
           const results = resultsFromOutput(output);
           const executed = results.length ? batch.actions.slice(0, results.length) : batch.actions;
           executed.forEach((action, index) => {
@@ -590,7 +910,7 @@ function runAgent(config, prompt) {
   console.log(`\n=== Launching local ${config.model} agent (${bin}) ===`);
   console.log(`Session: ${config.sessionFile}`);
   console.log(
-    `Tools ${config.tools ? "ON (full access)" : "OFF (sandboxed to maze only)"} | ` +
+    `Tool-use ${config.toolUse.toUpperCase()}${config.swarm ? " + SWARM" : ""} | ` +
       `Mode ${config.mode}${config.mode === "vision" ? ` (${config.visionWidth}x${config.visionHeight})` : ""} | ` +
       `Game ${config.gameId} | Level ${config.levelId} | view ${config.view} | yaw ${config.yaw} | budget ${config.moves} moves\n`
   );
@@ -611,7 +931,12 @@ function runAgent(config, prompt) {
   }
 
   return new Promise((resolve) => {
-    const child = spawn(bin, argv, { cwd: ROOT_DIR, stdio: ["ignore", "pipe", "inherit"] });
+    const env = { ...process.env };
+    if (config.model === "claude" && config.mcpEnabled) {
+      if (config.swarm && config.modelName) env.CLAUDE_CODE_SUBAGENT_MODEL = config.modelName;
+    }
+    const cwd = config.toolUse === "offline" ? config.workspaceDir : ROOT_DIR;
+    const child = spawn(bin, argv, { cwd, env, stdio: ["ignore", "pipe", "inherit"] });
     let raw = "";
 
     child.stdout.on("data", (chunk) => {
@@ -761,7 +1086,7 @@ function runInContainer(config, raw) {
   // path options (out/session) are intentionally dropped; the inner run writes
   // under the mounted /app/outputs/maze-local.
   const forwardKeys = [
-    "model", "moves", "mode", "tools", "game", "level", "view", "yaw", "gems",
+    "model", "moves", "mode", "tools", "tool_use", "swarm", "game", "level", "view", "yaw", "gems",
     "video", "no_video", "fast", "draft", "width", "height", "fps",
     "vision_width", "vision_height", "vision_view", "model_name", "llm",
     "reasoning", "effort", "codex_fast", "resume", "seed",
@@ -784,6 +1109,7 @@ function runInContainer(config, raw) {
 
   const dockerArgs = [
     "run", "--rm", "-i", "--cidfile", cidFile,
+    "--security-opt", "seccomp=unconfined",
     "-e", "MAZEBENCH_IN_CONTAINER=1",
     "-v", `${hostOutputs}:/app/outputs/maze-local`
   ];
@@ -1136,12 +1462,23 @@ async function main() {
     ? path.dirname(path.resolve(raw.session))
     : path.resolve(raw.out || path.join(ROOT_DIR, "outputs", "maze-local", model, timestampSlug()));
   const sessionFile = raw.session ? path.resolve(raw.session) : path.join(outDir, "session.json");
+  const inContainer = process.env.MAZEBENCH_IN_CONTAINER === "1";
+  const wantsContainer = isTruthy(raw.container, true);
+  const requestedToolUse = String(raw.tool_use || "").trim().toLowerCase();
+  const toolUse = wantsContainer || inContainer
+    ? ["read-only", "offline"].includes(requestedToolUse)
+      ? requestedToolUse
+      : isTruthy(raw.tools, false)
+        ? "offline"
+        : "read-only"
+    : "full";
+  const swarm = isTruthy(raw.swarm, false);
 
   const config = {
     claudeBin: raw.claude_bin || "claude",
     claudeAllowedTools: raw.claude_allowed_tools || "",
     codexBin: raw.codex_bin || "codex",
-    container: isTruthy(raw.container, true),
+    container: wantsContainer,
     dockerBin: raw.docker_bin || "docker",
     image: raw.image || "mazebench-agent",
     draft: isTruthy(raw.draft, false),
@@ -1152,13 +1489,18 @@ async function main() {
     height: raw.height ? positiveInt(raw.height, undefined) : undefined,
     levelId: normalizeLevelId(raw.level),
     mode: String(raw.mode || raw.observation || "text").toLowerCase() === "vision" ? "vision" : "text",
-    tools: isTruthy(raw.tools, false),
+    tools: toolUse !== "read-only",
+    toolUse,
+    swarm,
     model,
     modelName: raw.model_name || raw.llm || "",
     reasoning: String(raw.reasoning || raw.effort || "").toLowerCase(),
     codexFast: isTruthy(raw.codex_fast, false),
     moves: positiveInt(raw.moves, 20),
     outDir,
+    workspaceDir: path.join(outDir, "workspace"),
+    swarmDir: path.join(outDir, "swarm"),
+    mcpEnabled: inContainer && ["read-only", "offline"].includes(toolUse),
     // Continue a prior run. seed=true means the session.json (action history) is
     // present in outDir so we resume the maze from it instead of starting fresh.
     // resume=<conversation-id> additionally resumes the CLI conversation so the
@@ -1176,12 +1518,17 @@ async function main() {
     yaw: ((positiveInt(raw.yaw, 0) % 4) + 4) % 4
   };
 
+  if (config.swarm && (!config.mcpEnabled && !config.container || config.toolUse !== "offline")) {
+    console.error("Swarm requires Docker with tool_use=offline.");
+    process.exit(2);
+  }
+
   // A run is isolated by a container OR granted Full tool access — never the
   // host workspace-write sandbox in between (no network, so it can't render
   // vision frames, and it's weaker isolation than a container). The
   // in-container re-exec runs with container=false on the container's host, so
   // it's exempt (the container IS the isolation).
-  if (!config.container && !config.tools && process.env.MAZEBENCH_IN_CONTAINER !== "1") {
+  if (!config.container && config.toolUse !== "full" && !inContainer) {
     console.error(
       "A run needs either container mode or full tool access (tools=true).\n" +
         "The host sandbox in between can't render vision frames and isn't supported.\n" +
@@ -1192,11 +1539,12 @@ async function main() {
 
   // Default: isolate the whole run inside a container. `container=false` (or the
   // in-container re-exec, flagged by MAZEBENCH_IN_CONTAINER) runs on the host.
-  if (config.container && process.env.MAZEBENCH_IN_CONTAINER !== "1") {
+  if (config.container && !inContainer) {
     process.exit(runInContainer(config, raw));
   }
 
   fs.mkdirSync(outDir, { recursive: true });
+  prepareAgentRuntime(config);
 
   const prompt = buildPrompt(config);
 
@@ -1253,6 +1601,7 @@ async function main() {
 module.exports = {
   actionFromShellCommand,
   actionsFromShellCommand,
+  actionsFromToolCall,
   distillClaudeEvents,
   distillCodexEvents,
   loadCodexModels,

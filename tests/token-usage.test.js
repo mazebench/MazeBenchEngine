@@ -8,6 +8,7 @@ const {
 } = require("../server/token-usage");
 const {
   actionsFromShellCommand,
+  actionsFromToolCall,
   distillClaudeEvents,
   resultsFromOutput
 } = require("../scripts/maze-agent-local");
@@ -49,6 +50,13 @@ const codexCall = (verb) => ({
 }
 
 {
+  assert.deepEqual(actionsFromToolCall("mcp__mazebench__maze_action", { action: "left" }), ["left"]);
+  assert.deepEqual(
+    actionsFromToolCall("mcp__mazebench__maze_action", { action: "right", clone_id: "scout" }),
+    [],
+    "worker-clone moves do not belong to the lead token chart"
+  );
+
   const command = [
     'node scripts/codex-play.js action --state "session.json" up',
     'node scripts/codex-play.js action --state "session.json" "rotate camera left"',
@@ -69,15 +77,27 @@ const codexCall = (verb) => ({
   assert.deepEqual(distilled.entries.map((entry) => entry.action), ["up", "rotate camera left"]);
   assert.deepEqual(distilled.entries.map((entry) => entry.move), [1, 2]);
   assert(distilled.entries.every((entry) => entry.reasoning === "Follow the corridor."));
+
+  const mcpDistilled = distillClaudeEvents(
+    lines(
+      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "thinking_delta", thinking: "Take the open lane." } } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "mcp-1", name: "mcp__mazebench__maze_action", input: { action: "up" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "mcp-1", content: JSON.stringify({ moved: true, gem_count: 2, current_room: "level_HxI" }) }] } }
+    )
+  );
+  assert.deepEqual(mcpDistilled.entries.map((entry) => entry.action), ["up"]);
+  assert.equal(mcpDistilled.entries[0].reasoning, "Take the open lane.");
 }
 
 {
   const usage = parseClaudeEvents(
     lines(
       { type: "stream_event", event: { type: "message_delta", usage: { input_tokens: 20, cache_read_input_tokens: 80, output_tokens: 5 } } },
-      { type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "node scripts/codex-play.js action --state session.json up" } }] } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "a1", name: "Bash", input: { command: "node scripts/codex-play.js action --state session.json up" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "a1", content: "{}" }] } },
       { type: "stream_event", event: { type: "message_delta", usage: { input_tokens: 10, cache_creation_input_tokens: 110, output_tokens: 7 } } },
-      { type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "node scripts/codex-play.js action --state session.json left" } }] } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "a2", name: "Bash", input: { command: "node scripts/codex-play.js action --state session.json left" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "a2", content: "{}" }] } },
       { type: "result", modelUsage: { "claude-test": { inputTokens: 30, outputTokens: 12, cacheReadInputTokens: 80, cacheCreationInputTokens: 110, contextWindow: 200000 } } }
     )
   );
@@ -94,12 +114,26 @@ const codexCall = (verb) => ({
   const usage = parseClaudeEvents(
     lines(
       { type: "stream_event", event: { type: "message_delta", usage: { input_tokens: 100, output_tokens: 20 } } },
-      { type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command } }] } }
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "batch", name: "Bash", input: { command } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "batch", content: "{}" }] } }
     )
   );
   assert.equal(usage.actions.length, 2);
   assert.deepEqual(usage.actions.map((point) => point.context_tokens), [100, 100]);
   assert.deepEqual(usage.actions.map((point) => point.total_tokens), [60, 60]);
+}
+
+{
+  const usage = parseClaudeEvents(
+    lines(
+      { type: "stream_event", event: { type: "message_delta", usage: { input_tokens: 50, output_tokens: 10 } } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "ok", name: "mcp__mazebench__maze_action", input: { action: "right" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "ok", content: "{}" }] } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "over", name: "mcp__mazebench__maze_action", input: { action: "down" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "over", content: "budget exhausted", is_error: true }] } }
+    )
+  );
+  assert.equal(usage.actions.length, 1, "failed MCP actions are not charted as completed maze moves");
 }
 
 {

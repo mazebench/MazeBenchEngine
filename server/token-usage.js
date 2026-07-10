@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { actionsFromShellCommand } = require("../scripts/maze-agent-local");
+const { actionsFromShellCommand, actionsFromToolCall } = require("../scripts/maze-agent-local");
 
 function number(value) {
   const parsed = Number(value);
@@ -30,6 +30,10 @@ function isMazeAction(value) {
 function mazeActionCount(value) {
   const text = typeof value === "string" ? value : JSON.stringify(value || "");
   return actionsFromShellCommand(text).length || (isMazeAction(value) ? 1 : 0);
+}
+
+function mazeToolActionCount(name, input) {
+  return actionsFromToolCall(name, input).length;
 }
 
 function withCompactionFlags(points) {
@@ -95,11 +99,13 @@ function parseCodexSession(raw) {
 
     if (
       event.type === "response_item" &&
-      ["custom_tool_call", "function_call"].includes(event.payload?.type) &&
-      isMazeAction(event.payload.input || event.payload.arguments || event.payload.command) &&
+      ["custom_tool_call", "function_call", "mcp_tool_call"].includes(event.payload?.type) &&
       latest
     ) {
-      const count = mazeActionCount(event.payload.input || event.payload.arguments || event.payload.command);
+      const count =
+        mazeToolActionCount(event.payload.name || event.payload.tool || event.payload.tool_name, event.payload.input || event.payload.arguments) ||
+        mazeActionCount(event.payload.input || event.payload.arguments || event.payload.command);
+      if (!count) continue;
       for (let index = 0; index < count; index += 1) {
         points.push({
           action: points.length + 1,
@@ -132,13 +138,17 @@ function parseCodexEvents(raw) {
 
   for (const event of jsonLines(raw)) {
     const item = event.item || event.msg?.item;
-    if (
-      (event.type || event.msg?.type) === "item.completed" &&
-      (item?.type || item?.item_type) === "command_execution" &&
-      isMazeAction(item.command)
-    ) {
-      pendingActions += mazeActionCount(item.command);
-      continue;
+    if ((event.type || event.msg?.type) === "item.completed") {
+      const kind = item?.type || item?.item_type;
+      const count = kind === "command_execution"
+        ? mazeActionCount(item.command)
+        : kind === "mcp_tool_call" && item.status !== "failed" && !item.error
+          ? mazeToolActionCount(item.tool || item.name || item.tool_name, item.arguments || item.input)
+          : 0;
+      if (count) {
+        pendingActions += count;
+        continue;
+      }
     }
 
     if ((event.type || event.msg?.type) !== "turn.completed" || !event.usage) continue;
@@ -195,6 +205,7 @@ function claudeUsageShape(usage = {}) {
 
 function parseClaudeEvents(raw) {
   const points = [];
+  const pending = new Map();
   const totals = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
   let latest = null;
   let contextWindow = 0;
@@ -210,20 +221,32 @@ function parseClaudeEvents(raw) {
     }
 
     if (event.type === "assistant" && Array.isArray(event.message?.content) && latest) {
-      const count = event.message.content.reduce(
-        (sum, block) => sum + (block?.type === "tool_use" && block.name === "Bash" ? mazeActionCount(block.input?.command) : 0),
-        0
-      );
-      for (let index = 0; index < count; index += 1) {
-        points.push({
-          action: points.length + 1,
-          total_tokens: Math.round(latest.total_tokens / count),
-          input_tokens: Math.round(latest.input_tokens / count),
-          cached_input_tokens: Math.round(latest.cached_input_tokens / count),
-          output_tokens: Math.round(latest.output_tokens / count),
-          reasoning_tokens: Math.round(latest.reasoning_tokens / count),
-          context_tokens: latest.input_tokens
-        });
+      for (const block of event.message.content) {
+        if (block?.type !== "tool_use" || !block.id) continue;
+        const count = block.name === "Bash"
+          ? mazeActionCount(block.input?.command)
+          : mazeToolActionCount(block.name, block.input);
+        if (count) pending.set(block.id, { count, usage: { ...latest } });
+      }
+    }
+
+    if (event.type === "user" && Array.isArray(event.message?.content)) {
+      for (const block of event.message.content) {
+        if (block?.type !== "tool_result" || !pending.has(block.tool_use_id)) continue;
+        const batch = pending.get(block.tool_use_id);
+        pending.delete(block.tool_use_id);
+        if (block.is_error) continue;
+        for (let index = 0; index < batch.count; index += 1) {
+          points.push({
+            action: points.length + 1,
+            total_tokens: Math.round(batch.usage.total_tokens / batch.count),
+            input_tokens: Math.round(batch.usage.input_tokens / batch.count),
+            cached_input_tokens: Math.round(batch.usage.cached_input_tokens / batch.count),
+            output_tokens: Math.round(batch.usage.output_tokens / batch.count),
+            reasoning_tokens: Math.round(batch.usage.reasoning_tokens / batch.count),
+            context_tokens: batch.usage.input_tokens
+          });
+        }
       }
     }
 

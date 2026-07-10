@@ -843,6 +843,22 @@ function createPageRenderer({
                 </div>
                 <div id="docker-action" class="docker-action" hidden></div>
               </article>
+              <article class="setting-card setting-card--tool-use is-gated" inert aria-hidden="true">
+                <div class="setting-card__head"><span>Tool-use</span></div>
+                <div class="animated-segmented" id="tool-use-picker" role="radiogroup" aria-label="Tool-use">
+                  <span class="segmented__glider" aria-hidden="true"></span>
+                  <button type="button" class="segmented__option" data-tool-use="read-only" aria-pressed="false"><span class="segmented__icon">RO</span><span>Read only</span></button>
+                  <button type="button" class="segmented__option" data-tool-use="offline" aria-pressed="false"><span class="segmented__icon">CLI</span><span>Offline tools</span></button>
+                </div>
+              </article>
+              <article class="setting-card setting-card--orchestration is-gated" inert aria-hidden="true">
+                <div class="setting-card__head"><span>Orchestration</span></div>
+                <div class="animated-segmented" id="orchestration-picker" role="radiogroup" aria-label="Orchestration">
+                  <span class="segmented__glider" aria-hidden="true"></span>
+                  <button type="button" class="segmented__option" data-orchestration="single" aria-pressed="false"><span class="segmented__icon">ONE</span><span>Single</span></button>
+                  <button type="button" class="segmented__option" data-orchestration="swarm" aria-pressed="false"><span class="segmented__icon">NET</span><span>Swarm</span></button>
+                </div>
+              </article>
               <article class="setting-card setting-card--budget is-gated" inert aria-hidden="true">
                 <div class="setting-card__head"><span>Budget</span></div>
                 <label class="field setting-card__field setting-card__field--budget"><span>Move limit</span><input id="run-moves" type="number" min="0" max="500" value="0" inputmode="numeric"></label>

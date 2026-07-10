@@ -66,6 +66,8 @@
     levelId: null, // null = use the world's default from its metadata
     mode: null,
     isolation: null,
+    toolUse: null,
+    orchestration: null,
     catalogs: {},
     openFolders: new Set(),
     modelQuery: ""
@@ -298,10 +300,14 @@
   }
 
   function runOptionsReady() {
+    const dockerReady =
+      state.isolation === "docker" &&
+      (state.toolUse === "read-only" ||
+        (state.toolUse === "offline" && Boolean(state.orchestration)));
     return Boolean(
       composerSettingsReady() &&
       state.mode &&
-      (state.provider === "prime" || state.isolation)
+      (state.provider === "prime" || state.isolation === "full" || dockerReady)
     );
   }
 
@@ -848,6 +854,12 @@
     const primeSettings = document.getElementById("prime-settings");
     const hasObservation = Boolean(state.mode);
     const hasAccess = Boolean(state.isolation);
+    const dockerSelected = state.isolation === "docker";
+    const offlineSelected = dockerSelected && state.toolUse === "offline";
+    const localBudgetReady =
+      state.isolation === "full" ||
+      (dockerSelected && state.toolUse === "read-only") ||
+      (offlineSelected && Boolean(state.orchestration));
 
     const setCardVisibility = (card, show) => {
       if (!card) return;
@@ -857,7 +869,9 @@
     };
 
     setCardVisibility(localSettings?.querySelector(".setting-card--access"), hasObservation);
-    setCardVisibility(localSettings?.querySelector(".setting-card--budget"), hasObservation && hasAccess);
+    setCardVisibility(localSettings?.querySelector(".setting-card--tool-use"), hasObservation && dockerSelected);
+    setCardVisibility(localSettings?.querySelector(".setting-card--orchestration"), hasObservation && offlineSelected);
+    setCardVisibility(localSettings?.querySelector(".setting-card--budget"), hasObservation && hasAccess && localBudgetReady);
     setCardVisibility(primeSettings?.querySelector(".setting-card--budget"), hasObservation);
   }
 
@@ -924,7 +938,12 @@
   // (full host access). There is no host-sandbox middle mode: the codex/claude
   // workspace-write sandbox has no network, so it can't render vision frames.
   function setIsolation(value, syncSteps = true) {
-    state.isolation = value === "full" || value === "docker" ? value : null;
+    const next = value === "full" || value === "docker" ? value : null;
+    if (state.isolation !== next) {
+      state.toolUse = null;
+      state.orchestration = null;
+    }
+    state.isolation = next;
     document.querySelectorAll(".segmented__option[data-isolation]").forEach((option) => {
       const selected = option.dataset.isolation === state.isolation;
       option.classList.toggle("is-selected", selected);
@@ -933,6 +952,51 @@
     const picker = document.getElementById("isolation-picker");
     picker?.classList.toggle("has-selection", Boolean(state.isolation));
     picker?.classList.toggle("is-second", state.isolation === "full");
+    syncToolUsePicker();
+    syncOrchestrationPicker();
+    syncRunSettingCards();
+    if (syncSteps) syncComposerSteps();
+  }
+
+  function syncToolUsePicker() {
+    document.querySelectorAll(".segmented__option[data-tool-use]").forEach((option) => {
+      const selected = option.dataset.toolUse === state.toolUse;
+      option.classList.toggle("is-selected", selected);
+      option.setAttribute("aria-pressed", String(selected));
+    });
+    const picker = document.getElementById("tool-use-picker");
+    picker?.classList.toggle("has-selection", Boolean(state.toolUse));
+    picker?.classList.toggle("is-second", state.toolUse === "offline");
+  }
+
+  function setToolUse(value, syncSteps = true) {
+    if (state.isolation !== "docker") return;
+    const next = value === "read-only" || value === "offline" ? value : null;
+    if (state.toolUse !== next) {
+      state.orchestration = next === "read-only" ? "single" : null;
+    }
+    state.toolUse = next;
+    syncToolUsePicker();
+    syncOrchestrationPicker();
+    syncRunSettingCards();
+    if (syncSteps) syncComposerSteps();
+  }
+
+  function syncOrchestrationPicker() {
+    document.querySelectorAll(".segmented__option[data-orchestration]").forEach((option) => {
+      const selected = option.dataset.orchestration === state.orchestration;
+      option.classList.toggle("is-selected", selected);
+      option.setAttribute("aria-pressed", String(selected));
+    });
+    const picker = document.getElementById("orchestration-picker");
+    picker?.classList.toggle("has-selection", Boolean(state.orchestration));
+    picker?.classList.toggle("is-second", state.orchestration === "swarm");
+  }
+
+  function setOrchestration(value, syncSteps = true) {
+    if (state.isolation !== "docker" || state.toolUse !== "offline") return;
+    state.orchestration = value === "single" || value === "swarm" ? value : null;
+    syncOrchestrationPicker();
     syncRunSettingCards();
     if (syncSteps) syncComposerSteps();
   }
@@ -944,6 +1008,8 @@
     });
     setMode(null, false);
     setIsolation(null, false);
+    setToolUse(null, false);
+    setOrchestration(null, false);
   }
 
   // Docker mode needs Docker installed AND its daemon running. When it isn't,
@@ -1092,7 +1158,9 @@
             codex_fast: state.provider === "codex" && document.getElementById("run-codex-fast").checked,
             container: state.isolation === "docker",
             video: false,
-            tools: state.isolation === "full"
+            tools: state.isolation === "full" || state.toolUse === "offline",
+            tool_use: state.isolation === "docker" ? state.toolUse : "full",
+            swarm: state.isolation === "docker" && state.toolUse === "offline" && state.orchestration === "swarm"
           };
 
     body.count = 1;
@@ -1434,6 +1502,12 @@
       if (option.disabled) return;
       setIsolation(option.dataset.isolation);
     });
+  });
+  document.querySelectorAll(".segmented__option[data-tool-use]").forEach((option) => {
+    option.addEventListener("click", () => setToolUse(option.dataset.toolUse));
+  });
+  document.querySelectorAll(".segmented__option[data-orchestration]").forEach((option) => {
+    option.addEventListener("click", () => setOrchestration(option.dataset.orchestration));
   });
   syncIsolationPicker();
   syncRunSettingCards();

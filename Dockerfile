@@ -20,10 +20,11 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     NODE_ENV=production \
     MAZEBENCH_IN_CONTAINER=1
 
-# ffmpeg is needed for replay video; bubblewrap is Codex's Linux sandbox helper
-# (workspace-write). The browser + node come from the base image.
+# ffmpeg is needed for replay video. bubblewrap is the Linux sandbox used by
+# Codex and Claude Code; Claude's network broker also needs socat. The browser +
+# node come from the base image.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg bubblewrap \
+    && apt-get install -y --no-install-recommends ffmpeg bubblewrap socat \
     && rm -rf /var/lib/apt/lists/*
 
 # Install the local coding agents globally.

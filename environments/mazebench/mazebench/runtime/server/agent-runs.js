@@ -1610,6 +1610,19 @@ function createAgentRunService({
     const view = VIEW_NAMES.includes(String(params.view)) ? String(params.view) : "top-diagonal";
     const wantContainer = !(params.container === false || params.container === "false");
     const wantTools = params.tools === true || params.tools === "true";
+    const requestedToolUse = String(params.tool_use || "").trim().toLowerCase();
+    const toolUse = wantContainer
+      ? ["read-only", "offline"].includes(requestedToolUse)
+        ? requestedToolUse
+        : wantTools
+          ? "offline"
+          : "read-only"
+      : "full";
+    const swarm = wantContainer && toolUse === "offline" && (params.swarm === true || params.swarm === "true");
+
+    if ((params.swarm === true || params.swarm === "true") && !swarm) {
+      throw new Error("Swarm requires Docker with Offline tools.");
+    }
 
     // Every run must be isolated by a container OR granted Full tool access —
     // there is no host-sandbox middle mode. The codex/claude workspace-write
@@ -1641,7 +1654,9 @@ function createAgentRunService({
       `gems=${gems}`,
       `view=${view}`,
       `mode=${String(params.mode) === "vision" ? "vision" : "text"}`,
-      `tools=${params.tools === true || params.tools === "true" ? "true" : "false"}`,
+      `tools=${toolUse === "read-only" ? "false" : "true"}`,
+      `tool_use=${toolUse}`,
+      `swarm=${swarm ? "true" : "false"}`,
       `container=${params.container === false || params.container === "false" ? "false" : "true"}`,
       `video=${params.video === false || params.video === "false" ? "off" : "on"}`,
       `out=${runDirFor(runId)}`
@@ -1725,7 +1740,7 @@ function createAgentRunService({
       args.push(`resume=${String(params.resume_id)}`);
     }
 
-    return { args, model, levelId, moves, gems, view };
+    return { args, model, levelId, moves, gems, view, toolUse, swarm };
   }
 
   // Prime runs go through scripts/maze-prime-run.js, which runs the v1 taskset
@@ -1821,7 +1836,7 @@ function createAgentRunService({
         };
       } else {
         const game = normalizedGameForRun(params.game_id);
-        const { args, model, levelId, moves, gems, view } = buildLocalRunArgs(runId, params, game);
+        const { args, model, levelId, moves, gems, view, toolUse, swarm } = buildLocalRunArgs(runId, params, game);
         const requestedModelName = String(params.model_name || "");
         const exactModelName = model === "claude"
           ? resolveClaudeCatalogModelId(requestedModelName)
@@ -1858,7 +1873,9 @@ function createAgentRunService({
           gems,
           view,
           mode: String(params.mode) === "vision" ? "vision" : "text",
-          tools: params.tools === true || params.tools === "true",
+          tools: toolUse !== "read-only",
+          tool_use: toolUse,
+          swarm,
           container: !(params.container === false || params.container === "false"),
           video: !(params.video === false || params.video === "false"),
           launch_params: launchParamsOf(params),
@@ -2074,6 +2091,8 @@ function createAgentRunService({
       container: meta.container !== false,
       video: meta.video !== false,
       tools: Boolean(meta.tools),
+      tool_use: meta.tool_use || (meta.container === false ? "full" : meta.tools ? "offline" : "read-only"),
+      swarm: Boolean(meta.swarm),
       gems: meta.gems,
       view: meta.view
     };
