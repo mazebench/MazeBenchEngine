@@ -88,6 +88,8 @@ function finishUsage({
     context_window: number(contextWindow) || null,
     average_tokens_per_action: marked.length
       ? Math.round(
+          averageTokensPerAction !== null &&
+          averageTokensPerAction !== undefined &&
           Number.isFinite(Number(averageTokensPerAction))
             ? Number(averageTokensPerAction)
             : perActionTotal / marked.length
@@ -548,7 +550,7 @@ function parseClaudeEvents(raw) {
 function parsePrimeResults(raw) {
   const row = jsonLines(raw)[0] || {};
   const sampled = Array.isArray(row.nodes) ? row.nodes.filter((node) => node?.sampled && node.usage) : [];
-  const points = sampled.map((node, index) => {
+  let points = sampled.map((node, index) => {
     const usage = node.usage || {};
     const input = number(usage.prompt_tokens) + number(usage.cached_input_tokens);
     const output = number(usage.completion_tokens);
@@ -563,6 +565,23 @@ function parsePrimeResults(raw) {
       active_agents: 1
     };
   });
+  if (!points.length) {
+    const usage = row.info?.token_usage || {};
+    const input = number(usage.input_tokens) || number(usage.final_input_tokens);
+    const output = number(usage.output_tokens) || number(usage.final_output_tokens);
+    if (input || output) {
+      points = [{
+        action: Math.max(1, Number(row.info?.maze_actions?.length) || 1),
+        total_tokens: input + output,
+        input_tokens: input,
+        cached_input_tokens: number(usage.cached_input_tokens),
+        output_tokens: output,
+        reasoning_tokens: number(usage.reasoning_tokens),
+        context_tokens: number(usage.final_input_tokens) || input,
+        active_agents: 1
+      }];
+    }
+  }
   const totals = points.reduce(
     (sum, point) => {
       sum.input_tokens += point.input_tokens;

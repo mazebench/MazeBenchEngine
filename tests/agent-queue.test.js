@@ -22,6 +22,11 @@ process.on("SIGTERM", () => process.exit(0));
 `,
   "utf8"
 );
+fs.writeFileSync(
+  path.join(scriptsDir, "maze-prime-run.js"),
+  "setInterval(() => {}, 1000); process.on('SIGTERM', () => process.exit(0));\n",
+  "utf8"
+);
 
 function loadJson(filePath, fallback) {
   try {
@@ -53,6 +58,44 @@ const launchedIds = [];
 
 (async () => {
 try {
+  const [hostedPrime] = service.launchRuns({
+    kind: "prime",
+    model_name: "Qwen/Qwen3.5-0.8B",
+    max_turns: 5,
+    vision: false,
+    reasoning: "low",
+    allow_quit: false,
+    video: false
+  });
+  launchedIds.push(hostedPrime.id);
+  const hostedPrimeMeta = loadJson(
+    path.join(rootDir, "outputs", "maze-local", "site", hostedPrime.id, "run.json")
+  );
+  assert.equal(hostedPrimeMeta.prime_execution, "hosted");
+  assert.equal(hostedPrimeMeta.moves, 5);
+  assert.equal(hostedPrimeMeta.allow_quit, false);
+  assert.match(hostedPrimeMeta.command, /--hosted/);
+  assert.match(hostedPrimeMeta.command, /--model Qwen\/Qwen3\.5-0\.8B/);
+  assert.equal(service.stopRun(hostedPrime.id).status, "stopped");
+  service.deleteRun(hostedPrime.id);
+
+  const [visionPrime] = service.launchRuns({
+    kind: "prime",
+    model_name: "vision-test",
+    max_turns: 1,
+    vision: true,
+    video: false
+  });
+  launchedIds.push(visionPrime.id);
+  const visionPrimeMeta = loadJson(
+    path.join(rootDir, "outputs", "maze-local", "site", visionPrime.id, "run.json")
+  );
+  assert.equal(visionPrimeMeta.prime_execution, "local");
+  assert.doesNotMatch(visionPrimeMeta.command, /--hosted/);
+  assert.match(visionPrimeMeta.command, /--vision/);
+  service.stopRun(visionPrime.id);
+  service.deleteRun(visionPrime.id);
+
   const [hostReadOnlySwarm] = service.launchRuns({
     kind: "local",
     model: "codex",

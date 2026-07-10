@@ -72,6 +72,8 @@ const SERVABLE_RUN_FILES = new Set([
   "reasoning.json",
   "agent.log",
   "agent-events.jsonl",
+  "prime-evaluation.json",
+  "prime-evaluation-samples.json",
   "scorecard.json",
   "maze_scorecard.json",
   "maze_actions.txt",
@@ -389,6 +391,10 @@ function createAgentRunService({
 
   function readRunMeta(runId) {
     return loadJson(runMetaPath(runId), null);
+  }
+
+  function readPrimeEvaluation(runId) {
+    return loadJson(path.join(runDirFor(runId), "prime-evaluation.json"), null);
   }
 
   function writeRunMeta(runId, meta) {
@@ -1056,6 +1062,7 @@ function createAgentRunService({
     const actions = readActions(runId);
     const last = actions[actions.length - 1] || null;
     const runDir = runDirFor(runId);
+    const primeEvaluation = meta.kind === "prime" ? readPrimeEvaluation(runId) : null;
     const modelName = resolvedRunModelName(runId, meta);
     const scorecard = loadJson(path.join(runDir, "maze_scorecard.json"), null);
     const observedRooms = new Set(
@@ -1110,6 +1117,16 @@ function createAgentRunService({
       has_video: hasVideo,
       video_status: videoStatus,
       has_reasoning: fs.existsSync(path.join(runDir, "reasoning.json")),
+      prime_evaluation_id: String(primeEvaluation?.evaluation_id || primeEvaluation?.id || ""),
+      prime_evaluation_status: String(primeEvaluation?.status || ""),
+      prime_evaluation_url: String(
+        primeEvaluation?.viewer_url ||
+        (primeEvaluation?.evaluation_id
+          ? `https://app.primeintellect.ai/dashboard/evaluations/${primeEvaluation.evaluation_id}`
+          : "")
+      ),
+      prime_evaluation_score:
+        Number.isFinite(Number(primeEvaluation?.avg_score)) ? Number(primeEvaluation.avg_score) : null,
       // Grouping key for the runs-list provider filter (codex | claude | prime).
       provider: meta.kind === "prime" ? "prime" : meta.model,
       pausable:
@@ -2713,15 +2730,14 @@ function createAgentRunService({
     return { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit };
   }
 
-  // Prime runs go through scripts/maze-prime-run.js, which runs the v1 taskset
-  // via `uv run eval` and then renders a replay video + move feed from the eval
-  // results (see that script). We fix examples/rollouts at 1 — a Prime run here
-  // is "one maze, make N moves, stop" — so the only knob is the turn budget
-  // (plus an optional vision/image-input mode for models that accept images).
-  function buildPrimeCommand(params, runDir) {
+  // Prime text runs are real Hosted Evaluations, visible in Prime Evals from
+  // launch through completion. Vision keeps using the local v1 evaluator until
+  // the published environment has a self-contained Chromium renderer.
+  function buildPrimeCommand(params, runDir, runId, game) {
     const model = String(params.model_name || params.model || "").trim();
     const maxTurns = Math.max(1, Math.min(500, Number(params.max_turns) || 20));
     const vision = params.vision === true || params.vision === "true";
+    const hosted = !vision;
     const wantVideo = !(params.video === false || params.video === "false");
     const allowQuit = !(params.allow_quit === false || params.allow_quit === "false");
     // Reasoning effort → --sampling.reasoning-effort. OpenAI reasoning models and
@@ -2730,8 +2746,28 @@ function createAgentRunService({
       ? String(params.reasoning)
       : "";
     const envDir = path.join(rootDir, "environments", "mazebench");
+    const levelId = String(params.level_id || "level_HxI");
+    const gemTotal = buildWorlds.countWorldGems(game);
 
-    const argv = [primeRunnerScript, "--env-dir", envDir, "--out", runDir, "--max-turns", String(maxTurns)];
+    const argv = [
+      primeRunnerScript,
+      "--env-dir",
+      envDir,
+      "--out",
+      runDir,
+      "--run-id",
+      runId,
+      "--level",
+      levelId,
+      "--game-won-gem-count",
+      String(gemTotal),
+      "--max-turns",
+      String(maxTurns)
+    ];
+
+    if (hosted) {
+      argv.push("--hosted", "--environment", "mazebench/mazebench");
+    }
 
     if (model) {
       argv.push("--model", model);
@@ -2754,14 +2790,29 @@ function createAgentRunService({
     }
 
     // A readable command string for the run page / logs (not the resolved path).
-    const display = ["node", "scripts/maze-prime-run.js", "--out", "<run>", "--max-turns", String(maxTurns)]
+    const display = ["node", "scripts/maze-prime-run.js"]
+      .concat(hosted ? ["--hosted"] : [])
+      .concat(["--out", "<run>", "--max-turns", String(maxTurns)])
       .concat(model ? ["--model", model] : [])
       .concat(vision ? ["--vision"] : [])
       .concat(reasoning ? ["--reasoning", reasoning] : [])
       .concat(!allowQuit ? ["--no-quit"] : [])
       .join(" ");
 
-    return { bin: process.execPath, argv, display, model, maxTurns, vision, reasoning, allowQuit, video: wantVideo };
+    return {
+      bin: process.execPath,
+      argv,
+      display,
+      model,
+      maxTurns,
+      vision,
+      hosted,
+      levelId,
+      gemTotal,
+      reasoning,
+      allowQuit,
+      video: wantVideo
+    };
   }
 
   function launchRun(params = {}) {
@@ -2778,8 +2829,8 @@ function createAgentRunService({
 
     try {
       if (kind === "prime") {
-        const command = buildPrimeCommand(params, runDir);
         const game = normalizedGameForRun("maze");
+        const command = buildPrimeCommand(params, runDir, runId, game);
 
         child = spawn(command.bin, command.argv, {
           cwd: rootDir,
@@ -2798,8 +2849,8 @@ function createAgentRunService({
           model_name: command.model || "(prime default)",
           game_id: "maze",
           game_title: "Maze Bench Environment",
-          level_id: "level_HxI",
-          gem_total: buildWorlds.countWorldGems(game),
+          level_id: command.levelId,
+          gem_total: command.gemTotal,
           room_total: game.worldMap?.levels?.length || 0,
           moves: command.maxTurns,
           mode: command.vision ? "vision" : "text",
@@ -2809,7 +2860,10 @@ function createAgentRunService({
           video: command.video,
           launch_params: launchParamsOf(params),
           continue_of: params.continue_of || null,
-          note: "Prime Verifiers v1 eval (uv run eval). Progress, scores, and errors stream in the runner log; a replay video renders after the eval finishes."
+          prime_execution: command.hosted ? "hosted" : "local",
+          note: command.hosted
+            ? "Prime Hosted Evaluation. The evaluation ID and dashboard link appear as soon as Prime accepts the run; scored samples and replay artifacts sync back after completion."
+            : "Local Prime Verifiers vision evaluation. Hosted vision will replace this path once the published renderer is self-contained."
         };
       } else {
         const game = normalizedGameForRun(params.game_id);
@@ -3394,9 +3448,42 @@ function createAgentRunService({
     return summarizeRun(runId);
   }
 
+  function cancelPrimeEvaluation(runId) {
+    const state = readPrimeEvaluation(runId);
+    const evaluationId = String(state?.evaluation_id || state?.id || "");
+    const status = String(state?.status || "").toUpperCase();
+    if (!evaluationId || ["CANCELLED", "COMPLETED", "FAILED", "STOPPED"].includes(status)) return false;
+
+    const result = spawnSync("prime", ["eval", "stop", evaluationId, "--plain"], {
+      cwd: rootDir,
+      encoding: "utf8",
+      env: enrichedPathEnv(),
+      timeout: 30_000,
+      maxBuffer: 2 * 1024 * 1024
+    });
+    const updated = {
+      ...state,
+      status: result.status === 0 ? "STOPPED" : state.status,
+      stopped_at: result.status === 0 ? new Date().toISOString() : state.stopped_at,
+      ...(result.status === 0
+        ? { stop_error: undefined }
+        : { stop_error: String(result.stderr || result.stdout || "Prime evaluation cancellation failed.").trim() })
+    };
+    fs.writeFileSync(
+      path.join(runDirFor(runId), "prime-evaluation.json"),
+      `${JSON.stringify(updated, null, 2)}\n`,
+      "utf8"
+    );
+    return result.status === 0;
+  }
+
   function deleteRun(runId) {
     const meta = readRunMeta(runId);
     const runDir = runDirFor(runId);
+
+    if (meta?.kind === "prime" && ["running", "stopping"].includes(meta.status)) {
+      cancelPrimeEvaluation(runId);
+    }
 
     // Remove the daemon-owned container first; killing only the attached docker
     // client can otherwise leave the agent running after its card disappears.
@@ -3480,6 +3567,7 @@ function createAgentRunService({
     }
 
     writeRunMeta(runId, { ...meta, status: "stopping" });
+    if (meta.kind === "prime") cancelPrimeEvaluation(runId);
     stopLegacyClaudeSnapshots(runId);
     stopLiveRenderer(runId, { force: true });
 

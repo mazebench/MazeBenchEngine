@@ -4,7 +4,7 @@
   "license": "MIT",
   "private": true,
   "scripts": {
-    "test": "node tests/maze-engine.test.js && node tests/maze-solver.test.js && node tests/weightless-push.test.js && node tests/render-silhouette.test.js && node tests/author-play-data.test.js && node tests/maze-levels-author.test.js && node tests/build-worlds-local.test.js && node tests/maze-terminal.test.js && node tests/maze-mcp-server.test.js && node tests/token-usage.test.js && node tests/agent-queue.test.js && node tests/training.test.js && node tests/engine-parity.test.js && node tests/runtime-drift.test.js",
+    "test": "node tests/maze-engine.test.js && node tests/maze-solver.test.js && node tests/weightless-push.test.js && node tests/render-silhouette.test.js && node tests/author-play-data.test.js && node tests/maze-levels-author.test.js && node tests/build-worlds-local.test.js && node tests/maze-terminal.test.js && node tests/maze-mcp-server.test.js && node tests/token-usage.test.js && node tests/agent-queue.test.js && node tests/prime-hosted-eval.test.js && node tests/training.test.js && node tests/engine-parity.test.js && node tests/runtime-drift.test.js",
     "start": "node server.js",
     "sync-runtime": "node scripts/sync-runtime.js",
     "dev": "node --watch server.js",

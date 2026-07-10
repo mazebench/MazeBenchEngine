@@ -1,0 +1,24 @@
+name = "MazeBench · Qwen3.5-0.8B"
+model = "Qwen/Qwen3.5-0.8B"
+max_steps = 100
+batch_size = 512
+rollouts_per_example = 16
+
+[sampling]
+max_tokens = 1024
+temperature = 1
+
+[[env]]
+id = "mazebench/mazebench"
+
+[env.args]
+num_train_examples = 1
+num_eval_examples = 1
+start_level_id = "level_HxI"
+game_won_gem_count = 69
+gem_reward_weight = 1
+room_reward_weight = 0.1
+push_reward_weight = 0.05
+max_actions = 256
+allow_quit = false
+observation_mode = "ascii"

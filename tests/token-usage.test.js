@@ -243,4 +243,26 @@ const codexCall = (verb) => ({
   assert.equal(usage.reasoning_tokens, 12);
 }
 
+{
+  const usage = parsePrimeResults(
+    lines({
+      info: {
+        maze_actions: [{ turn: 1, command: "up" }],
+        token_usage: {
+          input_tokens: 1471,
+          output_tokens: 2,
+          final_input_tokens: 1471,
+          final_output_tokens: 2
+        }
+      },
+      nodes: []
+    })
+  );
+  assert.equal(usage.available, true);
+  assert.equal(usage.total_tokens, 1473);
+  assert.equal(usage.current_context_tokens, 1471);
+  assert.equal(usage.average_tokens_per_action, 1473);
+  assert.equal(usage.actions[0].action, 1);
+}
+
 console.log("token usage tests passed");

@@ -1100,15 +1100,14 @@ function createPageRenderer({
           </div>
           <video id="run-video" class="run-video" controls playsinline hidden></video>
         </section>`;
-    // Prime Verifiers plays the maze headlessly inside the eval, so there is no
-    // live board to stream. Instead we reuse the same replay + moves markup the
-    // local runner uses: maze-prime-run.js renders a replay video and a move
-    // feed from the eval results once it finishes, and the client fills them in.
+    // Hosted Prime Evaluations expose lifecycle/log state immediately and their
+    // scored sample after the rollout completes. Move zero is local; the move
+    // feed and replay sync back from that scored sample at completion.
     const mazeSections = isPrime
       ? `<section class="panel" id="run-see-section">
           <h2>What the agent sees</h2>
           ${boardWrap}
-          <p id="run-see-empty" class="muted">Actions stream live. The final board and replay appear after completion.</p>
+          <p id="run-see-empty" class="muted">Move zero is ready locally. Scored moves and replay appear when Prime finalizes the evaluation sample.</p>
         </section>
 
         ${replaySection}
@@ -1168,6 +1167,7 @@ function createPageRenderer({
             <button id="resume-run" class="button--primary" type="button" hidden>Resume</button>
             <button id="continue-run" class="button" type="button" hidden>Continue</button>
             <button id="generate-video" class="button" type="button" hidden>Generate video</button>
+            ${isPrime ? '<a id="open-prime-evaluation" class="button" href="#" target="_blank" rel="noreferrer" hidden>Open in Prime ↗</a>' : ""}
             ${isPrime ? '<button id="stop-run" class="button--coral" type="button" hidden>Cancel Run</button>' : ""}
             <button id="delete-run" class="button--ghost delete-button" type="button" title="Delete run">${TRASH_ICON}<span>Delete</span></button>
           </div>
@@ -1193,7 +1193,7 @@ function createPageRenderer({
           <pre id="run-log" class="agent-log"></pre>
         </section>
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)};</script>
-        <script src="/agent-run.js?v=20260710-quit-policy-66" defer></script>`
+        <script src="/agent-run.js?v=20260710-hosted-evals-67" defer></script>`
     });
   }
 

@@ -2,8 +2,8 @@
   const initial = window.__AGENT_RUN__ || {};
   const runId = initial.id;
   const isVision = initial.mode === "vision";
-  // Prime streams actions and usage live, but has no local rendered frame while
-  // the rollout is active, so skip the local-only frame renderer.
+  // Hosted Prime evaluations expose lifecycle state immediately and the scored
+  // sample at completion, so skip the local-only frame renderer while active.
   const isPrime = initial.kind === "prime" || initial.model === "prime";
   const statusEl = document.getElementById("run-status");
   const boardEl = document.getElementById("run-board");
@@ -11,6 +11,7 @@
   const feedEl = document.getElementById("run-feed");
   const logEl = document.getElementById("run-log");
   const stopButton = document.getElementById("stop-run");
+  const primeEvaluationLink = document.getElementById("open-prime-evaluation");
   const pauseButton = document.getElementById("pause-run");
   const resumeButton = document.getElementById("resume-run");
   const continueButton = document.getElementById("continue-run");
@@ -402,6 +403,7 @@
       run.reasoning ? `reasoning ${run.reasoning}` : null,
       run.continued ? `continued ×${run.continued}` : null,
       run.kind === "local" ? (run.container ? "container" : "host") : "prime verifiers",
+      run.prime_evaluation_id ? `Prime eval ${run.prime_evaluation_id}` : null,
       run.note || ""
     ].filter(Boolean);
     document.getElementById("run-meta").textContent = bits.join(" · ");
@@ -413,6 +415,8 @@
       ? [
           ["status", statusLabel],
           ["turn budget", String(run.moves ?? "")],
+          run.prime_evaluation_status ? ["Prime", String(run.prime_evaluation_status).toLowerCase()] : null,
+          run.prime_evaluation_score != null ? ["score", String(run.prime_evaluation_score)] : null,
           run.turns ? ["moves", String(run.turns)] : null,
           run.turns ? ["gems", String(run.gem_count ?? 0)] : null,
           run.solved ? ["result", "SOLVED"] : null
@@ -516,6 +520,10 @@
 
   function renderControls(run) {
     if (stopButton) stopButton.hidden = !(isPrime && ["running", "stopping"].includes(run.status));
+    if (primeEvaluationLink) {
+      primeEvaluationLink.hidden = !run.prime_evaluation_url;
+      if (run.prime_evaluation_url) primeEvaluationLink.href = run.prime_evaluation_url;
+    }
     pauseButton.hidden = !run.pausable;
     resumeButton.hidden = !run.resumable;
     continueButton.hidden = !run.continuable;
@@ -983,8 +991,8 @@
       renderSwarmViews(progress.swarm_views);
 
       if (isPrime) {
-        // Prime actions and token usage stream as each turn lands. The board,
-        // detailed reasoning, and replay are enriched from the final eval row.
+        // Hosted Prime lifecycle and logs stream immediately. The actions,
+        // usage, boards, and replay are enriched from the finalized sample.
         ingestActions(progress.actions || []);
         ingestReasoning(progress.reasoning || []);
         renderFeed();
@@ -1040,7 +1048,9 @@
           setStatus(
             rp && rp.phase && rp.phase !== "done"
               ? `Rendering replay video… ${rp.percent ?? 0}%`
-              : "Live — Prime's Verifiers eval is running."
+              : progress.run.prime_evaluation_id
+                ? "Live — Prime Hosted Evaluation is running."
+                : "Launching Prime Hosted Evaluation…"
           );
         } else {
           setStatus("Live — the agent is playing.");

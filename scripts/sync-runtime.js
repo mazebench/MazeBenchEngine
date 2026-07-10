@@ -36,7 +36,10 @@ const MIRRORED_FILES = [
   "public/play-world-transitions.js",
   "public/play.js",
   "public/styles.css",
+  "scripts/maze-agent-local.js",
   "scripts/maze-bridge.js",
+  "scripts/maze-prime-live-eval.py",
+  "scripts/maze-prime-run.js",
   "scripts/maze-render-frame.js",
   "scripts/maze-terminal.js"
 ];
