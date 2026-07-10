@@ -25,9 +25,9 @@
   const swarmSection = document.getElementById("run-swarm-section");
   const swarmGrid = document.getElementById("run-swarm-grid");
   const swarmCount = document.getElementById("run-swarm-count");
-  const toolsSection = document.getElementById("run-tools-section");
-  const toolsGrid = document.getElementById("run-tools-grid");
-  const toolsCount = document.getElementById("run-tools-count");
+  const finishedAgents = document.getElementById("run-finished-agents");
+  const finishedGrid = document.getElementById("run-finished-grid");
+  const finishedCount = document.getElementById("run-finished-count");
 
   if (isPrime) stopButton.textContent = "Cancel Run";
 
@@ -41,6 +41,8 @@
     agentCounts: new Map(), // move# -> agents active when the move was made
     tokenCounts: new Map(), // move# -> lead + worker tokens attributed to the move
     swarmAgents: { running: 0, ran: 0 },
+    instanceActivity: { active: 0, instances: 0, auxiliary_actions: 0, auxiliary_action_attempts: 0 },
+    expandedInstance: "",
     // -1 makes move 0 a real render target instead of waiting for move 1.
     lastRenderedTurn: -1,
     lastImageUrl: null,
@@ -49,7 +51,6 @@
     videoShown: false,
     tokenSignature: "",
     swarmSignature: "",
-    toolSignature: "",
     contextPoints: [],
     feedVersion: 0,
     renderedFeedVersion: -1
@@ -68,43 +69,56 @@
 
   const levelLabel = (id) => String(id || "").replace(/^level_/, "");
 
-  const SWARM_TILE_COLORS = {
-    " ": "#05070f",
-    A: "#16203a",
-    a: "#0d1428",
-    W: "#5363ae",
-    w: "#2c376f",
-    P: "#65f3d4",
-    p: "#2fbda9",
-    G: "#46e8f1",
-    g: "#168a9a",
-    U: "#9c86ff",
-    u: "#6250bd",
-    "+": "#e3b94f",
-    "(": "#405283",
-    ")": "#405283"
-  };
+  function instanceCards(workers) {
+    return workers.map((worker) => {
+      const player = worker.player ? `@ ${worker.player.x},${worker.player.y}` : "no player";
+      const frame = worker.frame_url
+        ? `<img class="run-swarm-card__image" src="${escapeText(worker.frame_url)}" alt="${escapeText(worker.id)} exact current vision observation">`
+        : worker.observation_mode === "vision"
+          ? `<div class="run-swarm-card__waiting">Waiting for vision frame…</div>`
+          : `<pre class="run-swarm-card__text" aria-label="${escapeText(worker.id)} exact current text observation">${escapeText(worker.board || "Waiting for observation…")}</pre>`;
+      const owner = worker.owner_kind === "tool" ? "tool branch" : "subagent";
+      const attempts = Math.max(0, Number(worker.auxiliary_action_attempts) || 0);
+      const applied = Math.max(0, Number(worker.auxiliary_actions) || 0);
+      const attemptLabel = attempts === applied ? `${applied} actions` : `${applied}/${attempts} applied`;
+      const parent = worker.parent_instance_id === "primary" ? `forked at primary ${worker.inherited_action_count || 0}` : `forked from ${worker.parent_instance_id}`;
+      const expanded = state.expandedInstance === worker.id ? " is-expanded" : "";
+      return `<article class="run-swarm-card${expanded}" data-instance-id="${escapeText(worker.id)}" role="button" tabindex="0" aria-expanded="${expanded ? "true" : "false"}">
+        <div class="run-swarm-card__screen">
+          ${frame}
+          <span class="run-swarm-card__activity is-${escapeText(worker.activity.replaceAll(" ", "-"))}"><i></i>${escapeText(worker.activity)}</span>
+          <span class="run-swarm-card__mode">${escapeText(worker.observation_mode || (worker.frame_url ? "vision" : "text"))}</span>
+        </div>
+        <div class="run-swarm-card__copy">
+          <strong>${escapeText(worker.label || worker.id.replaceAll("_", " "))}</strong>
+          <span>${escapeText(owner)} · ${escapeText(levelLabel(worker.room))} · ${escapeText(player)}</span>
+          <small>${escapeText(attemptLabel)} · ${escapeText(worker.gem_count)} gems</small>
+          <small>${escapeText(parent)}${worker.last_action ? ` · last: ${escapeText(worker.last_action)}` : ""}</small>
+        </div>
+      </article>`;
+    }).join("");
+  }
 
-  function drawSwarmBoard(canvas, board) {
-    const rows = String(board || "").split("\n").filter(Boolean);
-    if (!rows.length) return;
-    const width = Math.max(...rows.map((row) => row.length));
-    canvas.width = Math.max(1, width);
-    canvas.height = Math.max(1, rows.length);
-    const context = canvas.getContext("2d", { alpha: false });
-    context.fillStyle = SWARM_TILE_COLORS[" "];
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    rows.forEach((row, y) => {
-      for (let x = 0; x < row.length; x += 1) {
-        const symbol = row[x];
-        context.fillStyle = SWARM_TILE_COLORS[symbol] || (/\d/.test(symbol) ? "#775fe1" : "#263250");
-        context.fillRect(x, y, 1, 1);
-      }
+  function wireInstanceCards(container, workers) {
+    container.querySelectorAll(".run-swarm-card").forEach((card) => {
+      const toggle = () => {
+        const id = card.dataset.instanceId || "";
+        state.expandedInstance = state.expandedInstance === id ? "" : id;
+        state.swarmSignature = "";
+        renderSwarmViews(workers);
+      };
+      card.addEventListener("click", toggle);
+      card.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          toggle();
+        }
+      });
     });
   }
 
   function renderSwarmViews(views) {
-    if (!swarmSection || !swarmGrid || !swarmCount) return;
+    if (!swarmSection || !swarmGrid || !swarmCount || !finishedAgents || !finishedGrid || !finishedCount) return;
     const workers = Array.isArray(views) ? views : [];
     const signature = JSON.stringify(workers);
     if (signature === state.swarmSignature) return;
@@ -112,71 +126,20 @@
     swarmSection.hidden = workers.length === 0;
     if (!workers.length) return;
 
-    const exploring = workers.filter((worker) => worker.activity === "exploring").length;
-    swarmCount.textContent = `${workers.length} worker${workers.length === 1 ? "" : "s"}${exploring ? ` · ${exploring} exploring` : ""}`;
-    swarmGrid.innerHTML = workers.map((worker, index) => {
-      const player = worker.player ? `@ ${worker.player.x},${worker.player.y}` : "no player";
-      const frame = worker.frame_url
-        ? `<img class="run-swarm-card__image" src="${escapeText(worker.frame_url)}" alt="${escapeText(worker.id)} current maze view">`
-        : "";
-      return `<article class="run-swarm-card" data-worker-index="${index}">
-        <div class="run-swarm-card__screen">
-          ${frame}
-          <canvas class="run-swarm-card__map${worker.frame_url ? " is-fallback" : ""}" aria-label="${escapeText(worker.id)} current room minimap"></canvas>
-          <span class="run-swarm-card__activity is-${escapeText(worker.activity.replaceAll(" ", "-"))}"><i></i>${escapeText(worker.activity)}</span>
-        </div>
-        <div class="run-swarm-card__copy">
-          <strong>${escapeText(worker.id.replaceAll("_", " "))}</strong>
-          <span>${escapeText(levelLabel(worker.room))} · ${escapeText(player)}</span>
-          <small>${escapeText(worker.turn)} moves · ${escapeText(worker.gem_count)} gems</small>
-        </div>
-      </article>`;
-    }).join("");
+    const activeWorkers = workers.filter((worker) => worker.activity !== "finished");
+    const finishedWorkers = workers.filter((worker) => worker.activity === "finished");
+    const exploring = activeWorkers.filter((worker) => ["acting", "exploring"].includes(worker.activity)).length;
+    const totalActions = workers.reduce((sum, worker) => sum + Math.max(0, Number(worker.auxiliary_actions) || 0), 0);
+    swarmCount.textContent = `${activeWorkers.length} active${exploring ? ` · ${exploring} live` : ""} · ${totalActions} auxiliary action${totalActions === 1 ? "" : "s"}`;
 
-    workers.forEach((worker, index) => {
-      const card = swarmGrid.querySelector(`[data-worker-index="${index}"]`);
-      const canvas = card?.querySelector("canvas");
-      if (canvas) drawSwarmBoard(canvas, worker.board);
-      const image = card?.querySelector("img");
-      image?.addEventListener("error", () => {
-        image.hidden = true;
-        canvas?.classList.remove("is-fallback");
-      }, { once: true });
-    });
-  }
+    swarmGrid.hidden = activeWorkers.length === 0;
+    swarmGrid.innerHTML = instanceCards(activeWorkers);
+    wireInstanceCards(swarmGrid, workers);
 
-  function renderToolActivity(activity) {
-    if (!toolsSection || !toolsGrid || !toolsCount) return;
-    const active = Array.isArray(activity?.active) ? activity.active : [];
-    const recent = Array.isArray(activity?.recent) ? activity.recent : [];
-    const rows = [...active, ...recent].slice(0, 40);
-    const signature = JSON.stringify(rows) + (active.length ? `:${Math.floor(Date.now() / 1000)}` : "");
-    if (signature === state.toolSignature) return;
-    state.toolSignature = signature;
-    toolsSection.hidden = rows.length === 0;
-    if (!rows.length) return;
-
-    toolsCount.textContent = active.length
-      ? `${active.length} active · ${activity.calls || rows.length} calls`
-      : `${activity.calls || rows.length} calls`;
-    toolsGrid.innerHTML = rows.map((row) => {
-      const running = row.status === "running";
-      const duration = running
-        ? Date.now() - Date.parse(row.started_at || "")
-        : Number(row.duration_ms) || 0;
-      const moves = Math.max(0, Number(row.moves_tried) || 0);
-      return `<article class="run-tool${running ? " is-running" : ""}${row.status === "failed" ? " is-failed" : ""}">
-        <span class="run-tool__status" aria-hidden="true"></span>
-        <div class="run-tool__copy">
-          <strong>${escapeText(row.label || "Tool")}</strong>
-          ${row.detail ? `<span>${escapeText(row.detail)}</span>` : ""}
-        </div>
-        <div class="run-tool__metrics">
-          <strong>${escapeText(formatDuration(Number.isFinite(duration) ? duration : 0))}</strong>
-          <span>${moves ? `${escapeText(moves)} move${moves === 1 ? "" : "s"}` : escapeText(row.actor || "")}</span>
-        </div>
-      </article>`;
-    }).join("");
+    finishedAgents.hidden = finishedWorkers.length === 0;
+    finishedCount.textContent = String(finishedWorkers.length);
+    finishedGrid.innerHTML = instanceCards(finishedWorkers);
+    wireInstanceCards(finishedGrid, workers);
   }
 
   function describeRun(run) {
@@ -215,6 +178,15 @@
       chips.push(
         ["agents running", String(state.swarmAgents.running)],
         ["agents ran", String(state.swarmAgents.ran)]
+      );
+    }
+    if (Number(run.explorer_instances) > 0 || Number(state.instanceActivity.instances) > 0) {
+      const instances = Math.max(Number(run.explorer_instances) || 0, Number(state.instanceActivity.instances) || 0);
+      const auxiliary = Math.max(Number(run.auxiliary_actions) || 0, Number(state.instanceActivity.auxiliary_actions) || 0);
+      chips.push(
+        ["instances", String(instances)],
+        ["aux actions", String(auxiliary)],
+        ["simulated", String((Number(run.turns) || 0) + auxiliary)]
       );
     }
     document.getElementById("run-stats").innerHTML = chips
@@ -704,12 +676,12 @@
       if (!response.ok) throw new Error(`progress failed (${response.status})`);
       const progress = await response.json();
       state.run = progress.run;
+      state.instanceActivity = progress.instance_activity || state.instanceActivity;
 
       describeRun(progress.run);
       renderTokenUsage(progress.token_usage);
       renderStats(progress.run);
       renderSwarmViews(progress.swarm_views);
-      renderToolActivity(progress.tool_activity);
 
       if (isPrime) {
         // Prime actions and token usage stream as each turn lands. The board,

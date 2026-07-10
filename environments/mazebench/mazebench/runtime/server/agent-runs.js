@@ -924,6 +924,7 @@ function createAgentRunService({
     const turns = meta.kind === "prime" ? Math.max(actions.length, readPrimeLiveTurns(runDir)) : actions.length;
     const game = getGame(meta.game_id);
     const defaultLevelId = game ? worldMaps.defaultLevelIdForGame(game) : "";
+    const instanceMetrics = readInstanceMetrics(runId);
 
     const hasVideo = fs.existsSync(path.join(runDir, "maze_replay.mp4"));
     const storedVideoStatus =
@@ -940,6 +941,10 @@ function createAgentRunService({
       ...meta,
       model_name: modelName,
       turns,
+      auxiliary_actions: instanceMetrics.auxiliary_actions,
+      auxiliary_action_attempts: instanceMetrics.auxiliary_action_attempts,
+      simulated_actions: turns + instanceMetrics.auxiliary_actions,
+      explorer_instances: instanceMetrics.instances,
       gem_count: last ? last.gem_count : 0,
       gem_total: Number.isFinite(scorecardGemTotal) ? scorecardGemTotal : meta.gem_total ?? null,
       room_count: Number.isFinite(scorecardRooms) ? scorecardRooms : observedRooms.size,
@@ -1127,6 +1132,71 @@ function createAgentRunService({
     }
   }
 
+  function readInstanceEventSummary(runId) {
+    const events = readJsonLineTail(
+      path.join(runDirFor(runId), "maze-instance-events.jsonl"),
+      16 * 1024 * 1024
+    );
+    const instances = new Map();
+
+    events.forEach((event) => {
+      const instanceId = String(event.instance_id || "");
+      if (!instanceId || instanceId === "primary") return;
+      const current = instances.get(instanceId) || {
+        actions_applied: 0,
+        actions_attempted: 0,
+        created_at: null,
+        last_action: "",
+        last_action_at: null
+      };
+      if (event.type === "instance.created") {
+        current.created_at = event.at || current.created_at;
+      } else if (event.type === "instance.action") {
+        current.actions_attempted += event.attempted === false ? 0 : 1;
+        current.actions_applied += event.applied ? 1 : 0;
+        current.last_action = String(event.action || "");
+        current.last_action_at = event.at || current.last_action_at;
+      }
+      instances.set(instanceId, current);
+    });
+
+    return instances;
+  }
+
+  function readInstanceMetrics(runId) {
+    const byInstance = readInstanceEventSummary(runId);
+    const swarmDir = path.join(runDirFor(runId), "swarm");
+    const directories = fs.existsSync(swarmDir)
+      ? fs.readdirSync(swarmDir, { withFileTypes: true }).filter((entry) => entry.isDirectory())
+      : [];
+    const rows = directories.map((entry) => {
+      const directory = path.join(swarmDir, entry.name);
+      const metadata = loadJson(path.join(directory, "worker.json"), {}) || {};
+      const telemetry = loadJson(path.join(directory, "telemetry.json"), null);
+      const session = telemetry ? null : loadJson(path.join(directory, "session.json"), null);
+      const inherited = Math.max(0, Number(metadata.fork_action_count) || 0);
+      const fallbackApplied = Math.max(0, Number(session?.actions?.length) || 0) - inherited;
+      const recorded = byInstance.get(entry.name);
+      return {
+        actions_applied: telemetry
+          ? Math.max(0, Number(telemetry.actions_applied) || 0)
+          : recorded
+            ? recorded.actions_applied
+            : fallbackApplied,
+        actions_attempted: telemetry
+          ? Math.max(0, Number(telemetry.actions_attempted) || 0)
+          : recorded
+            ? recorded.actions_attempted
+            : fallbackApplied
+      };
+    });
+    return {
+      instances: Math.max(directories.length, byInstance.size),
+      auxiliary_actions: rows.reduce((sum, row) => sum + row.actions_applied, 0),
+      auxiliary_action_attempts: rows.reduce((sum, row) => sum + row.actions_attempted, 0)
+    };
+  }
+
   function shellActivityLabel(command) {
     const text = String(command || "").replace(/^\S+\s+-[lc]+\s+/, "").replace(/["']/g, "").trim();
     const script = text.match(/(?:^|[;&|]\s*|\s)(?:node|python\d*|ruby|bash|sh)\s+([^\s;&|]+\.(?:js|mjs|cjs|py|rb|sh))\b/i);
@@ -1141,20 +1211,27 @@ function createAgentRunService({
     const runDir = runDirFor(runId);
     const mcpEntries = readJsonLineTail(path.join(runDir, "tool-activity.jsonl"), 4 * 1024 * 1024);
     const events = readJsonLineTail(path.join(runDir, "agent-events.jsonl"));
-    const completed = mcpEntries.map((entry) => ({
+    const mcpById = new Map();
+    mcpEntries.forEach((entry, index) => {
+      const id = String(entry.id || `legacy-${index}`);
+      mcpById.set(id, { ...(mcpById.get(id) || {}), ...entry, id });
+    });
+    const mcpRows = [...mcpById.values()].map((entry) => ({
       id: entry.id,
       label: String(entry.tool || "Maze tool").replace(/^maze_/, "Maze · ").replaceAll("_", " "),
       detail: entry.action || entry.clone_id || "",
-      actor: entry.clone_id ? `worker · ${entry.clone_id}` : entry.actor || "lead",
+      actor: entry.clone_id ? `instance · ${entry.clone_id}` : entry.actor || "lead",
       started_at: entry.started_at,
       completed_at: entry.completed_at,
       duration_ms: Math.max(0, Number(entry.duration_ms) || 0),
       status: entry.status || "completed",
       moves_tried: Math.max(0, Number(entry.move_calls) || 0)
     }));
+    const activeMcp = mcpRows.filter((entry) => entry.status === "running");
+    const completed = mcpRows.filter((entry) => entry.status !== "running");
     const pending = new Map();
     const providerRows = [];
-    const timedMoves = mcpEntries.filter((entry) => entry.tool === "maze_action" && entry.started_at);
+    const timedMoves = completed.filter((entry) => entry.label === "Maze · action" && entry.started_at);
     const movesDuring = (startedAt, completedAt = new Date().toISOString()) => {
       const start = Date.parse(startedAt || "");
       const end = Date.parse(completedAt || "");
@@ -1231,7 +1308,7 @@ function createAgentRunService({
       });
     }
 
-    const active = [...pending.values()].map((row) => ({
+    const active = [...activeMcp, ...pending.values()].map((row) => ({
       ...row,
       duration_ms: Math.max(0, Date.now() - Date.parse(row.started_at)),
       moves_tried: movesDuring(row.started_at)
@@ -1242,7 +1319,7 @@ function createAgentRunService({
     return {
       active,
       recent,
-      calls: completed.length + providerRows.length + active.length,
+      calls: mcpRows.length + providerRows.length + pending.size,
       moves_tried: completed.reduce((sum, row) => sum + row.moves_tried, 0)
     };
   }
@@ -1408,6 +1485,7 @@ function createAgentRunService({
   function readSwarmViews(runId) {
     const swarmDir = path.join(runDirFor(runId), "swarm");
     if (!fs.existsSync(swarmDir)) return [];
+    const eventSummary = readInstanceEventSummary(runId);
 
     return fs.readdirSync(swarmDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && /^[a-z0-9_-]{1,48}$/i.test(entry.name))
@@ -1415,12 +1493,13 @@ function createAgentRunService({
         const workerDir = path.join(swarmDir, entry.name);
         const actionsPath = path.join(workerDir, "actions.jsonl");
         const sessionPath = path.join(workerDir, "session.json");
+        const metadata = loadJson(path.join(workerDir, "worker.json"), {}) || {};
+        const telemetry = loadJson(path.join(workerDir, "telemetry.json"), null);
         const lastAction = readLastJsonLine(actionsPath);
-        let session = null;
+        const session = loadJson(sessionPath, null);
         let status = lastAction?.status || null;
 
         if (!status) {
-          session = loadJson(sessionPath, null);
           status = session?.lastStatus || session?.initial || null;
         }
         if (!status) return null;
@@ -1451,12 +1530,18 @@ function createAgentRunService({
         );
         const activity = terminal
           ? "finished"
-          : updatedAt && Date.now() - updatedAt < 120_000
-            ? "exploring"
+          : updatedAt && Date.now() - updatedAt < 15_000
+            ? "acting"
+            : updatedAt && Date.now() - updatedAt < 120_000
+              ? "exploring"
             : "standing by";
+        const inheritedActionCount = Math.max(0, Number(metadata.fork_action_count) || 0);
+        const recorded = eventSummary.get(entry.name);
+        const ownActionCount = Math.max(0, turn - inheritedActionCount);
 
         return {
           id: entry.name,
+          label: String(metadata.label || entry.name),
           activity,
           board: String(status.level || ""),
           frame_url: latestSwarmFrame(runId, entry.name, workerDir),
@@ -1470,6 +1555,22 @@ function createAgentRunService({
             : null,
           room: String(status.current_room || checkpoint?.snapshot?.level_id || ""),
           turn,
+          inherited_action_count: inheritedActionCount,
+          auxiliary_actions: telemetry
+            ? Math.max(0, Number(telemetry.actions_applied) || 0)
+            : recorded
+              ? recorded.actions_applied
+              : ownActionCount,
+          auxiliary_action_attempts: telemetry
+            ? Math.max(0, Number(telemetry.actions_attempted) || 0)
+            : recorded
+              ? recorded.actions_attempted
+              : ownActionCount,
+          last_action: String(telemetry?.last_action || recorded?.last_action || ""),
+          owner_kind: String(metadata.owner_kind || "subagent"),
+          owner_agent_id: String(metadata.owner_agent_id || entry.name),
+          parent_instance_id: String(metadata.parent_instance_id || "primary"),
+          observation_mode: String(metadata.observation_mode || (session?.vision ? "vision" : "text")),
           updated_at: updatedAt ? new Date(updatedAt).toISOString() : null,
           view: String(status.current_view || ""),
           yaw: Number(status.yaw) || 0
@@ -1477,7 +1578,7 @@ function createAgentRunService({
       })
       .filter(Boolean)
       .sort((left, right) => {
-        const rank = { exploring: 0, "standing by": 1, finished: 2 };
+        const rank = { acting: 0, exploring: 1, "standing by": 2, finished: 3 };
         return (rank[left.activity] ?? 3) - (rank[right.activity] ?? 3) || left.id.localeCompare(right.id);
       });
   }
@@ -1756,6 +1857,8 @@ function createAgentRunService({
     if (summary.status === "running") startLegacyClaudeSnapshots(runId);
 
     const log = readLogChunk(runId, logOffset);
+    const instanceViews = readSwarmViews(runId);
+    const instanceMetrics = readInstanceMetrics(runId);
 
     return {
       run: summary,
@@ -1765,7 +1868,11 @@ function createAgentRunService({
       token_usage: readTokenUsage(runId, summary),
       tool_activity: readToolActivity(runId, summary),
       reasoning: readReasoning(runId, summary.model),
-      swarm_views: summary.swarm ? readSwarmViews(runId) : [],
+      instance_activity: {
+        active: instanceViews.filter((instance) => ["acting", "exploring"].includes(instance.activity)).length,
+        ...instanceMetrics
+      },
+      swarm_views: instanceViews,
       vision_frame_url: summary.mode === "vision" ? latestVisionFrame(runId) : null,
       replay_progress: summary.has_video ? { phase: "done", percent: 100 } : readReplayProgress(runId)
     };

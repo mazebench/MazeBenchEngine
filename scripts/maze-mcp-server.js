@@ -29,9 +29,13 @@ const AGENT_SWARM_WORKSPACES_DIR = String(
 const ACTIVITY_LOG = path.resolve(
   process.env.MAZEBENCH_TOOL_ACTIVITY_FILE || path.join(RUN_DIR, "tool-activity.jsonl")
 );
+const INSTANCE_EVENTS_LOG = path.resolve(
+  process.env.MAZEBENCH_INSTANCE_EVENTS_FILE || path.join(RUN_DIR, "maze-instance-events.jsonl")
+);
 const PRIMARY_MOVE_BUDGET = positiveInt(process.env.MAZEBENCH_MOVE_BUDGET, 20);
 const WORKER_ONLY = process.env.MAZEBENCH_WORKER_ONLY === "1";
 const SWARM_REQUIRED = process.env.MAZEBENCH_SWARM === "1";
+const LEAD_CLONES_ALLOWED = process.env.MAZEBENCH_ALLOW_LEAD_CLONES === "1";
 const HTTP_TOKEN = String(process.env.MAZEBENCH_MCP_HTTP_TOKEN || "");
 
 function sessionActionCount(file) {
@@ -120,10 +124,82 @@ function startMaze() {
   return runHelper(args);
 }
 
-function createWorker(requestedId) {
+function appendJsonLine(filePath, entry) {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`);
+  } catch (_error) {
+    /* telemetry must never break gameplay */
+  }
+}
+
+function writeJson(filePath, value) {
+  const temporary = `${filePath}.${process.pid}.${crypto.randomBytes(3).toString("hex")}.tmp`;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  fs.renameSync(temporary, filePath);
+}
+
+function compactStatus(value) {
+  const status = value?.status || value || {};
+  return {
+    action_count: Math.max(0, Number(status.action_count) || 0),
+    current_room: String(status.current_room || ""),
+    current_view: String(status.current_view || ""),
+    game_lost: Boolean(status.game_lost || status.player_dead),
+    game_won: Boolean(status.game_won || status.solved),
+    gem_count: Math.max(0, Number(status.gem_count) || 0),
+    player: status.player || null,
+    quit: Boolean(status.quit),
+    yaw: Number(status.yaw) || 0
+  };
+}
+
+function updateInstanceTelemetry(input, entry) {
+  if (!input?.clone_id) return;
+  const metadata = readWorkerMetadata(input.clone_id);
+  if (!metadata) return;
+  const filePath = path.join(workerDirectory(input.clone_id), "telemetry.json");
+  let current = {};
+  try {
+    current = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (_error) {
+    current = {};
+  }
+  writeJson(filePath, {
+    instance_id: String(input.clone_id),
+    parent_instance_id: metadata.parent_instance_id || "primary",
+    fork_action_count: Math.max(0, Number(metadata.fork_action_count) || 0),
+    actions_attempted: Math.max(0, Number(current.actions_attempted) || 0) + 1,
+    actions_applied: Math.max(0, Number(current.actions_applied) || 0) + (entry.applied ? 1 : 0),
+    last_action: String(entry.action || ""),
+    last_action_at: entry.at,
+    last_error: String(entry.error || ""),
+    action_count: Math.max(0, Number(entry.action_count_after) || 0),
+    own_action_count: Math.max(0, Number(entry.own_action_count) || 0),
+    status: entry.status || current.status || null
+  });
+}
+
+function readWorkerMetadata(workerId) {
+  if (!workerId) return null;
+  try {
+    return JSON.parse(fs.readFileSync(path.join(workerDirectory(workerId), "worker.json"), "utf8"));
+  } catch (_error) {
+    return null;
+  }
+}
+
+function createWorker(requestedId, options = {}) {
   if (!fs.existsSync(PRIMARY_SESSION)) {
     throw new Error("The lead must start or resume the primary maze before a worker can clone it.");
   }
+
+  const sourceCloneId = String(options.sourceCloneId || "").trim();
+  const sourceSession = sessionFor(sourceCloneId);
+  const sourceDirectory = path.dirname(sourceSession);
+  const forkActionCount = sessionActionCount(sourceSession);
+  const ownerKind = options.workerOnly ? "subagent" : "tool";
 
   fs.mkdirSync(SWARM_DIR, { recursive: true });
   const base = safeWorkerId(requestedId);
@@ -146,7 +222,7 @@ function createWorker(requestedId) {
   const session = path.join(directory, "session.json");
   const workspace = path.join(SWARM_WORKSPACES_DIR, id);
   const agentWorkspace = path.posix.join(AGENT_SWARM_WORKSPACES_DIR, id);
-  fs.copyFileSync(PRIMARY_SESSION, session);
+  fs.copyFileSync(sourceSession, session);
   fs.mkdirSync(workspace, { recursive: true });
   const agentUid = Number(process.env.MAZEBENCH_AGENT_UID);
   const agentGid = Number(process.env.MAZEBENCH_AGENT_GID);
@@ -154,22 +230,67 @@ function createWorker(requestedId) {
     fs.chownSync(workspace, agentUid, agentGid);
   }
 
-  const primaryActions = path.join(path.dirname(PRIMARY_SESSION), "actions.jsonl");
-  if (fs.existsSync(primaryActions)) {
-    fs.copyFileSync(primaryActions, path.join(directory, "actions.jsonl"));
+  const sourceActions = path.join(sourceDirectory, "actions.jsonl");
+  if (fs.existsSync(sourceActions)) {
+    fs.copyFileSync(sourceActions, path.join(directory, "actions.jsonl"));
+  }
+  const sourceFrames = path.join(sourceDirectory, "frames");
+  if (fs.existsSync(sourceFrames)) {
+    const latestFrame = fs.readdirSync(sourceFrames)
+      .map((name) => ({ name, match: name.match(/^frame-(\d+)\.png$/) }))
+      .filter((entry) => entry.match && Number(entry.match[1]) <= forkActionCount)
+      .sort((left, right) => Number(right.match[1]) - Number(left.match[1]))[0];
+    if (latestFrame) {
+      const targetFrames = path.join(directory, "frames");
+      fs.mkdirSync(targetFrames, { recursive: true });
+      fs.copyFileSync(path.join(sourceFrames, latestFrame.name), path.join(targetFrames, latestFrame.name));
+    }
   }
 
   const metadata = {
     id,
     created_at: new Date().toISOString(),
-    source_session: PRIMARY_SESSION,
+    source_session: sourceSession,
     session,
     workspace,
-    agent_workspace: agentWorkspace
+    agent_workspace: agentWorkspace,
+    parent_instance_id: sourceCloneId || "primary",
+    fork_action_count: forkActionCount,
+    primary_action_count_at_fork: sessionActionCount(PRIMARY_SESSION),
+    owner_kind: ownerKind,
+    owner_agent_id: String(options.ownerAgentId || requestedId || id).slice(0, 80),
+    label: String(options.label || requestedId || id).slice(0, 120),
+    observation_mode: process.env.MAZEBENCH_MODE === "vision" ? "vision" : "text"
   };
   fs.writeFileSync(path.join(directory, "worker.json"), `${JSON.stringify(metadata, null, 2)}\n`);
+  writeJson(path.join(directory, "telemetry.json"), {
+    instance_id: id,
+    parent_instance_id: metadata.parent_instance_id,
+    fork_action_count: metadata.fork_action_count,
+    actions_attempted: 0,
+    actions_applied: 0,
+    last_action: "",
+    last_action_at: null,
+    last_error: "",
+    action_count: metadata.fork_action_count,
+    own_action_count: 0,
+    status: null
+  });
+  appendJsonLine(INSTANCE_EVENTS_LOG, {
+    type: "instance.created",
+    at: metadata.created_at,
+    instance_id: id,
+    parent_instance_id: metadata.parent_instance_id,
+    fork_action_count: metadata.fork_action_count,
+    primary_action_count_at_fork: metadata.primary_action_count_at_fork,
+    owner_kind: metadata.owner_kind,
+    owner_agent_id: metadata.owner_agent_id,
+    label: metadata.label,
+    observation_mode: metadata.observation_mode
+  });
   return {
     ...metadata,
+    own_action_count: 0,
     instruction:
       `Use clone_id \"${id}\" for every MazeBench MCP observe/action/scorecard call. ` +
       `Put code and notes in ${agentWorkspace}. Never act on the primary maze; report findings to the lead.`
@@ -237,10 +358,15 @@ const TOOLS = [
   },
   {
     name: "maze_clone",
-    description: "Clone the lead's current maze into an independent worker session with a persistent private coding workspace.",
+    description: "Fork the current primary maze, or another private clone, into an independently tracked exploration instance.",
     inputSchema: {
       type: "object",
-      properties: { worker_id: { type: "string", description: "A short unique worker name." } },
+      properties: {
+        worker_id: { type: "string", description: "A short unique instance name." },
+        source_clone_id: { type: "string", description: "Optional existing clone to branch from. Omit to fork the primary maze." },
+        owner_agent_id: { type: "string", description: "Optional provider worker or tool invocation label." },
+        label: { type: "string", description: "Optional human-readable purpose for this exploration." }
+      },
       additionalProperties: false
     }
   },
@@ -263,7 +389,11 @@ function callTool(name, input = {}, { workerOnly = WORKER_ONLY } = {}) {
   if (name === "maze_action") {
     if (!String(input.action || "").trim()) throw new Error("action is required.");
     if (workerOnly && !input.clone_id) throw new Error("Workers must supply their clone_id and cannot act on the primary maze.");
-    if (!input.clone_id && SWARM_REQUIRED && listWorkers().length === 0) {
+    if (
+      !input.clone_id &&
+      SWARM_REQUIRED &&
+      !listWorkers().some((worker) => !worker.owner_kind || worker.owner_kind === "subagent")
+    ) {
       throw new Error("Spawn a provider subagent first. Only a worker can call maze_clone and unlock primary moves.");
     }
     if (!input.clone_id && sessionActionCount(PRIMARY_SESSION) - PRIMARY_INITIAL_ACTION_COUNT >= PRIMARY_MOVE_BUDGET) {
@@ -275,7 +405,17 @@ function callTool(name, input = {}, { workerOnly = WORKER_ONLY } = {}) {
     if (workerOnly && !input.clone_id) throw new Error("Workers must supply their clone_id.");
     return runHelper(["scorecard", "--state", sessionFor(input.clone_id)]);
   }
-  if (name === "maze_clone") return createWorker(input.worker_id);
+  if (name === "maze_clone") {
+    if (!workerOnly && !LEAD_CLONES_ALLOWED) {
+      throw new Error("Private maze branches are available to swarm workers and offline tool runs only.");
+    }
+    return createWorker(input.worker_id, {
+      sourceCloneId: input.source_clone_id,
+      ownerAgentId: input.owner_agent_id,
+      label: input.label,
+      workerOnly
+    });
+  }
   if (name === "maze_workers") return listWorkers();
   throw new Error(`Unknown tool \"${name}\".`);
 }
@@ -305,9 +445,8 @@ function failure(send, id, error) {
 }
 
 function toolsFor(workerOnly) {
-  return workerOnly
-    ? TOOLS.filter((tool) => tool.name !== "maze_start")
-    : TOOLS.filter((tool) => tool.name !== "maze_clone");
+  if (workerOnly) return TOOLS.filter((tool) => tool.name !== "maze_start");
+  return LEAD_CLONES_ALLOWED ? TOOLS : TOOLS.filter((tool) => tool.name !== "maze_clone");
 }
 
 function publicToolValue(value) {
@@ -348,13 +487,17 @@ function actionCountForInput(input) {
   }
 }
 
-function appendToolActivity(entry) {
+function lastStatusForInput(input) {
   try {
-    fs.mkdirSync(path.dirname(ACTIVITY_LOG), { recursive: true });
-    fs.appendFileSync(ACTIVITY_LOG, `${JSON.stringify(entry)}\n`);
+    const session = JSON.parse(fs.readFileSync(sessionFor(input?.clone_id), "utf8"));
+    return compactStatus(session.lastStatus || session.initial || {});
   } catch (_error) {
-    /* telemetry must never break gameplay */
+    return null;
   }
+}
+
+function appendToolActivity(entry) {
+  appendJsonLine(ACTIVITY_LOG, entry);
 }
 
 async function handle(request, send = stdioSend, { workerOnly = WORKER_ONLY } = {}) {
@@ -381,12 +524,28 @@ async function handle(request, send = stdioSend, { workerOnly = WORKER_ONLY } = 
     const input = request.params?.arguments || {};
     const startedAt = new Date();
     const movesBefore = actionCountForInput(input);
+    const activityId = crypto.randomUUID();
+    const instanceId = String(input.clone_id || "primary");
+    const instanceMetadata = readWorkerMetadata(input.clone_id);
+    appendToolActivity({
+      id: activityId,
+      tool: name,
+      actor: workerOnly ? "worker" : input.clone_id ? "tool" : "lead",
+      clone_id: String(input.clone_id || ""),
+      action: String(input.action || ""),
+      started_at: startedAt.toISOString(),
+      status: "running",
+      move_calls: 0,
+      moves_before: movesBefore,
+      moves_after: movesBefore
+    });
     try {
       const value = callTool(name, input, { workerOnly });
       success(send, request.id, toolContent(value));
       const completedAt = new Date();
+      const movesAfter = actionCountForInput(input);
       appendToolActivity({
-        id: crypto.randomUUID(),
+        id: activityId,
         tool: name,
         actor: workerOnly ? "worker" : "lead",
         clone_id: String(input.clone_id || value?.id || ""),
@@ -397,16 +556,39 @@ async function handle(request, send = stdioSend, { workerOnly = WORKER_ONLY } = 
         status: "completed",
         move_calls: name === "maze_action" ? 1 : 0,
         moves_before: movesBefore,
-        moves_after: actionCountForInput(input)
+        moves_after: movesAfter
       });
+      if (name === "maze_action" && (!input.clone_id || instanceMetadata)) {
+        const instanceEvent = {
+          type: "instance.action",
+          id: activityId,
+          at: completedAt.toISOString(),
+          instance_id: instanceId,
+          parent_instance_id: instanceMetadata?.parent_instance_id || null,
+          owner_kind: instanceMetadata?.owner_kind || (workerOnly ? "subagent" : input.clone_id ? "tool" : "lead"),
+          owner_agent_id: instanceMetadata?.owner_agent_id || "",
+          action: String(input.action || ""),
+          attempted: true,
+          applied: movesAfter > movesBefore,
+          action_count_before: movesBefore,
+          action_count_after: movesAfter,
+          own_action_count: input.clone_id
+            ? Math.max(0, movesAfter - Number(instanceMetadata?.fork_action_count || 0))
+            : movesAfter,
+          status: compactStatus(value)
+        };
+        appendJsonLine(INSTANCE_EVENTS_LOG, instanceEvent);
+        updateInstanceTelemetry(input, instanceEvent);
+      }
     } catch (error) {
       success(send, request.id, {
         content: [{ type: "text", text: safeErrorMessage(error) }],
         isError: true
       });
       const completedAt = new Date();
+      const movesAfter = actionCountForInput(input);
       appendToolActivity({
-        id: crypto.randomUUID(),
+        id: activityId,
         tool: name,
         actor: workerOnly ? "worker" : "lead",
         clone_id: String(input.clone_id || ""),
@@ -417,9 +599,32 @@ async function handle(request, send = stdioSend, { workerOnly = WORKER_ONLY } = 
         status: "failed",
         move_calls: name === "maze_action" ? 1 : 0,
         moves_before: movesBefore,
-        moves_after: actionCountForInput(input),
+        moves_after: movesAfter,
         error: safeErrorMessage(error)
       });
+      if (name === "maze_action" && (!input.clone_id || instanceMetadata)) {
+        const instanceEvent = {
+          type: "instance.action",
+          id: activityId,
+          at: completedAt.toISOString(),
+          instance_id: instanceId,
+          parent_instance_id: instanceMetadata?.parent_instance_id || null,
+          owner_kind: instanceMetadata?.owner_kind || (workerOnly ? "subagent" : input.clone_id ? "tool" : "lead"),
+          owner_agent_id: instanceMetadata?.owner_agent_id || "",
+          action: String(input.action || ""),
+          attempted: true,
+          applied: movesAfter > movesBefore,
+          action_count_before: movesBefore,
+          action_count_after: movesAfter,
+          own_action_count: input.clone_id
+            ? Math.max(0, movesAfter - Number(instanceMetadata?.fork_action_count || 0))
+            : movesAfter,
+          error: safeErrorMessage(error),
+          status: movesAfter > movesBefore ? lastStatusForInput(input) : null
+        };
+        appendJsonLine(INSTANCE_EVENTS_LOG, instanceEvent);
+        updateInstanceTelemetry(input, instanceEvent);
+      }
     }
     return;
   }

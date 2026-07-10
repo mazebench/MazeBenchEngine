@@ -52,6 +52,8 @@
     gems: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M10.5 3 8 9l4 13 4-13-2.5-6"></path><path d="M17 3a2 2 0 0 1 1.6.8l3 4a2 2 0 0 1 .013 2.382l-7.99 10.986a2 2 0 0 1-3.247 0l-7.99-10.986A2 2 0 0 1 2.4 7.8l2.998-3.997A2 2 0 0 1 7 3z"></path><path d="M2 9h20"></path></svg>',
     rooms: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M11 20H2"></path><path d="M11 4.562v16.157a1 1 0 0 0 1.242.97L19 20V5.562a2 2 0 0 0-1.515-1.94l-4-1A2 2 0 0 0 11 4.561z"></path><path d="M11 4H8a2 2 0 0 0-2 2v14"></path><path d="M14 12h.01"></path><path d="M22 20h-3"></path></svg>'
   };
+  // Trash 2 from Lucide Icons (ISC License).
+  const TRASH_ICON = '<svg class="trash-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
   const resizeAnimations = new WeakMap();
   const visibilityAnimations = new WeakMap();
   const selectionTargets = new WeakMap();
@@ -1267,7 +1269,7 @@
       run.status === "running" || run.status === "stopping" || (run.status === "paused" && run.pause_reason === "manual")
         ? `<button class="button--coral" type="button" data-action="stop">${run.provider === "prime" ? "Cancel" : "Stop"}</button>`
         : "",
-      '<button class="button--ghost run-trash" type="button" data-action="delete" title="Delete run" aria-label="Delete run">Delete</button>'
+      `<button class="button--ghost run-trash" type="button" data-action="delete" title="Delete run" aria-label="Delete run">${TRASH_ICON}</button>`
     ]
       .filter(Boolean)
       .join("");
@@ -1286,6 +1288,9 @@
             <span class="run-card__world">${escapeText(run.game_title || run.game_id)}</span>
             ${showStartRoom ? `<span class="run-card__badge">Start ${escapeText(levelLabel(run.level_id))}</span>` : ""}
             <span class="run-card__badge run-card__badge--reasoning">${escapeText(reasoningEffort)} reasoning</span>
+            ${Number(run.explorer_instances) > 0
+              ? `<span class="run-card__badge">${escapeText(run.auxiliary_actions || 0)} auxiliary · ${escapeText(run.explorer_instances)} instance${Number(run.explorer_instances) === 1 ? "" : "s"}</span>`
+              : ""}
           </div>
         </div>
         <div class="run-card__metrics" aria-label="Run results">

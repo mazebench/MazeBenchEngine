@@ -85,7 +85,19 @@ try {
     "scout_one"
   );
   fs.mkdirSync(path.join(swarmWorkerDir, "frames"), { recursive: true });
-  fs.writeFileSync(path.join(swarmWorkerDir, "worker.json"), JSON.stringify({ id: "scout_one" }));
+  fs.writeFileSync(path.join(swarmWorkerDir, "worker.json"), JSON.stringify({
+    id: "scout_one",
+    fork_action_count: 5,
+    label: "north scout",
+    observation_mode: "text",
+    owner_kind: "subagent",
+    parent_instance_id: "primary"
+  }));
+  fs.writeFileSync(path.join(swarmWorkerDir, "telemetry.json"), JSON.stringify({
+    actions_applied: 2,
+    actions_attempted: 3,
+    last_action: "up"
+  }));
   fs.writeFileSync(
     path.join(swarmWorkerDir, "actions.jsonl"),
     `${JSON.stringify({
@@ -106,6 +118,16 @@ try {
   assert.equal(swarmProgress.swarm_views[0].id, "scout_one");
   assert.equal(swarmProgress.swarm_views[0].room, "level_GxH");
   assert.equal(swarmProgress.swarm_views[0].turn, 7);
+  assert.equal(swarmProgress.swarm_views[0].auxiliary_actions, 2);
+  assert.equal(swarmProgress.swarm_views[0].auxiliary_action_attempts, 3);
+  assert.equal(swarmProgress.swarm_views[0].inherited_action_count, 5);
+  assert.equal(swarmProgress.swarm_views[0].observation_mode, "text");
+  assert.equal(swarmProgress.swarm_views[0].owner_kind, "subagent");
+  assert.equal(swarmProgress.instance_activity.instances, 1);
+  assert.equal(swarmProgress.instance_activity.auxiliary_actions, 2);
+  assert.equal(swarmProgress.run.explorer_instances, 1);
+  assert.equal(swarmProgress.run.auxiliary_actions, 2);
+  assert.equal(swarmProgress.run.simulated_actions, swarmProgress.run.turns + 2);
   assert.deepEqual(swarmProgress.swarm_views[0].player, { elevation: 0, x: 3, y: 0 });
   assert.match(swarmProgress.swarm_views[0].frame_url, /swarm\/scout_one\/frames\/frame-007\.png$/);
   assert.equal(
@@ -196,6 +218,44 @@ try {
   assert.equal(unlimitedSummary.progress.unlimited, true);
   assert.equal(unlimitedSummary.progress.total, null);
   assert.equal(unlimitedSummary.progress.eta_ms, null);
+  const toolInstanceDir = path.join(
+    rootDir,
+    "outputs",
+    "maze-local",
+    "site",
+    unlimitedRun.id,
+    "swarm",
+    "tool_search"
+  );
+  fs.mkdirSync(toolInstanceDir, { recursive: true });
+  fs.writeFileSync(path.join(toolInstanceDir, "worker.json"), JSON.stringify({
+    id: "tool_search",
+    fork_action_count: 0,
+    label: "search algorithm",
+    observation_mode: "text",
+    owner_kind: "tool",
+    parent_instance_id: "primary"
+  }));
+  fs.writeFileSync(path.join(toolInstanceDir, "telemetry.json"), JSON.stringify({
+    actions_applied: 0,
+    actions_attempted: 0
+  }));
+  fs.writeFileSync(path.join(toolInstanceDir, "session.json"), JSON.stringify({
+    actions: [],
+    vision: false,
+    initial: {
+      current_room: "level_HxI",
+      current_view: "top-diagonal",
+      gem_count: 0,
+      level: "AP",
+      player: { elevation: 0, x: 1, y: 0 },
+      yaw: 0
+    }
+  }));
+  const toolInstanceProgress = service.getRunProgress(unlimitedRun.id);
+  assert.equal(toolInstanceProgress.run.swarm, false);
+  assert.equal(toolInstanceProgress.swarm_views.length, 1, "tool-created instances stay visible outside swarm mode");
+  assert.equal(toolInstanceProgress.swarm_views[0].owner_kind, "tool");
   service.stopRun(unlimitedRun.id);
   service.deleteRun(unlimitedRun.id);
 

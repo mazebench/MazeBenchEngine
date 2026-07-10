@@ -9,6 +9,10 @@ const HOME_MODE_ICONS = Object.freeze({
   agent: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path></svg>`
 });
 
+// Trash 2 from Lucide Icons (ISC License).
+// https://lucide.dev/icons/trash-2
+const TRASH_ICON = `<svg class="trash-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`;
+
 // Page renderers. The chrome (topbar, footer, fonts, site.css) is ported from
 // the MazeJam repo so the local site looks exactly like the hosted one:
 //   - site pages load /site.css + /build-theme.css + /local-site.css
@@ -55,7 +59,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css">
-    <link rel="stylesheet" href="/local-site.css?v=20260709-agent-telemetry-54">
+    <link rel="stylesheet" href="/local-site.css?v=20260710-trash-icon-59">
     ${extraHeadHtml}`
     })}
   </head>
@@ -259,7 +263,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css">
-    <link rel="stylesheet" href="/local-site.css?v=20260709-agent-telemetry-54">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260710-trash-icon-59">`;
   }
 
   function renderPlayPage(game, level) {
@@ -371,7 +375,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    <link rel="stylesheet" href="/local-site.css?v=20260709-agent-telemetry-54">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260710-trash-icon-59">`;
   }
 
   function renderAuthorPage(game, level) {
@@ -933,7 +937,7 @@ function createPageRenderer({
           </div>
         </section>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
-        <script src="/agent.js?v=20260709-unlimited-52" defer></script>`
+        <script src="/agent.js?v=20260710-trash-icon-59" defer></script>`
     });
   }
 
@@ -1003,18 +1007,14 @@ function createPageRenderer({
 
         <section class="panel run-swarm" id="run-swarm-section" hidden>
           <div class="run-swarm__head">
-            <h2>Swarm views</h2>
+            <h2>Explorer instances</h2>
             <span class="run-swarm__count" id="run-swarm-count"></span>
           </div>
           <div class="run-swarm__grid" id="run-swarm-grid"></div>
-        </section>
-
-        <section class="panel run-tools" id="run-tools-section" hidden>
-          <div class="run-tools__head">
-            <h2>Tools &amp; algorithms</h2>
-            <span class="run-tools__count" id="run-tools-count"></span>
-          </div>
-          <div class="run-tools__grid" id="run-tools-grid"></div>
+          <details class="run-swarm__finished" id="run-finished-agents" hidden>
+            <summary><span>Finished agents</span><strong id="run-finished-count"></strong></summary>
+            <div class="run-swarm__grid" id="run-finished-grid"></div>
+          </details>
         </section>
 
         ${replaySection}
@@ -1036,7 +1036,7 @@ function createPageRenderer({
             <button id="continue-run" class="button" type="button" hidden>Continue</button>
             <button id="generate-video" class="button" type="button" hidden>Generate video</button>
             <button id="stop-run" class="button--coral" type="button" hidden>Stop Run</button>
-            <button id="delete-run" class="button--ghost" type="button" title="Delete run">🗑 Delete</button>
+            <button id="delete-run" class="button--ghost delete-button" type="button" title="Delete run">${TRASH_ICON}<span>Delete</span></button>
           </div>
           <h2 id="run-title" class="run-title"></h2>
           <p id="run-meta" class="muted"></p>
@@ -1060,7 +1060,7 @@ function createPageRenderer({
           <pre id="run-log" class="agent-log"></pre>
         </section>
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)};</script>
-        <script src="/agent-run.js?v=20260710-swarm-tools-56" defer></script>`
+        <script src="/agent-run.js?v=20260710-finished-agents-58" defer></script>`
     });
   }
 

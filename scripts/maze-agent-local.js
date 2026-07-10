@@ -138,7 +138,11 @@ field plus the current status.`;
 ${ROOT_DIR} and keep run-specific notes in ${config.workspaceDir}. Outbound
 network access is disabled. Host access is less isolated than Docker.`
       : `You have full local file, coding, and execution tools inside a persistent
-Docker workspace at ${config.agentWorkspaceDir}. Outbound network access is disabled.`
+Docker workspace at ${config.agentWorkspaceDir}. Outbound network access is disabled.
+If a tool or algorithm needs an experimental MazeBench branch, call maze_clone
+with a descriptive worker_id and label, then include its clone_id in every maze
+call. Each branch starts from the selected checkpoint and all of its attempted
+and applied actions are tracked separately from the primary score.`
     : `This is READ ONLY tool-use. You may inspect and search local files and
 explore private maze clones through MCP, but you cannot edit files or execute
 general-purpose code.`;
@@ -148,7 +152,7 @@ do not call maze_start.`
     : `Call maze_start exactly once as your first MazeBench tool call.`;
   const workerSpawnRule = config.model === "codex"
     ? "Use the Codex collaboration spawn tool to spawn the custom maze-worker agent without a full-history fork. Its model and reasoning effort are pinned to yours."
-    : "Use the Task/Agent tool to spawn the configured maze-worker subagent type. Do not call maze_clone yourself; the subagent does that. Its model and effort are pinned to yours.";
+    : "Use the Task/Agent tool to spawn the configured maze-worker subagent type. The subagent creates its own branch. Its model and effort are pinned to yours.";
   const workerCapability = config.toolUse === "offline"
     ? "may write and execute local code in its private workspace"
     : "is read-only and must not write files or execute general-purpose code";
@@ -165,8 +169,8 @@ maze_action, and maze_scorecard call, may explore freely, ${workerCapability},
 then report its findings to you. Workers must never act on
 the primary maze. You decide which findings to use and make every primary move
 yourself by omitting clone_id. Spawn at least one worker before your first
-primary move. maze_clone is worker-only and is intentionally unavailable to
-you. Beyond that, spawn, steer, stop, or wait for workers at your
+primary move. ${config.toolUse === "offline" ? "You may also create clearly labelled tool-driven branches with maze_clone; never use those clone ids for the primary score." : "Provider workers create their own branches."}
+Beyond that, spawn, steer, stop, or wait for workers at your
 discretion. Gather their reports before finishing.`
     : "";
   const budgetInstruction = config.unlimited
@@ -178,7 +182,8 @@ treat this segment boundary as the end of the run.`
 
   return `You are playing MazeBench, a 3D grid maze. Control maze state only
 through the MazeBench MCP tools: maze_start, maze_observe, maze_action, and
-maze_scorecard. Swarm workers also receive maze_clone. Never edit session JSON directly.
+maze_scorecard. Offline tool runs and swarm workers also receive maze_clone for
+independent, fully tracked branches. Never edit session JSON directly.
 
 ${observation}
 ${capability}
@@ -295,6 +300,7 @@ function mcpEnvironment(config, workerOnly = false) {
     MAZEBENCH_SWARM_WORKSPACES_DIR: config.swarmWorkspaceDir,
     MAZEBENCH_AGENT_SWARM_WORKSPACES_DIR: config.agentSwarmWorkspaceDir,
     MAZEBENCH_TOOL_ACTIVITY_FILE: path.join(config.outDir, "tool-activity.jsonl"),
+    MAZEBENCH_INSTANCE_EVENTS_FILE: path.join(config.outDir, "maze-instance-events.jsonl"),
     MAZEBENCH_GAME_ID: config.gameId,
     MAZEBENCH_LEVEL_ID: config.levelId,
     MAZEBENCH_VIEW: config.view,
@@ -302,6 +308,7 @@ function mcpEnvironment(config, workerOnly = false) {
     MAZEBENCH_GEMS: String(config.gems),
     MAZEBENCH_MOVE_BUDGET: String(config.moves),
     MAZEBENCH_SWARM: config.swarm ? "1" : "0",
+    MAZEBENCH_ALLOW_LEAD_CLONES: config.toolUse === "offline" ? "1" : "0",
     MAZEBENCH_MODE: config.mode,
     MAZEBENCH_VISION_WIDTH: String(config.visionWidth),
     MAZEBENCH_VISION_HEIGHT: String(config.visionHeight),
