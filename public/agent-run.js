@@ -25,6 +25,9 @@
   const swarmSection = document.getElementById("run-swarm-section");
   const swarmGrid = document.getElementById("run-swarm-grid");
   const swarmCount = document.getElementById("run-swarm-count");
+  const toolsSection = document.getElementById("run-tools-section");
+  const toolsGrid = document.getElementById("run-tools-grid");
+  const toolsCount = document.getElementById("run-tools-count");
 
   if (isPrime) stopButton.textContent = "Cancel Run";
 
@@ -46,6 +49,7 @@
     videoShown: false,
     tokenSignature: "",
     swarmSignature: "",
+    toolSignature: "",
     contextPoints: [],
     feedVersion: 0,
     renderedFeedVersion: -1
@@ -141,13 +145,47 @@
     });
   }
 
+  function renderToolActivity(activity) {
+    if (!toolsSection || !toolsGrid || !toolsCount) return;
+    const active = Array.isArray(activity?.active) ? activity.active : [];
+    const recent = Array.isArray(activity?.recent) ? activity.recent : [];
+    const rows = [...active, ...recent].slice(0, 40);
+    const signature = JSON.stringify(rows) + (active.length ? `:${Math.floor(Date.now() / 1000)}` : "");
+    if (signature === state.toolSignature) return;
+    state.toolSignature = signature;
+    toolsSection.hidden = rows.length === 0;
+    if (!rows.length) return;
+
+    toolsCount.textContent = active.length
+      ? `${active.length} active · ${activity.calls || rows.length} calls`
+      : `${activity.calls || rows.length} calls`;
+    toolsGrid.innerHTML = rows.map((row) => {
+      const running = row.status === "running";
+      const duration = running
+        ? Date.now() - Date.parse(row.started_at || "")
+        : Number(row.duration_ms) || 0;
+      const moves = Math.max(0, Number(row.moves_tried) || 0);
+      return `<article class="run-tool${running ? " is-running" : ""}${row.status === "failed" ? " is-failed" : ""}">
+        <span class="run-tool__status" aria-hidden="true"></span>
+        <div class="run-tool__copy">
+          <strong>${escapeText(row.label || "Tool")}</strong>
+          ${row.detail ? `<span>${escapeText(row.detail)}</span>` : ""}
+        </div>
+        <div class="run-tool__metrics">
+          <strong>${escapeText(formatDuration(Number.isFinite(duration) ? duration : 0))}</strong>
+          <span>${moves ? `${escapeText(moves)} move${moves === 1 ? "" : "s"}` : escapeText(row.actor || "")}</span>
+        </div>
+      </article>`;
+    }).join("");
+  }
+
   function describeRun(run) {
     document.getElementById("run-title").textContent =
       `${run.model}${run.model_name ? ` (${run.model_name})` : ""} on ${run.game_title || run.game_id}`;
     const bits = [
       `run ${run.id}`,
       run.level_id ? `level ${levelLabel(run.level_id)}` : null,
-      run.moves ? `${run.moves} move budget` : null,
+      run.unlimited ? "Unlimited move budget" : run.moves ? `${run.moves} move budget` : null,
       run.mode,
       run.reasoning ? `reasoning ${run.reasoning}` : null,
       run.continued ? `continued ×${run.continued}` : null,
@@ -168,7 +206,7 @@
         ].filter(Boolean)
       : [
           ["status", run.status],
-          ["moves", `${run.turns}/${run.moves}`],
+          ["moves", `${run.turns}/${run.unlimited ? "∞" : run.moves}`],
           ["gems", String(run.gem_count ?? 0)],
           ["room", levelLabel(run.current_room)],
           run.solved ? ["result", "SOLVED"] : null
@@ -224,6 +262,16 @@
                   : "Estimating…";
     const track = document.getElementById("run-progress-track");
     const bar = document.getElementById("run-progress-bar");
+
+    if (run.unlimited) {
+      document.getElementById("run-progress-count").textContent = `${current} moves · unlimited`;
+      document.getElementById("run-progress-eta").textContent =
+        run.status === "paused" ? "Paused" : run.status === "stopped" ? "Stopped" : "No move limit";
+      track.hidden = true;
+      return;
+    }
+
+    track.hidden = false;
 
     document.getElementById("run-progress-count").textContent = `${current} / ${total} moves`;
     document.getElementById("run-progress-eta").textContent = etaLabel;
@@ -661,6 +709,7 @@
       renderTokenUsage(progress.token_usage);
       renderStats(progress.run);
       renderSwarmViews(progress.swarm_views);
+      renderToolActivity(progress.tool_activity);
 
       if (isPrime) {
         // Prime actions and token usage stream as each turn lands. The board,

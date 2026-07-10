@@ -68,7 +68,9 @@
     isolation: null,
     toolUse: null,
     orchestration: null,
+    unlimited: false,
     catalogs: {},
+    catalogRequests: {},
     openFolders: new Set(),
     modelQuery: ""
   };
@@ -309,6 +311,7 @@
   }
 
   function moveBudget() {
+    if (state.provider !== "prime" && state.unlimited) return 500;
     const input = document.getElementById(state.provider === "prime" ? "run-prime-turns" : "run-moves");
     return Math.max(0, Math.floor(Number(input?.value) || 0));
   }
@@ -393,15 +396,19 @@
       renderModels();
     }, 440);
     syncComposerSteps();
-    loadModels(providerId, { fresh: !state.catalogs[providerId] });
+    loadModels(providerId, { fresh: providerId === "codex" || !state.catalogs[providerId] });
   }
 
   // ---- model picker ---------------------------------------------------------
 
   async function loadModels(providerId, { fresh = false } = {}) {
-    if (state.catalogs[providerId] && !fresh) {
+    const existing = state.catalogs[providerId];
+    if (existing?.models?.length && !fresh) {
       return;
     }
+
+    const requestId = (state.catalogRequests[providerId] || 0) + 1;
+    state.catalogRequests[providerId] = requestId;
 
     const host = document.getElementById("model-picker");
     tweenResize(document.querySelector(".model-browser"), () => {
@@ -416,11 +423,17 @@
     try {
       const suffix = fresh ? `?refresh=1&t=${Date.now()}` : "";
       const catalog = await api(`${data.modelsApiBase}/${encodeURIComponent(providerId)}${suffix}`);
+      if (state.catalogRequests[providerId] !== requestId) return;
       state.catalogs[providerId] = catalog;
     } catch (error) {
-      state.catalogs[providerId] = { models: [], note: error.message };
+      if (state.catalogRequests[providerId] !== requestId) return;
+      // A transient request failure must never erase a catalog that was
+      // already rendered successfully.
+      if (!existing?.models?.length) {
+        state.catalogs[providerId] = { models: [], note: error.message };
+      }
     } finally {
-      if (refreshButton) {
+      if (refreshButton && state.catalogRequests[providerId] === requestId) {
         refreshButton.disabled = false;
         refreshButton.textContent = "↻ Refresh";
       }
@@ -1000,10 +1013,23 @@
       const input = document.getElementById(id);
       if (input) input.value = "0";
     });
+    setUnlimited(false, false);
     setMode(null, false);
     setIsolation(null, false);
     setToolUse(null, false);
     setOrchestration(null, false);
+  }
+
+  function setUnlimited(selected, syncSteps = true) {
+    state.unlimited = state.provider !== "prime" && Boolean(selected);
+    const button = document.getElementById("run-unlimited");
+    const input = document.getElementById("run-moves");
+    if (button) {
+      button.classList.toggle("is-selected", state.unlimited);
+      button.setAttribute("aria-pressed", String(state.unlimited));
+    }
+    if (input) input.disabled = state.unlimited;
+    if (syncSteps) syncComposerSteps();
   }
 
   // Docker mode needs Docker installed AND its daemon running. When it isn't,
@@ -1145,6 +1171,7 @@
             game_id: state.worldId,
             level_id: effectiveLevelId(),
             moves: moveBudget(),
+            unlimited: state.unlimited,
             mode: state.mode,
             vision_view: "",
             model_name: resolvedModelName(),
@@ -1227,10 +1254,10 @@
         : "";
     const progress = run.progress || {};
     const progressCurrent = Number(progress.current) || 0;
-    const progressTotal = Math.max(1, Number(progress.total) || Number(run.moves) || 1);
+    const progressTotal = run.unlimited ? null : Math.max(1, Number(progress.total) || Number(run.moves) || 1);
     const progressTarget = Math.max(0, Math.min(100, Number(progress.percent) || 0));
     const progressFrom = runProgressCache.get(run.id) ?? 0;
-    const showProgress = progressTarget < 100;
+    const showProgress = !run.unlimited && progressTarget < 100;
     if (!showProgress) runProgressCache.delete(run.id);
 
     const actions = [
@@ -1264,7 +1291,7 @@
         <div class="run-card__metrics" aria-label="Run results">
           <div class="run-metric run-metric--moves">
             <span class="run-metric__icon" aria-hidden="true">${RUN_METRIC_ICONS.moves}</span>
-            <span class="run-metric__copy"><strong>${escapeText(run.turns)}<em>/ ${escapeText(run.moves)}</em></strong><small>Moves</small></span>
+            <span class="run-metric__copy"><strong>${escapeText(run.turns)}<em>/ ${run.unlimited ? "∞" : escapeText(run.moves)}</em></strong><small>Moves</small></span>
           </div>
           <div class="run-metric run-metric--gems">
             <span class="run-metric__icon" aria-hidden="true">${RUN_METRIC_ICONS.gems}</span>
@@ -1466,6 +1493,9 @@
       document.getElementById(id)?.addEventListener("input", () => {
         syncComposerSteps();
       });
+    });
+    document.getElementById("run-unlimited")?.addEventListener("click", () => {
+      setUnlimited(!state.unlimited);
     });
   }
 

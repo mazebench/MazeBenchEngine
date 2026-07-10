@@ -44,7 +44,9 @@
 //   width|height|fps  forwarded to the video renderer
 //   dry_run      print the agent command + prompt and exit (no run)
 
+const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
 const { spawn, spawnSync } = require("node:child_process");
@@ -124,9 +126,10 @@ function timestampSlug() {
 
 function buildMcpPrompt(config) {
   const observation = config.mode === "vision"
-    ? `This is VISION mode. Maze observations contain a frame_image path. Open
-and inspect that PNG before choosing a move; the status also includes the room,
-gems, player position, and allowed commands.`
+    ? `This is VISION mode. Every maze observation includes the current PNG as
+an MCP image attachment. Inspect that image before choosing a move; there is no
+ASCII board. The status also includes the room, gems, player position, and
+allowed commands.`
     : `This is TEXT mode. Maze observations contain an ASCII board in the level
 field plus the current status.`;
   const capability = config.toolUse === "offline"
@@ -135,7 +138,7 @@ field plus the current status.`;
 ${ROOT_DIR} and keep run-specific notes in ${config.workspaceDir}. Outbound
 network access is disabled. Host access is less isolated than Docker.`
       : `You have full local file, coding, and execution tools inside a persistent
-Docker workspace at ${config.workspaceDir}. Outbound network access is disabled.`
+Docker workspace at ${config.agentWorkspaceDir}. Outbound network access is disabled.`
     : `This is READ ONLY tool-use. You may inspect and search local files and
 explore private maze clones through MCP, but you cannot edit files or execute
 general-purpose code.`;
@@ -162,13 +165,20 @@ maze_action, and maze_scorecard call, may explore freely, ${workerCapability},
 then report its findings to you. Workers must never act on
 the primary maze. You decide which findings to use and make every primary move
 yourself by omitting clone_id. Spawn at least one worker before your first
-primary move; beyond that, spawn, steer, stop, or wait for workers at your
+primary move. maze_clone is worker-only and is intentionally unavailable to
+you. Beyond that, spawn, steer, stop, or wait for workers at your
 discretion. Gather their reports before finishing.`
     : "";
+  const budgetInstruction = config.unlimited
+    ? `This run has NO OVERALL MOVE LIMIT. This execution segment allows up to
+${config.moves} ${config.resume || config.seed ? "MORE " : ""}primary maze actions. If the game is not terminal, the same
+provider thread and maze automatically continue in another segment. Do not
+treat this segment boundary as the end of the run.`
+    : `Then play up to ${config.moves} ${config.resume || config.seed ? "MORE " : ""}primary maze actions unless the game reaches a terminal state earlier.`;
 
   return `You are playing MazeBench, a 3D grid maze. Control maze state only
-through the MazeBench MCP tools: maze_start, maze_observe, maze_action,
-maze_scorecard, and (in Swarm) maze_clone. Never edit session JSON directly.
+through the MazeBench MCP tools: maze_start, maze_observe, maze_action, and
+maze_scorecard. Swarm workers also receive maze_clone. Never edit session JSON directly.
 
 ${observation}
 ${capability}
@@ -176,7 +186,7 @@ ${swarm}
 
 ${firstStep}
 
-Then play up to ${config.moves} ${config.resume || config.seed ? "MORE " : ""}primary maze actions unless the game reaches a terminal state earlier. Do not
+${budgetInstruction} Do not
 stop after the first observation while budget remains. Before every primary
 maze_action, write one short sentence explaining the choice. Valid action
 strings include up, down, left, right, rotate camera left/right/up/down, undo,
@@ -249,7 +259,9 @@ Then continue playing up to ${config.moves} MORE maze action(s) from that state,
   node "${HELPER}" start --repo-root "${ROOT_DIR}" --state "${config.sessionFile}" --game "${config.gameId}" --level "${config.levelId}" --view "${config.view}" --yaw "${config.yaw}" --game-won-gem-count "${config.gems}"${visionFlags}
 
 Then play up to ${config.moves} maze action(s),`} unless the game reaches a
-terminal state earlier. Do not stop right after the first command: choose and run
+terminal state earlier.${config.unlimited ? ` This run has NO OVERALL MOVE LIMIT;
+${config.moves} actions is only the current execution segment, and the same
+provider thread and maze continue automatically afterward.` : ""} Do not stop right after the first command: choose and run
 at least one action while the budget is positive. After each action, read the
 observation (${config.mode === "vision" ? "the frame_image PNG plus the JSON status" : "the JSON board"}) and choose the next command.
 
@@ -280,16 +292,26 @@ function mcpEnvironment(config, workerOnly = false) {
     MAZEBENCH_RUN_DIR: config.outDir,
     MAZEBENCH_SESSION_FILE: config.sessionFile,
     MAZEBENCH_SWARM_DIR: config.swarmDir,
+    MAZEBENCH_SWARM_WORKSPACES_DIR: config.swarmWorkspaceDir,
+    MAZEBENCH_AGENT_SWARM_WORKSPACES_DIR: config.agentSwarmWorkspaceDir,
+    MAZEBENCH_TOOL_ACTIVITY_FILE: path.join(config.outDir, "tool-activity.jsonl"),
     MAZEBENCH_GAME_ID: config.gameId,
     MAZEBENCH_LEVEL_ID: config.levelId,
     MAZEBENCH_VIEW: config.view,
     MAZEBENCH_YAW: String(config.yaw),
     MAZEBENCH_GEMS: String(config.gems),
     MAZEBENCH_MOVE_BUDGET: String(config.moves),
+    MAZEBENCH_SWARM: config.swarm ? "1" : "0",
     MAZEBENCH_MODE: config.mode,
     MAZEBENCH_VISION_WIDTH: String(config.visionWidth),
     MAZEBENCH_VISION_HEIGHT: String(config.visionHeight),
     MAZEBENCH_VISION_VIEW: config.visionView || "",
+    ...(config.inContainer
+      ? { MAZEBENCH_AGENT_UID: String(config.agentUid), MAZEBENCH_AGENT_GID: String(config.agentGid) }
+      : {}),
+    ...(process.env.PLAYWRIGHT_BROWSERS_PATH
+      ? { PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH }
+      : {}),
     ...(workerOnly ? { MAZEBENCH_WORKER_ONLY: "1" } : {})
   };
 }
@@ -300,14 +322,22 @@ function tomlString(value) {
 
 function codexWritableRoots(config) {
   return [
-    config.workspaceDir,
-    config.swarmDir,
+    config.agentWorkspaceDir,
+    config.agentSwarmWorkspaceDir,
     ...(config.hostAccess && config.toolUse === "offline" ? [ROOT_DIR] : [])
   ];
 }
 
 function codexMcpConfigArgs(config) {
   const prefix = "mcp_servers.mazebench";
+  if (config.mcpUrl) {
+    return [
+      "-c", `${prefix}.url=${tomlString(config.mcpUrl)}`,
+      "-c", `${prefix}.default_tools_approval_mode="approve"`,
+      "-c", `${prefix}.startup_timeout_sec=15`,
+      "-c", `${prefix}.tool_timeout_sec=300`
+    ];
+  }
   const envEntries = Object.entries(mcpEnvironment(config))
     .map(([key, value]) => `${key} = ${tomlString(value)}`)
     .join(", ");
@@ -345,12 +375,16 @@ function codexWorkerConfig(config, name) {
     )}`,
     "",
     "[mcp_servers.mazebench]",
-    `command = ${tomlString(process.execPath)}`,
-    `args = [${tomlString(MAZE_MCP_SERVER)}]`,
+    ...(config.mcpWorkerUrl
+      ? [`url = ${tomlString(config.mcpWorkerUrl)}`]
+      : [
+          `command = ${tomlString(process.execPath)}`,
+          `args = [${tomlString(MAZE_MCP_SERVER)}]`,
+          `env = { ${Object.entries(mcpEnvironment(config, true)).map(([key, value]) => `${key} = ${tomlString(value)}`).join(", ")} }`
+        ]),
     'default_tools_approval_mode = "approve"',
     "startup_timeout_sec = 15",
-    "tool_timeout_sec = 300",
-    `env = { ${Object.entries(mcpEnvironment(config, true)).map(([key, value]) => `${key} = ${tomlString(value)}`).join(", ")} }`
+    "tool_timeout_sec = 300"
   );
   return `${rows.join("\n")}\n`;
 }
@@ -368,14 +402,20 @@ function prepareCodexRuntime(config) {
   }
 }
 
+function codexAgentConfigArgs(config) {
+  if (!config.swarm) return [];
+  return ["default", "worker", "explorer", "maze-worker"].flatMap((name) => [
+    "-c", `agents.${name}.description=${tomlString("An identical-model MazeBench worker controlled by the lead.")}`,
+    "-c", `agents.${name}.config_file=${tomlString(path.posix.join(config.agentWorkspaceDir, ".codex", "agents", `${name}.toml`))}`
+  ]);
+}
+
 function claudeMcpConfig(config) {
   return JSON.stringify({
     mcpServers: {
-      mazebench: {
-        command: process.execPath,
-        args: [MAZE_MCP_SERVER],
-        env: mcpEnvironment(config)
-      }
+      mazebench: config.mcpUrl
+        ? { type: "http", url: config.mcpUrl }
+        : { command: process.execPath, args: [MAZE_MCP_SERVER], env: mcpEnvironment(config) }
     }
   });
 }
@@ -392,7 +432,7 @@ function claudeSandboxSettings(config) {
         "mcp__mazebench_worker__maze_workers"
       ]
     : [];
-  const home = process.env.HOME || "/home/pwuser";
+  const home = config.inContainer ? "/home/pwuser" : process.env.HOME || "/home/pwuser";
   const denyRead = [
     process.env.CODEX_HOME || path.join(home, ".codex"),
     process.env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"),
@@ -401,7 +441,7 @@ function claudeSandboxSettings(config) {
       : [])
   ];
   const allowWrite = offline
-    ? [config.workspaceDir, config.swarmDir, ...(config.hostAccess ? [ROOT_DIR] : [])]
+    ? [config.agentWorkspaceDir, config.agentSwarmWorkspaceDir, ...(config.hostAccess ? [ROOT_DIR] : [])]
     : [];
   return JSON.stringify({
     sandbox: {
@@ -466,12 +506,14 @@ function claudeAgents(config) {
       "mcp__mazebench_worker__maze_workers"
     ],
     mcpServers: [{
-      mazebench_worker: {
-        type: "stdio",
-        command: process.execPath,
-        args: [MAZE_MCP_SERVER],
-        env: mcpEnvironment(config, true)
-      }
+      mazebench_worker: config.mcpWorkerUrl
+        ? { type: "http", url: config.mcpWorkerUrl }
+        : {
+            type: "stdio",
+            command: process.execPath,
+            args: [MAZE_MCP_SERVER],
+            env: mcpEnvironment(config, true)
+          }
     }]
   };
   if (config.reasoning) worker.effort = config.reasoning;
@@ -482,7 +524,127 @@ function prepareAgentRuntime(config) {
   if (!config.mcpEnabled) return;
   fs.mkdirSync(config.workspaceDir, { recursive: true });
   fs.mkdirSync(config.swarmDir, { recursive: true });
+  fs.mkdirSync(config.swarmWorkspaceDir, { recursive: true });
   if (config.model === "codex") prepareCodexRuntime(config);
+}
+
+async function startPrivateMcpServer(config) {
+  const token = crypto.randomBytes(24).toString("hex");
+  const portFile = path.join(config.outDir, "mcp-http.json");
+  fs.rmSync(portFile, { force: true });
+  const child = spawn(
+    process.execPath,
+    [MAZE_MCP_SERVER, "--http", "--port-file", portFile],
+    {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env,
+        ...mcpEnvironment(config),
+        MAZEBENCH_MCP_HTTP_TOKEN: token
+      },
+      stdio: ["ignore", "ignore", "inherit"]
+    }
+  );
+
+  let exited = null;
+  child.once("exit", (code) => {
+    exited = code;
+  });
+  const deadline = Date.now() + 15_000;
+  while (!fs.existsSync(portFile) && Date.now() < deadline && exited === null) {
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  }
+  if (!fs.existsSync(portFile)) {
+    child.kill("SIGKILL");
+    throw new Error(`Private MazeBench MCP service failed to start${exited === null ? "" : ` (exit ${exited})`}.`);
+  }
+  const info = JSON.parse(fs.readFileSync(portFile, "utf8"));
+  const base = `http://127.0.0.1:${Number(info.port)}/${token}`;
+  config.mcpUrl = `${base}/lead`;
+  config.mcpWorkerUrl = `${base}/worker`;
+  return {
+    stop() {
+      if (child.exitCode == null) child.kill("SIGTERM");
+      fs.rmSync(portFile, { force: true });
+    }
+  };
+}
+
+function isolatedDockerAgentCommand(config, command) {
+  if (!config.inContainer) return command;
+  const chownTree = (directory) => {
+    if (!fs.existsSync(directory)) return;
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const child = path.join(directory, entry.name);
+      if (entry.isDirectory()) chownTree(child);
+      fs.chownSync(child, config.agentUid, config.agentGid);
+    }
+    fs.chownSync(directory, config.agentUid, config.agentGid);
+  };
+  chownTree(config.workspaceDir);
+  chownTree(config.swarmWorkspaceDir);
+  for (const directory of ["/home/pwuser/.codex/sessions", "/home/pwuser/.claude/projects"]) {
+    chownTree(directory);
+  }
+  const credentialOverlays = [];
+  const stageCredential = (directory, fileName) => {
+    const source = path.join(directory, fileName);
+    if (!fs.existsSync(source)) return;
+    const staged = path.join(directory, `.${fileName}.mazebench-${process.pid}`);
+    fs.copyFileSync(source, staged);
+    fs.chmodSync(staged, 0o600);
+    fs.chownSync(staged, config.agentUid, config.agentGid);
+    credentialOverlays.push([staged, source]);
+  };
+  stageCredential("/home/pwuser/.codex", "auth.json");
+  stageCredential("/home/pwuser/.claude", ".credentials.json");
+  // A bwrap tmpfs root is owned by root. Give the demoted provider a private,
+  // container-ephemeral /tmp so Claude Code can create its per-UID runtime dir
+  // without exposing the trusted runner's /tmp contents.
+  const providerTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mazebench-provider-"));
+  fs.chmodSync(providerTmpDir, 0o700);
+  fs.chownSync(providerTmpDir, config.agentUid, config.agentGid);
+  const args = [
+    "--die-with-parent",
+    "--new-session",
+    "--unshare-pid",
+    "--unshare-ipc",
+    "--unshare-uts",
+    "--unshare-cgroup-try",
+    "--ro-bind", "/", "/",
+    // Hide every bundled MazeBench source, level, world-map, prior output, and
+    // solver from the provider and all descendants. Only blank run workspaces
+    // are rebound below; gameplay stays behind the private HTTP MCP service.
+    "--tmpfs", ROOT_DIR,
+    "--dir", config.agentWorkspaceDir,
+    "--dir", config.agentSwarmWorkspaceDir,
+    "--bind", providerTmpDir, "/tmp",
+    "--dev", "/dev",
+    "--proc", "/proc",
+    "--bind", config.workspaceDir, config.agentWorkspaceDir,
+    "--bind", config.swarmWorkspaceDir, config.agentSwarmWorkspaceDir,
+    "--chdir", config.agentWorkspaceDir,
+    "--setenv", "HOME", "/home/pwuser",
+    "--setenv", "USER", "pwuser",
+    "--setenv", "LOGNAME", "pwuser"
+  ];
+  for (const directory of ["/home/pwuser/.codex", "/home/pwuser/.claude"]) {
+    if (fs.existsSync(directory)) args.push("--bind", directory, directory);
+  }
+  for (const [source, destination] of credentialOverlays) {
+    args.push("--ro-bind", source, destination);
+  }
+  args.push(
+    "--",
+    "setpriv",
+    "--reuid", String(config.agentUid),
+    "--regid", String(config.agentGid),
+    "--clear-groups",
+    "--no-new-privs",
+    command.bin,
+    ...command.argv
+  );
+  return { bin: "bwrap", argv: args };
 }
 
 function agentCommand(config, prompt) {
@@ -490,7 +652,7 @@ function agentCommand(config, prompt) {
 
   if (config.model === "codex") {
     const sandboxMode = config.toolUse === "offline" ? "workspace-write" : "read-only";
-    const commandRoot = config.workspaceDir;
+    const commandRoot = config.agentWorkspaceDir;
     // --json streams structured events (agent messages, reasoning, shell calls)
     // on stdout so we can build a per-move reasoning log. `exec resume <id>`
     // continues a prior conversation (the model keeps its full memory).
@@ -508,6 +670,7 @@ function agentCommand(config, prompt) {
       "-c", "agents.max_depth=1",
       "-c", "sandbox_workspace_write.network_access=false",
       "-c", `sandbox_workspace_write.writable_roots=[${codexWritableRoots(config).map(tomlString).join(", ")}]`,
+      ...codexAgentConfigArgs(config),
       ...codexMcpConfigArgs(config)
     );
     if (!config.resume) argv.push("--sandbox", sandboxMode);
@@ -578,9 +741,9 @@ function agentCommand(config, prompt) {
           ...(config.toolUse === "read-only" ? ["Bash", "Edit", "Write", "NotebookEdit"] : []),
           ...(config.swarm ? [] : ["Task", "Agent"])
         ].join(","),
-        "--add-dir", ROOT_DIR,
-        "--add-dir", config.swarmDir
+        "--add-dir", config.agentSwarmWorkspaceDir
       );
+      if (config.hostAccess) argv.push("--add-dir", ROOT_DIR);
       const agents = claudeAgents(config);
       if (agents) argv.push("--agents", agents);
     } else if (config.tools) {
@@ -946,7 +1109,7 @@ function writeReasoningArtifacts(config, raw, distilled, options = {}) {
 }
 
 function runAgent(config, prompt) {
-  const { bin, argv } = agentCommand(config, prompt);
+  const { bin, argv } = isolatedDockerAgentCommand(config, agentCommand(config, prompt));
   ensureAgentAvailable(bin);
 
   console.log(`\n=== Launching local ${config.model} agent (${bin}) ===`);
@@ -954,7 +1117,7 @@ function runAgent(config, prompt) {
   console.log(
     `${config.hostAccess ? "Host access" : "Docker"} | Tool-use ${config.toolUse.toUpperCase()}${config.swarm ? " + SWARM" : ""} | ` +
       `Mode ${config.mode}${config.mode === "vision" ? ` (${config.visionWidth}x${config.visionHeight})` : ""} | ` +
-      `Game ${config.gameId} | Level ${config.levelId} | view ${config.view} | yaw ${config.yaw} | budget ${config.moves} moves\n`
+      `Game ${config.gameId} | Level ${config.levelId} | view ${config.view} | yaw ${config.yaw} | budget ${config.unlimited ? "unlimited" : `${config.moves} moves`}\n`
   );
 
   // Both agents emit a structured JSONL event stream on stdout (codex --json /
@@ -980,11 +1143,32 @@ function runAgent(config, prompt) {
     const cwd = config.mcpEnabled ? config.workspaceDir : ROOT_DIR;
     const child = spawn(bin, argv, { cwd, env, stdio: ["ignore", "pipe", "inherit"] });
     let raw = "";
+    let eventBuffer = "";
+
+    const appendTimedEvents = (text, flush = false) => {
+      eventBuffer += text;
+      const lines = eventBuffer.split("\n");
+      eventBuffer = flush ? "" : lines.pop() || "";
+      if (flush && lines.at(-1) === "") lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let output = line;
+        try {
+          const event = JSON.parse(line);
+          event._mazebench_received_at = new Date().toISOString();
+          output = JSON.stringify(event);
+        } catch (_error) {
+          /* preserve unexpected provider output verbatim */
+        }
+        fs.appendFileSync(eventsPath, `${output}\n`);
+      }
+    };
 
     child.stdout.on("data", (chunk) => {
-      raw += chunk.toString();
+      const text = chunk.toString();
+      raw += text;
       try {
-        fs.appendFileSync(eventsPath, chunk);
+        appendTimedEvents(text);
       } catch (_error) {
         /* best effort — the final write below still captures everything */
       }
@@ -994,6 +1178,11 @@ function runAgent(config, prompt) {
       resolve();
     });
     child.on("close", (code) => {
+      try {
+        appendTimedEvents("", true);
+      } catch (_error) {
+        /* best effort */
+      }
       // On resume, distill the whole file (prior turns + the new ones) so the
       // feed keeps the earlier moves' reasoning too.
       let full = raw;
@@ -1128,7 +1317,7 @@ function runInContainer(config, raw) {
   // path options (out/session) are intentionally dropped; the inner run writes
   // under the mounted /app/outputs/maze-local.
   const forwardKeys = [
-    "model", "moves", "mode", "tools", "tool_use", "swarm", "game", "level", "view", "yaw", "gems",
+    "model", "moves", "unlimited", "mode", "tools", "tool_use", "swarm", "game", "level", "view", "yaw", "gems",
     "video", "no_video", "fast", "draft", "width", "height", "fps",
     "vision_width", "vision_height", "vision_view", "model_name", "llm",
     "reasoning", "effort", "codex_fast", "resume", "seed",
@@ -1151,7 +1340,15 @@ function runInContainer(config, raw) {
 
   const dockerArgs = [
     "run", "--rm", "-i", "--cidfile", cidFile,
+    "--user", "root",
+    "--cap-drop", "ALL",
+    "--cap-add", "SYS_ADMIN",
+    "--cap-add", "SETUID",
+    "--cap-add", "SETGID",
+    "--cap-add", "CHOWN",
+    "--cap-add", "DAC_OVERRIDE",
     "--security-opt", "seccomp=unconfined",
+    "--security-opt", "apparmor=unconfined",
     "-e", "MAZEBENCH_IN_CONTAINER=1",
     "-v", `${hostOutputs}:/app/outputs/maze-local`
   ];
@@ -1428,8 +1625,13 @@ async function runWizard(raw) {
     { label: "10", value: "10" },
     { label: "20", value: "20" },
     { label: "50", value: "50" },
+    { label: "Unlimited", value: "__unlimited__" },
     { label: "Custom…", value: "__custom__" }
   ]);
+  if (moves === "__unlimited__") {
+    out.unlimited = "true";
+    moves = "500";
+  }
   if (moves === "__custom__") moves = await promptText("Number of moves", "10");
   out.moves = moves;
 
@@ -1520,6 +1722,10 @@ async function main() {
       : "read-only";
   const swarm = isTruthy(raw.swarm, false);
   const hostAccess = !wantsContainer && !inContainer;
+  const agentHomeStat = inContainer ? fs.statSync("/home/pwuser") : null;
+  const workspaceDir = path.join(outDir, "workspace");
+  const swarmDir = path.join(outDir, "swarm");
+  const swarmWorkspaceDir = path.join(outDir, "swarm-workspaces");
 
   const config = {
     claudeBin: raw.claude_bin || "claude",
@@ -1541,14 +1747,20 @@ async function main() {
     swarm,
     hostAccess,
     inContainer,
+    agentUid: agentHomeStat?.uid ?? (typeof process.getuid === "function" ? process.getuid() : 0),
+    agentGid: agentHomeStat?.gid ?? (typeof process.getgid === "function" ? process.getgid() : 0),
     model,
     modelName: raw.model_name || raw.llm || "",
     reasoning: String(raw.reasoning || raw.effort || "").toLowerCase(),
     codexFast: isTruthy(raw.codex_fast, false),
     moves: positiveInt(raw.moves, 20),
+    unlimited: isTruthy(raw.unlimited, false),
     outDir,
-    workspaceDir: path.join(outDir, "workspace"),
-    swarmDir: path.join(outDir, "swarm"),
+    workspaceDir,
+    swarmDir,
+    swarmWorkspaceDir,
+    agentWorkspaceDir: inContainer ? "/app/workspace" : workspaceDir,
+    agentSwarmWorkspaceDir: inContainer ? "/app/swarm-workspaces" : swarmWorkspaceDir,
     // The outer Docker launcher re-execs before starting an agent. Actual host
     // and in-container agents both use MCP so maze persistence stays outside
     // their file/tool sandbox.
@@ -1577,6 +1789,10 @@ async function main() {
   }
 
   fs.mkdirSync(outDir, { recursive: true });
+  fs.mkdirSync(config.workspaceDir, { recursive: true });
+  fs.mkdirSync(config.swarmDir, { recursive: true });
+  fs.mkdirSync(config.swarmWorkspaceDir, { recursive: true });
+  const privateMcp = config.inContainer ? await startPrivateMcpServer(config) : null;
   prepareAgentRuntime(config);
 
   const prompt = buildPrompt(config);
@@ -1588,10 +1804,15 @@ async function main() {
     console.log([bin, ...shown].join(" "));
     console.log(`# with <prompt>:\n${prompt}`);
     console.log(`\n# artifacts would land in: ${config.outDir}`);
+    privateMcp?.stop();
     return;
   }
 
-  await runAgent(config, prompt);
+  try {
+    await runAgent(config, prompt);
+  } finally {
+    privateMcp?.stop();
+  }
 
   const finalized = ensureScorecard(config);
   if (!finalized) {
@@ -1643,10 +1864,8 @@ module.exports = {
 };
 
 if (require.main === module) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
-  }
+  });
 }

@@ -114,6 +114,45 @@ try {
   );
   assert.equal(service.resolveRunFilePath(hostReadOnlySwarm.id, "swarm/../run.json"), null);
 
+  const hostRunDir = path.join(rootDir, "outputs", "maze-local", "site", hostReadOnlySwarm.id);
+  fs.writeFileSync(
+    path.join(hostRunDir, "tool-activity.jsonl"),
+    `${JSON.stringify({
+      id: "maze-1",
+      tool: "maze_action",
+      actor: "worker",
+      clone_id: "scout_one",
+      action: "up",
+      started_at: "2026-07-10T00:00:01.000Z",
+      completed_at: "2026-07-10T00:00:01.200Z",
+      duration_ms: 200,
+      status: "completed",
+      move_calls: 1
+    })}\n`
+  );
+  fs.writeFileSync(
+    path.join(hostRunDir, "agent-events.jsonl"),
+    [
+      {
+        type: "item.started",
+        item: { id: "algo-1", type: "command_execution", command: "node explore.js", status: "in_progress" },
+        _mazebench_received_at: "2026-07-10T00:00:00.000Z"
+      },
+      {
+        type: "item.completed",
+        item: { id: "algo-1", type: "command_execution", command: "node explore.js", status: "completed" },
+        _mazebench_received_at: "2026-07-10T00:00:02.000Z"
+      }
+    ].map(JSON.stringify).join("\n") + "\n"
+  );
+  const activityProgress = service.getRunProgress(hostReadOnlySwarm.id);
+  assert(activityProgress.tool_activity.recent.some((row) => row.label === "Algorithm · explore.js"));
+  assert(activityProgress.tool_activity.recent.some((row) => row.label === "Maze · action"));
+  assert.equal(
+    activityProgress.tool_activity.recent.find((row) => row.label === "Algorithm · explore.js").moves_tried,
+    1
+  );
+
   const pausedHostRun = service.pauseRun(hostReadOnlySwarm.id);
   assert.equal(pausedHostRun.status, "paused");
   assert.equal(pausedHostRun.pause_reason, "manual");
@@ -128,6 +167,37 @@ try {
   }
   assert.equal(stoppedHostRun.status, "stopped");
   service.deleteRun(hostReadOnlySwarm.id);
+
+  const [unlimitedRun] = service.launchRuns({
+    kind: "local",
+    model: "codex",
+    model_name: "gpt-test",
+    game_id: "maze",
+    level_id: "level_HxI",
+    moves: 5,
+    unlimited: true,
+    mode: "text",
+    container: false,
+    tools: false,
+    tool_use: "read-only",
+    swarm: false,
+    video: false
+  });
+  launchedIds.push(unlimitedRun.id);
+  const unlimitedMeta = loadJson(
+    path.join(rootDir, "outputs", "maze-local", "site", unlimitedRun.id, "run.json")
+  );
+  assert.equal(unlimitedMeta.unlimited, true);
+  assert.equal(unlimitedMeta.moves, 500);
+  assert.equal(unlimitedMeta.segment_move_budget, 500);
+  assert.equal(unlimitedMeta.launch_params.unlimited, true);
+  assert.match(unlimitedMeta.command, /unlimited=true/);
+  const unlimitedSummary = service.summarizeRun(unlimitedRun.id);
+  assert.equal(unlimitedSummary.progress.unlimited, true);
+  assert.equal(unlimitedSummary.progress.total, null);
+  assert.equal(unlimitedSummary.progress.eta_ms, null);
+  service.stopRun(unlimitedRun.id);
+  service.deleteRun(unlimitedRun.id);
 
   const runs = service.launchRuns({
     kind: "local",
@@ -191,6 +261,69 @@ try {
 
   service.deleteRun(runs[1].id);
   assert.equal(service.summarizeRun(runs[2].id).status, "running");
+
+  const originalHome = process.env.HOME;
+  const codexHome = path.join(rootDir, "codex-home");
+  const codexCachePath = path.join(codexHome, ".codex", "models_cache.json");
+  fs.mkdirSync(path.dirname(codexCachePath), { recursive: true });
+  const writeCodexCache = (slugs, fetchedAt) => {
+    fs.writeFileSync(
+      codexCachePath,
+      JSON.stringify({
+        fetched_at: fetchedAt,
+        models: slugs.map((slug, priority) => ({
+          slug,
+          display_name: slug.toUpperCase(),
+          priority,
+          supported_reasoning_levels: [{ effort: "high" }]
+        }))
+      })
+    );
+  };
+
+  try {
+    process.env.HOME = codexHome;
+    writeCodexCache(["gpt-new", "gpt-current"], "2026-07-10T01:00:00Z");
+    assert.deepEqual(
+      service.listProviderModels("codex").models.map((model) => model.id),
+      ["gpt-new", "gpt-current"]
+    );
+
+    // A newer disk write containing an older subset must not make a model
+    // disappear, and Codex requests must bypass the provider TTL cache.
+    writeCodexCache(["gpt-current"], "2026-07-10T02:00:00Z");
+    assert.deepEqual(
+      service.listProviderModels("codex").models.map((model) => model.id),
+      ["gpt-new", "gpt-current"]
+    );
+
+    writeCodexCache(["gpt-next", "gpt-new", "gpt-current"], "2026-07-10T03:00:00Z");
+    assert.deepEqual(
+      service.listProviderModels("codex").models.map((model) => model.id),
+      ["gpt-next", "gpt-new", "gpt-current"]
+    );
+
+    // The last-known-good catalog survives a local server restart.
+    writeCodexCache(["gpt-current"], "2026-07-10T04:00:00Z");
+    const restartedService = createAgentRunService({
+      agentEnvironment: () => ({ docker: false, docker_installed: false }),
+      ensureDirectory: (directory) => fs.mkdirSync(directory, { recursive: true }),
+      getGame: (id) => (id === "maze" ? game : null),
+      buildWorlds: { countWorldGems: () => 1 },
+      loadJson,
+      rootDir,
+      worldMaps: {
+        defaultLevelIdForGame: () => "level_HxI",
+        isMazeWorldLevelId: () => true
+      }
+    });
+    assert.deepEqual(
+      restartedService.listProviderModels("codex").models.map((model) => model.id),
+      ["gpt-next", "gpt-new", "gpt-current"]
+    );
+  } finally {
+    process.env.HOME = originalHome;
+  }
 
   console.log("agent queue tests passed");
 } finally {

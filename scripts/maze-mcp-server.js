@@ -8,6 +8,7 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const http = require("node:http");
 const path = require("node:path");
 const readline = require("node:readline");
 const { spawnSync } = require("node:child_process");
@@ -19,8 +20,19 @@ const PRIMARY_SESSION = path.resolve(
   process.env.MAZEBENCH_SESSION_FILE || path.join(RUN_DIR, "session.json")
 );
 const SWARM_DIR = path.resolve(process.env.MAZEBENCH_SWARM_DIR || path.join(RUN_DIR, "swarm"));
+const SWARM_WORKSPACES_DIR = path.resolve(
+  process.env.MAZEBENCH_SWARM_WORKSPACES_DIR || path.join(RUN_DIR, "swarm-workspaces")
+);
+const AGENT_SWARM_WORKSPACES_DIR = String(
+  process.env.MAZEBENCH_AGENT_SWARM_WORKSPACES_DIR || SWARM_WORKSPACES_DIR
+);
+const ACTIVITY_LOG = path.resolve(
+  process.env.MAZEBENCH_TOOL_ACTIVITY_FILE || path.join(RUN_DIR, "tool-activity.jsonl")
+);
 const PRIMARY_MOVE_BUDGET = positiveInt(process.env.MAZEBENCH_MOVE_BUDGET, 20);
 const WORKER_ONLY = process.env.MAZEBENCH_WORKER_ONLY === "1";
+const SWARM_REQUIRED = process.env.MAZEBENCH_SWARM === "1";
+const HTTP_TOKEN = String(process.env.MAZEBENCH_MCP_HTTP_TOKEN || "");
 
 function sessionActionCount(file) {
   try {
@@ -132,9 +144,15 @@ function createWorker(requestedId) {
   if (!allocated || !directory) throw new Error("Could not allocate a worker directory.");
 
   const session = path.join(directory, "session.json");
-  const workspace = path.join(directory, "workspace");
+  const workspace = path.join(SWARM_WORKSPACES_DIR, id);
+  const agentWorkspace = path.posix.join(AGENT_SWARM_WORKSPACES_DIR, id);
   fs.copyFileSync(PRIMARY_SESSION, session);
   fs.mkdirSync(workspace, { recursive: true });
+  const agentUid = Number(process.env.MAZEBENCH_AGENT_UID);
+  const agentGid = Number(process.env.MAZEBENCH_AGENT_GID);
+  if (Number.isInteger(agentUid) && Number.isInteger(agentGid)) {
+    fs.chownSync(workspace, agentUid, agentGid);
+  }
 
   const primaryActions = path.join(path.dirname(PRIMARY_SESSION), "actions.jsonl");
   if (fs.existsSync(primaryActions)) {
@@ -146,14 +164,15 @@ function createWorker(requestedId) {
     created_at: new Date().toISOString(),
     source_session: PRIMARY_SESSION,
     session,
-    workspace
+    workspace,
+    agent_workspace: agentWorkspace
   };
   fs.writeFileSync(path.join(directory, "worker.json"), `${JSON.stringify(metadata, null, 2)}\n`);
   return {
     ...metadata,
     instruction:
       `Use clone_id \"${id}\" for every MazeBench MCP observe/action/scorecard call. ` +
-      `Put code and notes in ${workspace}. Never act on the primary maze; report findings to the lead.`
+      `Put code and notes in ${agentWorkspace}. Never act on the primary maze; report findings to the lead.`
   };
 }
 
@@ -166,7 +185,12 @@ function listWorkers() {
       try {
         return JSON.parse(fs.readFileSync(path.join(directory, "worker.json"), "utf8"));
       } catch (_error) {
-        return { id: entry.name, session: path.join(directory, "session.json"), workspace: path.join(directory, "workspace") };
+        return {
+          id: entry.name,
+          session: path.join(directory, "session.json"),
+          workspace: path.join(SWARM_WORKSPACES_DIR, entry.name),
+          agent_workspace: path.posix.join(AGENT_SWARM_WORKSPACES_DIR, entry.name)
+        };
       }
     });
 }
@@ -227,25 +251,28 @@ const TOOLS = [
   }
 ];
 
-function callTool(name, input = {}) {
+function callTool(name, input = {}, { workerOnly = WORKER_ONLY } = {}) {
   if (name === "maze_start") {
-    if (WORKER_ONLY) throw new Error("Workers cannot start or reset the primary maze. Call maze_clone instead.");
+    if (workerOnly) throw new Error("Workers cannot start or reset the primary maze. Call maze_clone instead.");
     return startMaze();
   }
   if (name === "maze_observe") {
-    if (WORKER_ONLY && !input.clone_id) throw new Error("Workers must supply their clone_id.");
+    if (workerOnly && !input.clone_id) throw new Error("Workers must supply their clone_id.");
     return runHelper(["observe", "--state", sessionFor(input.clone_id)]);
   }
   if (name === "maze_action") {
     if (!String(input.action || "").trim()) throw new Error("action is required.");
-    if (WORKER_ONLY && !input.clone_id) throw new Error("Workers must supply their clone_id and cannot act on the primary maze.");
+    if (workerOnly && !input.clone_id) throw new Error("Workers must supply their clone_id and cannot act on the primary maze.");
+    if (!input.clone_id && SWARM_REQUIRED && listWorkers().length === 0) {
+      throw new Error("Spawn a provider subagent first. Only a worker can call maze_clone and unlock primary moves.");
+    }
     if (!input.clone_id && sessionActionCount(PRIMARY_SESSION) - PRIMARY_INITIAL_ACTION_COUNT >= PRIMARY_MOVE_BUDGET) {
       throw new Error(`The primary move budget of ${PRIMARY_MOVE_BUDGET} action(s) is exhausted. Call maze_scorecard and finish.`);
     }
     return runHelper(["action", "--state", sessionFor(input.clone_id), String(input.action)]);
   }
   if (name === "maze_scorecard") {
-    if (WORKER_ONLY && !input.clone_id) throw new Error("Workers must supply their clone_id.");
+    if (workerOnly && !input.clone_id) throw new Error("Workers must supply their clone_id.");
     return runHelper(["scorecard", "--state", sessionFor(input.clone_id)]);
   }
   if (name === "maze_clone") return createWorker(input.worker_id);
@@ -253,27 +280,88 @@ function callTool(name, input = {}) {
   throw new Error(`Unknown tool \"${name}\".`);
 }
 
-function send(message) {
+function stdioSend(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
-function success(id, result) {
+function success(send, id, result) {
   send({ jsonrpc: "2.0", id, result });
 }
 
-function failure(id, error) {
+function safeErrorMessage(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message
+    .split(/\r?\n/, 1)[0]
+    .replaceAll(REPO_ROOT, "[maze runtime]")
+    .replaceAll(RUN_DIR, "[run]");
+}
+
+function failure(send, id, error) {
   send({
     jsonrpc: "2.0",
     id,
-    error: { code: -32000, message: error instanceof Error ? error.message : String(error) }
+    error: { code: -32000, message: safeErrorMessage(error) }
   });
 }
 
-async function handle(request) {
+function toolsFor(workerOnly) {
+  return workerOnly
+    ? TOOLS.filter((tool) => tool.name !== "maze_start")
+    : TOOLS.filter((tool) => tool.name !== "maze_clone");
+}
+
+function publicToolValue(value) {
+  if (Array.isArray(value)) return value.map(publicToolValue);
+  if (!value || typeof value !== "object") return value;
+  const printable = {};
+  for (const [key, item] of Object.entries(value)) {
+    // These are trusted-runner paths. They are not useful to the provider and
+    // exposing them makes the isolation boundary needlessly discoverable.
+    if (["session", "source_session", "workspace"].includes(key)) continue;
+    printable[key] = key === "frame_image" ? "attached:image/png" : publicToolValue(item);
+  }
+  return printable;
+}
+
+function toolContent(value) {
+  const printable = publicToolValue(value);
+  const content = [{ type: "text", text: JSON.stringify(printable, null, 2) }];
+  const framePath = value && typeof value === "object" ? String(value.frame_image || "") : "";
+  if (framePath) {
+    const resolved = path.resolve(framePath);
+    if (resolved.startsWith(`${RUN_DIR}${path.sep}`) && fs.existsSync(resolved)) {
+      content.push({
+        type: "image",
+        data: fs.readFileSync(resolved).toString("base64"),
+        mimeType: "image/png"
+      });
+    }
+  }
+  return { content, structuredContent: printable, isError: false };
+}
+
+function actionCountForInput(input) {
+  try {
+    return sessionActionCount(sessionFor(input?.clone_id));
+  } catch (_error) {
+    return 0;
+  }
+}
+
+function appendToolActivity(entry) {
+  try {
+    fs.mkdirSync(path.dirname(ACTIVITY_LOG), { recursive: true });
+    fs.appendFileSync(ACTIVITY_LOG, `${JSON.stringify(entry)}\n`);
+  } catch (_error) {
+    /* telemetry must never break gameplay */
+  }
+}
+
+async function handle(request, send = stdioSend, { workerOnly = WORKER_ONLY } = {}) {
   if (!request || request.jsonrpc !== "2.0") return;
   if (request.method === "notifications/initialized" || request.method === "notifications/cancelled") return;
   if (request.method === "initialize") {
-    success(request.id, {
+    success(send, request.id, {
       protocolVersion: request.params?.protocolVersion || "2024-11-05",
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: "mazebench", version: "1.0.0" }
@@ -281,42 +369,148 @@ async function handle(request) {
     return;
   }
   if (request.method === "ping") {
-    success(request.id, {});
+    success(send, request.id, {});
     return;
   }
   if (request.method === "tools/list") {
-    success(request.id, { tools: TOOLS });
+    success(send, request.id, { tools: toolsFor(workerOnly) });
     return;
   }
   if (request.method === "tools/call") {
+    const name = String(request.params?.name || "");
+    const input = request.params?.arguments || {};
+    const startedAt = new Date();
+    const movesBefore = actionCountForInput(input);
     try {
-      const value = callTool(request.params?.name, request.params?.arguments || {});
-      success(request.id, {
-        content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
-        structuredContent: value,
-        isError: false
+      const value = callTool(name, input, { workerOnly });
+      success(send, request.id, toolContent(value));
+      const completedAt = new Date();
+      appendToolActivity({
+        id: crypto.randomUUID(),
+        tool: name,
+        actor: workerOnly ? "worker" : "lead",
+        clone_id: String(input.clone_id || value?.id || ""),
+        action: String(input.action || ""),
+        started_at: startedAt.toISOString(),
+        completed_at: completedAt.toISOString(),
+        duration_ms: completedAt.getTime() - startedAt.getTime(),
+        status: "completed",
+        move_calls: name === "maze_action" ? 1 : 0,
+        moves_before: movesBefore,
+        moves_after: actionCountForInput(input)
       });
     } catch (error) {
-      success(request.id, {
-        content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+      success(send, request.id, {
+        content: [{ type: "text", text: safeErrorMessage(error) }],
         isError: true
+      });
+      const completedAt = new Date();
+      appendToolActivity({
+        id: crypto.randomUUID(),
+        tool: name,
+        actor: workerOnly ? "worker" : "lead",
+        clone_id: String(input.clone_id || ""),
+        action: String(input.action || ""),
+        started_at: startedAt.toISOString(),
+        completed_at: completedAt.toISOString(),
+        duration_ms: completedAt.getTime() - startedAt.getTime(),
+        status: "failed",
+        move_calls: name === "maze_action" ? 1 : 0,
+        moves_before: movesBefore,
+        moves_after: actionCountForInput(input),
+        error: safeErrorMessage(error)
       });
     }
     return;
   }
-  if (request.id !== undefined) failure(request.id, new Error(`Unsupported method \"${request.method}\".`));
+  if (request.id !== undefined) failure(send, request.id, new Error(`Unsupported method \"${request.method}\".`));
+}
+
+function parseHttpMode(argv) {
+  if (!argv.includes("--http")) return null;
+  const portIndex = argv.indexOf("--port-file");
+  return {
+    portFile: portIndex >= 0
+      ? path.resolve(argv[portIndex + 1] || "")
+      : path.join(RUN_DIR, "mcp-http.json")
+  };
+}
+
+function startHttpServer({ portFile }) {
+  if (!HTTP_TOKEN) throw new Error("MAZEBENCH_MCP_HTTP_TOKEN is required in HTTP mode.");
+  const server = http.createServer((request, response) => {
+    const match = String(request.url || "").match(/^\/([^/]+)\/(lead|worker)$/);
+    if (!match || match[1] !== HTTP_TOKEN) {
+      response.writeHead(404).end();
+      return;
+    }
+    if (request.method === "DELETE") {
+      response.writeHead(200).end();
+      return;
+    }
+    if (request.method !== "POST") {
+      response.writeHead(405, { Allow: "POST, DELETE" }).end();
+      return;
+    }
+
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 4 * 1024 * 1024) request.destroy();
+    });
+    request.on("end", async () => {
+      try {
+        const payload = JSON.parse(body || "null");
+        const requests = Array.isArray(payload) ? payload : [payload];
+        const replies = [];
+        for (const message of requests) {
+          await handle(message, (reply) => replies.push(reply), { workerOnly: match[2] === "worker" });
+        }
+        if (!replies.length) {
+          response.writeHead(202).end();
+          return;
+        }
+        response.writeHead(200, {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "Mcp-Session-Id": HTTP_TOKEN
+        });
+        response.end(JSON.stringify(Array.isArray(payload) ? replies : replies[0]));
+      } catch (error) {
+        response.writeHead(400, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ error: safeErrorMessage(error) }));
+      }
+    });
+  });
+  server.listen(0, "127.0.0.1", () => {
+    const address = server.address();
+    fs.writeFileSync(
+      portFile,
+      `${JSON.stringify({ port: address.port, token: HTTP_TOKEN, pid: process.pid })}\n`,
+      "utf8"
+    );
+  });
+  const shutdown = () => server.close(() => process.exit(0));
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }
 
 if (require.main === module) {
-  const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-  input.on("line", (line) => {
-    if (!line.trim()) return;
-    try {
-      handle(JSON.parse(line));
-    } catch (error) {
-      failure(null, error);
-    }
-  });
+  const httpMode = parseHttpMode(process.argv.slice(2));
+  if (httpMode) {
+    startHttpServer(httpMode);
+  } else {
+    const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+    input.on("line", (line) => {
+      if (!line.trim()) return;
+      try {
+        handle(JSON.parse(line));
+      } catch (error) {
+        failure(stdioSend, null, error);
+      }
+    });
+  }
 }
 
 module.exports = {
@@ -324,5 +518,6 @@ module.exports = {
   createWorker,
   listWorkers,
   safeWorkerId,
-  sessionFor
+  sessionFor,
+  toolContent
 };

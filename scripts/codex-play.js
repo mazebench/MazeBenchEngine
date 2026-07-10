@@ -372,24 +372,28 @@ async function renderVisionFrame(session, turnIndex, stateFile) {
 
 // Print the status the agent sees. In vision mode, render a perspective image,
 // attach its path as frame_image, and drop the ASCII board so the agent must
-// look at the picture. A render failure degrades gracefully to ASCII.
+// look at the picture. A render failure is fatal for this observation: silently
+// falling back to ASCII would invalidate a vision benchmark.
 async function emitStatus(session, response, turnIndex, stateFile) {
   const status = response.status || response;
 
   if (!session.vision) {
     console.log(JSON.stringify(status, null, 2));
-    return;
+    return true;
   }
 
   const printable = { ...status, observation_mode: "vision" };
+  delete printable.level;
   try {
     printable.frame_image = await renderVisionFrame(session, turnIndex, stateFile);
-    delete printable.level;
   } catch (error) {
-    printable.observation_mode = "vision (render failed — showing ASCII board)";
+    printable.observation_mode = "vision (render unavailable)";
     printable.frame_error = error instanceof Error ? error.message : String(error);
+    console.log(JSON.stringify(printable, null, 2));
+    return false;
   }
   console.log(JSON.stringify(printable, null, 2));
+  return true;
 }
 
 async function main() {
@@ -423,7 +427,7 @@ async function main() {
     session.initial = response.status || response;
     session.lastStatus = session.initial;
     writeJson(options.state, session);
-    await emitStatus(session, response, 0, options.state);
+    if (!(await emitStatus(session, response, 0, options.state))) process.exitCode = 1;
     return;
   }
 
@@ -435,7 +439,7 @@ async function main() {
       runBridge(session, { command: "observe" }),
       options.state
     );
-    await emitStatus(session, response, session.actions.length, options.state);
+    if (!(await emitStatus(session, response, session.actions.length, options.state))) process.exitCode = 1;
     return;
   }
 
@@ -448,7 +452,7 @@ async function main() {
     session.lastStatus = response.status || response;
     writeJson(options.state, session);
     writeJson(path.join(path.dirname(options.state), "scorecard.json"), session.scorecard);
-    await emitStatus(session, response, session.actions.length, options.state);
+    if (!(await emitStatus(session, response, session.actions.length, options.state))) process.exitCode = 1;
     // The scorecard marks the end of the run — release the render daemon's
     // headless browser instead of waiting out its idle timer.
     if (session.vision) await stopRenderDaemon(options.state);
@@ -469,7 +473,7 @@ async function main() {
     session.lastStatus = status;
     writeJson(options.state, session);
     fs.appendFileSync(path.join(path.dirname(options.state), "actions.jsonl"), `${JSON.stringify(record)}\n`);
-    await emitStatus(session, response, session.actions.length, options.state);
+    if (!(await emitStatus(session, response, session.actions.length, options.state))) process.exitCode = 1;
     return;
   }
 

@@ -862,7 +862,10 @@ function createPageRenderer({
               </article>
               <article class="setting-card setting-card--budget is-gated" inert aria-hidden="true">
                 <div class="setting-card__head"><span>Budget</span></div>
-                <label class="field setting-card__field setting-card__field--budget"><span>Move limit</span><input id="run-moves" type="number" min="0" max="500" value="0" inputmode="numeric"></label>
+                <div class="budget-limit-control">
+                  <label class="field setting-card__field setting-card__field--budget"><span>Move limit</span><input id="run-moves" type="number" min="0" max="500" value="0" inputmode="numeric"></label>
+                  <button id="run-unlimited" class="budget-unlimited" type="button" aria-pressed="false"><span aria-hidden="true">∞</span> Unlimited</button>
+                </div>
               </article>
               </div>
               <div id="prime-settings" class="settings-deck settings-deck--prime" hidden>
@@ -930,7 +933,7 @@ function createPageRenderer({
           </div>
         </section>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
-        <script src="/agent.js?v=20260709-tool-matrix-51" defer></script>`
+        <script src="/agent.js?v=20260709-unlimited-52" defer></script>`
     });
   }
 
@@ -1006,6 +1009,14 @@ function createPageRenderer({
           <div class="run-swarm__grid" id="run-swarm-grid"></div>
         </section>
 
+        <section class="panel run-tools" id="run-tools-section" hidden>
+          <div class="run-tools__head">
+            <h2>Tools &amp; algorithms</h2>
+            <span class="run-tools__count" id="run-tools-count"></span>
+          </div>
+          <div class="run-tools__grid" id="run-tools-grid"></div>
+        </section>
+
         ${replaySection}
 
         ${tokenSection}
@@ -1049,7 +1060,7 @@ function createPageRenderer({
           <pre id="run-log" class="agent-log"></pre>
         </section>
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)};</script>
-        <script src="/agent-run.js?v=20260709-run-control-54" defer></script>`
+        <script src="/agent-run.js?v=20260710-swarm-tools-56" defer></script>`
     });
   }
 

@@ -1801,6 +1801,94 @@ body.play-body {
   opacity: 0.72;
 }
 
+.run-tools__head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.run-tools__head h2 {
+  margin: 0;
+}
+
+.run-tools__count {
+  color: var(--muted, #9aa3c7);
+  font-size: 10px;
+}
+
+.run-tools__grid {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 13px;
+}
+
+.run-tool {
+  align-items: center;
+  background: rgba(4, 7, 18, 0.72);
+  border: 1px solid rgba(124, 143, 255, 0.18);
+  border-radius: 10px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  padding: 9px 11px;
+}
+
+.run-tool__status {
+  background: #687397;
+  border-radius: 50%;
+  height: 7px;
+  width: 7px;
+}
+
+.run-tool.is-running .run-tool__status {
+  background: #65f3d4;
+  box-shadow: 0 0 9px rgba(101, 243, 212, 0.7);
+}
+
+.run-tool.is-failed .run-tool__status {
+  background: #ff7d93;
+}
+
+.run-tool__copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.run-tool__copy strong,
+.run-tool__metrics strong {
+  color: #eef1ff;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+}
+
+.run-tool__copy span {
+  color: var(--muted, #9aa3c7);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-tool__metrics {
+  display: grid;
+  gap: 2px;
+  text-align: right;
+}
+
+.run-tool__metrics span {
+  color: var(--cyan, #34e7f0);
+  font-size: 9px;
+}
+
+@media (max-width: 760px) {
+  .run-tools__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---- Agent run: completion + ETA ---- */
 
 .run-progress {
@@ -2713,6 +2801,50 @@ body.play-body {
 .setting-card__field--budget input {
   min-height: 46px;
   width: 100%;
+}
+
+.budget-limit-control {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-top: auto;
+  width: 100%;
+}
+
+.budget-unlimited {
+  align-items: center;
+  background: rgba(4, 7, 18, 0.62);
+  border: 1px solid rgba(124, 143, 255, 0.28);
+  border-radius: 8px;
+  color: var(--muted, #9aa3c7);
+  display: inline-flex;
+  font-family: var(--font-display);
+  font-size: 10px;
+  gap: 6px;
+  justify-content: center;
+  letter-spacing: 0.04em;
+  min-height: 46px;
+  padding: 8px 12px;
+  transition: background 200ms ease, border-color 200ms ease, color 200ms ease, box-shadow 200ms ease;
+  white-space: nowrap;
+}
+
+.budget-unlimited span {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.budget-unlimited.is-selected {
+  background: rgba(52, 231, 240, 0.1);
+  border-color: rgba(52, 231, 240, 0.72);
+  box-shadow: inset 0 0 18px rgba(52, 231, 240, 0.06), 0 0 14px rgba(52, 231, 240, 0.12);
+  color: var(--cyan, #34e7f0);
+}
+
+.setting-card__field--budget input:disabled {
+  opacity: 0.38;
 }
 
 .docker-action {

@@ -56,6 +56,9 @@ function enrichedPathEnv() {
 
 const VIEW_NAMES = ["top", "top-diagonal", "diagonal", "side-diagonal", "side"];
 const MAX_LOCAL_MOVE_BUDGET = 100_000;
+const UNLIMITED_SEGMENT_MOVE_BUDGET = 500;
+const RUNNER_STARTUP_GRACE_MS = 15_000;
+const RUNNER_ACTIVITY_GRACE_MS = 120_000;
 const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9-]{4,80}$/i;
 const SERVABLE_RUN_FILES = new Set([
   "run.json",
@@ -94,6 +97,8 @@ function createAgentRunService({
   const codexSessionPaths = new Map();
   const primeResultsPaths = new Map();
   const tokenUsageCache = new Map();
+  const stableCodexCatalogPath = path.join(runsDir, ".codex-model-catalog.json");
+  let stableCodexCatalog;
   let claudeQueueOrder = Date.now() * 1000;
   let startingClaudeQueue = false;
 
@@ -219,6 +224,30 @@ function createAgentRunService({
     return true;
   }
 
+  function dockerRunAlive(runId) {
+    const containerId = runContainerId(runId);
+    if (!containerId) return false;
+    const result = spawnSync("docker", ["inspect", "--format", "{{.State.Running}}", containerId], {
+      encoding: "utf8",
+      env: enrichedPathEnv(),
+      timeout: 3000,
+      maxBuffer: 128 * 1024
+    });
+    return result.status === 0 && String(result.stdout || "").trim() === "true";
+  }
+
+  function runRecentlyActive(runId) {
+    const directory = runDirFor(runId);
+    const files = ["launcher.log", "agent-events.jsonl", "tool-activity.jsonl", "session.json"];
+    return files.some((name) => {
+      try {
+        return Date.now() - fs.statSync(path.join(directory, name)).mtimeMs < RUNNER_ACTIVITY_GRACE_MS;
+      } catch (_error) {
+        return false;
+      }
+    });
+  }
+
   // Runs created before per-run Claude mounts were introduced still keep their
   // native transcript inside the live container. Mirror it after each completed
   // maze action so those already-running sessions can also Continue losslessly.
@@ -341,7 +370,22 @@ function createAgentRunService({
   }
 
   function writeRunMeta(runId, meta) {
+    const previous = readRunMeta(runId);
+    if (
+      previous?.status === "running" &&
+      ["failed", "finished"].includes(meta?.status) &&
+      (
+        pidAlive(previous.pid) ||
+        (previous.container && dockerRunAlive(runId))
+      )
+    ) {
+      // Never let a stale process/exit observation overwrite visibly active
+      // work. The real child exit will retry after its PID/container and output
+      // stream are quiet; manual Stop uses its own stopping → stopped path.
+      return previous;
+    }
     fs.writeFileSync(runMetaPath(runId), `${JSON.stringify(meta, null, 2)}\n`, "utf8");
+    return meta;
   }
 
   function pidAlive(pid) {
@@ -392,13 +436,25 @@ function createAgentRunService({
   }
 
   function progressForRun(meta, turns) {
-    const total = Math.max(1, Math.floor(Number(meta.moves) || 1));
     const current = Math.max(0, Math.floor(Number(turns) || 0));
+    const elapsedMs = activeElapsedMs(meta);
+    const averageTurnMs = current > 0 ? elapsedMs / current : null;
+    if (meta.unlimited) {
+      return {
+        current,
+        total: null,
+        percent: null,
+        unlimited: true,
+        elapsed_ms: elapsedMs,
+        average_turn_ms: averageTurnMs == null ? null : Math.round(averageTurnMs),
+        eta_ms: null
+      };
+    }
+
+    const total = Math.max(1, Math.floor(Number(meta.moves) || 1));
     const terminalComplete = meta.status === "finished";
     const rawPercent = (Math.min(current, total) / total) * 100;
     const percent = terminalComplete ? 100 : Math.max(0, Math.min(100, rawPercent));
-    const elapsedMs = activeElapsedMs(meta);
-    const averageTurnMs = current > 0 ? elapsedMs / current : null;
     const etaMs = meta.status === "running" && averageTurnMs != null
       ? Math.max(0, Math.round(averageTurnMs * Math.max(0, total - current)))
       : null;
@@ -414,14 +470,21 @@ function createAgentRunService({
   }
 
   function autoContinueBudgetTarget(runId, meta) {
+    const unlimited = Boolean(meta?.unlimited);
     const target = Math.min(MAX_LOCAL_MOVE_BUDGET, Math.floor(Number(meta?.auto_continue_target) || 0));
-    if (!target || meta?.kind === "prime") return null;
+    if ((!unlimited && !target) || meta?.kind === "prime") return null;
 
     const turns = readActions(runId).length;
     const segmentStart = Math.max(0, Math.floor(Number(meta.segment_start_turns) || 0));
     const segmentBudget = Math.max(1, Math.floor(Number(meta.segment_move_budget) || Number(meta.moves) || 1));
     const exhaustedSegment = turns - segmentStart >= segmentBudget;
-    if (!exhaustedSegment || turns >= target) return null;
+    if (!unlimited && (!exhaustedSegment || turns >= target)) return null;
+
+    if (unlimited) {
+      const session = loadJson(path.join(runDirFor(runId), "session.json"), null);
+      const status = session?.lastStatus || session?.actions?.at?.(-1)?.status || null;
+      if (status?.game_won || status?.game_lost || status?.quit) return null;
+    }
 
     const conversationId = readConversationId(runId);
     if (
@@ -436,7 +499,7 @@ function createAgentRunService({
       continueLocalInPlace(
         runId,
         { ...meta, moves: turns },
-        target - turns,
+        unlimited ? UNLIMITED_SEGMENT_MOVE_BUDGET : target - turns,
         conversationId
       );
       return readRunMeta(runId);
@@ -451,6 +514,21 @@ function createAgentRunService({
       return meta;
     }
 
+    if (
+      ["failed", "finished"].includes(meta.status) &&
+      (pidAlive(meta.pid) || (meta.container && dockerRunAlive(runId)))
+    ) {
+      const { finished_at, exit_code, launch_error, queue_error, ...rest } = meta;
+      const revived = {
+        ...rest,
+        status: "running",
+        active_started_at: new Date().toISOString(),
+        active_elapsed_ms: Math.max(0, Number(meta.active_elapsed_ms) || 0)
+      };
+      writeRunMeta(runId, revived);
+      return revived;
+    }
+
     if (meta.status === "stopping" && !pidAlive(meta.pid) && !liveChildren.has(runId)) {
       const updated = terminalRunMeta(meta, "stopped", {
         exit_code: meta.exit_code ?? null,
@@ -461,7 +539,22 @@ function createAgentRunService({
       return updated;
     }
 
-    if (meta.status !== "running" || pidAlive(meta.pid) || liveChildren.has(runId)) {
+    if (
+      meta.status !== "running" ||
+      pidAlive(meta.pid) ||
+      liveChildren.has(runId) ||
+      (meta.container && dockerRunAlive(runId)) ||
+      runRecentlyActive(runId)
+    ) {
+      return meta;
+    }
+
+    // Detached children can briefly be absent from the process table while
+    // launch wrappers settle. The attached exit handler is authoritative in a
+    // live server; this recovery path is for genuinely orphaned metadata after
+    // a restart, so never fail a brand-new run on a single early probe.
+    const createdAt = Date.parse(meta.created_at || "");
+    if (Number.isFinite(createdAt) && Date.now() - createdAt < RUNNER_STARTUP_GRACE_MS) {
       return meta;
     }
 
@@ -1007,6 +1100,153 @@ function createAgentRunService({
     }
   }
 
+  function readJsonLineTail(filePath, maxBytes = 8 * 1024 * 1024) {
+    try {
+      const stat = fs.statSync(filePath);
+      if (!stat.size) return [];
+      const length = Math.min(stat.size, maxBytes);
+      const buffer = Buffer.alloc(length);
+      const fd = fs.openSync(filePath, "r");
+      try {
+        fs.readSync(fd, buffer, 0, length, stat.size - length);
+      } finally {
+        fs.closeSync(fd);
+      }
+      const lines = buffer.toString("utf8").split(/\r?\n/);
+      if (length < stat.size) lines.shift();
+      return lines.flatMap((line) => {
+        if (!line.trim()) return [];
+        try {
+          return [JSON.parse(line)];
+        } catch (_error) {
+          return [];
+        }
+      });
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  function shellActivityLabel(command) {
+    const text = String(command || "").replace(/^\S+\s+-[lc]+\s+/, "").replace(/["']/g, "").trim();
+    const script = text.match(/(?:^|[;&|]\s*|\s)(?:node|python\d*|ruby|bash|sh)\s+([^\s;&|]+\.(?:js|mjs|cjs|py|rb|sh))\b/i);
+    return {
+      label: script ? `Algorithm · ${path.basename(script[1])}` : "Shell",
+      detail: text.split("\n")[0].slice(0, 140)
+    };
+  }
+
+  function readToolActivity(runId, summary) {
+    if (summary.provider === "prime") return { active: [], recent: [], calls: 0, moves_tried: 0 };
+    const runDir = runDirFor(runId);
+    const mcpEntries = readJsonLineTail(path.join(runDir, "tool-activity.jsonl"), 4 * 1024 * 1024);
+    const events = readJsonLineTail(path.join(runDir, "agent-events.jsonl"));
+    const completed = mcpEntries.map((entry) => ({
+      id: entry.id,
+      label: String(entry.tool || "Maze tool").replace(/^maze_/, "Maze · ").replaceAll("_", " "),
+      detail: entry.action || entry.clone_id || "",
+      actor: entry.clone_id ? `worker · ${entry.clone_id}` : entry.actor || "lead",
+      started_at: entry.started_at,
+      completed_at: entry.completed_at,
+      duration_ms: Math.max(0, Number(entry.duration_ms) || 0),
+      status: entry.status || "completed",
+      moves_tried: Math.max(0, Number(entry.move_calls) || 0)
+    }));
+    const pending = new Map();
+    const providerRows = [];
+    const timedMoves = mcpEntries.filter((entry) => entry.tool === "maze_action" && entry.started_at);
+    const movesDuring = (startedAt, completedAt = new Date().toISOString()) => {
+      const start = Date.parse(startedAt || "");
+      const end = Date.parse(completedAt || "");
+      if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
+      return timedMoves.filter((entry) => {
+        const time = Date.parse(entry.started_at);
+        return Number.isFinite(time) && time >= start && time <= end;
+      }).length;
+    };
+
+    if (summary.provider === "codex") {
+      events.forEach((event) => {
+        const item = event.item;
+        if (!item || !["command_execution", "collab_tool_call"].includes(item.type) || !event._mazebench_received_at) return;
+        const id = String(item.id || "");
+        if (!id) return;
+        if (event.type === "item.started") {
+          const shell = item.type === "command_execution" ? shellActivityLabel(item.command) : null;
+          pending.set(id, {
+            id: `provider-${id}`,
+            label: shell?.label || `Subagent · ${String(item.tool || "activity").replaceAll("_", " ")}`,
+            detail: shell?.detail || (item.type === "collab_tool_call" ? "Provider worker" : ""),
+            actor: "provider",
+            started_at: event._mazebench_received_at,
+            status: "running"
+          });
+        } else if (event.type === "item.completed") {
+          const row = pending.get(id);
+          if (!row) return;
+          pending.delete(id);
+          const completedAt = event._mazebench_received_at;
+          providerRows.push({
+            ...row,
+            completed_at: completedAt,
+            duration_ms: Math.max(0, Date.parse(completedAt) - Date.parse(row.started_at)),
+            status: item.status === "failed" ? "failed" : "completed",
+            moves_tried: movesDuring(row.started_at, completedAt)
+          });
+        }
+      });
+    } else if (summary.provider === "claude") {
+      events.forEach((event) => {
+        const timestamp = event._mazebench_received_at;
+        if (!timestamp) return;
+        if (event.type === "assistant" && Array.isArray(event.message?.content)) {
+          event.message.content.forEach((block) => {
+            if (block?.type !== "tool_use" || !block.id || /^mcp__mazebench/.test(block.name)) return;
+            const shell = block.name === "Bash" ? shellActivityLabel(block.input?.command) : null;
+            pending.set(block.id, {
+              id: `provider-${block.id}`,
+              label: shell?.label || (["Task", "Agent"].includes(block.name) ? "Subagent" : block.name || "Tool"),
+              detail: shell?.detail || (["Task", "Agent"].includes(block.name)
+                ? "Provider worker"
+                : String(block.input?.description || block.input?.file_path || "").slice(0, 140)),
+              actor: "provider",
+              started_at: timestamp,
+              status: "running"
+            });
+          });
+        } else if (event.type === "user" && Array.isArray(event.message?.content)) {
+          event.message.content.forEach((block) => {
+            if (block?.type !== "tool_result" || !pending.has(block.tool_use_id)) return;
+            const row = pending.get(block.tool_use_id);
+            pending.delete(block.tool_use_id);
+            providerRows.push({
+              ...row,
+              completed_at: timestamp,
+              duration_ms: Math.max(0, Date.parse(timestamp) - Date.parse(row.started_at)),
+              status: block.is_error ? "failed" : "completed",
+              moves_tried: movesDuring(row.started_at, timestamp)
+            });
+          });
+        }
+      });
+    }
+
+    const active = [...pending.values()].map((row) => ({
+      ...row,
+      duration_ms: Math.max(0, Date.now() - Date.parse(row.started_at)),
+      moves_tried: movesDuring(row.started_at)
+    }));
+    const recent = [...completed, ...providerRows]
+      .sort((left, right) => Date.parse(right.completed_at || right.started_at) - Date.parse(left.completed_at || left.started_at))
+      .slice(0, 40);
+    return {
+      active,
+      recent,
+      calls: completed.length + providerRows.length + active.length,
+      moves_tried: completed.reduce((sum, row) => sum + row.moves_tried, 0)
+    };
+  }
+
   function fileStamp(filePath) {
     if (!filePath || !fs.existsSync(filePath)) return "-";
 
@@ -1523,6 +1763,7 @@ function createAgentRunService({
       log_chunk: log.chunk,
       log_offset: log.offset,
       token_usage: readTokenUsage(runId, summary),
+      tool_activity: readToolActivity(runId, summary),
       reasoning: readReasoning(runId, summary.model),
       swarm_views: summary.swarm ? readSwarmViews(runId) : [],
       vision_frame_url: summary.mode === "vision" ? latestVisionFrame(runId) : null,
@@ -1531,8 +1772,10 @@ function createAgentRunService({
   }
 
   // ---- provider model catalogs ------------------------------------------
-  // codex: the Codex app caches its model catalog on disk (rich metadata:
-  //        display names, reasoning levels, fast tier availability).
+  // codex: read the Codex app's disk catalog on every request, then merge it
+  //        into a last-known-good snapshot. The app can briefly rewrite its
+  //        cache with an older/subset catalog; that must not make newly exposed
+  //        models disappear from Maze Bench.
   // claude: help aliases plus the installed /model picker's static metadata.
   // prime: `prime inference models --output json` (needs `prime login`);
   //        results are cached and errors surface as a hint instead of a 500.
@@ -1542,6 +1785,59 @@ function createAgentRunService({
 
   function modelCatalogCheckedAt() {
     return new Date().toISOString();
+  }
+
+  function readStableCodexCatalog() {
+    if (stableCodexCatalog !== undefined) return stableCodexCatalog;
+    const saved = loadJson(stableCodexCatalogPath, null);
+    stableCodexCatalog = saved && Array.isArray(saved.models) ? saved : null;
+    return stableCodexCatalog;
+  }
+
+  function mergeStableCodexCatalog(candidate) {
+    const previous = readStableCodexCatalog();
+    if (!candidate.models.length) return previous || candidate;
+    const snapshot = { ...candidate };
+    delete snapshot.checked_at;
+    if (!previous?.models?.length) {
+      stableCodexCatalog = snapshot;
+    } else {
+      const currentById = new Map(snapshot.models.map((model) => [model.id, model]));
+      const previousById = new Map(previous.models.map((model) => [model.id, model]));
+      const introducedIds = snapshot.models
+        .map((model) => model.id)
+        .filter((id) => !previousById.has(id));
+      const candidateIsRegression = previous.models.some((model) => !currentById.has(model.id));
+      const orderedIds = introducedIds.length
+        ? [...snapshot.models.map((model) => model.id), ...previous.models.map((model) => model.id)]
+        : previous.models.map((model) => model.id);
+      const seen = new Set();
+      const models = orderedIds
+        .filter((id) => id && !seen.has(id) && seen.add(id))
+        // If this is a subset regression, preserve the richer metadata too
+        // (reasoning levels and fast-tier support), not only the model ids.
+        .map((id) => candidateIsRegression
+          ? previousById.get(id) || currentById.get(id)
+          : currentById.get(id) || previousById.get(id))
+        .filter(Boolean);
+
+      stableCodexCatalog = {
+        ...snapshot,
+        models,
+        updated_at: candidateIsRegression
+          ? previous.updated_at || snapshot.updated_at
+          : snapshot.updated_at || previous.updated_at
+      };
+    }
+
+    if (JSON.stringify(stableCodexCatalog) !== JSON.stringify(previous)) {
+      ensureDirectory(runsDir);
+      const temporary = `${stableCodexCatalogPath}.${process.pid}.tmp`;
+      fs.writeFileSync(temporary, `${JSON.stringify(stableCodexCatalog, null, 2)}\n`, "utf8");
+      fs.renameSync(temporary, stableCodexCatalogPath);
+    }
+
+    return stableCodexCatalog;
   }
 
   function codexModelCatalog() {
@@ -1564,16 +1860,23 @@ function createAgentRunService({
       /* loadCodexModels reports the missing cache below */
     }
 
-    return {
+    const candidate = {
       models,
-      source: "Codex model cache",
+      source: "Codex live catalog",
       updated_at: updatedAt,
       checked_at: modelCatalogCheckedAt(),
       // The Codex app orders its catalog strongest-first.
       default_model_id: models[0]?.id || "",
       note: models.length
-        ? "This is the model list available to the installed Codex app. Refresh after Codex receives a catalog update."
+        ? "This is the model list available to the installed Codex app."
         : "No Codex model cache found (~/.codex/models_cache.json) — run the Codex app once, or type a model id."
+    };
+    const stable = mergeStableCodexCatalog(candidate);
+    return {
+      ...stable,
+      checked_at: candidate.checked_at,
+      default_model_id: stable.models[0]?.id || "",
+      note: stable.models.length ? candidate.note : stable.note
     };
   }
 
@@ -1843,18 +2146,19 @@ function createAgentRunService({
       throw new Error(`Unknown provider "${provider}".`);
     }
 
+    // Codex already maintains its own host-side cache. Always inspect it so
+    // Maze Bench cannot add another ten minutes of staleness on top.
+    if (normalized === "codex") {
+      return codexModelCatalog();
+    }
+
     const cached = fresh ? null : providerModelCache.get(normalized);
 
     if (cached && Date.now() < cached.expiresAt) {
       return cached.value;
     }
 
-    const value =
-      normalized === "codex"
-        ? codexModelCatalog()
-        : normalized === "claude"
-          ? claudeModelCatalog()
-          : primeModelCatalog();
+    const value = normalized === "claude" ? claudeModelCatalog() : primeModelCatalog();
     const ttl = value.models.length ? PROVIDER_MODEL_TTL_MS : PROVIDER_MODEL_ERROR_TTL_MS;
 
     providerModelCache.set(normalized, { value, expiresAt: Date.now() + ttl });
@@ -1884,7 +2188,10 @@ function createAgentRunService({
       throw new Error(`"${levelId}" is not a level of ${game.name}.`);
     }
 
-    const moves = Math.max(1, Math.min(MAX_LOCAL_MOVE_BUDGET, Number(params.moves) || 20));
+    const unlimited = params.unlimited === true || params.unlimited === "true";
+    const moves = unlimited
+      ? UNLIMITED_SEGMENT_MOVE_BUDGET
+      : Math.max(1, Math.min(MAX_LOCAL_MOVE_BUDGET, Number(params.moves) || 20));
     const gems =
       game.id === "maze"
         ? Math.max(1, Math.min(1000, Number(params.gems) || 100))
@@ -1914,6 +2221,7 @@ function createAgentRunService({
       `game=${game.id}`,
       `level=${levelId}`,
       `moves=${moves}`,
+      `unlimited=${unlimited ? "true" : "false"}`,
       `gems=${gems}`,
       `view=${view}`,
       `mode=${String(params.mode) === "vision" ? "vision" : "text"}`,
@@ -2003,7 +2311,7 @@ function createAgentRunService({
       args.push(`resume=${String(params.resume_id)}`);
     }
 
-    return { args, model, levelId, moves, gems, view, toolUse, swarm };
+    return { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited };
   }
 
   // Prime runs go through scripts/maze-prime-run.js, which runs the v1 taskset
@@ -2099,7 +2407,7 @@ function createAgentRunService({
         };
       } else {
         const game = normalizedGameForRun(params.game_id);
-        const { args, model, levelId, moves, gems, view, toolUse, swarm } = buildLocalRunArgs(runId, params, game);
+        const { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited } = buildLocalRunArgs(runId, params, game);
         const requestedModelName = String(params.model_name || "");
         const exactModelName = model === "claude"
           ? resolveClaudeCatalogModelId(requestedModelName)
@@ -2133,6 +2441,9 @@ function createAgentRunService({
           gem_total: gemTotal,
           room_total: roomTotal,
           moves,
+          unlimited,
+          segment_start_turns: readActions(runId).length,
+          segment_move_budget: moves,
           gems,
           view,
           mode: String(params.mode) === "vision" ? "vision" : "text",
@@ -2367,6 +2678,7 @@ function createAgentRunService({
       level_id: meta.level_id,
       mode: meta.mode,
       reasoning: meta.reasoning || "",
+      unlimited: Boolean(meta.unlimited),
       container: meta.container !== false,
       video: meta.video !== false,
       tools: Boolean(meta.tools),
@@ -2490,12 +2802,14 @@ function createAgentRunService({
     const next = {
       ...meta,
       moves: target,
+      unlimited: false,
       auto_continue_target: target,
       segment_start_turns: Math.max(0, Math.floor(Number(meta.segment_start_turns) || 0)),
       segment_move_budget: Math.max(1, Math.floor(Number(meta.segment_move_budget) || Number(meta.moves) || 20)),
       launch_params: {
         ...(meta.launch_params || reconstructParams(meta)),
-        moves: target
+        moves: target,
+        unlimited: false
       }
     };
     writeRunMeta(runId, next);
@@ -2674,10 +2988,13 @@ function createAgentRunService({
       throw new Error(`Unknown run "${runId}".`);
     }
 
+    const terminalButAlive = !["running", "stopping", "paused"].includes(meta.status) &&
+      (pidAlive(meta.pid) || (meta.container && dockerRunAlive(runId)));
     if (
       meta.status !== "running" &&
       meta.status !== "stopping" &&
-      !(meta.status === "paused" && meta.pause_reason === "manual")
+      !(meta.status === "paused" && meta.pause_reason === "manual") &&
+      !terminalButAlive
     ) {
       if (meta.status === "stopped") {
         // Stop is idempotent and doubles as a cleanup sweep. This matters when
