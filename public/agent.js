@@ -35,6 +35,7 @@
     prime: "Prime Intellect"
   };
   const RUN_STATUS_LABELS = {
+    waiting: "Waiting",
     running: "Running",
     paused: "Paused",
     stopping: "Stopping",
@@ -1142,6 +1143,7 @@
   }
 
   function runProgressLabel(run) {
+    if (run.status === "waiting") return "Waiting";
     const eta = Number(run.progress?.eta_ms);
     if (run.status === "finished") return "Complete";
     if (run.status === "paused") return "Paused";
@@ -1156,7 +1158,7 @@
 
   function runStatusClass(status) {
     if (status === "running" || status === "stopping") return "agent-chip--running";
-    if (status === "paused") return "agent-chip--paused";
+    if (status === "waiting" || status === "paused") return "agent-chip--paused";
     if (status === "finished") return "agent-chip--done";
     return "agent-chip--failed";
   }
@@ -1359,7 +1361,7 @@
       document.getElementById("runs-prev").disabled = (payload.page || 1) <= 1;
       document.getElementById("runs-next").disabled = (payload.page || 1) >= pages;
 
-      const active = payload.active || runs.some((run) => run.status === "running" || run.status === "stopping");
+      const active = payload.active || runs.some((run) => ["waiting", "running", "stopping"].includes(run.status));
       clearTimeout(refreshTimer);
       refreshTimer = setTimeout(refreshRuns, active ? 3000 : 15000);
     } catch (error) {

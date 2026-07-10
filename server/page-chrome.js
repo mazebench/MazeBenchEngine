@@ -81,8 +81,10 @@ function topbar({ rightHtml = "", extraNavHtml = "", extraHtml = "" } = {}) {
         <a class="nav-link" href="/agent">Agent</a>
         ${extraNavHtml}
       </nav>
-      ${extraHtml}
-      <div class="account-actions" aria-label="Account">${rightHtml}</div>
+      <div class="topbar-end">
+        ${extraHtml}
+        <div class="account-actions" aria-label="Account">${rightHtml}</div>
+      </div>
       <script>${TOPBAR_NAV_SCRIPT}</script>
     </header>`;
 }

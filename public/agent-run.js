@@ -114,7 +114,9 @@
     const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
     const eta = Number(progress.eta_ms);
     const etaLabel =
-      run.status === "finished"
+      run.status === "waiting"
+        ? "Waiting"
+        : run.status === "finished"
         ? "Complete"
         : run.status === "paused"
           ? "Paused"
@@ -583,6 +585,9 @@
       } else if (waitingForVideo) {
         setStatus("Run finished — rendering the replay video…");
         state.timer = setTimeout(poll, 2000);
+      } else if (progress.run.status === "waiting") {
+        setStatus("Waiting for the active Claude Code run to finish.");
+        state.timer = setTimeout(poll, 3000);
       } else if (progress.run.status === "paused") {
         setStatus(
           progress.run.pause_reason === "quota"

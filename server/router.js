@@ -174,10 +174,18 @@ function createRequestRouter({
       if (request.method === "POST") {
         const payload = await readJsonBody(request);
         const runs = agentRuns.launchRuns(payload);
+        const waiting = runs.filter((run) => run.status === "waiting").length;
         sendJson(response, 201, {
           run: runs[0],
           runs,
-          message: runs.length === 1 ? `Launched run ${runs[0].id}.` : `Launched ${runs.length} runs.`
+          message:
+            runs.length === 1
+              ? runs[0].status === "waiting"
+                ? `Queued run ${runs[0].id}.`
+                : `Launched run ${runs[0].id}.`
+              : waiting
+                ? `Launched ${runs.length - waiting} run${runs.length - waiting === 1 ? "" : "s"}; ${waiting} waiting.`
+                : `Launched ${runs.length} runs.`
         });
         return;
       }

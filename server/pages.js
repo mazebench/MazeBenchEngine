@@ -1,6 +1,14 @@
 const { escapeHtml, serializeForScript } = require("./support");
 const { accountActionsHtml, pageHead, siteFooter, topbar } = require("./page-chrome");
 
+// Gamepad 2, Blocks, and Bot from Lucide Icons (ISC License).
+// https://lucide.dev/
+const HOME_MODE_ICONS = Object.freeze({
+  play: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><line x1="6" x2="10" y1="11" y2="11"></line><line x1="8" x2="8" y1="9" y2="13"></line><line x1="15" x2="15.01" y1="12" y2="12"></line><line x1="18" x2="18.01" y1="10" y2="10"></line><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"></path></svg>`,
+  build: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"></path><rect x="14" y="2" width="8" height="8" rx="1"></rect></svg>`,
+  agent: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path></svg>`
+});
+
 // Page renderers. The chrome (topbar, footer, fonts, site.css) is ported from
 // the MazeJam repo so the local site looks exactly like the hosted one:
 //   - site pages load /site.css + /build-theme.css + /local-site.css
@@ -47,7 +55,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css">
-    <link rel="stylesheet" href="/local-site.css?v=20260709-agent-redesign-43">
+    <link rel="stylesheet" href="/local-site.css?v=20260709-home-icons-48">
     ${extraHeadHtml}`
     })}
   </head>
@@ -122,23 +130,22 @@ function createPageRenderer({
         </section>`
       : "";
 
-    const modeCard = (href, title, copy) => `<a class="world-card mode-card-link" href="${href}">
+    const modeCard = (href, mode, title, copy) => `<a class="world-card mode-card-link mode-card-link--${mode}" href="${href}">
         <div class="card-body">
-          <h3 class="card-title">${title}</h3>
-          <p class="card-by">${copy}</p>
+          <span class="mode-card-icon" aria-hidden="true">${HOME_MODE_ICONS[mode]}</span>
+          <div class="mode-card-copy">
+            <h3 class="card-title">${title}</h3>
+            <p class="card-by">${copy}</p>
+          </div>
         </div>
       </a>`;
 
     return renderSitePage({
       title: "Maze Bench",
-      main: `<div class="page-head">
-          <h1>Maze Bench</h1>
-          <p class="page-sub">Ice-maze puzzles, a world editor, and a benchmark arena for coding agents — running locally.</p>
-        </div>
-        <div class="world-grid">
-          ${modeCard("/play", "Play", "Play the master world, your local drafts, or worlds from mazebench.com.")}
-          ${modeCard("/build", "Build", "Make and save worlds locally, edit the master world, and sync drafts with your account.")}
-          ${modeCard("/agent", "Agent", "Run Codex, Claude Code, or Prime Verifiers on any world and watch live.")}
+      main: `<div class="world-grid home-mode-grid">
+          ${modeCard("/play", "play", "Play", "Play the official Maze Bench environment or your local drafts.")}
+          ${modeCard("/build", "build", "Build", "Create and save worlds locally, edit the official Maze Bench environment, or download published worlds from mazebench.com.")}
+          ${modeCard("/agent", "agent", "Agent", "Run Codex, Claude Code, or Prime Verifiers on any world and watch live.")}
         </div>
         ${otherGamesSection}`
     });
@@ -252,7 +259,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css">
-    <link rel="stylesheet" href="/local-site.css?v=20260709-agent-redesign-43">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260709-home-icons-48">`;
   }
 
   function renderPlayPage(game, level) {
@@ -364,7 +371,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    <link rel="stylesheet" href="/local-site.css?v=20260709-agent-redesign-43">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260709-home-icons-48">`;
   }
 
   function renderAuthorPage(game, level) {
@@ -905,7 +912,7 @@ function createPageRenderer({
           </div>
         </section>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
-        <script src="/agent.js?v=20260709-agent-redesign-43" defer></script>`
+        <script src="/agent.js?v=20260709-agent-redesign-44" defer></script>`
     });
   }
 
@@ -1016,7 +1023,7 @@ function createPageRenderer({
           <pre id="run-log" class="agent-log"></pre>
         </section>
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)};</script>
-        <script src="/agent-run.js?v=20260709-agent-redesign-44" defer></script>`
+        <script src="/agent-run.js?v=20260709-agent-redesign-45" defer></script>`
     });
   }
 

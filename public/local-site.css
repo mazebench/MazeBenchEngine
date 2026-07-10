@@ -25,14 +25,139 @@
 }
 
 .mode-card-link {
+  --mode-accent: 52, 231, 240;
+  background:
+    radial-gradient(circle at 50% 24%, rgba(var(--mode-accent), 0.11), transparent 42%),
+    var(--panel);
   color: inherit;
+  min-height: 190px;
   text-decoration: none;
+}
+
+.mode-card-link--build {
+  --mode-accent: 139, 123, 255;
+}
+
+.mode-card-link--agent {
+  --mode-accent: 101, 243, 212;
+}
+
+.home-mode-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-inline: auto;
+  max-width: 1120px;
+  width: 100%;
+}
+
+.mode-card-link .card-body {
+  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  justify-items: center;
+  padding: 24px;
+  row-gap: 14px;
+  text-align: center;
+}
+
+.mode-card-copy {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  min-width: 0;
 }
 
 .mode-card-link .card-title {
   font-family: var(--font-display);
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.mode-card-icon {
+  align-items: center;
+  background: rgba(var(--mode-accent), 0.08);
+  border: 1px solid rgba(var(--mode-accent), 0.44);
+  border-radius: 15px;
+  box-shadow: 0 0 24px rgba(var(--mode-accent), 0.12), inset 0 0 18px rgba(var(--mode-accent), 0.05);
+  color: rgb(var(--mode-accent));
+  display: inline-flex;
+  height: 58px;
+  justify-content: center;
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  width: 58px;
+}
+
+.mode-card-icon svg {
+  height: 30px;
+  width: 30px;
+}
+
+.mode-card-link:hover .mode-card-icon,
+.mode-card-link:focus-visible .mode-card-icon {
+  border-color: rgba(var(--mode-accent), 0.9);
+  box-shadow: 0 0 30px rgba(var(--mode-accent), 0.28), inset 0 0 20px rgba(var(--mode-accent), 0.09);
+  transform: translateY(-2px) scale(1.045);
+}
+
+.mode-card-link:hover,
+.mode-card-link:focus-visible {
+  border-color: rgba(var(--mode-accent), 0.68);
+  box-shadow: 0 0 26px rgba(var(--mode-accent), 0.14), 0 14px 34px rgba(0, 0, 0, 0.4);
+}
+
+/* Equal side columns keep the nav centered on the viewport regardless of the
+   brand width, account state, or play-page controls. */
+.topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+.topbar .brand-link {
+  justify-self: start;
+  min-width: 0;
+}
+
+.topbar .topbar-nav {
+  justify-self: center;
+}
+
+.topbar-end {
+  align-items: center;
+  display: flex;
+  justify-content: flex-end;
+  justify-self: stretch;
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .mode-card-link .card-body {
+    padding: 20px;
+    row-gap: 12px;
+  }
+
+  .mode-card-icon {
+    border-radius: 13px;
+    height: 50px;
+    width: 50px;
+  }
+
+  .mode-card-icon svg {
+    height: 26px;
+    width: 26px;
+  }
+}
+
+@media (max-width: 720px) {
+  .home-mode-grid {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 420px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-card-icon {
+    transition: none;
+  }
 }
 
 .form-grid {

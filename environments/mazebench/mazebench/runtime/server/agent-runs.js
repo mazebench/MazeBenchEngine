@@ -91,6 +91,8 @@ function createAgentRunService({
   const codexSessionPaths = new Map();
   const primeResultsPaths = new Map();
   const tokenUsageCache = new Map();
+  let claudeQueueOrder = Date.now() * 1000;
+  let startingClaudeQueue = false;
 
   // Container mode needs Docker installed AND its daemon running. Prefer the
   // shared (cached) environment probe; fall back to a direct check otherwise.
@@ -390,7 +392,118 @@ function createAgentRunService({
         }
       : terminalRunMeta(meta, succeeded ? "finished" : "failed", { finished_at: meta.finished_at || now });
     writeRunMeta(runId, updated);
+    if (meta.model === "claude") {
+      setImmediate(() => startNextWaitingClaudeRun());
+    }
     return updated;
+  }
+
+  function allocateClaudeQueueOrder() {
+    claudeQueueOrder = Math.max(claudeQueueOrder + 1, Date.now() * 1000);
+    return claudeQueueOrder;
+  }
+
+  function runMetaEntries() {
+    if (!fs.existsSync(runsDir)) return [];
+
+    return fs
+      .readdirSync(runsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && RUN_ID_PATTERN.test(entry.name))
+      .map((entry) => ({ id: entry.name, meta: readRunMeta(entry.name) }))
+      .filter((entry) => entry.meta);
+  }
+
+  function claudeSlotOccupied(excludeRunId = "") {
+    return runMetaEntries().some((entry) => {
+      if (entry.id === excludeRunId || entry.meta.model !== "claude") return false;
+      const meta = entry.meta.status === "running" ? finalizeStatus(entry.id, entry.meta) : entry.meta;
+      return ["running", "paused", "stopping"].includes(meta.status);
+    });
+  }
+
+  function waitingClaudeRuns(excludeRunId = "") {
+    return runMetaEntries()
+      .filter((entry) => entry.id !== excludeRunId && entry.meta.model === "claude" && entry.meta.status === "waiting")
+      .sort((left, right) => {
+        const orderDifference = Number(left.meta.queue_order || 0) - Number(right.meta.queue_order || 0);
+        return orderDifference || String(left.meta.created_at || "").localeCompare(String(right.meta.created_at || ""));
+      });
+  }
+
+  function queuedLocalRunMeta(meta, args, extras = {}) {
+    const now = new Date().toISOString();
+    return {
+      ...meta,
+      ...extras,
+      status: "waiting",
+      pid: null,
+      queued_args: args,
+      queued_at: now,
+      queue_order: allocateClaudeQueueOrder(),
+      active_started_at: null,
+      exit_code: undefined,
+      finished_at: undefined,
+      pause_reason: undefined,
+      pause_message: undefined,
+      paused_at: undefined
+    };
+  }
+
+  function startWaitingClaudeRun(runId) {
+    const meta = readRunMeta(runId);
+    if (!meta || meta.model !== "claude" || meta.status !== "waiting") return null;
+
+    const args = Array.isArray(meta.queued_args) ? meta.queued_args : [];
+    if (!args.length) {
+      writeRunMeta(runId, terminalRunMeta(meta, "failed", { queue_error: "Queued launch arguments are missing." }));
+      setImmediate(() => startNextWaitingClaudeRun());
+      return summarizeRun(runId);
+    }
+
+    const logFd = fs.openSync(path.join(runDirFor(runId), "launcher.log"), "a");
+    let child;
+    try {
+      child = spawn(process.execPath, [runnerScript, ...args], {
+        cwd: rootDir,
+        detached: true,
+        env: enrichedPathEnv(),
+        stdio: ["ignore", logFd, logFd]
+      });
+    } catch (error) {
+      writeRunMeta(
+        runId,
+        terminalRunMeta(meta, "failed", { queue_error: error instanceof Error ? error.message : String(error) })
+      );
+      setImmediate(() => startNextWaitingClaudeRun());
+      return summarizeRun(runId);
+    } finally {
+      fs.closeSync(logFd);
+    }
+
+    const startedAt = new Date().toISOString();
+    writeRunMeta(runId, {
+      ...meta,
+      status: "running",
+      pid: child.pid,
+      queue_started_at: startedAt,
+      active_started_at: startedAt,
+      active_elapsed_ms: activeElapsedMs(meta)
+    });
+    attachRunChild(runId, child);
+    return summarizeRun(runId);
+  }
+
+  function startNextWaitingClaudeRun() {
+    if (startingClaudeQueue) return null;
+    startingClaudeQueue = true;
+
+    try {
+      if (claudeSlotOccupied()) return null;
+      const next = waitingClaudeRuns()[0];
+      return next ? startWaitingClaudeRun(next.id) : null;
+    } finally {
+      startingClaudeQueue = false;
+    }
   }
 
   function readActions(runId, afterTurn = 0) {
@@ -689,7 +802,7 @@ function createAgentRunService({
 
     const providers = [...new Set(all.map((run) => run.provider).filter(Boolean))].sort();
     const models = [...new Set(all.map((run) => run.model_name).filter(Boolean))].sort();
-    const standardStatuses = ["running", "paused", "stopping", "stopped", "finished", "failed"];
+    const standardStatuses = ["waiting", "running", "paused", "stopping", "stopped", "finished", "failed"];
     const extraStatuses = [...new Set(all.map((run) => run.status).filter(Boolean))]
       .filter((value) => !standardStatuses.includes(value))
       .sort();
@@ -740,7 +853,7 @@ function createAgentRunService({
       providers,
       models,
       statuses,
-      active: all.some((run) => run.status === "running" || run.status === "stopping")
+      active: all.some((run) => ["waiting", "running", "stopping"].includes(run.status))
     };
   }
 
@@ -1712,18 +1825,21 @@ function createAgentRunService({
         const gemTotal = buildWorlds.countWorldGems(game);
         const roomTotal = game.worldMap?.levels?.length || 0;
 
-        child = spawn(process.execPath, [runnerScript, ...args], {
-          cwd: rootDir,
-          detached: true,
-          env: enrichedPathEnv(),
-          stdio: ["ignore", logFd, logFd]
-        });
+        const shouldWait = model === "claude" && (claudeSlotOccupied() || waitingClaudeRuns().length > 0);
+        if (!shouldWait) {
+          child = spawn(process.execPath, [runnerScript, ...args], {
+            cwd: rootDir,
+            detached: true,
+            env: enrichedPathEnv(),
+            stdio: ["ignore", logFd, logFd]
+          });
+        }
         meta = {
           id: runId,
           kind: "local",
           created_at: new Date().toISOString(),
-          status: "running",
-          pid: child.pid,
+          status: shouldWait ? "waiting" : "running",
+          pid: child?.pid || null,
           command: ["node", "scripts/maze-agent-local.js", ...args].join(" "),
           model,
           model_name: exactModelName,
@@ -1748,6 +1864,9 @@ function createAgentRunService({
             ? "run-dir"
             : "cli"
         };
+        if (shouldWait) {
+          meta = queuedLocalRunMeta(meta, args);
+        }
       }
     } catch (error) {
       fs.closeSync(logFd);
@@ -1756,10 +1875,11 @@ function createAgentRunService({
     }
 
     fs.closeSync(logFd);
-    meta.active_started_at = meta.created_at;
+    meta.active_started_at = child ? meta.created_at : null;
     meta.active_elapsed_ms = 0;
-    attachRunChild(runId, child);
     writeRunMeta(runId, meta);
+    if (child) attachRunChild(runId, child);
+    else startNextWaitingClaudeRun();
     return summarizeRun(runId);
   }
 
@@ -1782,23 +1902,17 @@ function createAgentRunService({
         return;
       }
 
+      let updated;
       if (code === 0) {
-        writeRunMeta(runId, terminalRunMeta(current, "finished", { exit_code: code }));
-        return;
-      }
-
-      if (current.status === "stopping") {
-        writeRunMeta(runId, terminalRunMeta(current, "stopped", { exit_code: code }));
-        return;
-      }
-
-      // Non-zero exit that isn't a user stop: if it's an out-of-funds/credits/
-      // usage error, auto-pause (resumable) rather than fail it outright.
-      const quota = detectQuotaPause(runId);
-      const now = new Date().toISOString();
-      writeRunMeta(
-        runId,
-        quota
+        updated = terminalRunMeta(current, "finished", { exit_code: code });
+      } else if (current.status === "stopping") {
+        updated = terminalRunMeta(current, "stopped", { exit_code: code });
+      } else {
+        // Non-zero exit that isn't a user stop: if it's an out-of-funds/credits/
+        // usage error, auto-pause (resumable) rather than fail it outright.
+        const quota = detectQuotaPause(runId);
+        const now = new Date().toISOString();
+        updated = quota
           ? {
               ...current,
               status: "paused",
@@ -1809,11 +1923,20 @@ function createAgentRunService({
               active_elapsed_ms: activeElapsedMs(current, Date.parse(now)),
               active_started_at: null
             }
-          : terminalRunMeta(current, "failed", { exit_code: code, finished_at: now })
-      );
+          : terminalRunMeta(current, "failed", { exit_code: code, finished_at: now });
+      }
+      writeRunMeta(runId, updated);
+      if (current.model === "claude") startNextWaitingClaudeRun();
     });
-    child.on("error", () => {
+    child.on("error", (error) => {
       liveChildren.delete(runId);
+      const current = readRunMeta(runId);
+      if (!current || current.status === "paused") return;
+      writeRunMeta(
+        runId,
+        terminalRunMeta(current, "failed", { launch_error: error instanceof Error ? error.message : String(error) })
+      );
+      if (current.model === "claude") startNextWaitingClaudeRun();
     });
   }
 
@@ -1824,16 +1947,10 @@ function createAgentRunService({
     return rest;
   }
 
-  // Launch N runs of the same config at once. Claude Code can't safely run
-  // multiple concurrent instances (one login / one sandbox), so it's capped at 1.
+  // Launch N runs of the same config at once. Claude Code runs after the first
+  // are persisted as FIFO waiters and started one at a time.
   function launchRuns(params = {}) {
-    const kind = String(params.kind || "local");
-    const model = String(params.model || "").toLowerCase();
-    let count = Math.max(1, Math.min(8, Math.floor(Number(params.count) || 1)));
-
-    if (kind === "local" && model === "claude") {
-      count = 1;
-    }
+    const count = Math.max(1, Math.min(8, Math.floor(Number(params.count) || 1)));
 
     const runs = [];
     for (let index = 0; index < count; index += 1) {
@@ -2006,6 +2123,18 @@ function createAgentRunService({
     const params = meta.launch_params || reconstructParams(meta);
     const game = normalizedGameForRun(params.game_id);
     const { args } = buildLocalRunArgs(runId, { ...params, moves: add, resume_id: conversationId }, game);
+    const nextMeta = {
+      ...meta,
+      moves: (Number(meta.moves) || 0) + add,
+      continued: (meta.continued || 0) + 1,
+      command: ["node", "scripts/maze-agent-local.js", ...args].join(" ")
+    };
+
+    if (meta.model === "claude" && (claudeSlotOccupied(runId) || waitingClaudeRuns(runId).length > 0)) {
+      writeRunMeta(runId, queuedLocalRunMeta(nextMeta, args));
+      startNextWaitingClaudeRun();
+      return summarizeRun(runId);
+    }
 
     const logFd = fs.openSync(path.join(runDir, "launcher.log"), "a");
     let child;
@@ -2022,12 +2151,9 @@ function createAgentRunService({
     }
 
     writeRunMeta(runId, {
-      ...meta,
+      ...nextMeta,
       status: "running",
       pid: child.pid,
-      moves: (Number(meta.moves) || 0) + add,
-      continued: (meta.continued || 0) + 1,
-      command: ["node", "scripts/maze-agent-local.js", ...args].join(" "),
       exit_code: undefined,
       finished_at: undefined,
       pause_reason: undefined,
@@ -2170,7 +2296,7 @@ function createAgentRunService({
 
     // Remove the daemon-owned container first; killing only the attached docker
     // client can otherwise leave the agent running after its card disappears.
-    if (meta?.container) {
+    if (meta?.container && meta.status !== "waiting") {
       try {
         dockerRunControl(runId, ["rm", "-f"], "delete", { required: false });
       } catch (_error) {
@@ -2201,6 +2327,7 @@ function createAgentRunService({
     stopLegacyClaudeSnapshots(runId);
     stopLiveRenderer(runId);
     fs.rmSync(runDir, { recursive: true, force: true });
+    if (meta?.model === "claude") startNextWaitingClaudeRun();
     return { id: runId, deleted: true };
   }
 
@@ -2255,6 +2382,8 @@ function createAgentRunService({
     const filePath = path.join(runDir, ...fileName.split("/"));
     return fs.existsSync(filePath) && fs.statSync(filePath).isFile() ? filePath : null;
   }
+
+  setImmediate(() => startNextWaitingClaudeRun());
 
   return {
     continueRun,
