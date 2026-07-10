@@ -2,7 +2,7 @@
 
 ## Lucide Icons
 
-The Route, Gem, and Door Open SVG icons are from [Lucide](https://lucide.dev/).
+The Route, Gem, Door Open, Mouse Pointer 2 Off, and Eraser SVG icons are from [Lucide](https://lucide.dev/).
 
 ISC License
 

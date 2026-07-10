@@ -90,6 +90,7 @@
     appendCellToken,
     normalizeAuthoringCellValue,
     normalizeCellValue,
+    placeCellElevationTokenIfVacant,
     setCellElevationToken,
     setSurfaceAttachmentToken,
     toolByName,
@@ -118,13 +119,24 @@
   };
   const editorGridRectCache = { rect: null };
   const pointerMoveScheduler = {
-    event: null,
     frameId: null,
-    processor: null
+    samples: []
   };
+  const authorOverlaySelector = [
+    ".author-topbar",
+    ".author-sidebar",
+    ".author-sidebar-toggle",
+    "#author-cam-pad",
+    "#author-inventory",
+    "#author-hotbar",
+    ".build-mobile-blocker",
+    ".publish-modal",
+    ".solver-result"
+  ].join(",");
   const defaultSolverMaxExpandedStates = 1000000;
   const solverProgressYieldStateInterval = 4096;
   const solverProgressRenderIntervalMs = 80;
+  const pointerPaintSamplesPerFrameLimit = 16;
   const undoStackLimit = 80;
   const solutionDirections = {
     U: { label: "U", dx: 0, dy: -1 },
@@ -137,7 +149,7 @@
   const noopToken = "__select_only__";
   const noopTool = {
     imageUrl: null,
-    label: "Select",
+    label: "Deselect",
     name: "select_only",
     selectable: true,
     token: noopToken,
@@ -145,12 +157,27 @@
   };
   const eraserTool = {
     imageUrl: null,
-    label: "Eraser",
+    label: "Erase",
     name: "eraser",
     selectable: true,
     token: eraserToken,
     type: "eraser"
   };
+  // Adapted from Lucide's ISC-licensed MousePointer2Off and Eraser icons.
+  // https://lucide.dev/icons/mouse-pointer-2-off
+  // https://lucide.dev/icons/eraser
+  const deselectToolIconSvg =
+    '<svg class="author-tool-icon author-tool-icon--deselect" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' +
+    '<path d="m15.55 8.45 5.138 2.087a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063L8.45 15.551"></path>' +
+    '<path d="M22 2 2 22"></path>' +
+    '<path d="m6.816 11.528-2.779-6.84a.495.495 0 0 1 .651-.651l6.84 2.779"></path>' +
+    "</svg>";
+  const eraserToolIconSvg =
+    '<svg class="author-tool-icon author-tool-icon--eraser" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' +
+    '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"></path>' +
+    '<path d="M22 21H7"></path>' +
+    '<path d="m5 11 9 9"></path>' +
+    "</svg>";
   const iceSlopeTools = authorData.palette.filter((tool) => isIceSlopeTool(tool));
   const canonicalIceSlopeToken = iceSlopeTools[0]?.token || null;
   const iceSlopeTokenByDirection = new Map(
@@ -171,7 +198,7 @@
 
   function toolDescription(tool) {
     if (!tool) return "";
-    if (tool.token === noopToken) return "Inspect and select cells without painting anything.";
+    if (tool.token === noopToken) return "Stop painting; clicks only inspect and select cells.";
     if (tool.token === eraserToken) return "Clear the cell back to plain floor.";
     return typeof tool.description === "string" ? tool.description : "";
   }
@@ -192,6 +219,7 @@
     filePath: authorData.initialLevel.filePath,
     height: authorData.initialLevel.height,
     isDirty: false,
+    isLevelLoading: false,
     isLevelSwitching: false,
     isSolutionPlaying: false,
     isSolverBusy: false,
@@ -206,7 +234,10 @@
     hillClimbResultIndex: -1,
     paintDragPlane: null,
     paintPointerId: null,
+    paintStrokeLevelId: null,
     paintStrokeDidPaint: false,
+    paintStrokePaintedVoxelKeys: new Set(),
+    paintStrokeToken: null,
     savedBoardSignature: boardSignature(
       authorData.initialLevel.width,
       authorData.initialLevel.height,
@@ -247,7 +278,11 @@
   }
 
   function syncUndoButtonState() {
-    const isLocked = state.isLevelSwitching || state.isSolverBusy || state.isSolutionPlaying;
+    const isLocked =
+      state.isLevelLoading ||
+      state.isLevelSwitching ||
+      state.isSolverBusy ||
+      state.isSolutionPlaying;
 
     elements.undoLevel.disabled = state.undoStack.length === 0 || isLocked;
     elements.undoLevel.title =
@@ -302,15 +337,14 @@
       y: Math.max(0, Math.min(snapshot.height - 1, snapshot.selectedCell.y))
     };
     state.width = snapshot.width;
-    state.isDirty =
-      boardSignature(state.width, state.height, state.cells) !== state.savedBoardSignature;
+    syncEditorDirtyState();
     clearSolverSolution();
     clearHillClimbResults();
     renderAll();
   }
 
   function undoLastEdit() {
-    if (state.isLevelSwitching || state.isSolverBusy || state.isSolutionPlaying) {
+    if (isEditorInteractionLocked()) {
       return false;
     }
 
@@ -1300,6 +1334,13 @@
   }
 
   function renderEditorScene() {
+    // The compositor owns the renderer until its room transition completes.
+    // Applying an editor level state here would cancel that animation and
+    // strand the author-side input lock.
+    if (state.isLevelSwitching) {
+      return;
+    }
+
     const playData = buildEditorRenderPlayData();
     const shouldStartNoiseTicker = !editorRenderer.app;
     const app = ensureEditorRenderApp(playData);
@@ -1475,22 +1516,25 @@
   }
 
   function renderStatus() {
+    const isChangingLevel = state.isLevelLoading || state.isLevelSwitching;
+
     elements.status.textContent = state.message;
     elements.status.className = "author-status is-" + state.messageTone;
     // The Save button carries the dirty state: amber + pulsing dot while
     // there are unsaved changes, quiet "Saved" once everything is stored.
     if (elements.saveLevel) {
-      elements.saveLevel.disabled = !state.isDirty;
+      elements.saveLevel.disabled = !state.isDirty || isChangingLevel;
       elements.saveLevel.textContent = state.isDirty ? "Save" : "Saved";
       elements.saveLevel.classList.toggle("has-unsaved", state.isDirty);
     }
+    elements.grid.setAttribute("aria-busy", isChangingLevel ? "true" : "false");
     renderWorldStats();
     syncUndoButtonState();
   }
 
-  function currentLevelGemCount() {
+  function gemCountForCells(cells) {
     let count = 0;
-    state.cells.forEach((row) => {
+    (cells || []).forEach((row) => {
       row.forEach((cell) => {
         String(cell || "")
           .split(/[+\s]+/)
@@ -1502,6 +1546,10 @@
       });
     });
     return count;
+  }
+
+  function currentLevelGemCount() {
+    return gemCountForCells(state.cells);
   }
 
   function formatWorldUpdatedAt(value) {
@@ -1682,24 +1730,117 @@
     { match: (tool) => ["player", "clone", "gem"].includes(tool.name), name: "Players & Goals" },
     { match: () => true, name: "Scenery" }
   ];
+  const INVENTORY_DEMO_CLASSES = [
+    "demo-gem",
+    "demo-shimmer",
+    "demo-jab",
+    "demo-rise",
+    "demo-slide",
+    "demo-hop"
+  ];
   // Every hotbar slot is replaceable: picking a tool from the toolbox (or the
   // right-click eyedropper) drops it into whichever slot is highlighted.
-  const hotbarSlots = [
+  const defaultHotbarTokens = [
     noopToken,
     eraserToken,
-    authorData.defaultFloorToken,
-    "i",
-    authorData.defaultWallToken,
-    canonicalIceSlopeToken,
-    "G",
-    "p",
-    "g"
-  ].filter((token) => Boolean(token) && Boolean(toolForToken(token)));
+    toolByName.get("player")?.token || "p",
+    toolByName.get("gem")?.token || "G",
+    authorData.defaultWallToken || "#",
+    authorData.defaultFloorToken || ".",
+    toolByName.get("ice")?.token || "i",
+    toolByToken.get("M1")?.token || "M1",
+    toolByToken.get("M2")?.token || "M2",
+    toolByToken.get("l")?.token || "l"
+  ];
+  const hotbarPersistenceEnabled = Array.isArray(authorData.hotbarTokens);
+  const hotbarSlots = normalizeClientHotbarTokens(
+    authorData.hotbarTokens,
+    defaultHotbarTokens
+  );
   let activeHotbarSlotIndex =
     hotbarSlots.indexOf(state.selectedToken) >= 0
       ? hotbarSlots.indexOf(state.selectedToken)
       : Math.max(0, hotbarSlots.length - 1);
+  if (!hotbarSlots.includes(state.selectedToken) && hotbarSlots[activeHotbarSlotIndex]) {
+    state.selectedToken = hotbarSlots[activeHotbarSlotIndex];
+  }
+  let savedHotbarTokens = hotbarSlots.slice();
+  let savedHotbarSignature = hotbarSignature(savedHotbarTokens);
   let hotbarToolnameTimer = 0;
+
+  function normalizeClientHotbarTokens(tokens, fallbackTokens = defaultHotbarTokens) {
+    const normalized = [];
+    const seen = new Set();
+    for (const rawToken of Array.isArray(tokens) ? tokens : []) {
+      const token = String(rawToken || "");
+      if (!toolForToken(token) || seen.has(token)) {
+        continue;
+      }
+      seen.add(token);
+      normalized.push(token);
+      if (normalized.length >= 10) {
+        break;
+      }
+    }
+    if (normalized.length > 0) {
+      return normalized;
+    }
+    return (fallbackTokens || [])
+      .filter((token, index, values) => toolForToken(token) && values.indexOf(token) === index)
+      .slice(0, 10);
+  }
+
+  function hotbarSignature(tokens = hotbarSlots) {
+    return JSON.stringify(tokens);
+  }
+
+  function syncEditorDirtyState() {
+    const boardDirty =
+      boardSignature(state.width, state.height, state.cells) !== state.savedBoardSignature;
+    const hotbarDirty =
+      hotbarPersistenceEnabled && hotbarSignature() !== savedHotbarSignature;
+    state.isDirty = boardDirty || hotbarDirty;
+    return state.isDirty;
+  }
+
+  function rememberPersistedHotbarTokens(tokens, fallbackTokens = savedHotbarTokens) {
+    const nextTokens = normalizeClientHotbarTokens(tokens, fallbackTokens);
+    savedHotbarTokens = nextTokens.slice();
+    savedHotbarSignature = hotbarSignature(savedHotbarTokens);
+    return nextTokens;
+  }
+
+  function applyPersistedHotbarTokens(tokens, fallbackTokens = savedHotbarTokens) {
+    const nextTokens = rememberPersistedHotbarTokens(tokens, fallbackTokens);
+    hotbarSlots.splice(0, hotbarSlots.length, ...nextTokens);
+    const selectedIndex = hotbarSlots.indexOf(state.selectedToken);
+    if (selectedIndex >= 0) {
+      activeHotbarSlotIndex = selectedIndex;
+    } else {
+      activeHotbarSlotIndex = Math.max(
+        0,
+        Math.min(activeHotbarSlotIndex, hotbarSlots.length - 1)
+      );
+      state.selectedToken = hotbarSlots[activeHotbarSlotIndex] || state.selectedToken;
+    }
+  }
+
+  function swapTokenIntoHotbarSlot(slots, targetIndex, token) {
+    if (!Array.isArray(slots) || slots.length === 0) {
+      return -1;
+    }
+    const safeTargetIndex = Math.max(0, Math.min(targetIndex, slots.length - 1));
+    const sourceIndex = slots.indexOf(token);
+    if (sourceIndex === safeTargetIndex) {
+      return safeTargetIndex;
+    }
+    const displacedToken = slots[safeTargetIndex];
+    slots[safeTargetIndex] = token;
+    if (sourceIndex >= 0) {
+      slots[sourceIndex] = displacedToken;
+    }
+    return safeTargetIndex;
+  }
 
   function toolForToken(token) {
     if (token === noopToken) {
@@ -1720,10 +1861,10 @@
 
   function toolSwatchMarkup(tool) {
     if (tool.token === noopToken) {
-      return '<span class="palette__swatch-glyph" aria-hidden="true">-</span>';
+      return deselectToolIconSvg;
     }
     if (tool.token === eraserToken) {
-      return '<span class="palette__swatch-glyph" aria-hidden="true">&times;</span>';
+      return eraserToolIconSvg;
     }
     const previewUrl = palettePreviewRenderer.previewsByToken.get(tool.token);
     return previewUrl
@@ -1785,13 +1926,18 @@
         if (!tool) {
           return "";
         }
+        const shortcutKey = index === 9 ? "0" : String(index + 1);
         return (
           '<button class="author-hotbar__slot' +
-          (token === state.selectedToken ? " is-active" : "") +
-          '" type="button" data-token="' +
+          (index === activeHotbarSlotIndex ? " is-active" : "") +
+          '" type="button" data-slot-index="' +
+          index +
+          '" data-token="' +
           escapeHtml(token) +
           '" title="' +
-          escapeHtml((tool.label || token) + " (" + (index + 1) + ")") +
+          escapeHtml((tool.label || token) + " (" + shortcutKey + ")") +
+          '" aria-keyshortcuts="' +
+          shortcutKey +
           '" aria-label="' +
           escapeHtml(tool.label || token) +
           '">' +
@@ -1808,7 +1954,7 @@
   }
 
   function demoClassForTool(tool) {
-    const kind = tool.name || tool.type || "";
+    const kind = tool.type || tool.name || "";
     if (kind === "gem") {
       return "demo-gem";
     }
@@ -1862,7 +2008,12 @@
     }
     if (stage) {
       const demoClass = demoClassForTool(tool);
-      stage.className = "author-inventory__stage" + (demoClass ? " " + demoClass : "");
+      // Renderer state (notably has-demo and is-demo-resetting) must survive
+      // detail refreshes while previews arrive progressively.
+      stage.classList.remove(...INVENTORY_DEMO_CLASSES);
+      if (demoClass) {
+        stage.classList.add(demoClass);
+      }
     }
     // Live 3D scene when the toolbox is showing; the CSS demo classes above
     // only surface if the scene renderer is unavailable.
@@ -1884,8 +2035,8 @@
     inventory.hidden = !open;
     document.getElementById("hotbar-backpack")?.setAttribute("aria-expanded", open ? "true" : "false");
     if (open) {
-      renderPalettePreviews(); // Memoized; covers opening before the boot chain gets there.
       renderInventoryDetail();
+      renderPalettePreviews(); // Memoized; covers opening before the boot chain gets there.
     } else {
       stopDemoScene();
     }
@@ -2059,7 +2210,7 @@
     }
   }
 
-  function createAuxiliaryRenderApp(canvas, playData) {
+  function createAuxiliaryRenderApp(canvas, playData, hostFrame = null) {
     const modules = window.PlayModules || {};
     if (
       !canvas ||
@@ -2068,18 +2219,27 @@
     ) {
       return null;
     }
+    const auxiliaryPlayData = hostFrame
+      ? { ...playData, hostFullBleedView: true }
+      : playData;
     const app = modules.createPlayCore({
-      playData,
+      playData: auxiliaryPlayData,
       canvas,
       playShell: null,
       playHeader: null,
-      playStage: null,
-      mazeFrame: null,
+      playStage: hostFrame,
+      mazeFrame: hostFrame,
       fuzzyToggle: null,
       enableCameraControls: false
     });
     if (!app) {
       return null;
+    }
+    if (hostFrame) {
+      // Slow the demo app's native movement clock instead of overriding an
+      // individual move. Punch and ice scenes depend on the native clock to
+      // preserve their sequenced phases and distance-aware easing.
+      app.MOVE_DURATION_MS = 220;
     }
     modules.registerRenderFunctions(app);
     if (typeof modules.registerGameplayFunctions === "function") {
@@ -2090,7 +2250,45 @@
     return app;
   }
 
-  function demoPlayData(cells, label) {
+  function disposeAuxiliaryRenderApp(app, canvas) {
+    if (!app) {
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+      return;
+    }
+    [
+      "animationFrameId",
+      "cameraFrameId",
+      "floatingFloorFrameId",
+      "gateAnimationFrameId",
+      "levelTransitionFrameId",
+      "noiseFrameId",
+      "orangeWallAnimationFrameId",
+      "playerLiftAnimationFrameId"
+    ].forEach((key) => {
+      if (app[key] !== null && app[key] !== undefined) {
+        window.cancelAnimationFrame(app[key]);
+        app[key] = null;
+      }
+    });
+    try {
+      app.threeRenderer?.dispose?.();
+      const gl = app.gl;
+      const loseContext =
+        gl && typeof gl.getExtension === "function" ? gl.getExtension("WEBGL_lose_context") : null;
+      loseContext?.loseContext?.();
+    } catch {
+      // Best-effort cleanup for one-shot renderers and page teardown.
+    }
+    if (canvas) {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+  }
+
+  function demoPlayData(cells, label, key = "scene") {
     const height = cells.length;
     const width = cells[0].length;
     return buildPlayData({
@@ -2102,7 +2300,9 @@
       gameId: authorData.game.id,
       height,
       includeGems: true,
-      levelId: "level_AxA",
+      // A non-world ID prevents auxiliary scenes from fetching and meshing
+      // the real BxA/AxB/BxB rooms behind a tiny demo.
+      levelId: "__toolbox_demo_" + encodeURIComponent(key),
       levelLabel: label || "Demo",
       width
     });
@@ -2113,7 +2313,7 @@
   // engine on a dedicated offscreen app, so tools demonstrate their actual
   // behavior (slides, punches, toggles, collection) with real models.
   function demoSceneForTool(tool) {
-    const kind = tool.name || tool.type || "";
+    const kind = tool.type || tool.name || "";
     const t = tool.token;
     switch (kind) {
       case "floor":
@@ -2121,9 +2321,9 @@
       case "ice":
         return { cells: [[".", ".", ".", ".", "."], ["p", "i", "i", "i", "."], [".", ".", ".", ".", "."]], moves: "R" };
       case "wall":
-        return { cells: [[".", ".", "."], ["p", "#", "."], [".", ".", "."]], moves: "RR" };
+        return { cells: [[".", ".", "."], ["p", ".", "#"], [".", ".", "."]], moves: "RR" };
       case "ice_block":
-        return { cells: [[".", ".", "."], ["p", "I", "."], [".", ".", "."]], moves: "RR" };
+        return { cells: [[".", ".", "."], ["p", ".", "I"], [".", ".", "."]], moves: "RR" };
       case "ice_slope":
         return { cells: [["p", "i", "Sr", "I", "I"]], moves: "R" };
       case "player":
@@ -2131,7 +2331,7 @@
       case "clone":
         return { cells: [["p", ".", "."], [".", ".", "."], [t, ".", "."]], moves: "RL" };
       case "gem":
-        return { cells: [["p", ".", "G"]], moves: "RR" };
+        return { ambient: true, cells: [["p", ".", "G"]], moves: "RR" };
       case "player_gate":
         return { cells: [["p", "g", ".", "."]], moves: "RRR" };
       case "player_lift":
@@ -2150,20 +2350,32 @@
         return { cells: [["p", "f", ".", "."]], moves: "RR" };
       case "tree":
       case "shrub":
-      case "block_asset":
         // Tall models: padding rows to the north plus a pulled-back camera
         // give the model vertical screen room, with the player for scale.
         return {
           cells: [[".", ".", "."], [".", ".", "."], [".", t, "."], [".", ".", "p"]],
           moves: "",
-          zoom: 0.55
+          zoom: 0.68
+        };
+      case "block_asset":
+        return {
+          cells: [[".", ".", "."], [".", t, "."], [".", ".", "p"]],
+          moves: "",
+          zoom: 1.08
         };
       default:
         return null;
     }
   }
 
-  const demoSceneRenderer = { activeKey: null, rafId: 0, ready: null, runToken: 0 };
+  const demoSceneRenderer = {
+    activeKey: null,
+    app: null,
+    movePromise: null,
+    rafId: 0,
+    ready: null,
+    runToken: 0
+  };
 
   function ensureDemoApp() {
     if (demoSceneRenderer.ready) {
@@ -2171,9 +2383,11 @@
     }
     demoSceneRenderer.ready = (async () => {
       const canvas = document.getElementById("inventory-demo-canvas");
+      const stage = document.getElementById("inventory-detail-stage");
       const app = createAuxiliaryRenderApp(
         canvas,
-        demoPlayData([[".", ".", "."], [".", "p", "."], [".", ".", "."]], "Demo")
+        demoPlayData([[".", ".", "."], [".", "p", "."], [".", ".", "."]], "Demo", "boot"),
+        stage
       );
       if (!app) {
         return null;
@@ -2181,10 +2395,14 @@
       if (app.threeRendererReady && typeof app.threeRendererReady.then === "function") {
         await app.threeRendererReady;
       }
+      demoSceneRenderer.app = app;
       // Diagnostic handle, matching the other __MAZEBENCH_* globals.
       window.__MAZEBENCH_AUTHOR_DEMO__ = app;
       return app;
-    })().catch(() => null);
+    })().catch(() => {
+      demoSceneRenderer.ready = null;
+      return null;
+    });
     return demoSceneRenderer.ready;
   }
 
@@ -2195,6 +2413,13 @@
       window.cancelAnimationFrame(demoSceneRenderer.rafId);
       demoSceneRenderer.rafId = 0;
     }
+    const app = demoSceneRenderer.app;
+    if (app?.floatingFloorFrameId !== null && app?.floatingFloorFrameId !== undefined) {
+      window.cancelAnimationFrame(app.floatingFloorFrameId);
+      app.floatingFloorFrameId = null;
+    }
+    const stage = document.getElementById("inventory-detail-stage");
+    stage?.classList.remove("has-demo", "is-demo-resetting");
   }
 
   async function runDemoScene(tool) {
@@ -2202,6 +2427,9 @@
     // demo: a duplicate half-started run clears the canvas under the live one.
     const sceneKey = tool ? tool.token : null;
     if (sceneKey && sceneKey === demoSceneRenderer.activeKey) {
+      if (demoSceneRenderer.app) {
+        document.getElementById("inventory-detail-stage")?.classList.add("has-demo");
+      }
       return;
     }
     stopDemoScene();
@@ -2216,12 +2444,12 @@
     const app = await ensureDemoApp();
     if (!app || token !== demoSceneRenderer.runToken) {
       if (token === demoSceneRenderer.runToken) {
+        demoSceneRenderer.activeKey = null;
         stage?.classList.remove("has-demo");
       }
       return;
     }
-    stage?.classList.add("has-demo");
-    const playData = demoPlayData(scene.cells, tool.label);
+    const playData = demoPlayData(scene.cells, tool.label, tool.token);
     try {
       await app.preloadImagesForLevelState(playData);
       await app.threeRenderer?.whenLevelStateModelsReady?.(playData);
@@ -2231,25 +2459,46 @@
     if (token !== demoSceneRenderer.runToken) {
       return;
     }
-    app.setupCanvas();
-    const renderTick = (now) => {
+    const pendingMove = demoSceneRenderer.movePromise;
+    if (pendingMove) {
+      await pendingMove.catch(() => {});
       if (token !== demoSceneRenderer.runToken) {
         return;
       }
-      // Plain render(): renderOncePerFrame's coalesced path draws a blank
-      // frame on auxiliary apps, and this tick is already rAF-paced.
-      app.render(now);
+    }
+    app.setupCanvas();
+    if (scene.ambient) {
+      let lastIdleRenderMs = 0;
+      const renderTick = (now) => {
+        if (token !== demoSceneRenderer.runToken) {
+          return;
+        }
+        // Gameplay owns frames during moves. This light ambient loop only
+        // keeps genuinely animated idle assets (currently the gem) alive.
+        if (!app.isAnimating && now - lastIdleRenderMs >= 1000 / 30) {
+          lastIdleRenderMs = now;
+          app.render(now);
+        }
+        demoSceneRenderer.rafId = window.requestAnimationFrame(renderTick);
+      };
       demoSceneRenderer.rafId = window.requestAnimationFrame(renderTick);
-    };
-    demoSceneRenderer.rafId = window.requestAnimationFrame(renderTick);
+    }
     const moves = String(scene.moves || "")
       .split("")
       .map((letter) => solutionDirections[letter])
       .filter(Boolean);
-    // Loop: reset the board, breathe, play the scripted moves, repeat.
+    // Loop: ease through a reset, breathe, play the scripted moves, repeat.
+    let firstCycle = true;
     for (;;) {
       if (token !== demoSceneRenderer.runToken) {
         return;
+      }
+      if (!firstCycle) {
+        stage?.classList.add("is-demo-resetting");
+        await sleepMs(160);
+        if (token !== demoSceneRenderer.runToken) {
+          return;
+        }
       }
       app.applyLevelState(playData, {
         deferRender: true,
@@ -2265,22 +2514,43 @@
         skipRender: true
       });
       app.render();
-      if (!moves.length) {
-        return; // Static scene: idle render loop keeps native animations alive.
+      stage?.classList.add("has-demo");
+      stage?.classList.remove("is-demo-resetting");
+      if (!firstCycle) {
+        await sleepMs(140);
       }
-      await sleepMs(700);
+      firstCycle = false;
+      if (!moves.length) {
+        return; // Static scenery needs only the frame rendered above.
+      }
+      await sleepMs(500);
       for (const move of moves) {
         if (token !== demoSceneRenderer.runToken) {
           return;
         }
         try {
-          await performSolutionMove(app, move);
+          const movePromise = performSolutionMove(app, move);
+          demoSceneRenderer.movePromise = movePromise;
+          try {
+            await movePromise;
+          } finally {
+            if (demoSceneRenderer.movePromise === movePromise) {
+              demoSceneRenderer.movePromise = null;
+            }
+          }
         } catch {
           break;
         }
-        await sleepMs(260);
+        if (token !== demoSceneRenderer.runToken) {
+          if (app.floatingFloorFrameId !== null) {
+            window.cancelAnimationFrame(app.floatingFloorFrameId);
+            app.floatingFloorFrameId = null;
+          }
+          return;
+        }
+        await sleepMs(180);
       }
-      await sleepMs(1200);
+      await sleepMs(900);
     }
   }
 
@@ -2288,7 +2558,7 @@
   // Rendered client-side with a dedicated offscreen app and kept live as the
   // board is painted. Nothing uploads while editing; the server regenerates
   // the public listing thumbnails when the world is published.
-  const worldThumbRenderer = { canvas: null, ready: null };
+  const worldThumbRenderer = { app: null, canvas: null, ready: null };
   const localLevelThumbs = new Map();
   let currentLevelThumbTimer = 0;
 
@@ -2310,6 +2580,7 @@
       if (app.threeRendererReady && typeof app.threeRendererReady.then === "function") {
         await app.threeRendererReady;
       }
+      worldThumbRenderer.app = app;
       return app;
     })().catch(() => null);
     return worldThumbRenderer.ready;
@@ -2347,7 +2618,9 @@
       gameId: authorData.game.id,
       height,
       includeGems: true,
-      levelId,
+      // Thumbnail renders are isolated portraits; using the real room ID
+      // would make the auxiliary app stream and mesh adjacent rooms.
+      levelId: "__author_thumbnail_" + encodeURIComponent(levelId),
       levelLabel: levelId,
       width
     });
@@ -2439,6 +2712,41 @@
     }
     app.rememberHorizontalNeighborLevelState(
       neighborStateForLevel(state.levelId, state.cells, state.width, state.height)
+    );
+  }
+
+  function refreshEditorLevelNeighborState(payload) {
+    if (!payload?.levelId || !Array.isArray(payload.cells) || payload.cells.length === 0) {
+      return;
+    }
+
+    const existingLevel = authorData.existingLevels.find(
+      (level) => level.id === payload.levelId
+    );
+    const levelRecord = existingLevel || {
+      authorUrl: "#",
+      id: payload.levelId,
+      label: payload.levelId,
+      playUrl: "#",
+      previewUrl: null
+    };
+
+    levelRecord.cells = cloneCells(payload.cells);
+    levelRecord.height = payload.height;
+    levelRecord.width = payload.width;
+    if (!existingLevel) {
+      authorData.existingLevels.push(levelRecord);
+    }
+
+    const app = editorRenderer.app;
+    app?.rememberHorizontalNeighborLevelState?.(
+      neighborStateForLevel(
+        payload.levelId,
+        payload.cells,
+        payload.width,
+        payload.height,
+        levelRecord.label
+      )
     );
   }
 
@@ -2610,12 +2918,14 @@
       }
       rendererApi.invalidateSceneCache?.();
       app.render();
-      window.setTimeout(() => {
-        primeLocalWorldThumbs().catch(() => {});
-      }, 250);
+      // Tool symbols are the editor's primary controls, so publish those
+      // first; room-map thumbnails wait until the hotbar pipeline is underway.
       window.setTimeout(() => {
         renderPalettePreviews();
-      }, 1400);
+      }, 100);
+      window.setTimeout(() => {
+        primeLocalWorldThumbs().catch(() => {});
+      }, 900);
     };
     window.requestAnimationFrame(warmTick);
   }
@@ -2638,19 +2948,20 @@
   }
 
   function createPalettePreviewPlayData(tool) {
-    // A 3x3 floor board with the object centered: the swatch shows the piece
-    // in context, at the same angled camera the toolbox demos use.
-    const width = 3;
-    const height = 3;
+    // Icons are item portraits, not miniature rooms. A one-cell scene keeps
+    // the object legible at 32px and activates the renderer's palette camera.
+    const width = 1;
+    const height = 1;
     const cells = createBlankCells(width, height, authorData.defaultFloorToken);
     const kind = tool.type || tool.name;
+    const tall = kind === "tree" || kind === "shrub";
 
     // The puncher preview faces the camera (south) so its punching face is
     // visible; orientation is picked at placement time anyway.
     const previewToken =
       kind === "puncher" ? puncherTokenForDirection("down") || tool.token : tool.token;
 
-    cells[1][1] =
+    cells[0][0] =
       kind === "orange_button"
         ? appendCellToken(authorData.defaultFloorToken, previewToken)
         : previewToken;
@@ -2663,15 +2974,20 @@
         gameId: authorData.game.id,
         height,
         includeGems: true,
-        levelId: "level_AxA",
+        // Tall scenery keeps the editor-height camera plus a pulled-back zoom;
+        // other tools use the dedicated compact palette camera. Neither ID is
+        // parseable as a world room, so no neighbor requests can be queued.
+        levelId:
+          (tall ? "__author_palette_tall_" : "__palette_preview_") +
+          encodeURIComponent(tool.token),
         levelLabel: tool.label || tool.token,
         width
       }),
-      tall: kind === "tree" || kind === "shrub" || kind === "block_asset"
+      tall
     };
   }
 
-  function captureSquarePreview(sourceCanvas, outputSize) {
+  function captureSquarePreview(sourceCanvas, outputSize, tool = null) {
     if (!sourceCanvas || !sourceCanvas.width || !sourceCanvas.height) {
       return "";
     }
@@ -2686,7 +3002,12 @@
     previewCanvas.height = outputSize;
     previewContext.imageSmoothingEnabled = true;
     previewContext.imageSmoothingQuality = "high";
-    const cropSize = Math.min(sourceCanvas.width, sourceCanvas.height);
+    const kind = tool ? tool.type || tool.name : "";
+    const isTall = kind === "tree" || kind === "shrub";
+    const cropSize = Math.max(
+      1,
+      Math.round(Math.min(sourceCanvas.width, sourceCanvas.height) * (isTall ? 1 : 0.72))
+    );
     previewContext.drawImage(
       sourceCanvas,
       Math.round((sourceCanvas.width - cropSize) / 2),
@@ -2702,19 +3023,44 @@
     return previewCanvas.toDataURL("image/png");
   }
 
+  function publishPalettePreview(tool, previewUrl) {
+    palettePreviewRenderer.previewsByToken.set(tool.token, previewUrl);
+    [elements.palette, document.getElementById("hotbar-slots")].forEach((root) => {
+      root?.querySelectorAll("[data-token]").forEach((button) => {
+        if (button.dataset.token !== tool.token) {
+          return;
+        }
+        const swatch = button.querySelector(".palette__swatch");
+        if (swatch) {
+          swatch.innerHTML = toolSwatchMarkup(tool);
+        }
+      });
+    });
+    if (state.selectedToken === tool.token) {
+      const detailSwatch = document.getElementById("inventory-detail-swatch");
+      if (detailSwatch) {
+        detailSwatch.innerHTML = toolSwatchMarkup(tool);
+      }
+    }
+  }
+
+  function yieldPalettePreviewPaint() {
+    return new Promise((resolve) => window.requestAnimationFrame(resolve));
+  }
+
   async function renderPalettePreviews() {
     if (palettePreviewRenderer.promise) {
       return palettePreviewRenderer.promise;
     }
 
-    palettePreviewRenderer.promise = (async function () {
+    const renderPromise = (async function () {
       const modules = window.PlayModules || {};
 
       if (
         typeof modules.createPlayCore !== "function" ||
         typeof modules.registerRenderFunctions !== "function"
       ) {
-        return;
+        throw new Error("Palette preview modules are not ready.");
       }
 
       const paletteTools = selectablePaletteTools().filter(
@@ -2725,14 +3071,16 @@
         return;
       }
 
+      const toolsByToken = new Map(paletteTools.map((tool) => [tool.token, tool]));
+      const orderedTools = [...new Set([...hotbarTokens(), ...paletteTools.map((tool) => tool.token)])]
+        .map((token) => toolsByToken.get(token))
+        .filter(Boolean);
       const previewEntriesByToken = new Map(
-        paletteTools.map((tool) => [tool.token, createPalettePreviewPlayData(tool)])
+        orderedTools.map((tool) => [tool.token, createPalettePreviewPlayData(tool)])
       );
-      const firstEntry = previewEntriesByToken.get(paletteTools[0].token);
+      const firstEntry = previewEntriesByToken.get(orderedTools[0].token);
       const canvas = document.createElement("canvas");
-      canvas.width = 512;
-      canvas.height = 512;
-      const app = modules.createPlayCore({
+      let app = modules.createPlayCore({
         playData: firstEntry.playData,
         canvas,
         playShell: null,
@@ -2744,63 +3092,90 @@
       });
 
       if (!app) {
-        return;
+        throw new Error("Palette preview renderer is unavailable.");
       }
 
       modules.registerRenderFunctions(app);
       app.setupCanvas();
       app.syncCameraTarget?.(true);
-      await Promise.all(
-        Array.from(previewEntriesByToken.values()).map((entry) =>
-          app.preloadImagesForLevelState(entry.playData)
-        )
-      );
-
-      if (app.threeRendererReady && typeof app.threeRendererReady.then === "function") {
-        await app.threeRendererReady;
-      }
-
-      const previewsByToken = new Map();
-      for (const [token, entry] of previewEntriesByToken.entries()) {
-        // Model-backed tools (gem, trees, blocks) wait for their GLB so the
-        // swatch shows the real 3D asset, never a fallback primitive.
-        try {
-          await app.threeRenderer?.whenLevelStateModelsReady?.(entry.playData);
-        } catch {
-          // Failed loads keep their fallback and do not block the capture.
+      const preloadPromises = new Map();
+      const preloadTool = (tool) => {
+        if (!preloadPromises.has(tool.token)) {
+          const entry = previewEntriesByToken.get(tool.token);
+          preloadPromises.set(
+            tool.token,
+            (async () => {
+              try {
+                await app.preloadImagesForLevelState(entry.playData);
+                await app.threeRenderer?.whenLevelStateModelsReady?.(entry.playData);
+              } catch {
+                // Failed loads keep their fallback and do not block icons.
+              }
+            })()
+          );
         }
-        app.applyLevelState(entry.playData, {
-          deferRender: true,
-          immediateCamera: true,
-          resetHistory: true,
-          resetLevelEntry: true
-        });
-        app.liveRaisedPlayerGates = app.computeRaisedPlayerGateSet();
-        app.liveRaisedOrangeWalls = app.computeRaisedOrangeWallSet();
-        app.syncGateAnimationTargets(0);
-        app.syncOrangeWallAnimationTargets(0);
-        app.syncPlayerLiftAnimationTargets(0);
-        // Same angled vantage as the toolbox demo scenes; tall scenery pulls
-        // back so the whole model is in frame.
-        app.threeRenderer?.setDebugCameraView?.({
-          yaw: 0,
-          tilt: 0.62,
-          zoom: entry.tall ? 0.55 : 1.35,
-          mode: "perspective",
-          skipRender: true
-        });
-        app.render();
-
-        const previewUrl = captureSquarePreview(canvas, 96);
-
-        if (previewUrl) {
-          previewsByToken.set(token, previewUrl);
+        return preloadPromises.get(tool.token);
+      };
+      try {
+        if (app.threeRendererReady && typeof app.threeRendererReady.then === "function") {
+          await app.threeRendererReady;
         }
-      }
 
-      palettePreviewRenderer.previewsByToken = previewsByToken;
-      renderPalette();
-    })().catch(() => {});
+        const preloadWindowSize = 4;
+        for (let index = 0; index < orderedTools.length; index += 1) {
+          const tool = orderedTools[index];
+          const entry = previewEntriesByToken.get(tool.token);
+          // Keep a small hotbar-first load window ahead of the sequential
+          // capture loop. This avoids both a 34-request burst and a full GLB
+          // waterfall while preserving deterministic progressive publishing.
+          for (
+            let nextIndex = index;
+            nextIndex < Math.min(orderedTools.length, index + preloadWindowSize);
+            nextIndex += 1
+          ) {
+            preloadTool(orderedTools[nextIndex]);
+          }
+          await preloadTool(tool);
+          app.applyLevelState(entry.playData, {
+            deferRender: true,
+            immediateCamera: true,
+            resetHistory: true,
+            resetLevelEntry: true
+          });
+          app.liveRaisedPlayerGates = app.computeRaisedPlayerGateSet();
+          app.liveRaisedOrangeWalls = app.computeRaisedOrangeWallSet();
+          app.syncGateAnimationTargets(0);
+          app.syncOrangeWallAnimationTargets(0);
+          app.syncPlayerLiftAnimationTargets(0);
+          app.threeRenderer?.setDebugCameraView?.({
+            yaw: 0,
+            tilt: 0.62,
+            zoom: entry.tall ? 0.55 : 1.2,
+            mode: "perspective",
+            skipRender: true
+          });
+          app.render();
+
+          const previewUrl = captureSquarePreview(canvas, 96, tool);
+          if (previewUrl) {
+            publishPalettePreview(tool, previewUrl);
+            // Give the browser a paint between captures so the first hotbar
+            // symbols become visible without waiting for the slowest GLB.
+            await yieldPalettePreviewPaint();
+          }
+        }
+      } finally {
+        await Promise.allSettled(Array.from(preloadPromises.values()));
+        disposeAuxiliaryRenderApp(app, canvas);
+        app = null;
+      }
+    })();
+
+    palettePreviewRenderer.promise = renderPromise.catch(() => {
+      // A transient WebGL/context failure can be retried the next time the
+      // toolbox opens; successfully published previews remain available.
+      palettePreviewRenderer.promise = null;
+    });
 
     return palettePreviewRenderer.promise;
   }
@@ -2872,6 +3247,15 @@
 
   function isPaintStrokeActive() {
     return state.paintPointerId !== null;
+  }
+
+  function isEditorInteractionLocked() {
+    return (
+      state.isLevelLoading ||
+      state.isLevelSwitching ||
+      state.isSolverBusy ||
+      state.isSolutionPlaying
+    );
   }
 
   function refreshHitButton(x, y) {
@@ -3107,14 +3491,31 @@
     renderExistingLevels();
   }
 
-  function selectToken(token) {
+  function selectToken(token, options = {}) {
+    if (state.isLevelLoading || state.isLevelSwitching) {
+      return;
+    }
+
     if (token !== eraserToken && token !== noopToken && !toolByToken.has(token)) {
       return;
     }
 
+    if (isPaintStrokeActive() && token !== state.selectedToken) {
+      finishPainting();
+    }
+
     state.selectedToken = token;
     const slotIndex = hotbarSlots.indexOf(token);
-    if (slotIndex >= 0) {
+    if (options.assignToActiveSlot === true && hotbarSlots.length > 0) {
+      // Toolbox and eyedropper picks belong in the slot the builder already
+      // highlighted. If that tool lives elsewhere, exchange the two tools so
+      // the hotbar remains a stable, duplicate-free ten-slot inventory.
+      activeHotbarSlotIndex = swapTokenIntoHotbarSlot(
+        hotbarSlots,
+        activeHotbarSlotIndex,
+        token
+      );
+    } else if (slotIndex >= 0) {
       // Selecting a tool that's already on the hotbar highlights its slot.
       activeHotbarSlotIndex = slotIndex;
     } else if (hotbarSlots.length > 0) {
@@ -3123,18 +3524,21 @@
       activeHotbarSlotIndex = Math.max(0, Math.min(activeHotbarSlotIndex, hotbarSlots.length - 1));
       hotbarSlots[activeHotbarSlotIndex] = token;
     }
+    syncEditorDirtyState();
     renderPalette();
     renderSelectedTool();
+    renderStatus();
     flashHotbarToolname(toolForToken(token)?.label || "");
   }
 
   function selectCell(x, y) {
+    if (!isInsideEditorCell(x, y)) {
+      return false;
+    }
+
     const previousCell = state.selectedCell;
 
-    state.selectedCell = {
-      x: Math.max(0, Math.min(state.width - 1, x)),
-      y: Math.max(0, Math.min(state.height - 1, y))
-    };
+    state.selectedCell = { x, y };
 
     if (isPaintStrokeActive()) {
       refreshHitButton(previousCell.x, previousCell.y);
@@ -3144,6 +3548,7 @@
     }
 
     renderSelectedCell();
+    return true;
   }
 
   function markDirty() {
@@ -3172,10 +3577,9 @@
     const previousCell = state.selectedCell;
 
     state.paintStrokeDidPaint = true;
-    state.selectedCell = {
-      x: Math.max(0, Math.min(state.width - 1, selectedX)),
-      y: Math.max(0, Math.min(state.height - 1, selectedY))
-    };
+    if (isInsideEditorCell(selectedX, selectedY)) {
+      state.selectedCell = { x: selectedX, y: selectedY };
+    }
     refreshHitButton(previousCell.x, previousCell.y);
     changedCells.forEach((cell) => refreshHitButton(cell.x, cell.y));
     refreshHitButton(state.selectedCell.x, state.selectedCell.y);
@@ -3185,29 +3589,37 @@
   }
 
   function updateCellValue(x, y, normalizedValue) {
-    if (state.cells[y][x] === normalizedValue) {
-      selectCell(x, y);
-      return;
+    if (!isInsideEditorCell(x, y)) {
+      return false;
     }
 
-    pushUndoSnapshot({ boardChanged: true });
+    if (state.cells[y][x] === normalizedValue) {
+      selectCell(x, y);
+      return false;
+    }
+
+    if (!isPaintStrokeActive() || !state.paintStrokeDidPaint) {
+      pushUndoSnapshot({ boardChanged: true });
+    }
     state.cells[y][x] = normalizedValue;
 
     if (isPaintStrokeActive()) {
       renderPaintStrokeChange([{ x, y }], x, y);
-      return;
+      return true;
     }
 
-    state.selectedCell = {
-      x: Math.max(0, Math.min(state.width - 1, x)),
-      y: Math.max(0, Math.min(state.height - 1, y))
-    };
+    state.selectedCell = { x, y };
     renderGrid();
     renderSelectedCell();
     markDirty();
+    return true;
   }
 
   function updateCellsForSingleMainPlayerPlacement(x, y, normalizedValue) {
+    if (!isInsideEditorCell(x, y)) {
+      return false;
+    }
+
     const nextCells = state.cells.map((row) => row.slice());
     const targetValue = keepFirstMainPlayerTokenInCellValue(normalizedValue);
     const changedCells = [];
@@ -3235,35 +3647,38 @@
 
     if (changedCells.length === 0) {
       selectCell(x, y);
-      return;
+      return false;
     }
 
-    pushUndoSnapshot({ boardChanged: true });
+    if (!isPaintStrokeActive() || !state.paintStrokeDidPaint) {
+      pushUndoSnapshot({ boardChanged: true });
+    }
     state.cells = nextCells;
 
     if (isPaintStrokeActive()) {
       renderPaintStrokeChange(changedCells, x, y);
-      return;
+      return true;
     }
 
-    state.selectedCell = {
-      x: Math.max(0, Math.min(state.width - 1, x)),
-      y: Math.max(0, Math.min(state.height - 1, y))
-    };
+    state.selectedCell = { x, y };
     renderGrid();
     renderSelectedCell();
     markDirty();
+    return true;
   }
 
   function setCellValue(x, y, value) {
+    if (!isInsideEditorCell(x, y) || isEditorInteractionLocked()) {
+      return false;
+    }
+
     const normalizedValue = normalizeAuthoringCellValue(value);
 
     if (cellValueHasMainPlayerToken(normalizedValue)) {
-      updateCellsForSingleMainPlayerPlacement(x, y, normalizedValue);
-      return;
+      return updateCellsForSingleMainPlayerPlacement(x, y, normalizedValue);
     }
 
-    updateCellValue(x, y, normalizedValue);
+    return updateCellValue(x, y, normalizedValue);
   }
 
   function appendTokenToCellValue(currentValue, token) {
@@ -3324,14 +3739,17 @@
   }
 
   function paintCell(x, y, value) {
+    if (!isInsideEditorCell(x, y) || isEditorInteractionLocked()) {
+      return false;
+    }
+
     if (value === noopToken) {
       selectCell(x, y);
-      return;
+      return false;
     }
 
     if (value === eraserToken) {
-      updateCellValue(x, y, eraseTopCellValue(state.cells[y][x]));
-      return;
+      return updateCellValue(x, y, eraseTopCellValue(state.cells[y][x]));
     }
 
     const isMainPlayerPaint = isMainPlayerToken(value);
@@ -3341,15 +3759,21 @@
     const nextValue = appendTokenToCellValue(currentValue, value);
 
     if (isMainPlayerPaint) {
-      updateCellsForSingleMainPlayerPlacement(x, y, nextValue);
-      return;
+      return updateCellsForSingleMainPlayerPlacement(x, y, nextValue);
     }
 
-    updateCellValue(x, y, nextValue);
+    return updateCellValue(x, y, nextValue);
   }
 
   function isInsideEditorCell(x, y) {
-    return x >= 0 && y >= 0 && x < state.width && y < state.height;
+    return (
+      Number.isInteger(x) &&
+      Number.isInteger(y) &&
+      x >= 0 &&
+      y >= 0 &&
+      x < state.width &&
+      y < state.height
+    );
   }
 
   function fallbackPaintTargetFromCell(x, y) {
@@ -3414,31 +3838,59 @@
     return event.target instanceof Element ? event.target : null;
   }
 
-  function paintTargetFromPointerEvent(event) {
-    const pickedTarget = editorRenderer.app?.threeRenderer?.pickEditorFace?.(
-      event.clientX,
-      event.clientY,
-      elements.canvas
-    );
-
-    if (pickedTarget) {
-      // Taps on neighbor rooms come back as level-switch picks with only a
-      // room delta; resolve the delta to a real level id (or drop the pick
-      // when it points outside the world grid).
-      if (pickedTarget.kind === "levelSwitch" && !pickedTarget.levelId) {
-        const levelId = adjacentLevelId(
-          state.levelId,
-          Math.round(Number(pickedTarget.dx) || 0),
-          Math.round(Number(pickedTarget.dy) || 0)
-        );
-        if (!levelId || levelId === state.levelId) {
-          return null;
-        }
-        pickedTarget.levelId = levelId;
-      }
-      return pickedTarget;
+  function resolveLevelSwitchTarget(target) {
+    if (!target || target.kind !== "levelSwitch") {
+      return null;
     }
 
+    const dx = Math.round(Number(target.dx) || 0);
+    const dy = Math.round(Number(target.dy) || 0);
+
+    if (dx === 0 && dy === 0) {
+      return null;
+    }
+
+    const levelId = adjacentLevelId(state.levelId, dx, dy);
+
+    if (
+      !levelId ||
+      levelId === state.levelId ||
+      (target.levelId && target.levelId !== levelId)
+    ) {
+      return null;
+    }
+
+    return { ...target, dx, dy, levelId };
+  }
+
+  function paintTargetFromPointerEvent(event) {
+    const pickEditorFace = editorRenderer.app?.threeRenderer?.pickEditorFace;
+
+    if (typeof pickEditorFace === "function") {
+      const pickedTarget = pickEditorFace.call(
+        editorRenderer.app.threeRenderer,
+        event.clientX,
+        event.clientY,
+        elements.canvas
+      );
+
+      // A real 3D miss stays a miss. Mapping the blank pixel through the old
+      // rectangular 2D fallback could select or paint an unrelated edge cell.
+      if (!pickedTarget) {
+        return null;
+      }
+
+      if (pickedTarget.kind === "levelSwitch") {
+        return resolveLevelSwitchTarget(pickedTarget);
+      }
+
+      return isInsideEditorCell(pickedTarget.sourceX, pickedTarget.sourceY)
+        ? pickedTarget
+        : null;
+    }
+
+    // The cell-grid fallback is only for hosts where the 3D picker is not
+    // available at all, never for a miss from a live perspective scene.
     return (
       fallbackPaintTargetFromButton(
         targetElementFromEvent(event)?.closest(".author-grid__cell")
@@ -3447,6 +3899,11 @@
   }
 
   function syncEditorHoverFromPointerEvent(event) {
+    if (isEditorInteractionLocked()) {
+      clearEditorHoverTarget();
+      return null;
+    }
+
     const target = paintTargetFromPointerEvent(event);
 
     editorRenderer.app?.threeRenderer?.setEditorHoverTarget?.(target);
@@ -3633,6 +4090,16 @@
       return 0;
     }
 
+    const lockedLayer = state.paintDragPlane?.layer;
+    if (
+      lockedLayer !== null &&
+      lockedLayer !== undefined &&
+      Array.isArray(target.paintLayerCandidates) &&
+      target.paintLayerCandidates.includes(lockedLayer)
+    ) {
+      return lockedLayer;
+    }
+
     return target.paintLayer;
   }
 
@@ -3651,12 +4118,26 @@
       return false;
     }
 
-    const paintLayer = Math.max(0, Math.floor(Number(target.sourceLayer) || 0));
-    const currentValue = state.cells[target.paintY][target.paintX];
-    const nextValue = setCellElevationToken(currentValue, directionToken, paintLayer);
+    const targetLayer = adjustedPaintLayerForTarget(target);
 
-    updateCellValue(target.paintX, target.paintY, nextValue);
-    return true;
+    if (targetLayer === null || targetLayer === undefined) {
+      return false;
+    }
+
+    const paintLayer = Math.max(0, Math.floor(Number(targetLayer) || 0));
+    const currentValue = state.cells[target.paintY][target.paintX];
+    const nextValue = placeCellElevationTokenIfVacant(
+      currentValue,
+      directionToken,
+      paintLayer
+    );
+
+    if (nextValue === currentValue) {
+      selectCell(target.paintX, target.paintY);
+      return false;
+    }
+
+    return updateCellValue(target.paintX, target.paintY, nextValue);
   }
 
   function paintOrangeButtonTarget(target) {
@@ -3676,6 +4157,17 @@
 
     const paintToken = effectivePaintToken();
     const currentValue = state.cells[target.paintY][target.paintX];
+    const vacancyProbe = placeCellElevationTokenIfVacant(
+      currentValue,
+      paintToken,
+      paintLayer
+    );
+
+    if (vacancyProbe === currentValue) {
+      selectCell(target.paintX, target.paintY);
+      return false;
+    }
+
     const nextValue = setSurfaceAttachmentToken(currentValue, paintToken, paintLayer);
 
     if (nextValue === currentValue) {
@@ -3688,7 +4180,7 @@
   }
 
   function paintFaceTarget(target) {
-    if (!target || target.kind === "levelSwitch") {
+    if (isEditorInteractionLocked() || !target || target.kind === "levelSwitch") {
       return false;
     }
 
@@ -3736,15 +4228,19 @@
     const nextValue =
       paintLayer === null || paintLayer === undefined
         ? appendTokenToCellValue(currentValue, paintToken)
-        : setCellElevationToken(currentValue, paintToken, paintLayer);
+        : placeCellElevationTokenIfVacant(currentValue, paintToken, paintLayer);
 
     if (isMainPlayerPaint) {
-      updateCellsForSingleMainPlayerPlacement(target.paintX, target.paintY, nextValue);
-      return true;
+      // Do not remove the player from its old cell when the requested target
+      // was occupied and the non-replacing placement therefore failed.
+      if (!cellValueHasMainPlayerToken(nextValue)) {
+        selectCell(target.paintX, target.paintY);
+        return false;
+      }
+      return updateCellsForSingleMainPlayerPlacement(target.paintX, target.paintY, nextValue);
     }
 
-    updateCellValue(target.paintX, target.paintY, nextValue);
-    return true;
+    return updateCellValue(target.paintX, target.paintY, nextValue);
   }
 
   function paintFaceTargetOnce(target) {
@@ -3755,7 +4251,21 @@
     }
 
     state.lastPaintTargetKey = key;
-    return paintFaceTarget(target);
+    const didPaint = paintFaceTarget(target);
+
+    if (didPaint) {
+      const voxelKey = paintVoxelKeyForTarget(target);
+
+      // Only the most recently created side-pickable voxel is unsafe as a
+      // launch point. Base floor/ice edits do not create a side face and must
+      // not make an existing wall at that coordinate look newly painted.
+      state.paintStrokePaintedVoxelKeys.clear();
+      if (voxelKey && !isBaseSurfaceToken(state.selectedToken)) {
+        state.paintStrokePaintedVoxelKeys.add(voxelKey);
+      }
+    }
+
+    return didPaint;
   }
 
   function paintGestureLayerForTarget(target) {
@@ -3766,6 +4276,33 @@
     return state.selectedToken === eraserToken
       ? target.sourceLayer
       : adjustedPaintLayerForTarget(target);
+  }
+
+  function paintVoxelKeyForTarget(target, useSource = false) {
+    if (!target) {
+      return "";
+    }
+
+    const useSourceCell = useSource || state.selectedToken === eraserToken;
+    const x = useSourceCell ? target.sourceX : target.paintX;
+    const y = useSourceCell ? target.sourceY : target.paintY;
+    const lockedLayer = state.paintDragPlane?.layer;
+    const layer =
+      useSource &&
+      lockedLayer !== null &&
+      lockedLayer !== undefined &&
+      Array.isArray(target.sourceLayerCandidates) &&
+      target.sourceLayerCandidates.includes(lockedLayer)
+        ? lockedLayer
+        : useSource
+          ? target.sourceLayer
+          : paintGestureLayerForTarget(target);
+
+    if (!isInsideEditorCell(x, y) || layer === null || layer === undefined) {
+      return "";
+    }
+
+    return x + ":" + y + ":" + Math.max(0, Math.floor(Number(layer) || 0));
   }
 
   function canDragEraseFromTarget(target, layer) {
@@ -3792,8 +4329,7 @@
     if (
       !target ||
       target.kind === "levelSwitch" ||
-      state.selectedToken === noopToken ||
-      target.face !== "top"
+      state.selectedToken === noopToken
     ) {
       return null;
     }
@@ -3808,14 +4344,29 @@
       return null;
     }
 
-    return {
-      face: "top",
-      layer
-    };
+    return { layer };
   }
 
   function canDragPaintTarget(target) {
-    if (!target || !state.paintDragPlane || target.face !== state.paintDragPlane.face) {
+    if (!state.paintDragPlane) {
+      return false;
+    }
+
+    if (
+      state.paintStrokeLevelId !== state.levelId ||
+      state.paintStrokeToken !== state.selectedToken
+    ) {
+      return false;
+    }
+
+    // This guard belongs to one pointer sample, not the whole remainder of
+    // the stroke. Consume it before evaluating the new target so a rejected
+    // side hit cannot deadlock every later move.
+    const justPaintedVoxelKey =
+      state.paintStrokePaintedVoxelKeys.values().next().value || "";
+    state.paintStrokePaintedVoxelKeys.clear();
+
+    if (!target || target.kind === "levelSwitch") {
       return false;
     }
 
@@ -3829,10 +4380,29 @@
       return canDragEraseFromTarget(target, layer);
     }
 
+    if (!isInsideEditorCell(target.paintX, target.paintY)) {
+      return false;
+    }
+
+    // Side faces can continue a swipe onto their adjacent voxel when it is
+    // on the frozen layer. Do not chain outward from a block created by this
+    // immediately preceding paint sample; that would let a single pointer
+    // sample grow multiple blocks. Older painted cells are valid sources.
+    if (
+      target.face !== "top" &&
+      justPaintedVoxelKey === paintVoxelKeyForTarget(target, true)
+    ) {
+      return false;
+    }
+
     return true;
   }
 
   function resizeLevel() {
+    if (isEditorInteractionLocked()) {
+      return;
+    }
+
     const requestedWidth = Number(elements.boardWidth.value);
     const requestedHeight = Number(elements.boardHeight.value);
     const nextWidth = Math.max(1, Math.min(authorData.maxBoardWidth, requestedWidth || state.width));
@@ -3860,6 +4430,10 @@
   }
 
   function clearLevel() {
+    if (isEditorInteractionLocked()) {
+      return;
+    }
+
     pushUndoSnapshot();
     state.cells = createBlankCells(state.width, state.height, authorData.defaultFloorToken);
     clearSolverSolution();
@@ -3885,6 +4459,10 @@
   }
 
   function frameLevel() {
+    if (isEditorInteractionLocked()) {
+      return;
+    }
+
     const horizontalOpening = centeredEdgeOpeningRange(state.width);
     const verticalOpening = centeredEdgeOpeningRange(state.height);
 
@@ -3919,6 +4497,10 @@
   }
 
   function transformLevel(transformType) {
+    if (isEditorInteractionLocked()) {
+      return;
+    }
+
     const oldCells = state.cells;
     const oldWidth = state.width;
     const oldHeight = state.height;
@@ -3987,6 +4569,10 @@
   }
 
   function applySelectedCellValue() {
+    if (isEditorInteractionLocked()) {
+      return;
+    }
+
     try {
       setCellValue(state.selectedCell.x, state.selectedCell.y, elements.cellValue.value);
       setStatus("Updated that cell.", "warning");
@@ -4015,12 +4601,12 @@
   }
 
   function applyAuthorLevelPayload(payload, options = {}) {
+    applyPersistedHotbarTokens(payload.hotbarTokens, savedHotbarTokens);
     state.cells = cloneCells(payload.cells);
     state.exists = payload.exists;
     state.fileName = payload.fileName;
     state.filePath = payload.filePath;
     state.height = payload.height;
-    state.isDirty = false;
     state.levelId = payload.levelId;
     state.message =
       options.message ||
@@ -4032,13 +4618,28 @@
     clearSolverSolution();
     clearUndoHistory();
     state.width = payload.width;
+    syncEditorDirtyState();
   }
 
   async function loadLevel(levelId) {
+    if (isEditorInteractionLocked()) {
+      syncLevelSelectors();
+      return false;
+    }
+
     if (!shouldDiscardUnsavedChanges()) {
       syncLevelSelectors();
-      return;
+      return false;
     }
+
+    window.clearTimeout(currentLevelThumbTimer);
+    currentLevelThumbTimer = 0;
+    cancelScheduledPointerMove();
+    finishPainting();
+    state.isLevelLoading = true;
+    clearEditorHoverTarget();
+    syncUndoButtonState();
+    setStatus("Loading " + String(levelId || "room").replace("level_", "") + "...", "warning");
 
     try {
       applyAuthorLevelPayload(await fetchAuthorLevelPayload(levelId));
@@ -4049,9 +4650,14 @@
         "/author/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId)
       );
       renderAll();
+      return true;
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not load that level.", "error");
       syncLevelSelectors();
+      return false;
+    } finally {
+      state.isLevelLoading = false;
+      renderStatus();
     }
   }
 
@@ -4060,16 +4666,30 @@
     const refreshPreview = options.refreshPreview !== false;
     const updateStatus = options.updateStatus !== false;
     const throwOnError = options.throwOnError === true;
+    const submittedLevelId = state.levelId;
+    const submittedCells = cloneCells(state.cells);
+    const submittedFileName = state.fileName;
+    const submittedHeight = state.height;
+    const submittedWidth = state.width;
+    const submittedHotbarTokens = hotbarTokens();
+    const submittedBoardSignature = boardSignature(
+      submittedWidth,
+      submittedHeight,
+      submittedCells
+    );
+    const submittedHotbarSignature = hotbarSignature(submittedHotbarTokens);
+    const submittedBoardWasDirty = submittedBoardSignature !== state.savedBoardSignature;
 
     try {
       const response = await fetch(
-        authorData.authorApiBaseUrl + "/" + encodeURIComponent(state.levelId),
+        authorData.authorApiBaseUrl + "/" + encodeURIComponent(submittedLevelId),
         {
           body: JSON.stringify({
-            cells: state.cells,
-            fileName: state.fileName,
-            height: state.height,
-            width: state.width
+            cells: submittedCells,
+            fileName: submittedFileName,
+            height: submittedHeight,
+            hotbarTokens: submittedHotbarTokens,
+            width: submittedWidth
           }),
           headers: {
             "Content-Type": "application/json",
@@ -4084,17 +4704,39 @@
         throw new Error(payload.error || "Could not save that level.");
       }
 
-      state.cells = cloneCells(payload.cells);
-      state.exists = true;
-      state.fileName = payload.fileName;
-      state.filePath = payload.filePath;
-      state.height = payload.height;
-      state.isDirty = false;
-      state.levelId = payload.levelId;
-      state.width = payload.width;
-      state.savedBoardSignature = boardSignature(state.width, state.height, state.cells);
+      refreshEditorLevelNeighborState(payload);
+
+      const sameLevel = state.levelId === submittedLevelId;
+      const liveBoardUnchanged =
+        sameLevel &&
+        boardSignature(state.width, state.height, state.cells) === submittedBoardSignature;
+      const liveHotbarUnchanged = hotbarSignature() === submittedHotbarSignature;
+      let hasNewerChanges = state.isDirty;
+
+      if (sameLevel) {
+        const persistedBoardSignature = boardSignature(
+          payload.width,
+          payload.height,
+          payload.cells
+        );
+        if (liveBoardUnchanged) {
+          state.cells = cloneCells(payload.cells);
+          state.height = payload.height;
+          state.width = payload.width;
+        }
+        state.exists = true;
+        state.fileName = payload.fileName;
+        state.filePath = payload.filePath;
+        state.savedBoardSignature = persistedBoardSignature;
+        if (liveHotbarUnchanged) {
+          applyPersistedHotbarTokens(payload.hotbarTokens, submittedHotbarTokens);
+        } else {
+          rememberPersistedHotbarTokens(payload.hotbarTokens, submittedHotbarTokens);
+        }
+        hasNewerChanges = syncEditorDirtyState();
+      }
       if (authorData.worldMeta) {
-        authorData.worldMeta.gemsByLevel[state.levelId] = currentLevelGemCount();
+        authorData.worldMeta.gemsByLevel[submittedLevelId] = gemCountForCells(payload.cells);
         authorData.worldMeta.savedThisSession = true;
         authorData.worldMeta.walkthroughVerified = false;
       }
@@ -4104,13 +4746,15 @@
       // Thumbnails are local while editing (no upload churn): refresh this
       // room's world-map tile from the just-saved cells. The server rebuilds
       // the public listing thumbnails when the world is published.
-      if (refreshPreview) {
+      if (refreshPreview && submittedBoardWasDirty && liveBoardUnchanged) {
         scheduleCurrentLevelThumbRefresh(0);
       }
 
       if (updateStatus) {
-        state.message = payload.message || "Saved.";
-        state.messageTone = "success";
+        state.message = hasNewerChanges
+          ? "Saved earlier changes. New changes are still unsaved."
+          : payload.message || "Saved.";
+        state.messageTone = hasNewerChanges ? "warning" : "success";
       }
       syncLevelSelectors();
       if (renderAfterSave) {
@@ -4187,52 +4831,77 @@
   }
 
   async function switchToNeighborLevel(target) {
-    if (state.isLevelSwitching || !target || target.kind !== "levelSwitch") {
-      return;
+    if (isEditorInteractionLocked()) {
+      return false;
     }
 
-    const dx = Math.max(-1, Math.min(1, Math.round(Number(target.dx) || 0)));
-    const dy = Math.max(-1, Math.min(1, Math.round(Number(target.dy) || 0)));
-    const nextLevelId = target.levelId || adjacentLevelId(state.levelId, dx, dy);
+    const resolvedTarget = resolveLevelSwitchTarget(target);
 
-    if (!nextLevelId || nextLevelId === state.levelId) {
-      return;
+    if (!resolvedTarget) {
+      return false;
     }
 
+    const dx = Math.sign(resolvedTarget.dx);
+    const dy = Math.sign(resolvedTarget.dy);
+    const nextLevelId = resolvedTarget.levelId;
+    window.clearTimeout(currentLevelThumbTimer);
+    currentLevelThumbTimer = 0;
+    cancelScheduledPointerMove();
+    finishPainting();
     state.isLevelSwitching = true;
     clearEditorHoverTarget();
+    syncUndoButtonState();
     setStatus("Saving before switching rooms...", "warning");
 
+    let app = null;
+    let outgoingPlayData = null;
+
     try {
-      await saveLevel({
+      const savedPayload = await saveLevel({
         refreshPreview: false,
         renderAfterSave: false,
         throwOnError: true,
         updateStatus: false
       });
 
-      const outgoingPlayData = buildEditorRenderPlayData();
-      const app = ensureEditorRenderApp(outgoingPlayData);
+      // Refresh the outgoing room while state still points at it. Deferred
+      // thumbnail/cache timers must not accidentally snapshot the incoming
+      // room after the transition lands.
+      refreshEditorLevelNeighborState(savedPayload);
+      renderLevelThumbFromCells(
+        savedPayload.levelId,
+        savedPayload.cells,
+        savedPayload.width,
+        savedPayload.height
+      ).catch(() => {});
+
+      outgoingPlayData = buildEditorRenderPlayData();
+      app = ensureEditorRenderApp(outgoingPlayData);
+      const pendingPayload = await fetchAuthorLevelPayload(nextLevelId);
 
       if (
         !app ||
         typeof app.applyLevelState !== "function" ||
         !app.renderCompositor?.startLevelTransition
       ) {
+        renderLoadedLevelWithoutScene(pendingPayload, {
+          message: "Saved and switched to " + nextLevelId.replace("level_", "") + ".",
+          messageTone: pendingPayload.exists ? "success" : "warning"
+        });
         state.isLevelSwitching = false;
-        syncUndoButtonState();
-        await loadLevel(nextLevelId);
-        return;
+        renderStatus();
+        renderEditorScene();
+        return true;
       }
 
       const outgoingLevel = await prepareEditorAppLevelState(app, outgoingPlayData);
-      const payload = await fetchAuthorLevelPayload(nextLevelId);
-      renderLoadedLevelWithoutScene(payload, {
-        message: "Saved and switched to " + nextLevelId.replace("level_", "") + ".",
-        messageTone: payload.exists ? "success" : "warning"
-      });
-
-      const incomingPlayData = buildEditorRenderPlayData();
+      const incomingPlayData = neighborStateForLevel(
+        pendingPayload.levelId,
+        pendingPayload.cells,
+        pendingPayload.width,
+        pendingPayload.height,
+        pendingPayload.levelId
+      );
       const incomingLevel = await prepareEditorAppLevelState(app, incomingPlayData);
       const incomingRaised = raisedSurfaceSnapshotForApp(app);
 
@@ -4250,19 +4919,36 @@
           incomingRaisedOrangeWalls: incomingRaised.raisedOrangeWalls
         },
         onComplete: () => {
-          state.isLevelSwitching = false;
-          syncUndoButtonState();
-          renderEditorScene();
+          try {
+            renderLoadedLevelWithoutScene(pendingPayload, {
+              message: "Saved and switched to " + nextLevelId.replace("level_", "") + ".",
+              messageTone: pendingPayload.exists ? "success" : "warning"
+            });
+          } catch (error) {
+            setStatus(
+              error instanceof Error ? error.message : "Could not finish switching rooms.",
+              "error"
+            );
+          } finally {
+            state.isLevelSwitching = false;
+            renderStatus();
+            renderEditorScene();
+          }
         }
       });
       app.render();
+      return true;
     } catch (error) {
       state.isLevelSwitching = false;
       syncUndoButtonState();
+      if (app && outgoingPlayData) {
+        renderEditorScene();
+      }
       setStatus(
         error instanceof Error ? error.message : "Could not switch to that level.",
         "error"
       );
+      return false;
     }
   }
 
@@ -4539,10 +5225,18 @@
   }
 
   function pageHillClimbResult(delta) {
+    if (isEditorInteractionLocked()) {
+      return false;
+    }
+
     return showHillClimbResult(state.hillClimbResultIndex + delta);
   }
 
   async function hillClimb() {
+    if (isEditorInteractionLocked()) {
+      return;
+    }
+
     if (!levelHasPlayer()) {
       setStatus("Hill-Climb needs a player first.", "error");
       syncSolverButtonState();
@@ -4781,6 +5475,10 @@
   }
 
   async function placeGem() {
+    if (isEditorInteractionLocked()) {
+      return;
+    }
+
     if (!levelHasPlayer()) {
       setStatus("Place Gem needs a player first.", "error");
       syncSolverButtonState();
@@ -4864,6 +5562,10 @@
   }
 
   async function solveLevel() {
+    if (isEditorInteractionLocked()) {
+      return;
+    }
+
     if (!levelHasGem()) {
       setStatus("Solver needs a gem first.", "error");
       syncSolverButtonState();
@@ -4982,6 +5684,10 @@
   }
 
   async function playSolution() {
+    if (isEditorInteractionLocked()) {
+      return;
+    }
+
     if (!hasPlayableSolution()) {
       setStatus("Run Solver successfully before playing a solution.", "error");
       syncSolverButtonState();
@@ -5113,8 +5819,9 @@
       return;
     }
 
-    if (/^[1-9]$/.test(key)) {
-      const token = hotbarTokens()[Number(key) - 1];
+    if (/^[0-9]$/.test(key)) {
+      const slotIndex = key === "0" ? 9 : Number(key) - 1;
+      const token = hotbarTokens()[slotIndex];
       if (token) {
         event.preventDefault();
         selectToken(token);
@@ -5131,6 +5838,16 @@
   }
 
   function handleGridPointerDown(event) {
+    if (
+      isEditorInteractionLocked() ||
+      event.button !== 0 ||
+      event.isPrimary === false ||
+      event.ctrlKey ||
+      eventTargetsAuthorOverlay(event)
+    ) {
+      return;
+    }
+
     const target = syncEditorHoverFromPointerEvent(event);
 
     if (!target) {
@@ -5150,6 +5867,10 @@
     }
 
     state.paintPointerId = event.pointerId;
+    state.paintStrokeDidPaint = false;
+    state.paintStrokeLevelId = state.levelId;
+    state.paintStrokePaintedVoxelKeys.clear();
+    state.paintStrokeToken = state.selectedToken;
     state.lastPaintTargetKey = null;
     state.eraseGestureMode = null;
     state.paintDragPlane = paintDragPlaneForTarget(target);
@@ -5159,31 +5880,113 @@
     paintFaceTargetOnce(target);
   }
 
-  // Pointer moves are throttled to one raycast pick per animation frame: the
-  // listeners only stash the latest event and the work happens in the rAF.
+  function pointerSamplesForMoveEvent(event) {
+    if (typeof event?.getCoalescedEvents !== "function") {
+      return [event];
+    }
+
+    try {
+      const coalesced = Array.from(event.getCoalescedEvents() || []);
+      return coalesced.length > 0 ? coalesced : [event];
+    } catch {
+      return [event];
+    }
+  }
+
+  function compactPointerMoveSamples(samples, limit) {
+    if (samples.length <= limit) {
+      return samples;
+    }
+
+    const compacted = [];
+    for (let index = 0; index < limit; index += 1) {
+      const sourceIndex = Math.round((index * (samples.length - 1)) / (limit - 1));
+      const sample = samples[sourceIndex];
+
+      if (compacted[compacted.length - 1] !== sample) {
+        compacted.push(sample);
+      }
+    }
+
+    return compacted;
+  }
+
+  // Hover-only moves remain latest-only. During an active paint stroke we
+  // retain ordered/coalesced samples until the next frame so narrow side
+  // faces cannot disappear merely because a newer pointer event arrived.
   function schedulePointerMove(event, processor) {
-    pointerMoveScheduler.event = event;
-    pointerMoveScheduler.processor = processor;
+    const isPaintSample =
+      state.paintPointerId === event.pointerId && event.buttons === 1;
+
+    if (isPaintSample) {
+      pointerSamplesForMoveEvent(event).forEach((sampleEvent) => {
+        const previous = pointerMoveScheduler.samples[pointerMoveScheduler.samples.length - 1];
+        const isDuplicate =
+          previous?.isPaintSample === true &&
+          previous.processor === processor &&
+          previous.event.pointerId === sampleEvent.pointerId &&
+          previous.event.clientX === sampleEvent.clientX &&
+          previous.event.clientY === sampleEvent.clientY;
+
+        if (!isDuplicate) {
+          pointerMoveScheduler.samples.push({
+            event: sampleEvent,
+            isPaintSample: true,
+            processor
+          });
+        }
+      });
+      pointerMoveScheduler.samples = compactPointerMoveSamples(
+        pointerMoveScheduler.samples,
+        pointerPaintSamplesPerFrameLimit
+      );
+    } else if (!pointerMoveScheduler.samples.some((sample) => sample.isPaintSample)) {
+      pointerMoveScheduler.samples = [{ event, isPaintSample: false, processor }];
+    }
 
     if (pointerMoveScheduler.frameId !== null) {
       return;
     }
 
     pointerMoveScheduler.frameId = window.requestAnimationFrame(() => {
-      const pendingEvent = pointerMoveScheduler.event;
-      const pendingProcessor = pointerMoveScheduler.processor;
+      const pendingSamples = pointerMoveScheduler.samples;
 
       pointerMoveScheduler.frameId = null;
-      pointerMoveScheduler.event = null;
-      pointerMoveScheduler.processor = null;
+      pointerMoveScheduler.samples = [];
 
-      if (pendingEvent && pendingProcessor) {
-        pendingProcessor(pendingEvent);
-      }
+      pendingSamples.forEach((sample) => sample.processor?.(sample.event));
     });
   }
 
+  function cancelScheduledPointerMove() {
+    if (pointerMoveScheduler.frameId !== null) {
+      window.cancelAnimationFrame(pointerMoveScheduler.frameId);
+    }
+    pointerMoveScheduler.frameId = null;
+    pointerMoveScheduler.samples = [];
+  }
+
+  function flushScheduledPointerMoves() {
+    if (pointerMoveScheduler.frameId !== null) {
+      window.cancelAnimationFrame(pointerMoveScheduler.frameId);
+    }
+
+    const pendingSamples = pointerMoveScheduler.samples;
+    pointerMoveScheduler.frameId = null;
+    pointerMoveScheduler.samples = [];
+    pendingSamples.forEach((sample) => sample.processor?.(sample.event));
+  }
+
   function processGridPointerMove(event) {
+    if (
+      isEditorInteractionLocked() ||
+      eventTargetsAuthorOverlay(event) ||
+      !fallbackPaintTargetFromPoint(event.clientX, event.clientY)
+    ) {
+      clearEditorHoverTarget();
+      return;
+    }
+
     const target = syncEditorHoverFromPointerEvent(event);
 
     if (state.paintPointerId !== event.pointerId || event.buttons !== 1) {
@@ -5198,24 +6001,36 @@
   }
 
   function handleGridPointerMove(event) {
+    if (isEditorInteractionLocked()) {
+      clearEditorHoverTarget();
+      return;
+    }
     schedulePointerMove(event, processGridPointerMove);
   }
 
-  function stopPainting(event) {
-    if (state.paintPointerId !== event.pointerId) {
-      return;
+  function finishPainting(pointerId = state.paintPointerId) {
+    if (state.paintPointerId === null || pointerId !== state.paintPointerId) {
+      return false;
     }
 
+    // A pointerup can arrive before this frame's queued move samples. Process
+    // them while the stroke lock is still active so its final side tiles are
+    // not silently dropped.
+    flushScheduledPointerMoves();
+    const capturedPointerId = state.paintPointerId;
     const didPaint = state.paintStrokeDidPaint;
 
     state.paintPointerId = null;
     state.paintStrokeDidPaint = false;
+    state.paintStrokeLevelId = null;
+    state.paintStrokePaintedVoxelKeys.clear();
+    state.paintStrokeToken = null;
     state.lastPaintTargetKey = null;
     state.eraseGestureMode = null;
     state.paintDragPlane = null;
     try {
-      if (elements.grid.hasPointerCapture?.(event.pointerId)) {
-        elements.grid.releasePointerCapture(event.pointerId);
+      if (elements.grid.hasPointerCapture?.(capturedPointerId)) {
+        elements.grid.releasePointerCapture(capturedPointerId);
       }
     } catch (_) {}
 
@@ -5228,23 +6043,35 @@
       renderRawOutput();
       syncSolverButtonState();
     }
+
+    return didPaint;
+  }
+
+  function stopPainting(event) {
+    finishPainting(event.pointerId);
   }
 
   function eventTargetsEditorGrid(event) {
     return event.target instanceof Node && elements.grid.contains(event.target);
   }
 
-  // The hotbar and toolbox float over the canvas; pointer events on them are
-  // UI interactions, never paint strokes.
+  // Editor chrome can float over the canvas; pointer capture still reports
+  // the grid as event.target, so also inspect the element under the pointer.
   function eventTargetsAuthorOverlay(event) {
-    return (
-      event.target instanceof Element &&
-      Boolean(event.target.closest("#author-inventory, #author-hotbar"))
+    const eventTarget = event.target instanceof Element ? event.target : null;
+    const pointTarget =
+      Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+        ? document.elementFromPoint?.(event.clientX, event.clientY)
+        : null;
+
+    return Boolean(
+      eventTarget?.closest(authorOverlaySelector) ||
+      pointTarget?.closest?.(authorOverlaySelector)
     );
   }
 
   function handleDocumentGridPointerDown(event) {
-    if (eventTargetsAuthorOverlay(event)) {
+    if (isEditorInteractionLocked() || eventTargetsAuthorOverlay(event)) {
       return;
     }
     if (eventTargetsEditorGrid(event) || !fallbackPaintTargetFromPoint(event.clientX, event.clientY)) {
@@ -5255,6 +6082,11 @@
   }
 
   function processDocumentGridPointerMove(event) {
+    if (isEditorInteractionLocked()) {
+      clearEditorHoverTarget();
+      return;
+    }
+
     const isActivePaintPointer = state.paintPointerId === event.pointerId;
     const isOverGrid =
       !eventTargetsAuthorOverlay(event) &&
@@ -5283,9 +6115,17 @@
   }
 
   function handleGridContextMenu(event) {
+    if (isEditorInteractionLocked() || eventTargetsAuthorOverlay(event)) {
+      return;
+    }
+
     const target = paintTargetFromPointerEvent(event);
 
-    if (!target || !isInsideEditorCell(target.sourceX, target.sourceY)) {
+    if (
+      !target ||
+      target.kind === "levelSwitch" ||
+      !isInsideEditorCell(target.sourceX, target.sourceY)
+    ) {
       return;
     }
 
@@ -5295,7 +6135,7 @@
     const descriptor = getCellDescriptor(state.cells[y][x]);
 
     selectCell(x, y);
-    selectToken(descriptor.topToken);
+    selectToken(descriptor.topToken, { assignToActiveSlot: true });
   }
 
   function handleDocumentGridContextMenu(event) {
@@ -5745,7 +6585,7 @@
       gameId: authorData.game.id,
       height: board.height,
       includeGems: true,
-      levelId: "level_AxA",
+      levelId: "__author_social_card__",
       levelLabel: meta.title || "World",
       width: board.width
     });
@@ -5818,19 +6658,23 @@
       );
       return card.toDataURL("image/png");
     } finally {
-      try {
-        app.threeRenderer?.dispose?.();
-        const gl = app.gl;
-        const loseContext =
-          gl && typeof gl.getExtension === "function" ? gl.getExtension("WEBGL_lose_context") : null;
-        loseContext?.loseContext?.();
-      } catch {
-        // Best-effort cleanup.
-      }
-      sceneCanvas.width = 0;
-      sceneCanvas.height = 0;
+      disposeAuxiliaryRenderApp(app, sceneCanvas);
     }
   }
+
+  window.addEventListener("pagehide", (event) => {
+    if (event.persisted) {
+      return;
+    }
+    stopDemoScene();
+    disposeAuxiliaryRenderApp(
+      demoSceneRenderer.app,
+      document.getElementById("inventory-demo-canvas")
+    );
+    demoSceneRenderer.app = null;
+    disposeAuxiliaryRenderApp(worldThumbRenderer.app, worldThumbRenderer.canvas);
+    worldThumbRenderer.app = null;
+  });
 
   renderLevelSelectors();
   renderPalette();
@@ -5848,7 +6692,7 @@
       return;
     }
 
-    selectToken(button.dataset.token);
+    selectToken(button.dataset.token, { assignToActiveSlot: true });
   });
 
   elements.grid.addEventListener("pointerdown", handleGridPointerDown);

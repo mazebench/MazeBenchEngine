@@ -630,6 +630,81 @@
       return normalizeTokenRows(enforceBottomSurfaceRows(tokens));
     }
 
+    // Brush painting is additive: an occupied voxel must survive a swipe.
+    // Keep setCellElevationToken's explicit replacement semantics for raw
+    // editing/solver code, and use this narrower helper for paint gestures.
+    // Base floor/ice is support at elevation zero rather than an occupant,
+    // while tall terrain (notably trees) reserves every voxel it spans.
+    function placeCellElevationTokenIfVacant(currentValue, token, targetElevation) {
+      const normalizedToken = normalizeCellValue(token);
+      const elevation = Math.max(0, Math.floor(Number(targetElevation) || 0));
+      const tool = toolByToken.get(normalizedToken);
+
+      if (isBaseSurfaceTool(tool)) {
+        return setCellElevationToken(currentValue, normalizedToken, elevation);
+      }
+
+      const tokens = enforceBottomSurfaceRows(getCellTokens(currentValue));
+      const metadata = cellStackMetadata(tokens);
+      const candidateHeight = isActorTool(tool)
+        ? Math.max(1, actorToolLayerSlotHeight(tool))
+        : Math.max(1, terrainToolLayerSlotHeight(tool));
+      const candidateTop = elevation + candidateHeight;
+      const occupied = metadata.entries.some((entry) => {
+        if (entry.isAir || !entry.tool || isBaseSurfaceTool(entry.tool)) {
+          return false;
+        }
+
+        const occupiedHeight = isActorTool(entry.tool)
+          ? Math.max(1, actorToolLayerSlotHeight(entry.tool))
+          : Math.max(1, terrainToolLayerSlotHeight(entry.tool));
+        const occupiedTop = entry.elevation + occupiedHeight;
+
+        return elevation < occupiedTop && candidateTop > entry.elevation;
+      });
+
+      if (occupied) {
+        return normalizeAuthoringCellValue(currentValue);
+      }
+
+      // Prefer the explicit air row at the requested elevation. A tall token
+      // then consumes the remaining air rows in its span so objects above it
+      // keep their original elevation instead of being pushed upward.
+      const targetAirEntry = metadata.entries.find(
+        (entry) => entry.isAir && entry.elevation === elevation
+      );
+      let placementIndex;
+
+      if (targetAirEntry) {
+        placementIndex = targetAirEntry.index;
+        tokens[placementIndex] = normalizedToken;
+      } else {
+        let nextElevation = metadata.nextElevation;
+
+        while (nextElevation < elevation) {
+          tokens.push("");
+          nextElevation = cellStackMetadata(tokens).nextElevation;
+        }
+
+        placementIndex = tokens.length;
+        tokens.push(normalizedToken);
+      }
+
+      metadata.entries
+        .filter(
+          (entry) =>
+            entry.isAir &&
+            entry.index !== placementIndex &&
+            entry.elevation >= elevation &&
+            entry.elevation < candidateTop
+        )
+        .map((entry) => entry.index)
+        .sort((left, right) => right - left)
+        .forEach((index) => tokens.splice(index, 1));
+
+      return normalizeTokenRows(enforceBottomSurfaceRows(tokens));
+    }
+
     function eraseCellElevationValue(currentValue, targetElevation) {
       const tokens = getCellTokens(currentValue);
       const elevation = Math.max(0, Math.floor(Number(targetElevation) || 0));
@@ -735,6 +810,7 @@
       isActorTool,
       normalizeAuthoringCellValue,
       normalizeCellValue,
+      placeCellElevationTokenIfVacant,
       setCellElevationToken,
       setSurfaceAttachmentToken,
       toolByName,

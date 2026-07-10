@@ -4544,24 +4544,72 @@
           point.z >= cell.top - tolerance &&
           point.z <= cell.bottom + tolerance
       );
-      const pool = candidates.length > 0 ? candidates : cells;
+      const isXFace = Math.abs(normal.x) >= Math.abs(normal.z) && Math.abs(normal.x) > 0.4;
+      const isZFace = Math.abs(normal.z) > 0.4;
+      // Tolerance keeps ray hits on beveled/rounded geometry pickable, but it
+      // must not make both cells beside a seam equally eligible. Resolve the
+      // coordinate along the face with half-open tile bounds first.
+      const strictCandidates = candidates.filter((cell) => {
+        if (isXFace) {
+          return point.z >= cell.top && point.z < cell.bottom;
+        }
+
+        if (isZFace) {
+          return point.x >= cell.left && point.x < cell.right;
+        }
+
+        return (
+          point.x >= cell.left &&
+          point.x < cell.right &&
+          point.z >= cell.top &&
+          point.z < cell.bottom
+        );
+      });
+      const pool =
+        strictCandidates.length > 0
+          ? strictCandidates
+          : candidates.length > 0
+            ? candidates
+            : cells;
 
       if (pool.length === 0) {
         return null;
       }
 
-      if (Math.abs(normal.x) >= Math.abs(normal.z) && Math.abs(normal.x) > 0.4) {
+      if (isXFace) {
         const edge = normal.x > 0 ? "right" : "left";
         return pool
           .slice()
-          .sort((a, b) => Math.abs(a[edge] - point.x) - Math.abs(b[edge] - point.x))[0];
+          .sort((a, b) => {
+            const edgeDistance =
+              Math.abs(a[edge] - point.x) - Math.abs(b[edge] - point.x);
+
+            if (edgeDistance !== 0) {
+              return edgeDistance;
+            }
+
+            const aCenter = (a.top + a.bottom) / 2;
+            const bCenter = (b.top + b.bottom) / 2;
+            return Math.abs(aCenter - point.z) - Math.abs(bCenter - point.z);
+          })[0];
       }
 
-      if (Math.abs(normal.z) > 0.4) {
+      if (isZFace) {
         const edge = normal.z > 0 ? "bottom" : "top";
         return pool
           .slice()
-          .sort((a, b) => Math.abs(a[edge] - point.z) - Math.abs(b[edge] - point.z))[0];
+          .sort((a, b) => {
+            const edgeDistance =
+              Math.abs(a[edge] - point.z) - Math.abs(b[edge] - point.z);
+
+            if (edgeDistance !== 0) {
+              return edgeDistance;
+            }
+
+            const aCenter = (a.left + a.right) / 2;
+            const bCenter = (b.left + b.right) / 2;
+            return Math.abs(aCenter - point.x) - Math.abs(bCenter - point.x);
+          })[0];
       }
 
       return pool
@@ -4583,7 +4631,128 @@
         return Math.max(0, Math.round(y / unit));
       }
 
-      return Math.max(0, Math.floor(Math.max(0, y - 0.001) / unit));
+      return Math.max(0, Math.floor(y / unit));
+    }
+
+    function editorCellOccupiedLayers(cell) {
+      if (!Array.isArray(cell?.occupiedLayers)) {
+        return [];
+      }
+
+      return Array.from(
+        new Set(
+          cell.occupiedLayers
+            .filter((layer) => Number.isFinite(layer))
+            .map((layer) => Math.max(0, Math.floor(layer)))
+        )
+      ).sort((left, right) => left - right);
+    }
+
+    function editorSideLayerRange(pick, explicitSourceLayer = null) {
+      const bottomY = Number(pick?.bottomY);
+      const topY = Number(pick?.topY);
+      const explicitLogicalBottom = Number.isFinite(pick?.logicalBottomLayer)
+        ? Math.max(0, Math.floor(pick.logicalBottomLayer))
+        : null;
+      const bottomLayer =
+        explicitLogicalBottom !== null
+          ? explicitLogicalBottom
+          : explicitSourceLayer !== null
+            ? explicitSourceLayer
+          : Number.isFinite(bottomY)
+            ? editorVoxelLayerAt(bottomY, "side")
+            : 0;
+      const normalizedTop = Number.isFinite(topY)
+        ? Math.max(0, topY - actorVisualLift) / unit
+        : bottomLayer + 1;
+      const roundedTop = Math.round(normalizedTop);
+      const snappedTop =
+        Math.abs(normalizedTop - roundedTop) <= 0.001 ? roundedTop : normalizedTop;
+      const topLayerExclusive = Math.max(bottomLayer + 1, Math.ceil(snappedTop));
+      const logicalLayerCount = Number.isFinite(pick?.logicalLayerCount)
+        ? Math.max(1, Math.floor(pick.logicalLayerCount))
+        : topLayerExclusive - bottomLayer;
+      const rangeBottomY = Number.isFinite(bottomY)
+        ? bottomY
+        : bottomLayer * unit + actorVisualLift;
+      const rangeTopY =
+        Number.isFinite(topY) && topY > rangeBottomY
+          ? topY
+          : rangeBottomY + logicalLayerCount * unit;
+
+      return {
+        bottomLayer,
+        bottomY: rangeBottomY,
+        layerCount: logicalLayerCount,
+        topY: rangeTopY
+      };
+    }
+
+    function editorSidePaintLayerAt(
+      pick,
+      pointY,
+      explicitSourceLayer = null,
+      cell = null
+    ) {
+      const range = editorSideLayerRange(pick, explicitSourceLayer);
+      const span = Math.max(0.001, range.topY - range.bottomY);
+      const progress = Math.max(0, Math.min(1, (pointY - range.bottomY) / span));
+      const layerOffset = Math.min(
+        range.layerCount - 1,
+        Math.floor(progress * range.layerCount)
+      );
+      const inferredLayer = range.bottomLayer + layerOffset;
+      const occupiedLayers = editorCellOccupiedLayers(cell);
+
+      if (occupiedLayers.length === 0 || occupiedLayers.includes(inferredLayer)) {
+        return inferredLayer;
+      }
+
+      return occupiedLayers.reduce((closest, layer) =>
+        Math.abs(layer - inferredLayer) < Math.abs(closest - inferredLayer)
+          ? layer
+          : closest
+      );
+    }
+
+    function editorSidePaintLayerCandidatesAt(
+      pick,
+      pointY,
+      explicitSourceLayer = null,
+      cell = null
+    ) {
+      const range = editorSideLayerRange(pick, explicitSourceLayer);
+      const primaryLayer = editorSidePaintLayerAt(
+        pick,
+        pointY,
+        explicitSourceLayer,
+        cell
+      );
+      const candidates = [primaryLayer];
+      const span = Math.max(0.001, range.topY - range.bottomY);
+      const seamTolerance = Math.max(0.001, unit * 0.0001);
+
+      for (let offset = 1; offset < range.layerCount; offset += 1) {
+        const seamY = range.bottomY + (span * offset) / range.layerCount;
+
+        if (Math.abs(pointY - seamY) <= seamTolerance) {
+          const lowerLayer = range.bottomLayer + offset - 1;
+          const upperLayer = range.bottomLayer + offset;
+
+          if (!candidates.includes(lowerLayer)) {
+            candidates.push(lowerLayer);
+          }
+          if (!candidates.includes(upperLayer)) {
+            candidates.push(upperLayer);
+          }
+          break;
+        }
+      }
+
+      const occupiedLayers = editorCellOccupiedLayers(cell);
+      return occupiedLayers.length > 0
+        ? candidates.filter((layer) => occupiedLayers.includes(layer))
+        : candidates;
     }
 
     function editorVoxelLayerBounds(layer) {
@@ -4600,7 +4769,16 @@
 
       const rect = targetElement.getBoundingClientRect();
 
-      if (rect.width <= 0 || rect.height <= 0) {
+      if (
+        rect.width <= 0 ||
+        rect.height <= 0 ||
+        !Number.isFinite(clientX) ||
+        !Number.isFinite(clientY) ||
+        clientX < rect.left ||
+        clientX >= rect.right ||
+        clientY < rect.top ||
+        clientY >= rect.bottom
+      ) {
         return null;
       }
 
@@ -4640,29 +4818,71 @@
         let dx = 0;
         let dy = 0;
         const isVoxelPick = pick.voxelPick === true;
-        let topPaintLayer = isVoxelPick
-          ? editorVoxelLayerAt(intersection.point.y, "top")
-          : Math.max(0, Math.round((pick.topY || 0) / unit));
+        const logicalBottomLayer = Number.isFinite(pick.logicalBottomLayer)
+          ? Math.max(0, Math.floor(pick.logicalBottomLayer))
+          : null;
+        const logicalLayerCount = Number.isFinite(pick.logicalLayerCount)
+          ? Math.max(1, Math.floor(pick.logicalLayerCount))
+          : null;
+        const voxelTopSourceLayer = isVoxelPick
+          ? editorSidePaintLayerAt(pick, intersection.point.y, null, cell)
+          : null;
+        let topPaintLayer =
+          isVoxelPick
+            ? voxelTopSourceLayer + 1
+            : logicalBottomLayer !== null && logicalLayerCount !== null
+            ? logicalBottomLayer + logicalLayerCount
+            : Math.max(0, Math.round((pick.topY || 0) / unit));
         const explicitSourceLayer = Number.isFinite(pick.sourceLayer)
           ? Math.max(0, Math.floor(pick.sourceLayer))
           : null;
-        let sourceLayer = explicitSourceLayer ?? Math.max(0, topPaintLayer - 1);
+        let sourceLayer =
+          isVoxelPick
+            ? voxelTopSourceLayer
+            : pick.logicalSourceFollowsPaint === true && logicalBottomLayer !== null
+            ? Math.max(logicalBottomLayer, topPaintLayer - 1)
+            : explicitSourceLayer ?? Math.max(0, topPaintLayer - 1);
+        let sidePaintLayer = sourceLayer;
+        let sidePaintLayerCandidates = [sidePaintLayer];
         let targetBottomY = isVoxelPick ? sourceLayer * unit + actorVisualLift : pick.bottomY;
         let targetTopY = isVoxelPick ? topPaintLayer * unit + actorVisualLift : pick.topY;
 
         if (normal.y <= 0.55) {
-          if (isVoxelPick) {
-            sourceLayer = editorVoxelLayerAt(intersection.point.y, "side");
+          sidePaintLayer = editorSidePaintLayerAt(
+            pick,
+            intersection.point.y,
+            isVoxelPick ? null : explicitSourceLayer,
+            cell
+          );
+          sidePaintLayerCandidates = editorSidePaintLayerCandidatesAt(
+            pick,
+            intersection.point.y,
+            isVoxelPick ? null : explicitSourceLayer,
+            cell
+          );
+
+          if (isVoxelPick || pick.logicalSourceFollowsPaint === true) {
+            sourceLayer = sidePaintLayer;
             const bounds = editorVoxelLayerBounds(sourceLayer);
 
             targetBottomY = bounds.bottomY;
             targetTopY = bounds.topY;
-          } else if (explicitSourceLayer === null) {
-            const sideTopLayer = Math.max(1, Math.ceil((pick.topY || 0) / unit));
-            sourceLayer = Math.max(
-              0,
-              Math.min(sideTopLayer - 1, Math.floor(Math.max(0, intersection.point.y) / unit))
-            );
+          } else {
+            if (explicitSourceLayer === null) {
+              sourceLayer = sidePaintLayer;
+            }
+
+            const spansMultipleLayers =
+              Number.isFinite(pick.bottomY) &&
+              Number.isFinite(pick.topY) &&
+              pick.topY - pick.bottomY > unit + 0.001;
+
+            if (spansMultipleLayers || sidePaintLayer !== sourceLayer) {
+              const bounds = editorVoxelLayerBounds(sidePaintLayer);
+
+              targetBottomY = bounds.bottomY;
+              targetTopY = bounds.topY;
+            }
           }
 
           if (Math.abs(normal.x) >= Math.abs(normal.z)) {
@@ -4710,10 +4930,16 @@
           dy,
           face,
           kind: pick.kind || "terrain",
-          paintLayer: dx === 0 && dy === 0 ? topPaintLayer : sourceLayer,
+          paintLayer: dx === 0 && dy === 0 ? topPaintLayer : sidePaintLayer,
+          paintLayerCandidates:
+            dx === 0 && dy === 0 ? [topPaintLayer] : sidePaintLayerCandidates,
           paintX: cell.gridX + dx,
           paintY: cell.gridY + dy,
           sourceLayer,
+          sourceLayerCandidates:
+            dx === 0 && dy === 0 || (!isVoxelPick && pick.logicalSourceFollowsPaint !== true)
+              ? [sourceLayer]
+              : sidePaintLayerCandidates,
           sourceX: cell.gridX,
           sourceY: cell.gridY,
           topY: targetTopY
@@ -5597,25 +5823,30 @@
     function addTerrainPolycubeComponent(voxels, now) {
       const entries = Array.from(new Set(voxels.map((voxel) => voxel.entry)));
       const cells = Array.from(
-        entries
-          .reduce((cellMap, entry) => {
-            const key = `${entry.x},${entry.y}`;
+        voxels
+          .reduce((cellMap, voxel) => {
+            const key = `${voxel.x},${voxel.y}`;
 
             if (!cellMap.has(key)) {
               cellMap.set(key, {
-                gridX: entry.x,
-                gridY: entry.y,
-                left: entry.x * unit + renderOffsetX(),
-                right: (entry.x + 1) * unit + renderOffsetX(),
-                top: entry.y * unit + renderOffsetZ(),
-                bottom: (entry.y + 1) * unit + renderOffsetZ()
+                gridX: voxel.x,
+                gridY: voxel.y,
+                left: voxel.x * unit + renderOffsetX(),
+                right: (voxel.x + 1) * unit + renderOffsetX(),
+                top: voxel.y * unit + renderOffsetZ(),
+                bottom: (voxel.y + 1) * unit + renderOffsetZ(),
+                occupiedLayers: new Set()
               });
             }
+            cellMap.get(key).occupiedLayers.add(voxel.z);
 
             return cellMap;
           }, new Map())
           .values()
-      );
+      ).map((cell) => ({
+        ...cell,
+        occupiedLayers: Array.from(cell.occupiedLayers).sort((left, right) => left - right)
+      }));
       const visibility = transitionPieceProgressForCells(cells);
 
       if (visibility <= 0.015) {
@@ -5709,13 +5940,18 @@
             const key = `${entry.x},${entry.y}`;
 
             if (!cellMap.has(key)) {
+              const sourceLayer = Math.max(
+                0,
+                Math.floor(Number(entry.descriptor.elevation) || 0)
+              );
               cellMap.set(key, {
                 gridX: entry.x,
                 gridY: entry.y,
                 left: entry.x * unit + renderOffsetX(),
                 right: (entry.x + 1) * unit + renderOffsetX(),
                 top: entry.y * unit + renderOffsetZ(),
-                bottom: (entry.y + 1) * unit + renderOffsetZ()
+                bottom: (entry.y + 1) * unit + renderOffsetZ(),
+                occupiedLayers: [sourceLayer]
               });
             }
 
@@ -6528,14 +6764,23 @@
         const edgeOpacity = fade * visibility;
         const bottomY = Math.min(...columns.map((column) => column.bottomY));
         const topY = Math.max(...columns.map((column) => column.topY));
+        const logicalBottomLayer = Math.min(
+          ...columns.map((column) => column.logicalBottomLayer)
+        );
+        const logicalTopLayer = Math.max(
+          ...columns.map(
+            (column) => column.logicalBottomLayer + column.logicalLayerCount
+          )
+        );
         const renderOffset = {
           x: columnRenderOffsetX(columns[0]) * unit,
           y: columnYOffset(columns[0]),
           z: columnRenderOffsetY(columns[0]) * unit
         };
         const cells = Array.from(
-          columns
-            .reduce((cellMap, column) => {
+          voxels
+            .reduce((cellMap, voxel) => {
+              const column = voxel.column;
               const key = `${column.gridX},${column.gridY}`;
 
               if (!cellMap.has(key)) {
@@ -6545,14 +6790,22 @@
                   left: column.renderX * unit + renderOffsetX(),
                   right: (column.renderX + 1) * unit + renderOffsetX(),
                   top: column.renderY * unit + renderOffsetZ(),
-                  bottom: (column.renderY + 1) * unit + renderOffsetZ()
+                  bottom: (column.renderY + 1) * unit + renderOffsetZ(),
+                  occupiedLayers: new Set()
                 });
               }
+              const logicalLayer =
+                column.logicalBottomLayer +
+                (voxel.z - baseLevel(column.bottomY));
+              cellMap.get(key).occupiedLayers.add(logicalLayer);
 
               return cellMap;
             }, new Map())
             .values()
-        );
+        ).map((cell) => ({
+          ...cell,
+          occupiedLayers: Array.from(cell.occupiedLayers).sort((left, right) => left - right)
+        }));
 
         addOutlinedMesh(
           polycubeGeometry(voxels),
@@ -6568,6 +6821,8 @@
             editorPick: {
               kind: "actor",
               cells,
+              logicalBottomLayer,
+              logicalLayerCount: logicalTopLayer - logicalBottomLayer,
               voxelPick: true,
               topY,
               bottomY
@@ -6626,6 +6881,10 @@
         const bottomY = elevation * elevationUnit - sink + actorVisualLift;
         const renderX = actor.renderX ?? actor.x;
         const renderY = actor.renderY ?? actor.y;
+        const logicalBottomLayer = Math.max(
+          0,
+          Math.floor(Number(actor.elevation) || 0)
+        );
         const entry = {
           actor,
           bottomY,
@@ -6635,6 +6894,8 @@
           groupId: actor.groupId || `${actor.type}-${index}`,
           height,
           index,
+          logicalBottomLayer,
+          logicalLayerCount: 1,
           opacity: actorOpacity(actor),
           renderX,
           renderY,
@@ -6673,6 +6934,7 @@
             previous.fade = Math.min(previous.fade, entry.fade);
             previous.hasHoleFade = previous.hasHoleFade || Boolean(entry.actor.renderInHole);
             previous.height = entry.topY - previous.bottomY;
+            previous.logicalLayerCount += entry.logicalLayerCount;
             previous.opacity = Math.min(previous.opacity, entry.opacity);
             previous.topY = entry.topY;
           });
@@ -6707,6 +6969,8 @@
               gridY,
               hasHoleFade: column.hasHoleFade,
               height: column.height,
+              logicalBottomLayer: column.logicalBottomLayer,
+              logicalLayerCount: column.logicalLayerCount,
               opacity: column.opacity,
               renderX: column.renderX,
               renderY: column.renderY,
@@ -6822,6 +7086,9 @@
                 top: cell.top,
                 bottom: cell.bottom
               })),
+              logicalBottomLayer: component[0].logicalBottomLayer,
+              logicalLayerCount: component[0].logicalLayerCount,
+              logicalSourceFollowsPaint: true,
               topY,
               bottomY: topY - height
             }
@@ -6853,6 +7120,8 @@
     }
 
     function gemEditorPick(actor, topY, bottomY) {
+      const sourceLayer = Math.max(0, Math.floor(Number(actor.elevation) || 0));
+
       return editorPickForRenderContext({
         kind: "actor",
         cells: [
@@ -6865,9 +7134,12 @@
             bottom: ((actor.renderY ?? actor.y) + 1) * unit + renderOffsetZ()
           }
         ],
+        logicalBottomLayer: sourceLayer,
+        logicalLayerCount: 1,
+        logicalSourceFollowsPaint: true,
         topY,
         bottomY,
-        sourceLayer: Math.max(0, Math.floor(Number(actor.elevation) || 0))
+        sourceLayer
       });
     }
 
@@ -6996,6 +7268,7 @@
       const height = Math.max(4, unit * 0.32 * scale);
       const bottomY = elevation * elevationUnit - sink + actorVisualLift + hover;
       const topY = bottomY + height;
+      const sourceLayer = Math.max(0, Math.floor(Number(actor.elevation) || 0));
       const actorBounds = {
         gridX: actor.x,
         gridY: actor.y,
@@ -7017,8 +7290,12 @@
         editorPick: {
           kind: "actor",
           cells: [actorBounds],
+          logicalBottomLayer: sourceLayer,
+          logicalLayerCount: 1,
+          logicalSourceFollowsPaint: true,
           topY,
-          bottomY
+          bottomY,
+          sourceLayer
         }
       });
     }
@@ -7100,6 +7377,7 @@
     function puncherEditorPick(actor, center, topY, bottomY) {
       const renderX = actor.renderX ?? actor.x;
       const renderY = actor.renderY ?? actor.y;
+      const sourceLayer = Math.max(0, Math.floor(Number(actor.elevation) || 0));
 
       return editorPickForRenderContext({
         kind: "actor",
@@ -7113,8 +7391,12 @@
             bottom: (renderY + 1) * unit + renderOffsetZ()
           }
         ],
+        logicalBottomLayer: sourceLayer,
+        logicalLayerCount: 1,
+        logicalSourceFollowsPaint: true,
         topY,
-        bottomY
+        bottomY,
+        sourceLayer
       });
     }
 
@@ -7292,6 +7574,7 @@
         const baseY = orangeButtonSurfaceBaseY(actor, elevation, sink, now);
         const renderX = actor.renderX ?? actor.x;
         const renderY = actor.renderY ?? actor.y;
+        const sourceLayer = Math.max(0, Math.floor(Number(actor.elevation) || 0));
         const editorPick = {
           kind: "actor",
           cells: [
@@ -7304,9 +7587,12 @@
               bottom: (renderY + 1) * unit + renderOffsetZ()
             }
           ],
+          logicalBottomLayer: sourceLayer,
+          logicalLayerCount: 1,
+          logicalSourceFollowsPaint: true,
           topY: baseY + buttonHeight,
           bottomY: baseY,
-          sourceLayer: elevation
+          sourceLayer
         };
 
         addOrangeButtonMesh(center, baseY, opacity, fade * visibility, editorPick);
@@ -7337,6 +7623,7 @@
       const depth = unit * scale;
       const height = actorCuboidHeight(scale);
       const topY = elevation * elevationUnit - sink + actorVisualLift + height;
+      const sourceLayer = Math.max(0, Math.floor(Number(actor.elevation) || 0));
       const radius = shapeCornerRadius;
       const actorBounds = {
         gridX: actor.x,
@@ -7359,8 +7646,12 @@
         editorPick: {
           kind: "actor",
           cells: [actorBounds],
+          logicalBottomLayer: sourceLayer,
+          logicalLayerCount: 1,
+          logicalSourceFollowsPaint: true,
           topY,
-          bottomY: topY - height
+          bottomY: topY - height,
+          sourceLayer
         }
       });
     }
