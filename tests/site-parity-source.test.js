@@ -32,6 +32,10 @@ assert.doesNotMatch(pages, /modeCard\("\/play"/);
 assert.match(pages, /\["Edit", `\/author\/maze\//);
 assert.doesNotMatch(pages, /\["Edit Levels", `\/author\/maze\//);
 assert.doesNotMatch(pageChrome, /href="\/play">Play<\/a>/);
+assert.match(pageChrome, /<span class="brand-mark"[^>]*>\$\{BRAND_MARK_SVG\}<\/span>Maze Bench/);
+assert.match(playTheme, /\.wm \{ fill: #ffd15c; stroke: #ffd15c; stroke-width: 1\.5; \}/);
+assert.doesNotMatch(playTheme, /mbChromL|mbChromR|mbWrtick|mbWbtick/);
+assert.doesNotMatch(playTheme, /wordmark-m/);
 assert.match(router, /if \(url\.pathname === "\/play"\) \{[\s\S]*?sendRedirect\(response, "\/build"\)/);
 
 assert.match(pages, /window\.__PLAY_WORLD_DATA__/);

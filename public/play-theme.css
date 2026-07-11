@@ -944,9 +944,7 @@ a.save-button:focus-visible {
   font-weight: 900; font-size: 66px; letter-spacing: 6px; text-anchor: middle;
   paint-order: stroke; stroke-width: 3; stroke-linejoin: round; opacity: 0;
 }
-.mb-crt .wm { fill: #ffd15c; stroke: #ffd15c; }
-.mb-crt .wr { fill: #ff2fb0; stroke: #ff2fb0; mix-blend-mode: screen; }
-.mb-crt .wb { fill: #34e7f0; stroke: #34e7f0; mix-blend-mode: screen; }
+.mb-crt .wm { fill: #ffd15c; stroke: #ffd15c; stroke-width: 1.5; }
 .mb-crt .bar { fill: #ff49d9; transform-box: fill-box; transform-origin: left center; transform: scaleX(0); filter: drop-shadow(0 0 9px rgba(255,73,217,.75)); }
 /* Full-stage click catcher: "press anything" via pointer. */
 .home-boot-hit,
@@ -996,8 +994,6 @@ a.save-button:focus-visible {
 .home-hero.is-run .blockp { animation: mbPop .32s ease-out 1.5s both; }
 .home-hero.is-run .targetp { animation: mbPop .32s ease-out 1.6s both; }
 .home-hero.is-run .frame { animation: mbTrace .55s ease-in-out 1.65s both, mbFramefill .35s linear 1.9s both; }
-.home-hero.is-run .wr { animation: mbChromL .45s linear 2.0s both, mbWrtick 5s step-end 3.4s infinite; }
-.home-hero.is-run .wb { animation: mbChromR .45s linear 2.0s both, mbWbtick 5s step-end 3.4s infinite; }
 .home-hero.is-run .wm { animation: mbWordsnap .45s linear 2.0s both; }
 .home-hero.is-run .bar { animation: mbGrowx .3s cubic-bezier(.2,0,.2,1) 2.45s both; }
 .home-hero.is-run .mb-crt { animation: mbHum 3.4s linear 2.9s infinite; }
@@ -1019,20 +1015,6 @@ a.save-button:focus-visible {
   75% { opacity: 1; transform: translate(-2px, 1px); animation-timing-function: step-end; }
   100% { opacity: 1; transform: translate(0, 0); }
 }
-@keyframes mbChromL {
-  0% { opacity: 0; transform: translate(-30px, 6px); animation-timing-function: step-end; }
-  15% { opacity: .85; transform: translate(-22px, -5px); animation-timing-function: step-end; }
-  40% { opacity: .6; transform: translate(-13px, 3px); animation-timing-function: step-end; }
-  70% { opacity: .85; transform: translate(-7px, -1px); animation-timing-function: step-end; }
-  100% { opacity: .75; transform: translate(-2.5px, 0); }
-}
-@keyframes mbChromR {
-  0% { opacity: 0; transform: translate(30px, -6px); animation-timing-function: step-end; }
-  15% { opacity: .85; transform: translate(22px, 5px); animation-timing-function: step-end; }
-  40% { opacity: .6; transform: translate(13px, -3px); animation-timing-function: step-end; }
-  70% { opacity: .85; transform: translate(7px, 1px); animation-timing-function: step-end; }
-  100% { opacity: .75; transform: translate(2.5px, 0); }
-}
 @keyframes mbHum {
   0%, 100% { opacity: 1; }
   11% { opacity: .988; } 13% { opacity: 1; }
@@ -1049,26 +1031,14 @@ a.save-button:focus-visible {
   97.2% { transform: translate(1.5px, 0); }
   97.8%, 100% { transform: translate(0, 0); }
 }
-@keyframes mbWrtick {
-  0%, 95.8% { transform: translate(-2.5px, 0); }
-  96% { transform: translate(-9px, 1px); }
-  97% { transform: translate(-5px, 0); }
-  97.8%, 100% { transform: translate(-2.5px, 0); }
-}
-@keyframes mbWbtick {
-  0%, 95.8% { transform: translate(2.5px, 0); }
-  96% { transform: translate(9px, -1px); }
-  97% { transform: translate(5px, 0); }
-  97.8%, 100% { transform: translate(2.5px, 0); }
-}
 @keyframes mbCrawl { from { background-position: 0 0, 0 0; } to { background-position: 0 6px, 0 0; } }
 @media (prefers-reduced-motion: reduce) {
   .home-hero.is-run .sun-rise, .home-hero.is-run .halo, .home-hero.is-run .sun-bg,
   .home-hero.is-run .sun-outline,
   .home-hero.is-run .band, .home-hero.is-run .bands, .home-hero.is-run .wall,
   .home-hero.is-run .beam, .home-hero.is-run .mazeG, .home-hero.is-run .blockp,
-  .home-hero.is-run .targetp, .home-hero.is-run .frame, .home-hero.is-run .wr,
-  .home-hero.is-run .wb, .home-hero.is-run .wm, .home-hero.is-run .bar,
+  .home-hero.is-run .targetp, .home-hero.is-run .frame, .home-hero.is-run .wm,
+  .home-hero.is-run .bar,
   .home-hero.is-run .mb-crt, .home-hero.is-run .jitter, .home-hero.is-run .scan { animation: none; }
   .mb-crt .halo { opacity: .4; }
   .mb-crt .sun-outline, .mb-crt .wall, .mb-crt .frame { stroke-dashoffset: 0; }
@@ -1076,8 +1046,6 @@ a.save-button:focus-visible {
   .mb-crt .band, .mb-crt .bar { transform: scaleX(1); }
   .mb-crt .blockp, .mb-crt .targetp { transform: scale(1); }
   .mb-crt .w { opacity: 1; }
-  .mb-crt .wr { transform: translate(-2.5px, 0); }
-  .mb-crt .wb { transform: translate(2.5px, 0); }
 }
 /* Bottom prompt carries its own scrim so it reads over bright edges. */
 .home-boot-footer {
