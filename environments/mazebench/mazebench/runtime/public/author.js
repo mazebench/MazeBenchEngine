@@ -7186,8 +7186,7 @@
       revealEditorWorld();
     }, 6000);
 
-    // Publish-time hero: the page's publish flow calls this to compose the
-    // social card from a true 3D render of the world's start room.
+    // Publish-time hero: hosts can call this for a clean 3D whole-world image.
     window.__MAZEBENCH_RENDER_WORLD_HERO__ = (options) =>
       renderWorldHeroCardDataUrl(options || {});
   }
@@ -7231,9 +7230,8 @@
   }
 
   // Renders the saved (canonical) world at card size on a throwaway app —
-  // the WHOLE stitched world when possible, otherwise the start room — then
-  // composes the neon title treatment over it. Returned as a 1200x630 PNG
-  // data URL, the standard social-card aspect.
+  // the WHOLE stitched world when possible, otherwise the start room. The
+  // capture is image-only: no player, title, or metadata is baked into it.
   async function renderWorldHeroCardDataUrl(options) {
     const meta = authorData.worldMeta;
     if (!meta) {
@@ -7275,6 +7273,9 @@
       levelLabel: meta.title || "World",
       width: board.width
     });
+    playData.actors = (playData.actors || []).filter(
+      (actor) => actor?.type !== "player" && actor?.type !== "circle_player"
+    );
     const app = createAuxiliaryRenderApp(sceneCanvas, playData);
     if (!app) {
       return null;
@@ -7292,8 +7293,8 @@
       }
       app.threeRenderer?.setDebugCameraView?.({
         yaw: 0,
-        tilt: 0.85,
-        zoom: 1.1,
+        tilt: 0.42,
+        zoom: Math.max(0.55, Math.min(1.4, Number(meta.width || 1) / Math.max(1, Number(meta.height || 1)))),
         mode: "perspective",
         skipRender: true
       });
@@ -7318,29 +7319,6 @@
         (card.height - drawHeight) / 2,
         drawWidth,
         drawHeight
-      );
-      // Bottom gradient + neon title treatment.
-      const gradient = context.createLinearGradient(0, card.height * 0.45, 0, card.height);
-      gradient.addColorStop(0, "rgba(5, 6, 14, 0)");
-      gradient.addColorStop(1, "rgba(5, 6, 14, 0.92)");
-      context.fillStyle = gradient;
-      context.fillRect(0, 0, card.width, card.height);
-      const title = String(options.title || meta.title || "Maze Bench World").toUpperCase();
-      context.textBaseline = "alphabetic";
-      context.shadowColor = "rgba(111, 220, 255, 0.85)";
-      context.shadowBlur = 26;
-      context.fillStyle = "#eaffff";
-      context.font = "700 64px Orbitron, Inter, system-ui, sans-serif";
-      context.fillText(title, 56, card.height - 96, card.width - 112);
-      context.shadowBlur = 0;
-      context.fillStyle = "rgba(231, 234, 255, 0.75)";
-      context.font = "500 26px 'Space Mono', Menlo, monospace";
-      const gems = Number(options.gems || 0);
-      context.fillText(
-        (gems > 0 ? gems + " GEMS · " : "") + "PLAY IT ON MAZEBENCH.COM",
-        58,
-        card.height - 44,
-        card.width - 116
       );
       return card.toDataURL("image/png");
     } finally {

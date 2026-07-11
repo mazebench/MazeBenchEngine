@@ -57,6 +57,16 @@ const thumbnailUploadSection = sourceSection(
 assert.match(thumbnailUploadSection, /authorData\.previewApiBaseUrl/);
 assert.match(thumbnailUploadSection, /method: "POST"/);
 
+const socialCardSection = sourceSection(
+  "async function renderWorldHeroCardDataUrl",
+  'window.addEventListener("pagehide"'
+);
+assert.match(socialCardSection, /actor\?\.type !== "player"/);
+assert.match(socialCardSection, /actor\?\.type !== "circle_player"/);
+assert.match(socialCardSection, /tilt: 0\.42/);
+assert.doesNotMatch(socialCardSection, /fillText/);
+assert.doesNotMatch(socialCardSection, /PLAY IT ON MAZEBENCH/);
+
 const previewSection = sourceSection(
   "function createPalettePreviewPlayData",
   "function renderSelectedTool"
