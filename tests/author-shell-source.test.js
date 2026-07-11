@@ -26,6 +26,9 @@ for (const id of [
   "solve-level",
   "world-details-panel",
   "author-info-popover",
+  "unsaved-changes-modal",
+  "unsaved-changes-cancel",
+  "unsaved-changes-save",
   "existing-levels"
 ]) {
   assert.match(shell, new RegExp(`id=["']${id}["']`), `canonical editor shell is missing #${id}`);
@@ -55,6 +58,10 @@ assert.match(theme, /\.author-inventory__democanvas \{/);
 assert.match(theme, /\.author-tool-icon--eraser \{/);
 assert.match(theme, /\.author-world-map-overlay\.is-open/);
 assert.match(theme, /\.author-info-popover\.is-open/);
+assert.match(theme, /\.author-unsaved-modal \.publish-modal__dialog/);
+assert.match(theme, /\.author-unsaved-modal__save/);
+assert.match(theme, /rgba\(var\(--green-rgb\), 0\.12\)/);
+assert.doesNotMatch(shell, /unsaved-changes-discard|Leave Without Saving/);
 assert.match(site, /grid-template-columns: minmax\(0, 1fr\) auto minmax\(0, 1fr\)/);
 assert.match(pages, /<div id="author-shell-root"><\/div>/);
 assert.match(pages, /<script src="\/author-shell\.js" defer><\/script>/);

@@ -43,6 +43,8 @@ const PUBLIC_FILE_ROUTES = new Map(
     "/flyover.js",
     "/maze-engine.js",
     "/maze-solver.js",
+    "/world-solver.js",
+    "/world-solver-worker.js",
     "/author-play-data.js",
     "/author-solver-worker.js",
     "/author-shell.js",

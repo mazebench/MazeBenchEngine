@@ -33,6 +33,8 @@ const MIRRORED_FILES = [
   "public/local-site.css",
   "public/maze-engine.js",
   "public/maze-solver.js",
+  "public/world-solver.js",
+  "public/world-solver-worker.js",
   "public/play-core.js",
   "public/play-gameplay.js",
   "public/play-movement.js",

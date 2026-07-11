@@ -330,6 +330,23 @@ const loadSection = sourceSection(
   "async function loadLevel",
   "async function saveLevel"
 );
+
+const unsavedPromptSection = sourceSection(
+  authorSource,
+  "let unsavedPromptResolve",
+  "async function fetchAuthorLevelPayload"
+);
+assert.match(unsavedPromptSection, /function promptForUnsavedChanges\(options = \{\}\)/);
+assert.match(unsavedPromptSection, /function installUnsavedNavigationGuards\(\)/);
+assert.match(unsavedPromptSection, /\.author-nav a, \.build-mobile-blocker__actions a/);
+assert.match(unsavedPromptSection, /await saveLevel\(\{ refreshPreview: false \}\)/);
+assert.match(unsavedPromptSection, /window\.location\.assign\(link\.href\)/);
+
+assert.doesNotMatch(authorSource, /discardLabel|Use Saved Version|Leave Without Saving/);
+assert.match(authorSource, /message: "This room has unsaved changes\. Save before publishing\?"/);
+assert.match(authorSource, /if \(choice === "cancel"\) \{\s*return \{ cancelled: true, ok: false \};/);
+assert.match(authorSource, /installUnsavedNavigationGuards\(\)/);
+assert.match(authorSource, /if \(!state\.isDirty \|\| allowDirtyUnload\)/);
 assertBefore(
   loadSection,
   "window.clearTimeout(currentLevelThumbTimer)",

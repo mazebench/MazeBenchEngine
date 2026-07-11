@@ -53,6 +53,10 @@
     solverModePlace: document.getElementById("solver-mode-place"),
     solverModeReach: document.getElementById("solver-mode-reach"),
     status: document.getElementById("author-status"),
+    unsavedCancel: document.getElementById("unsaved-changes-cancel"),
+    unsavedMessage: document.getElementById("unsaved-changes-message"),
+    unsavedModal: document.getElementById("unsaved-changes-modal"),
+    unsavedSave: document.getElementById("unsaved-changes-save"),
     undoLevel: document.getElementById("undo-level")
   };
 
@@ -4869,6 +4873,72 @@
     return !state.isDirty || window.confirm("Discard your unsaved changes?");
   }
 
+  let unsavedPromptResolve = null;
+  let allowDirtyUnload = false;
+
+  function closeUnsavedChangesPrompt(choice = "cancel") {
+    elements.unsavedModal.classList.remove("open");
+    const resolve = unsavedPromptResolve;
+    unsavedPromptResolve = null;
+    if (resolve) resolve(choice);
+  }
+
+  function ensureUnsavedChangesPromptListeners() {
+    if (elements.unsavedModal.dataset.bound === "true") return;
+    elements.unsavedModal.dataset.bound = "true";
+    elements.unsavedCancel.addEventListener("click", () => closeUnsavedChangesPrompt("cancel"));
+    elements.unsavedSave.addEventListener("click", () => closeUnsavedChangesPrompt("save"));
+    elements.unsavedModal.addEventListener("click", (event) => {
+      if (event.target === elements.unsavedModal) closeUnsavedChangesPrompt("cancel");
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && elements.unsavedModal.classList.contains("open")) {
+        event.preventDefault();
+        closeUnsavedChangesPrompt("cancel");
+      }
+    });
+  }
+
+  function promptForUnsavedChanges(options = {}) {
+    if (!state.isDirty) return Promise.resolve("clean");
+    ensureUnsavedChangesPromptListeners();
+    if (unsavedPromptResolve) closeUnsavedChangesPrompt("cancel");
+    elements.unsavedMessage.textContent =
+      options.message || "This room has unsaved changes. Save before continuing?";
+    elements.unsavedSave.textContent = options.saveLabel || "Save & Continue";
+    elements.unsavedModal.classList.add("open");
+    window.setTimeout(() => elements.unsavedSave.focus(), 0);
+    return new Promise((resolve) => {
+      unsavedPromptResolve = resolve;
+    });
+  }
+
+  async function navigateFromEditor(link) {
+    const destination = String(link.textContent || "that page").trim();
+    const choice = await promptForUnsavedChanges({
+      message: "This room has unsaved changes. Save before opening " + destination + "?",
+      saveLabel: "Save & Continue"
+    });
+    if (choice === "cancel") return false;
+    setStatus("Saving before leaving...", "warning");
+    const saved = await saveLevel({ refreshPreview: false });
+    if (!saved || state.isDirty) return false;
+    allowDirtyUnload = true;
+    window.location.assign(link.href);
+    return true;
+  }
+
+  function installUnsavedNavigationGuards() {
+    document.querySelectorAll(".author-nav a, .build-mobile-blocker__actions a").forEach((link) => {
+      link.addEventListener("click", (event) => {
+        if (!state.isDirty || event.defaultPrevented || event.button !== 0) return;
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        navigateFromEditor(link);
+      });
+    });
+  }
+
   async function fetchAuthorLevelPayload(levelId) {
     const response = await fetch(
       authorData.authorApiBaseUrl + "/" + encodeURIComponent(levelId),
@@ -6993,9 +7063,16 @@
     const playerTokenPattern = /^(p|cp|p[rlud])$/;
     window.__MAZEBENCH_AUTHOR_PUBLISH_CHECKS__ = async () => {
       if (state.isDirty) {
+        const choice = await promptForUnsavedChanges({
+          message: "This room has unsaved changes. Save before publishing?",
+          saveLabel: "Save & Continue"
+        });
+        if (choice === "cancel") {
+          return { cancelled: true, ok: false };
+        }
         const saved = await saveLevel({ refreshPreview: false });
-        if (!saved) {
-          return { ok: false, roomsMissingPlayer: [], startWalkthrough: null, totalGems: 0, verified: false };
+        if (!saved || state.isDirty) {
+          return { cancelled: true, ok: false };
         }
         if (meta) {
           meta.walkthroughVerified = false;
@@ -7023,7 +7100,7 @@
       return {
         ok: totalGems > 0 && roomsMissingPlayer.length === 0 && verified,
         roomsMissingPlayer,
-        startWalkthrough: async () => {
+        startWorldSolver: async () => {
           if (state.isDirty) {
             await saveLevel({ refreshPreview: false });
           }
@@ -7031,7 +7108,7 @@
           const startId = meta?.startLevelId || authorData.existingLevels?.[0]?.id || "level_AxA";
           window.location.assign(
             "/play/maze/" + encodeURIComponent(startId) +
-            "?world=" + encodeURIComponent(worldId) + "&draft=1&walkthrough=1"
+            "?world=" + encodeURIComponent(worldId) + "&draft=1&world_solver=1"
           );
         },
         totalGems,
@@ -7039,22 +7116,26 @@
       };
     };
 
-    // Entering test mode always saves first, so the run you play is the run
-    // you just painted.
-    const testLink = document.getElementById("author-test-link");
-    if (testLink) {
-      testLink.addEventListener("click", async (event) => {
-        if (!state.isDirty) {
-          return;
-        }
-        event.preventDefault();
-        setStatus("Saving before test...", "success");
-        const saved = await saveLevel({ refreshPreview: false });
-        if (saved) {
-          window.location.assign(testLink.href);
-        }
+    document.getElementById("author-world-solver")?.addEventListener("click", async () => {
+      const choice = await promptForUnsavedChanges({
+        message: "This room has unsaved changes. Save before opening World Solver?",
+        saveLabel: "Save & Continue"
       });
-    }
+      if (choice === "cancel") return;
+      if (state.isDirty) {
+        setStatus("Saving before opening World Solver...", "warning");
+        const saved = await saveLevel({ refreshPreview: false });
+        if (!saved || state.isDirty) return;
+      }
+      const startId = meta?.startLevelId || authorData.existingLevels?.[0]?.id || state.levelId;
+      allowDirtyUnload = true;
+      window.location.assign(
+        "/play/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(startId) +
+        "?world_solver=1"
+      );
+    });
+
+    installUnsavedNavigationGuards();
 
     document.getElementById("hotbar-slots")?.addEventListener("click", (event) => {
       const slot = event.target.closest("[data-token]");
@@ -7459,7 +7540,7 @@
   }
 
   window.addEventListener("beforeunload", function (event) {
-    if (!state.isDirty) {
+    if (!state.isDirty || allowDirtyUnload) {
       return;
     }
 

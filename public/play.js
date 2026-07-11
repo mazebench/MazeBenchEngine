@@ -105,7 +105,8 @@
     app.playSurroundingRadius = Math.max(1, Math.min(26, Math.floor(viewRings)));
   }
 
-  if (window.__PIXEL_GAME_DEBUG__ === true) {
+  const worldSolverRequested = new URLSearchParams(window.location.search).get("world_solver") === "1";
+  if (window.__PIXEL_GAME_DEBUG__ === true || worldSolverRequested) {
     window.__PIXEL_GAME_APP__ = app;
   }
 
@@ -122,6 +123,7 @@
   let inputBound = false;
   let worldMapCloseTimer = 0;
   let worldMapSwitching = false;
+  let worldSolverController = null;
 
   // The controls synchronize overlay/input state immediately, so every piece
   // of state they read must exist before installation begins.
@@ -149,6 +151,34 @@
   function revealPlayFrame() {
     document.getElementById("game-root")?.classList.remove("is-loading");
     app.mazeFrame?.classList.remove("is-loading");
+  }
+
+  function startWorldSolver() {
+    if (
+      worldSolverController ||
+      !worldSolverRequested ||
+      !playWorldData ||
+      typeof window.WorldSolver?.createController !== "function"
+    ) return;
+    app.resetCollectionProgress?.();
+    worldSolverController = window.WorldSolver.createController({
+      app,
+      levels: playWorldData.existingLevels,
+      startLevelId: playWorldData.defaultLevelId || playData.levelId,
+      moveDirection(label) {
+        const direction = { U: [0, -1], D: [0, 1], L: [-1, 0], R: [1, 0] }[label];
+        if (!direction || typeof app.movePlayers !== "function") return false;
+        app.movePlayers(direction[0], direction[1]);
+        return true;
+      },
+      gotoLevel: switchPlayWorldLevel,
+      onExit() {
+        window.location.assign(
+          "/author/" + encodeURIComponent(playData.gameId) + "/" + encodeURIComponent(app.currentLevelId)
+        );
+      }
+    });
+    worldSolverController.start();
   }
 
   function bindInput() {
@@ -804,6 +834,7 @@
     app.render();
     revealPlayFrame();
     bindInput();
+    startWorldSolver();
   }
 
   function diveIntoRoom(renderer, onDone) {
@@ -1008,6 +1039,7 @@
       app.render();
       revealPlayFrame();
       bindInput();
+      startWorldSolver();
     }
   });
   window.addEventListener("resize", function () {

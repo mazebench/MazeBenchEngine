@@ -533,8 +533,166 @@
     };
   }
 
+  function normalizedPositionTargets(targets) {
+    return (Array.isArray(targets) ? targets : [])
+      .map((target, index) => ({
+        ...target,
+        id: String(target?.id || "target-" + index),
+        x: Math.floor(Number(target?.x)),
+        y: Math.floor(Number(target?.y)),
+        elevation: Math.max(0, Math.floor(Number(target?.elevation || 0)))
+      }))
+      .filter((target) => Number.isFinite(target.x) && Number.isFinite(target.y));
+  }
+
+  function recordReachedPositionTargets(engine, state, path, targetsByPosition, targetCount, reachedById) {
+    if (reachedById.size >= targetCount) return;
+    for (let actorIndex = 0; actorIndex < engine.actorCount; actorIndex += 1) {
+      const type = engine.actorTypes[actorIndex];
+      if (
+        (type !== "player" && type !== "circle_player" && type !== "clone") ||
+        state.actorRemoved?.[actorIndex]
+      ) continue;
+      const x = Number(state.actorX?.[actorIndex]);
+      const y = Number(state.actorY?.[actorIndex]);
+      const elevation = Number(state.actorElevation?.[actorIndex] || 0);
+      const targets = targetsByPosition.get(x + "," + y + "," + elevation) || [];
+      for (const target of targets) {
+        if (
+          !reachedById.has(target.id) &&
+          x === target.x &&
+          y === target.y &&
+          elevation === target.elevation
+        ) {
+          reachedById.set(target.id, { ...target, moves: path.length, path });
+        }
+      }
+    }
+  }
+
+  // Exhaust a room state graph once and return the shortest path to every
+  // requested position. Unlike running A* separately for every edge tile,
+  // this shares the visited-state table and proves unreachable targets when
+  // the open set becomes empty.
+  async function findReachablePositions(engine, targets, options = {}) {
+    throwIfSolverAborted(options.signal);
+    const normalizedTargets = normalizedPositionTargets(targets);
+    const directions = Array.isArray(options.directions) ? options.directions : defaultDirections;
+    const maxExpandedStates = numericOption(options.maxExpandedStates, Number.MAX_SAFE_INTEGER);
+    const progressYieldStateInterval = numericOption(
+      options.progressYieldStateInterval,
+      defaultProgressYieldStateInterval
+    );
+    const reportProgressFn = typeof options.onProgress === "function" ? options.onProgress : null;
+    const open = new SolverHeap();
+    const bestCostByKey = new Map();
+    const reachedById = new Map();
+    const targetsByPosition = new Map();
+    for (const target of normalizedTargets) {
+      const key = target.x + "," + target.y + "," + target.elevation;
+      if (!targetsByPosition.has(key)) targetsByPosition.set(key, []);
+      targetsByPosition.get(key).push(target);
+    }
+    const statePool = new SolverStatePool(engine);
+    const nodePool = new SolverNodePool();
+    const initialState = statePool.acquire(engine.initialState);
+    const initialKey = engine.stateKey(initialState);
+    let order = 0;
+    let expanded = 0;
+
+    bestCostByKey.set(initialKey, 0);
+    open.push(nodePool.acquire({
+      state: initialState,
+      key: initialKey,
+      cost: 0,
+      path: "",
+      priority: 0,
+      order: order++
+    }));
+    await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
+
+    while (open.size > 0) {
+      throwIfSolverAborted(options.signal);
+      const current = open.pop();
+      if (current.cost !== bestCostByKey.get(current.key)) {
+        statePool.release(current.state);
+        nodePool.release(current);
+        continue;
+      }
+      recordReachedPositionTargets(
+        engine,
+        current.state,
+        current.path,
+        targetsByPosition,
+        normalizedTargets.length,
+        reachedById
+      );
+      if (reachedById.size >= normalizedTargets.length) {
+        statePool.release(current.state);
+        nodePool.release(current);
+        await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
+        return {
+          status: "found_all",
+          expanded,
+          reachable: Array.from(reachedById.values()),
+          unreachable: []
+        };
+      }
+
+      expanded += 1;
+      if (expanded % progressYieldStateInterval === 0) {
+        await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size);
+      }
+      if (expanded >= maxExpandedStates) {
+        statePool.release(current.state);
+        nodePool.release(current);
+        await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
+        return {
+          status: "capped",
+          expanded,
+          maxExpanded: maxExpandedStates,
+          reachable: Array.from(reachedById.values()),
+          unreachable: normalizedTargets.filter((target) => !reachedById.has(target.id))
+        };
+      }
+
+      for (const direction of directions) {
+        const moveResult = engine.moveForSearch(current.state, direction.dx, direction.dy);
+        if (!moveResult?.moved) continue;
+        const nextCost = current.cost + 1;
+        const nextKey = engine.stateKey(current.state);
+        const bestKnownCost = bestCostByKey.get(nextKey);
+        if (typeof bestKnownCost !== "number" || nextCost < bestKnownCost) {
+          const nextState = statePool.acquire(current.state);
+          bestCostByKey.set(nextKey, nextCost);
+          open.push(nodePool.acquire({
+            state: nextState,
+            key: nextKey,
+            cost: nextCost,
+            path: current.path + direction.label,
+            priority: nextCost,
+            order: order++
+          }));
+        }
+        engine.undoMove(current.state, moveResult);
+      }
+
+      statePool.release(current.state);
+      nodePool.release(current);
+    }
+
+    await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
+    return {
+      status: "exhausted",
+      expanded,
+      reachable: Array.from(reachedById.values()),
+      unreachable: normalizedTargets.filter((target) => !reachedById.has(target.id))
+    };
+  }
+
   window.MazeSolver = {
     findHardestGemPlacement,
+    findReachablePositions,
     solveWithAStar
   };
 })();

@@ -162,6 +162,16 @@
         </header>
         <p id="author-info-popover-description"></p>
       </aside>
+      <div id="unsaved-changes-modal" class="publish-modal author-unsaved-modal" role="dialog" aria-modal="true" aria-labelledby="unsaved-changes-title" aria-describedby="unsaved-changes-message">
+        <div class="publish-modal__dialog">
+          <h2 id="unsaved-changes-title" class="publish-modal__title">Save changes?</h2>
+          <p id="unsaved-changes-message" class="author-unsaved-modal__message">This room has unsaved changes.</p>
+          <div class="publish-modal__actions author-unsaved-modal__actions">
+            <button id="unsaved-changes-cancel" class="tool-button" type="button">Cancel</button>
+            <button id="unsaved-changes-save" class="tool-button author-unsaved-modal__save" type="button">Save &amp; Continue</button>
+          </div>
+        </div>
+      </div>
       <div id="publish-modal" class="publish-modal" role="dialog" aria-modal="true" aria-labelledby="publish-modal-title"><div class="publish-modal__dialog"><h2 id="publish-modal-title" class="publish-modal__title">Publish checklist</h2><ul id="publish-modal-list" class="publish-modal__list"></ul><div id="publish-modal-actions" class="publish-modal__actions"></div></div></div>
     </main>
     <main class="build-mobile-blocker"><section class="build-mobile-blocker__panel"><h1>Desktop editor only</h1><p>World editing is available on desktop for now.</p><div class="build-mobile-blocker__actions"></div></section></main>`;
@@ -211,6 +221,15 @@
     root.querySelector(".author-actions")?.append(button);
   } else {
     document.getElementById("publish-modal")?.setAttribute("hidden", "");
+  }
+
+  if (capabilities.worldSolver === true) {
+    const button = document.createElement("button");
+    button.id = "author-world-solver";
+    button.className = "tool-button";
+    button.type = "button";
+    button.textContent = "World Solver";
+    root.querySelector(".author-actions")?.append(button);
   }
 
   installChromeInteractionShield();

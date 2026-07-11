@@ -7,6 +7,12 @@
       "runtimeArgs": ["server.js"],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "bg-demo",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "4173", "--directory", "/private/tmp/claude-501/-Users-jpappas-code-GitHub-PixelGameTest/d342c4f1-688c-4511-a20a-0a33b8dfbe1c/scratchpad"],
+      "port": 4173
     }
   ]
 }

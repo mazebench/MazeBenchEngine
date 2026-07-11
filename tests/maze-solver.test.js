@@ -6,7 +6,7 @@ loadBrowserScript("public/maze-engine.js");
 loadBrowserScript("public/maze-solver.js");
 
 const { createEngine } = window.MazeEngine;
-const { findHardestGemPlacement, solveWithAStar } = window.MazeSolver;
+const { findHardestGemPlacement, findReachablePositions, solveWithAStar } = window.MazeSolver;
 
 function floorTerrain(width, height) {
   return Array.from({ length: height }, () =>
@@ -160,6 +160,30 @@ function floorTerrain(width, height) {
         path: "RR"
       }
     );
+  }
+
+  {
+    const engine = createEngine({
+      width: 3,
+      height: 2,
+      terrain: [
+        [{ type: "floor" }, { type: "floor" }, { type: "floor" }],
+        [{ type: "wall" }, { type: "wall" }, { type: "wall" }]
+      ],
+      actors: [{ type: "player", x: 0, y: 0, removed: false }]
+    });
+    const result = await findReachablePositions(engine, [
+      { id: "near", x: 1, y: 0, elevation: 0 },
+      { id: "far", x: 2, y: 0, elevation: 0 },
+      { id: "blocked", x: 1, y: 1, elevation: 0 }
+    ], { progressYieldStateInterval: 1 });
+
+    assert.equal(result.status, "exhausted");
+    assert.deepEqual(
+      result.reachable.map((target) => ({ id: target.id, path: target.path })),
+      [{ id: "near", path: "R" }, { id: "far", path: "RR" }]
+    );
+    assert.deepEqual(result.unreachable.map((target) => target.id), ["blocked"]);
   }
 
   {
