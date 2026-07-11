@@ -117,7 +117,7 @@
           <section class="author-stage" aria-label="Level canvas">
             <section class="author-grid-shell">
               <div id="author-grid" class="author-grid" aria-label="Maze author grid"><canvas id="author-canvas" class="author-grid__canvas"></canvas><div id="author-hit-grid" class="author-grid__hit-grid"></div></div>
-              <div class="author-load-art" aria-hidden="true"><span class="author-load-progress"><span></span></span></div>
+              <div class="author-load-art" aria-hidden="true"><span class="author-load-label">Loading</span><span class="author-load-progress"><span></span></span></div>
               <button id="author-world-map-toggle" class="control-button author-world-map-button" type="button" aria-controls="author-world-map-overlay" aria-expanded="false" aria-label="World map" title="World map">
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 6.5 9 4l6 3 4.5-2.5v13L15 20l-6-3-4.5 2.5v-13Z"></path><path d="M9 4v13"></path><path d="M15 7v13"></path></svg>
               </button>

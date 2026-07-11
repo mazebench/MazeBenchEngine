@@ -258,6 +258,21 @@ html, body {
   position: absolute;
   z-index: 7;
 }
+.author-load-label {
+  color: rgba(255, 255, 255, 0.82);
+  font-family: "Orbitron", sans-serif;
+  font-size: clamp(16px, 1.8vw, 22px);
+  font-weight: 700;
+  left: 50%;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  position: absolute;
+  text-align: center;
+  text-transform: uppercase;
+  top: calc(50% - 42px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
 .author-load-progress {
   background: rgba(255, 255, 255, 0.14);
   border-radius: 999px;
@@ -281,6 +296,9 @@ html, body {
   animation: authorViewportFade 220ms ease forwards;
 }
 .author-grid-shell.is-ready .author-load-progress {
+  display: none;
+}
+.author-grid-shell.is-ready .author-load-label {
   display: none;
 }
 @keyframes authorLoadBar {

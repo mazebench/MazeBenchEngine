@@ -269,7 +269,7 @@ function createPageRenderer({
                 height="${levelState.height * 64}"
                 aria-label="${escapeHtml(game.name)} board"
               ></canvas>
-              <div class="maze-load-art" aria-hidden="true"><span class="maze-load-progress"><span></span></span></div>
+              <div class="maze-load-art" aria-hidden="true"><span class="maze-load-label">Loading</span><span class="maze-load-progress"><span></span></span></div>
             </div>
           </section>
           <nav class="mazebench-controls" aria-label="Game controls">

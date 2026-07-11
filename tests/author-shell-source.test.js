@@ -36,6 +36,9 @@ for (const id of [
 }
 
 assert.match(shell, /mazebench:author-shell-ready/);
+assert.match(shell, /class="author-load-label">Loading</);
+assert.match(theme, /\.author-load-label \{/);
+assert.match(theme, /font-size: clamp\(16px, 1\.8vw, 22px\)/);
 assert.match(shell, /link\.dataset\.authorPlayLink = ""/);
 assert.match(shell, /__MAZEBENCH_AUTHOR_MARK_READY__/);
 assert.match(shell, /function installChromeInteractionShield/);

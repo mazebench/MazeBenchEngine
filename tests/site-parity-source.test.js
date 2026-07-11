@@ -36,6 +36,7 @@ assert.match(router, /if \(url\.pathname === "\/play"\) \{[\s\S]*?sendRedirect\(
 
 assert.match(pages, /window\.__PLAY_WORLD_DATA__/);
 assert.match(pages, /maze-frame is-loading/);
+assert.match(pages, /class="maze-load-label">Loading</);
 assert.match(pages, /maze-load-progress/);
 assert.match(playScript, /renderer\.primeHomeEdgeReveal/);
 assert.match(playScript, /renderer\.beginHomeEdgeReveal/);
@@ -66,6 +67,8 @@ assert.match(playScript, /const roomDistance = Math\.hypot\(dx, dy\)/);
 assert.match(playScript, /prewarmAdjacentLevelTransition\?\.\(transitionData, durationMs\)/);
 assert.match(playScript, /startLevelTransition\(null, null, dx, dy/);
 assert.match(playTheme, /#world-map-overlay \.world-map-grid \{[\s\S]*?grid-auto-rows: var\(--world-map-tile-size/);
+assert.match(playTheme, /#game-root \.maze-load-label \{/);
+assert.match(playTheme, /font-size: clamp\(16px, 1\.8vw, 22px\)/);
 assert.ok(
   playScript.indexOf("let worldMapSwitching = false;") < playScript.indexOf("installPlayControls();"),
   "Play overlay state must initialize before controls synchronize it"

@@ -322,6 +322,21 @@ a.save-button:focus-visible {
   position: absolute;
   z-index: 2;
 }
+#game-root .maze-load-label {
+  color: rgba(255, 255, 255, 0.82);
+  font-family: "Orbitron", sans-serif;
+  font-size: clamp(16px, 1.8vw, 22px);
+  font-weight: 700;
+  left: 50%;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  position: absolute;
+  text-align: center;
+  text-transform: uppercase;
+  top: calc(50% - 42px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
 /* Loading bar in the home-splash language: a dim white track with a white
    sweep, centered on the dark frame. (The old amber bottom bar came from
    the framed pre-fullbleed layout and was invisible on game routes.) */
@@ -812,7 +827,8 @@ a.save-button:focus-visible {
 }
 /* The home vista hides the in-frame bar (its #home-splash overlay is the
    loader there); direct game routes keep it — it is their only signal. */
-#game-root.is-overview .maze-load-progress {
+#game-root.is-overview .maze-load-progress,
+#game-root.is-overview .maze-load-label {
   display: none;
 }
 /* Loading screen — a fully black screen with a small white loading bar,
