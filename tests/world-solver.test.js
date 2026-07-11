@@ -53,7 +53,7 @@ assert.match(playSource, /moveDirection\(label\)/);
 assert.match(authorSource, /startWorldSolver/);
 assert.match(authorSource, /world_solver=1/);
 assert.match(pagesSource, /<script src="\/world-solver\.js" defer><\/script>/);
-assert.match(pagesSource, /worldSolver: Boolean\(authorData\.worldMeta\)/);
+assert.doesNotMatch(pagesSource, /worldSolver:/);
 assert.match(appSource, /"\/world-solver\.js"/);
 assert.match(appSource, /"\/world-solver-worker\.js"/);
 

@@ -46,6 +46,7 @@ assert.match(shell, /author-hotbar__shortcut/);
 assert.match(shell, /data-panel-info-description=/);
 assert.doesNotMatch(shell, /author-panel__note/);
 assert.doesNotMatch(shell, /author-disclosure--world/);
+assert.doesNotMatch(shell, /author-world-solver|World Solver/);
 assert.match(shell, /The solver uses the A\* search algorithm/);
 assert.match(shell, /Reach Gem becomes available when this room contains a gem/);
 assert.doesNotMatch(shell, /id=["']solver-algorithm["']/);
@@ -67,5 +68,6 @@ assert.match(pages, /<div id="author-shell-root"><\/div>/);
 assert.match(pages, /<script src="\/author-shell\.js" defer><\/script>/);
 assert.match(pages, /includeRuntimeStyles: false/);
 assert.doesNotMatch(pages, /<aside id="author-sidebar" class="author-sidebar">/);
+assert.doesNotMatch(pages, /worldSolver:/);
 
 console.log("author-shell-source: OK — MazeBench owns the complete editor shell and skin.");

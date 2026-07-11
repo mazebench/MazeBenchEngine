@@ -458,8 +458,7 @@ function createPageRenderer({
     const shellConfig = {
       capabilities: {
         publish: false,
-        worldDetails: Boolean(authorData.worldMeta),
-        worldSolver: Boolean(authorData.worldMeta)
+        worldDetails: Boolean(authorData.worldMeta)
       },
       mobileNavigation: [
         { href: playUrl, label: "Play" },

@@ -7116,25 +7116,6 @@
       };
     };
 
-    document.getElementById("author-world-solver")?.addEventListener("click", async () => {
-      const choice = await promptForUnsavedChanges({
-        message: "This room has unsaved changes. Save before opening World Solver?",
-        saveLabel: "Save & Continue"
-      });
-      if (choice === "cancel") return;
-      if (state.isDirty) {
-        setStatus("Saving before opening World Solver...", "warning");
-        const saved = await saveLevel({ refreshPreview: false });
-        if (!saved || state.isDirty) return;
-      }
-      const startId = meta?.startLevelId || authorData.existingLevels?.[0]?.id || state.levelId;
-      allowDirtyUnload = true;
-      window.location.assign(
-        "/play/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(startId) +
-        "?world_solver=1"
-      );
-    });
-
     installUnsavedNavigationGuards();
 
     document.getElementById("hotbar-slots")?.addEventListener("click", (event) => {

@@ -223,15 +223,6 @@
     document.getElementById("publish-modal")?.setAttribute("hidden", "");
   }
 
-  if (capabilities.worldSolver === true) {
-    const button = document.createElement("button");
-    button.id = "author-world-solver";
-    button.className = "tool-button";
-    button.type = "button";
-    button.textContent = "World Solver";
-    root.querySelector(".author-actions")?.append(button);
-  }
-
   installChromeInteractionShield();
   installSidebarToggle();
   installWorldMapOverlay();
