@@ -3683,6 +3683,29 @@
     elements.rawOutput.value = serializeCells();
   }
 
+  function levelUrlFromTemplate(template, levelId, fallback) {
+    const value = String(template || "");
+    return value.includes("__LEVEL_ID__")
+      ? value.replaceAll("__LEVEL_ID__", encodeURIComponent(levelId))
+      : fallback;
+  }
+
+  function authorUrlForLevel(levelId) {
+    return levelUrlFromTemplate(
+      authorData.authorUrlTemplate,
+      levelId,
+      "/author/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(levelId)
+    );
+  }
+
+  function playUrlForLevel(levelId) {
+    return levelUrlFromTemplate(
+      authorData.playUrlTemplate,
+      levelId,
+      "/play/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(levelId)
+    );
+  }
+
   function renderMeta() {
     elements.boardWidth.value = String(state.width);
     elements.boardHeight.value = String(state.height);
@@ -3695,8 +3718,13 @@
     if (elements.currentLevelName) {
       elements.currentLevelName.textContent = state.levelId.replace("level_", "");
     }
-    elements.playLink.href = "/play/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId);
+    const playUrl = playUrlForLevel(state.levelId);
+    elements.playLink.href = playUrl;
     elements.playLink.setAttribute("aria-label", "Play " + state.levelId);
+    document.querySelectorAll("[data-author-play-link]").forEach((link) => {
+      link.href = playUrl;
+      link.setAttribute("aria-label", "Play " + state.levelId);
+    });
     syncSolverButtonState();
   }
 
@@ -3709,10 +3737,10 @@
 
     if (state.exists && !levelsById.has(state.levelId)) {
       const created = {
-        authorUrl: "/author/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId),
+        authorUrl: authorUrlForLevel(state.levelId),
         id: state.levelId,
         label: state.levelId.replace("level_", "Level "),
-        playUrl: "/play/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId)
+        playUrl: playUrlForLevel(state.levelId)
       };
       authorData.existingLevels.push(created);
       authorData.existingLevels.sort((left, right) => left.id.localeCompare(right.id));
@@ -5002,7 +5030,7 @@
       window.history.replaceState(
         null,
         "",
-        "/author/" + encodeURIComponent(authorData.game.id) + "/" + encodeURIComponent(state.levelId)
+        authorUrlForLevel(state.levelId)
       );
       renderAll();
       return true;

@@ -59,6 +59,7 @@ assert.match(appSource, /STATIC_CACHE_CONTROL = "no-cache, max-age=0, must-reval
 assert.match(playScript, /function renderPlayWorldMap\(\)/);
 assert.match(playScript, /async function switchPlayWorldLevel\(levelId\)/);
 assert.match(playCore, /hostOwnsWorldMapNavigation: playData\?\.hostOwnsWorldMapNavigation === true/);
+assert.match(playCore, /new window\.CustomEvent\("mazebench:level-state-applied"/);
 assert.match(playScript, /if \(app\.hostOwnsWorldMapNavigation === true\) return;/);
 assert.match(playScript, /function playWorldMapTransitionSnapshot\(\)/);
 assert.match(playScript, /const roomDistance = Math\.hypot\(dx, dy\)/);

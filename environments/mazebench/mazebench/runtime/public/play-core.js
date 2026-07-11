@@ -1558,6 +1558,12 @@
       if (!deferRender) {
         app.render();
       }
+
+      if (typeof window.dispatchEvent === "function" && typeof window.CustomEvent === "function") {
+        window.dispatchEvent(new window.CustomEvent("mazebench:level-state-applied", {
+          detail: { levelId: app.currentLevelId, levelState }
+        }));
+      }
     }
 
     async function loadLevelState(levelId) {

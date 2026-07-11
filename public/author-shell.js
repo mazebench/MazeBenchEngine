@@ -190,6 +190,9 @@
     link.href = item.href;
     link.textContent = item.label;
     if (item.testLink === true) link.id = "author-test-link";
+    if (item.roomPlayLink === true || item.testLink === true) {
+      link.dataset.authorPlayLink = "";
+    }
     nav.append(link);
   }
 
@@ -200,6 +203,7 @@
     link.className = "back-link";
     link.href = item.href;
     link.textContent = item.label;
+    if (item.roomPlayLink === true) link.dataset.authorPlayLink = "";
     mobileActions.append(link);
   }
 

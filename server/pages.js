@@ -486,12 +486,12 @@ function createPageRenderer({
         worldDetails: Boolean(authorData.worldMeta)
       },
       mobileNavigation: [
-        { href: playUrl, label: "Play" },
+        { href: playUrl, label: "Play", roomPlayLink: true },
         { href: "/build", label: "Back to Build" }
       ],
       navigation: [
         { href: "/build", label: "Build" },
-        { href: playUrl, label: "Play", testLink: true }
+        { href: playUrl, label: "Play", roomPlayLink: true, testLink: true }
       ],
       title: game.name
     };
