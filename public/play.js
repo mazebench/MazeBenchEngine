@@ -290,20 +290,19 @@
     }
   }
 
-  function applyPlayCameraView() {
+  function applyPlayCameraView(now = performance.now()) {
     const renderer = app.threeRenderer;
     if (!renderer || typeof renderer.setDebugCameraView !== "function") return false;
     renderer.setDebugCameraView({
       yaw: playCameraYaw,
       tilt: playCameraTilt,
-      skipRender: true
+      preserveSceneCache: true,
+      skipRender: true,
+      skipResize: true
     });
-    // Movement and room-transition loops already render once per frame. Let
-    // them consume the new camera angle so simultaneous input never causes a
-    // second competing render; camera-only input still renders immediately.
-    if (!app.isAnimating && !app.isTransitioningLevel && !app.levelTransition) {
-      (app.renderOncePerFrame || app.render)?.(performance.now());
-    }
+    // renderOncePerFrame deduplicates camera and movement rAF callbacks that
+    // share this timestamp, keeping both animations live without double work.
+    (app.renderOncePerFrame || app.render)?.(now);
     return true;
   }
 
@@ -359,7 +358,7 @@
       shouldContinue = shouldContinue || Boolean(cameraTiltDirection || cameraTiltVelocity);
     }
 
-    if (changed) applyPlayCameraView();
+    if (changed) applyPlayCameraView(now);
     if (shouldContinue) scheduleCameraMotionFrame();
     else cameraMotionLastMs = 0;
   }

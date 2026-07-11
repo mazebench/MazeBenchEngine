@@ -521,6 +521,11 @@
       ) {
         cameraMode = requestedMode;
         cameraReady = createCameraForMode();
+      } else if (options.skipResize === true) {
+        // High-frequency camera controls already share the active renderer.
+        // Avoid measuring/resizing the canvas on every camera animation frame;
+        // normal layout and resize handlers remain responsible for that work.
+        cameraReady = Boolean(camera);
       } else {
         cameraReady = syncRendererSize();
       }
@@ -553,7 +558,12 @@
       debugCameraYaw = debugCameraTargetYaw;
       debugCameraTilt = debugCameraTargetTilt;
       debugCameraZoom = debugCameraTargetZoom;
-      lastSceneSignature = "";
+      // Camera orientation changes do not alter room geometry. Hosts that
+      // drive yaw/tilt every frame can retain the scene cache and avoid a
+      // full world rebuild competing with the player animation.
+      if (options.preserveSceneCache !== true) {
+        lastSceneSignature = "";
+      }
 
       // Hosts driving the camera every frame (e.g. the mazebench.com home
       // flyby) render via renderOncePerFrame themselves; skipRender avoids a

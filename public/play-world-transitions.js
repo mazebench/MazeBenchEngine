@@ -512,10 +512,17 @@
       rememberCurrentLevelEntryState();
     }
 
-    function blinkRevivedPlayer(playerOrPlayers) {
+    function blinkRevivedPlayer(playerOrPlayers, options = {}) {
       const players = Array.isArray(playerOrPlayers) ? playerOrPlayers : [playerOrPlayers];
-      const durationMs = (PLAYER_REVIVE_BLINK_DURATION_MS || 620) / 2.25;
-      const blinkCount = 2;
+      const durationMs = Number.isFinite(options.durationMs)
+        ? Math.max(1, options.durationMs)
+        : (PLAYER_REVIVE_BLINK_DURATION_MS || 620) / 2.25;
+      const blinkCount = Number.isInteger(options.blinkCount)
+        ? Math.max(1, options.blinkCount)
+        : 2;
+      const visibleDurationMs = Number.isFinite(options.visibleDurationMs)
+        ? Math.max(0, options.visibleDurationMs)
+        : 0;
       const startMs = performance.now();
 
       app.isAnimating = true;
@@ -551,6 +558,37 @@
         });
         app.render();
         app.animationFrameId = window.requestAnimationFrame(step);
+      }
+
+      if (blinkCount === 1) {
+        let hiddenAtMs = null;
+
+        function stepSingleBlink(now) {
+          if (hiddenAtMs === null) {
+            if (now - startMs < visibleDurationMs) {
+              app.animationFrameId = window.requestAnimationFrame(stepSingleBlink);
+              return;
+            }
+
+            hiddenAtMs = now;
+            players.forEach((player) => {
+              player.renderAlpha = 0;
+            });
+            app.render();
+            app.animationFrameId = window.requestAnimationFrame(stepSingleBlink);
+            return;
+          }
+
+          if (now - hiddenAtMs >= durationMs) {
+            finishBlink();
+            return;
+          }
+
+          app.animationFrameId = window.requestAnimationFrame(stepSingleBlink);
+        }
+
+        app.animationFrameId = window.requestAnimationFrame(stepSingleBlink);
+        return;
       }
 
       app.animationFrameId = window.requestAnimationFrame(step);

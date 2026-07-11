@@ -721,7 +721,13 @@
       if (mainPlayerFell) {
         app.queuedAction = null;
         app.onPlayerPitAutoUndo?.();
-        undoMove({ blinkRevivedPlayer: true });
+        undoMove({
+          blinkCount: 1,
+          blinkDurationMs: 50,
+          blinkRevivedPlayer: true,
+          blinkVisibleDurationMs: 50,
+          instantRestore: true
+        });
         return;
       }
 
@@ -2098,7 +2104,28 @@
       return entries.reverse();
     }
 
-    function restoreGroupedUndoEntry(firstEntry) {
+    function finishRestoredUndo(options = {}) {
+      app.gateRenderOverride = null;
+      app.orangeWallRenderOverride = null;
+      syncFloatingFloorTicker();
+
+      if (options.blinkRevivedPlayer === true) {
+        const players = state.actors.filter(
+          (actor) => app.isMainPlayerActor?.(actor) && !actor.removed
+        );
+        app.render();
+        app.blinkRevivedPlayer?.(players, {
+          blinkCount: options.blinkCount,
+          durationMs: options.blinkDurationMs,
+          visibleDurationMs: options.blinkVisibleDurationMs
+        });
+        return;
+      }
+
+      app.render();
+    }
+
+    function restoreGroupedUndoEntry(firstEntry, options = {}) {
       if (firstEntry?.kind === "level-transition") {
         applyLevelState(firstEntry.level, {
           updateUrl: true,
@@ -2122,10 +2149,7 @@
         restoreTerrainState(firstEntry.terrain);
       }
 
-      app.gateRenderOverride = null;
-      app.orangeWallRenderOverride = null;
-      syncFloatingFloorTicker();
-      app.render();
+      finishRestoredUndo(options);
     }
 
     function activeUndoGroupIncludesLevelTransition() {
@@ -3076,7 +3100,13 @@
         if (plan.terminalPlayerRemoved === true && app.autoUndoPlayerFalls === true) {
           app.queuedAction = null;
           app.onPlayerPitAutoUndo?.();
-          undoMove({ blinkRevivedPlayer: true });
+          undoMove({
+            blinkCount: 1,
+            blinkDurationMs: 50,
+            blinkRevivedPlayer: true,
+            blinkVisibleDurationMs: 50,
+            instantRestore: true
+          });
           return;
         }
         runQueuedAction();
@@ -3395,6 +3425,29 @@
             return;
           }
 
+          const mainPlayerFell =
+            app.autoUndoPlayerFalls === true &&
+            moveResult?.moves?.some(
+              (move) =>
+                move?.visualOnly !== true &&
+                move?.fromRemoved !== true &&
+                move?.toRemoved === true &&
+                app.isMainPlayerActor?.(move.actor)
+            );
+          if (mainPlayerFell) {
+            finishMoveUndoGroup();
+            app.queuedAction = null;
+            app.onPlayerPitAutoUndo?.();
+            undoMove({
+              blinkCount: 1,
+              blinkDurationMs: 50,
+              blinkRevivedPlayer: true,
+              blinkVisibleDurationMs: 50,
+              instantRestore: true
+            });
+            return;
+          }
+
           if (continuePlayerMoveAcrossEdge(moveResult, dx, dy)) {
             return;
           }
@@ -3452,7 +3505,7 @@
       const undoEntries = collectUndoGroupEntries(previousState);
 
       if (undoEntries.length > 1) {
-        restoreGroupedUndoEntry(undoEntries[0]);
+        restoreGroupedUndoEntry(undoEntries[0], options);
         return;
       }
 
@@ -3464,8 +3517,7 @@
         if (typeof app.restoreLevelEntryState === "function") {
           app.restoreLevelEntryState(previousState.entry);
         }
-        syncFloatingFloorTicker();
-        app.render();
+        finishRestoredUndo(options);
         return;
       }
 
@@ -3480,8 +3532,7 @@
         ) {
           app.restoreLevelEntryState(previousState.levelEntrySnapshot);
         }
-        syncFloatingFloorTicker();
-        app.render();
+        finishRestoredUndo(options);
         return;
       }
 
@@ -3491,6 +3542,14 @@
         collectedGemVisual: "hidden"
       });
       movement.applyUndoIceSlideMetadata(moves, previousState);
+
+      if (options.instantRestore === true) {
+        restoreTerrainState(previousState.terrain);
+        movement.applyMoveFinalState(moves);
+        finishRestoredUndo(options);
+        return;
+      }
+
       const hasLiftReversal = moves.some(
         (move) => {
           const liftFromElevation = liftPhaseStartElevationForMove(move);
@@ -3502,7 +3561,11 @@
             const players = state.actors.filter(
               (actor) => app.isMainPlayerActor?.(actor) && !actor.removed
             );
-            app.blinkRevivedPlayer?.(players);
+            app.blinkRevivedPlayer?.(players, {
+              blinkCount: options.blinkCount,
+              durationMs: options.blinkDurationMs,
+              visibleDurationMs: options.blinkVisibleDurationMs
+            });
           }
         : null;
 

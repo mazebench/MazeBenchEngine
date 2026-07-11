@@ -15,6 +15,10 @@ const gameplaySource = fs.readFileSync(
   path.join(__dirname, "..", "public", "play-gameplay.js"),
   "utf8"
 );
+const worldTransitionsSource = fs.readFileSync(
+  path.join(__dirname, "..", "public", "play-world-transitions.js"),
+  "utf8"
+);
 
 assert.match(authorSource, /function openAuthorInfoPopover\(button\)/);
 assert.match(authorSource, /function closeAuthorInfoPopover\(options = \{\}\)/);
@@ -38,7 +42,13 @@ assert.match(rendererSource, /new THREE\.InstancedMesh/);
 assert.match(gameplaySource, /const LATE_INPUT_WINDOW_MS = 200/);
 assert.match(gameplaySource, /app\.queuedAction = action/);
 assert.match(gameplaySource, /app\.onPlayerPitAutoUndo\?\.\(\)/);
-assert.match(gameplaySource, /undoMove\(\{ blinkRevivedPlayer: true \}\)/);
+assert.match(gameplaySource, /blinkCount: 1,[\s\S]*blinkDurationMs: 50,[\s\S]*blinkRevivedPlayer: true,[\s\S]*blinkVisibleDurationMs: 50,[\s\S]*instantRestore: true/);
+assert.match(gameplaySource, /if \(options\.instantRestore === true\)/);
+assert.match(gameplaySource, /movement\.applyMoveFinalState\(moves\)/);
+assert.match(gameplaySource, /moveResult\?\.moves\?\.some/);
+assert.match(worldTransitionsSource, /if \(blinkCount === 1\)/);
+assert.match(worldTransitionsSource, /now - startMs < visibleDurationMs/);
+assert.match(worldTransitionsSource, /hiddenAtMs = now/);
 assert.match(rendererSource, /`solver-ghost:\$\{solverGhostVersion\}`/);
 
 function sourceSection(source, startMarker, endMarker) {

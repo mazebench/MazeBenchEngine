@@ -76,6 +76,8 @@ assert.ok(
 );
 assert.match(playScript, /const cameraYawDurationMs = 400/);
 assert.match(playScript, /skipRender: true/);
+assert.match(playScript, /skipResize: true/);
+assert.match(playScript, /preserveSceneCache: true/);
 assert.match(playScript, /const moveRepeatIntervalMs = 100/);
 assert.match(playScript, /app\.cancelQueuedAction\?\.\(inputSource\)/);
 assert.match(playScript, /playData\.autoUndoPlayerFalls = true/);
