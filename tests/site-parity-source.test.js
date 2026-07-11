@@ -35,6 +35,8 @@ assert.doesNotMatch(pageChrome, /href="\/play">Play<\/a>/);
 assert.match(pageChrome, /<span class="brand-mark"[^>]*>\$\{BRAND_MARK_SVG\}<\/span>Maze Bench/);
 assert.match(playTheme, /\.wm \{ fill: #ffd15c; stroke: #ffd15c; stroke-width: 1\.5; \}/);
 assert.doesNotMatch(playTheme, /mbChromL|mbChromR|mbWrtick|mbWbtick/);
+assert.match(playTheme, /translate: 0 calc\(-1 \* var\(--mb-logo-lift, 0px\)\)/);
+assert.doesNotMatch(playTheme, /--mb-sign-gap|--mb-scene-h/);
 assert.doesNotMatch(playTheme, /wordmark-m/);
 assert.match(router, /if \(url\.pathname === "\/play"\) \{[\s\S]*?sendRedirect\(response, "\/build"\)/);
 

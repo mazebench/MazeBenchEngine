@@ -905,7 +905,12 @@ a.save-button:focus-visible {
   overflow: hidden;
 }
 .mb-crt .jitter { position: absolute; inset: 0; z-index: 1; }
-.mb-crt svg.scene { width: 100%; height: 100%; display: block; }
+.mb-crt svg.scene {
+  display: block;
+  height: 100%;
+  translate: 0 calc(-1 * var(--mb-logo-lift, 0px));
+  width: 100%;
+}
 /* CRT overlays */
 .mb-crt .scan {
   position: absolute; inset: 0; z-index: 5; pointer-events: none;
@@ -1054,28 +1059,13 @@ a.save-button:focus-visible {
 }
 /* Bottom prompt carries its own scrim so it reads over bright edges. */
 .home-boot-footer {
-  /* Track the MAZE BENCH lockup instead of the viewport: the SVG scene is a
-     1200x800 viewBox letterboxed with "meet", so the lockup's bottom edge
-     (y≈672 of 800, i.e. 0.34 scene-heights below center) lands at a height
-     that depends on BOTH viewport axes. Center the prompt in the gap left
-     below the sign so squat/wide windows can't push the two into overlap.
-     --mb-scene-scale mirrors the svg transform in the narrow media query. */
-  --mb-scene-scale: 1;
-  --mb-hero-h: calc(100dvh - var(--mazebench-topbar-height));
-  --mb-scene-h: min(var(--mb-hero-h), calc(100vw * 800 / 1200));
-  --mb-sign-gap: calc(var(--mb-hero-h) / 2 - var(--mb-scene-h) * 0.34 * var(--mb-scene-scale));
   position: absolute;
-  bottom: clamp(8px, calc(var(--mb-sign-gap) / 2 - 24px), 74px);
+  bottom: 12px;
   left: 0;
   right: 0;
   pointer-events: none;
   text-align: center;
   z-index: 4;
-}
-@media (max-width: 640px) {
-  .home-boot-footer {
-    --mb-scene-scale: 1.5;
-  }
 }
 .home-boot-status,
 .home-boot-continue {
@@ -1099,8 +1089,10 @@ a.save-button:focus-visible {
   color: #eaffff;
   display: none;
   opacity: 0;
-  font-size: clamp(13px, 1.5vw, 15px);
-  padding: 10px 22px;
+  box-sizing: border-box;
+  font-size: clamp(11px, 3.4vw, 15px);
+  max-width: calc(100vw - 24px);
+  padding: 10px clamp(14px, 4vw, 22px);
   text-shadow: 0 0 10px rgba(var(--cyan-rgb), 0.7);
 }
 .home-hero.is-ready .home-boot-status {
