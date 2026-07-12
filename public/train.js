@@ -223,12 +223,15 @@
   });
 
   async function initialize() {
+    // Training history is independent of model/readiness discovery. Start it
+    // immediately so a slow Prime model probe never leaves the whole page
+    // looking stalled.
+    loadRuns();
     try {
       const payload = await api(data.bootstrapUrl);
       applyDefaults(payload.defaults || {});
       renderModels(payload.models || []);
       syncReadiness(payload.readiness || {});
-      await loadRuns();
     } catch (error) {
       document.getElementById("train-model-loading").innerHTML = `<span>${escapeText(error.message)}</span>`;
       setStatus(error.message, true);

@@ -420,6 +420,63 @@ function claudeUsageShape(usage = {}) {
   };
 }
 
+// USD per million tokens. Claude Code's Fable 5 modelUsage records price at
+// these API-equivalent rates; cache writes retain the TTL-specific multipliers
+// exposed in each streamed usage record.
+const CLAUDE_API_PRICING = Object.freeze({
+  "claude-fable-5": Object.freeze({
+    input: 10,
+    cache_read: 1,
+    cache_write_5m: 12.5,
+    cache_write_1h: 20,
+    output: 50
+  })
+});
+
+function claudeApiPricing(modelId) {
+  const normalized = String(modelId || "").toLowerCase();
+  return Object.entries(CLAUDE_API_PRICING).find(([prefix]) => normalized.startsWith(prefix))?.[1] || null;
+}
+
+function claudeCacheCreationBreakdown(usage = {}) {
+  const direct = usage.cache_creation && typeof usage.cache_creation === "object"
+    ? usage.cache_creation
+    : null;
+  const iterations = Array.isArray(usage.iterations) ? usage.iterations : [];
+  const fromIterations = iterations.reduce(
+    (sum, iteration) => {
+      sum.fiveMinute += number(iteration?.cache_creation?.ephemeral_5m_input_tokens);
+      sum.oneHour += number(iteration?.cache_creation?.ephemeral_1h_input_tokens);
+      return sum;
+    },
+    { fiveMinute: 0, oneHour: 0 }
+  );
+  const fiveMinute = direct
+    ? number(direct.ephemeral_5m_input_tokens)
+    : fromIterations.fiveMinute;
+  const oneHour = direct
+    ? number(direct.ephemeral_1h_input_tokens)
+    : fromIterations.oneHour;
+  const total = number(usage.cache_creation_input_tokens);
+
+  return {
+    five_minute: fiveMinute,
+    one_hour: oneHour,
+    unknown: Math.max(0, total - fiveMinute - oneHour)
+  };
+}
+
+function claudeApiCost(details, pricing) {
+  if (!pricing) return null;
+  return (
+    number(details.uncached_input_tokens) * pricing.input +
+    number(details.cache_read_input_tokens) * pricing.cache_read +
+    number(details.cache_creation_5m_input_tokens) * pricing.cache_write_5m +
+    (number(details.cache_creation_1h_input_tokens) + number(details.cache_creation_unknown_input_tokens)) * pricing.cache_write_1h +
+    number(details.output_tokens) * pricing.output
+  ) / 1_000_000;
+}
+
 function parseClaudeEvents(raw) {
   const points = [];
   const pending = new Map();
@@ -427,7 +484,20 @@ function parseClaudeEvents(raw) {
   const allAgentTools = new Set();
   const totals = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
   let previousActionTotals = { ...totals };
-  let reportedTotals = null;
+  const reportedTotals = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
+  const streamedDetails = {
+    uncached_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+    cache_creation_5m_input_tokens: 0,
+    cache_creation_1h_input_tokens: 0,
+    cache_creation_unknown_input_tokens: 0,
+    output_tokens: 0
+  };
+  const reportedDetails = { ...streamedDetails };
+  let streamedResponses = 0;
+  let reportedCost = 0;
+  let selectedModelId = "";
   let latest = null;
   let contextWindow = 0;
   let selectedModelWeight = -1;
@@ -436,9 +506,18 @@ function parseClaudeEvents(raw) {
   for (const event of jsonLines(raw)) {
     if (event.type === "stream_event" && event.event?.type === "message_delta" && event.event.usage) {
       latest = claudeUsageShape(event.event.usage);
+      streamedResponses += 1;
       Object.keys(totals).forEach((key) => {
         totals[key] += latest[key];
       });
+      const cacheCreation = claudeCacheCreationBreakdown(event.event.usage);
+      streamedDetails.uncached_input_tokens += number(event.event.usage.input_tokens);
+      streamedDetails.cache_read_input_tokens += number(event.event.usage.cache_read_input_tokens);
+      streamedDetails.cache_creation_input_tokens += number(event.event.usage.cache_creation_input_tokens);
+      streamedDetails.cache_creation_5m_input_tokens += cacheCreation.five_minute;
+      streamedDetails.cache_creation_1h_input_tokens += cacheCreation.one_hour;
+      streamedDetails.cache_creation_unknown_input_tokens += cacheCreation.unknown;
+      streamedDetails.output_tokens += number(event.event.usage.output_tokens);
       continue;
     }
 
@@ -499,22 +578,22 @@ function parseClaudeEvents(raw) {
     }
 
     if (event.type === "result" && event.modelUsage && typeof event.modelUsage === "object") {
-      const modelStats = Object.values(event.modelUsage);
-      reportedTotals = modelStats.reduce(
-        (sum, stats) => {
-          const input = number(stats?.inputTokens) +
-            number(stats?.cacheReadInputTokens) +
-            number(stats?.cacheCreationInputTokens);
-          const output = number(stats?.outputTokens);
-          sum.input_tokens += input;
-          sum.cached_input_tokens += number(stats?.cacheReadInputTokens) + number(stats?.cacheCreationInputTokens);
-          sum.output_tokens += output;
-          sum.total_tokens += input + output;
-          return sum;
-        },
-        { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 0 }
-      );
-      for (const stats of modelStats) {
+      const modelStats = Object.entries(event.modelUsage);
+      modelStats.forEach(([modelId, stats]) => {
+        const input = number(stats?.inputTokens) +
+          number(stats?.cacheReadInputTokens) +
+          number(stats?.cacheCreationInputTokens);
+        const output = number(stats?.outputTokens);
+        reportedTotals.input_tokens += input;
+        reportedTotals.cached_input_tokens += number(stats?.cacheReadInputTokens) + number(stats?.cacheCreationInputTokens);
+        reportedTotals.output_tokens += output;
+        reportedTotals.total_tokens += input + output;
+        reportedDetails.uncached_input_tokens += number(stats?.inputTokens);
+        reportedDetails.cache_read_input_tokens += number(stats?.cacheReadInputTokens);
+        reportedDetails.cache_creation_input_tokens += number(stats?.cacheCreationInputTokens);
+        reportedDetails.cache_creation_unknown_input_tokens += number(stats?.cacheCreationInputTokens);
+        reportedDetails.output_tokens += output;
+        reportedCost += number(stats?.costUSD);
         const weight =
           number(stats?.inputTokens) +
           number(stats?.cacheReadInputTokens) +
@@ -522,29 +601,42 @@ function parseClaudeEvents(raw) {
           number(stats?.outputTokens);
         if (weight > selectedModelWeight) {
           selectedModelWeight = weight;
+          selectedModelId = modelId;
           contextWindow = number(stats?.contextWindow) || contextWindow;
         }
-      }
+      });
     }
   }
 
-  const finalTotals = reportedTotals?.total_tokens ? reportedTotals : totals;
+  // Streamed message usage is additive across resumes, retries, and
+  // compactions. Result.modelUsage is scoped to one CLI invocation, so it is
+  // only a fallback for legacy transcripts that contain no streamed deltas.
+  const finalTotals = streamedResponses ? totals : reportedTotals;
+  const finalDetails = streamedResponses ? streamedDetails : reportedDetails;
   reconcilePointTotals(points, finalTotals);
 
-  return finishUsage({
-    provider: "claude",
-    points,
-    totals: finalTotals,
-    currentContext: latest?.input_tokens,
-    contextWindow,
-    exact: true,
-    note: sawAgentTools ? "Claude Code · subagent usage included" : "",
-    averageTokensPerAction: points.length && finalTotals.total_tokens
-      ? finalTotals.total_tokens / points.length
-      : null,
-    agentsCurrent: 1 + pendingAgents.size,
-    agentsTotal: 1 + allAgentTools.size
-  });
+  const pricing = claudeApiPricing(selectedModelId);
+  const apiCostEstimate = claudeApiCost(finalDetails, pricing);
+
+  return {
+    ...finishUsage({
+      provider: "claude",
+      points,
+      totals: finalTotals,
+      currentContext: latest?.input_tokens,
+      contextWindow,
+      exact: true,
+      note: sawAgentTools ? "Claude Code · subagent usage included" : "",
+      averageTokensPerAction: points.length && finalTotals.total_tokens
+        ? finalTotals.total_tokens / points.length
+        : null,
+      agentsCurrent: 1 + pendingAgents.size,
+      agentsTotal: 1 + allAgentTools.size
+    }),
+    ...finalDetails,
+    api_cost_estimate_usd: apiCostEstimate ?? (reportedCost || null),
+    api_pricing: pricing ? { model: selectedModelId, ...pricing } : null
+  };
 }
 
 function parsePrimeResults(raw) {

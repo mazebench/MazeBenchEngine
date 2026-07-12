@@ -1,7 +1,8 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { spawnSync } = require("child_process");
+const { execFile, spawnSync } = require("child_process");
+const { promisify } = require("util");
 const { createAgentRunService, enrichedPathEnv } = require("./agent-runs");
 const { createTrainingService } = require("./training");
 const { createLocalBuildWorldService } = require("./build-worlds-local");
@@ -25,6 +26,7 @@ const GAMES_DIR = path.join(ROOT_DIR, "games");
 const PUBLIC_DIR = path.join(ROOT_DIR, "public");
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
+const execFileAsync = promisify(execFile);
 const PUBLIC_FILE_ROUTES = new Map(
   [
     "/styles.css",
@@ -224,6 +226,7 @@ const buildWorlds = createLocalBuildWorldService({
 
 const agentRuns = createAgentRunService({
   agentEnvironment,
+  agentEnvironmentAsync,
   buildWorlds,
   ensureDirectory,
   getGame,
@@ -251,6 +254,7 @@ const remote = createRemoteService({
 // what they can launch. Cached briefly (15s: short enough that starting Docker
 // then reloading picks it up, long enough to keep page loads snappy).
 let agentEnvironmentCache = null;
+let agentEnvironmentPromise = null;
 
 // A container run needs BOTH the docker binary AND a reachable daemon. Report
 // them separately so the UI can say "install Docker" vs "start Docker".
@@ -279,27 +283,137 @@ function agentEnvironment(options = {}) {
     return agentEnvironmentCache.value;
   }
 
+  // Page HTML should never wait on Docker or provider login probes. The Agent
+  // client refreshes this asynchronously after first paint.
+  if (options.cachedOnly) {
+    return agentEnvironmentCache?.value || { checking: true };
+  }
+
   const probe = (bin) =>
     spawnSync("sh", ["-c", `command -v ${JSON.stringify(bin)}`], {
       encoding: "utf8",
       env: enrichedPathEnv()
     }).status === 0;
+  const probeCommand = (bin, args, timeout = 5000) => {
+    const result = spawnSync(bin, args, {
+      encoding: "utf8",
+      env: enrichedPathEnv(),
+      timeout,
+      maxBuffer: 2 * 1024 * 1024
+    });
+    return result.status === 0;
+  };
+  const codexInstalled = probe("codex");
+  const claudeInstalled = probe("claude");
+  const primeInstalled = probe("prime");
+  const codexAuthenticated = Boolean(process.env.OPENAI_API_KEY) ||
+    (codexInstalled && probeCommand("codex", ["login", "status"]));
+  const claudeAuthenticated = Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ||
+    (claudeInstalled && probeCommand("claude", ["auth", "status", "--json"]));
+  const primeAuthenticated = Boolean(process.env.PRIME_API_KEY) ||
+    (primeInstalled && probeCommand("prime", ["whoami"], 8000));
   const docker = dockerState();
   const value = {
-    codex: probe("codex"),
-    claude: probe("claude"),
+    checking: false,
+    codex: codexInstalled && codexAuthenticated,
+    codex_installed: codexInstalled,
+    codex_authenticated: codexAuthenticated,
+    claude: claudeInstalled && claudeAuthenticated,
+    claude_installed: claudeInstalled,
+    claude_authenticated: claudeAuthenticated,
     // `docker` means "ready for a container run" — installed AND daemon up.
     docker: docker.running,
     docker_installed: docker.installed,
     docker_running: docker.running,
     // Prime v1 evals run via `uv run eval`; the `prime` CLI is only needed for
     // the model catalog / login, so `uv` is what gates launching a Prime run.
-    prime: probe("prime"),
+    prime: primeInstalled && primeAuthenticated,
+    prime_installed: primeInstalled,
+    prime_authenticated: primeAuthenticated,
     uv: probe("uv")
   };
 
   agentEnvironmentCache = { at: Date.now(), value };
   return value;
+}
+
+async function agentEnvironmentAsync(options = {}) {
+  if (!options.fresh && agentEnvironmentCache && Date.now() - agentEnvironmentCache.at < 15000) {
+    return agentEnvironmentCache.value;
+  }
+  if (agentEnvironmentPromise) return agentEnvironmentPromise;
+
+  const commandExists = async (bin) => {
+    try {
+      await execFileAsync("sh", ["-c", "command -v \"$1\"", "sh", bin], {
+        encoding: "utf8",
+        env: enrichedPathEnv(),
+        timeout: 3000
+      });
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  };
+  const commandSucceeds = async (bin, args, timeout = 5000) => {
+    try {
+      await execFileAsync(bin, args, {
+        encoding: "utf8",
+        env: enrichedPathEnv(),
+        timeout,
+        maxBuffer: 2 * 1024 * 1024
+      });
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  };
+
+  agentEnvironmentPromise = (async () => {
+    const [codexInstalled, claudeInstalled, primeInstalled, uvInstalled, dockerInstalled] = await Promise.all([
+      commandExists("codex"),
+      commandExists("claude"),
+      commandExists("prime"),
+      commandExists("uv"),
+      commandExists("docker")
+    ]);
+    const [codexAuthenticated, claudeAuthenticated, primeAuthenticated, dockerRunning] = await Promise.all([
+      process.env.OPENAI_API_KEY
+        ? true
+        : codexInstalled && commandSucceeds("codex", ["login", "status"]),
+      process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN
+        ? true
+        : claudeInstalled && commandSucceeds("claude", ["auth", "status", "--json"]),
+      process.env.PRIME_API_KEY
+        ? true
+        : primeInstalled && commandSucceeds("prime", ["whoami"], 8000),
+      dockerInstalled && commandSucceeds("docker", ["info", "--format", "{{.ServerVersion}}"], 8000)
+    ]);
+    const value = {
+      checking: false,
+      codex: codexInstalled && Boolean(codexAuthenticated),
+      codex_installed: codexInstalled,
+      codex_authenticated: Boolean(codexAuthenticated),
+      claude: claudeInstalled && Boolean(claudeAuthenticated),
+      claude_installed: claudeInstalled,
+      claude_authenticated: Boolean(claudeAuthenticated),
+      docker: Boolean(dockerRunning),
+      docker_installed: dockerInstalled,
+      docker_running: Boolean(dockerRunning),
+      prime: primeInstalled && Boolean(primeAuthenticated),
+      prime_installed: primeInstalled,
+      prime_authenticated: Boolean(primeAuthenticated),
+      uv: uvInstalled
+    };
+    agentEnvironmentCache = { at: Date.now(), value };
+    return value;
+  })();
+
+  try {
+    return await agentEnvironmentPromise;
+  } finally {
+    agentEnvironmentPromise = null;
+  }
 }
 
 const DEFAULT_REQUEST_BODY_MAX_BYTES = 5 * 1024 * 1024;

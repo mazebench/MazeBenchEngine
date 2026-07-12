@@ -163,6 +163,30 @@ const codexCall = (verb) => ({
 }
 
 {
+  const usage = parseClaudeEvents(
+    lines(
+      { type: "stream_event", event: { type: "message_delta", usage: { input_tokens: 20, cache_read_input_tokens: 80, output_tokens: 5 } } },
+      { type: "result", modelUsage: { "claude-fable-5": { inputTokens: 20, outputTokens: 5, cacheReadInputTokens: 80, costUSD: 0.00035, contextWindow: 1000000 } } },
+      { type: "stream_event", event: { type: "message_delta", usage: {
+        input_tokens: 10,
+        cache_creation_input_tokens: 110,
+        output_tokens: 7,
+        cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 110 }
+      } } },
+      { type: "result", modelUsage: { "claude-fable-5": { inputTokens: 10, outputTokens: 7, cacheCreationInputTokens: 110, costUSD: 0.00265, contextWindow: 1000000 } } }
+    )
+  );
+  assert.equal(usage.total_tokens, 232, "Claude result chunks must not replace the cumulative stream total");
+  assert.equal(usage.input_tokens, 220);
+  assert.equal(usage.output_tokens, 12);
+  assert.equal(usage.uncached_input_tokens, 30);
+  assert.equal(usage.cache_read_input_tokens, 80);
+  assert.equal(usage.cache_creation_input_tokens, 110);
+  assert.equal(usage.api_cost_estimate_usd, 0.00318);
+  assert.equal(usage.api_pricing.model, "claude-fable-5");
+}
+
+{
   const command = [
     "node scripts/codex-play.js action --state session.json up",
     "node scripts/codex-play.js action --state session.json left"

@@ -89,6 +89,7 @@ function collectedAllWorldGems(gemCount, gemTotal) {
 
 function createAgentRunService({
   agentEnvironment,
+  agentEnvironmentAsync,
   ensureDirectory,
   getGame,
   buildWorlds,
@@ -146,6 +147,11 @@ function createAgentRunService({
 
   function getEnvironment(options = {}) {
     return typeof agentEnvironment === "function" ? agentEnvironment(options) : {};
+  }
+
+  function getEnvironmentAsync(options = {}) {
+    if (typeof agentEnvironmentAsync === "function") return agentEnvironmentAsync(options);
+    return Promise.resolve(getEnvironment(options));
   }
 
   // Launch the Docker daemon when it is installed but stopped. The daemon takes
@@ -1152,17 +1158,50 @@ function createAgentRunService({
       .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
   }
 
+  // The runs page usually shows only five recent cards. Reading and parsing every
+  // historical actions.jsonl before slicing that page made initial load scale
+  // with the lifetime of the installation rather than the number of visible
+  // cards. Keep filtering/pagination on tiny run.json records, then deeply
+  // summarize only the requested page. Metric sorts still use full summaries
+  // because their ordering genuinely depends on replay-derived data.
+  function lightweightRunRecords() {
+    if (!fs.existsSync(runsDir)) return [];
+
+    return fs
+      .readdirSync(runsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && RUN_ID_PATTERN.test(entry.name))
+      .flatMap((entry) => {
+        const raw = readRunMeta(entry.name);
+        if (!raw) return [];
+        const meta = ["running", "pausing", "stopping"].includes(raw.status)
+          ? finalizeStatus(entry.name, raw)
+          : raw;
+        return [{
+          id: entry.name,
+          created_at: meta.created_at || entry.name,
+          game_id: meta.game_id || "",
+          game_title: meta.game_title || "",
+          model: meta.model || "",
+          model_name: meta.model_name || meta.model || "",
+          provider: meta.kind === "prime" ? "prime" : meta.model,
+          status: meta.status || ""
+        }];
+      })
+      .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
+  }
+
   // Paginated, filterable, sortable runs listing. Returns the requested page plus
   // the totals and the facet lists (providers/models present across ALL runs) so
   // the UI can offer stable filter dropdowns. With no options it behaves like the
   // old full list (page 1), so existing callers keep working.
   function listRuns(options = {}) {
-    const all = allRunSummaries();
     const provider = String(options.provider || "").trim();
     const model = String(options.model || "").trim();
     const status = String(options.status || "").trim();
     const query = String(options.query || "").trim().toLowerCase();
     const sort = String(options.sort || "newest");
+    const metricSort = ["actions", "rooms", "gems"].includes(sort);
+    const all = metricSort ? allRunSummaries() : lightweightRunRecords();
 
     const providers = [...new Set(all.map((run) => run.provider).filter(Boolean))].sort();
     const models = [...new Set(all.map((run) => run.model_name).filter(Boolean))].sort();
@@ -1198,7 +1237,7 @@ function createAgentRunService({
 
     if (sort === "oldest") {
       filtered = [...filtered].reverse();
-    } else if (["actions", "rooms", "gems"].includes(sort)) {
+    } else if (metricSort) {
       const key = { actions: "turns", rooms: "room_count", gems: "gem_count" }[sort];
       filtered = [...filtered].sort((left, right) => {
         const difference = (Number(right[key]) || 0) - (Number(left[key]) || 0);
@@ -1212,8 +1251,13 @@ function createAgentRunService({
     const page = Math.max(1, Math.min(pages, Math.floor(Number(options.page) || 1)));
     const start = (page - 1) * pageSize;
 
+    const pageRows = filtered.slice(start, start + pageSize);
+    const runs = metricSort
+      ? pageRows
+      : pageRows.map((record) => summarizeRun(record.id)).filter(Boolean);
+
     return {
-      runs: filtered.slice(start, start + pageSize),
+      runs,
       total,
       page,
       pages,
@@ -3638,6 +3682,7 @@ function createAgentRunService({
     deleteRun,
     generateRunVideo,
     getEnvironment,
+    getEnvironmentAsync,
     getRunObservation,
     getRunProgress,
     launchRun,

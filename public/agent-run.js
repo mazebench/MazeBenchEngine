@@ -25,6 +25,10 @@
   const tokenEmpty = document.getElementById("run-token-empty");
   const tokenBadge = document.getElementById("run-token-badge");
   const tokenNote = document.getElementById("run-token-note");
+  const explorationGrid = document.getElementById("run-exploration-grid");
+  const explorationEmpty = document.getElementById("run-exploration-empty");
+  const roomsChart = document.getElementById("run-rooms-chart");
+  const gemsChart = document.getElementById("run-gems-chart");
   const swarmSection = document.getElementById("run-swarm-section");
   const swarmGrid = document.getElementById("run-swarm-grid");
   const swarmCount = document.getElementById("run-swarm-count");
@@ -66,6 +70,7 @@
     frameFailures: 0,
     videoShown: false,
     tokenSignature: "",
+    explorationSignature: "",
     swarmSignature: "",
     contextPoints: [],
     feedVersion: 0,
@@ -536,9 +541,15 @@
   function formatTokens(value) {
     const tokens = Number(value);
     if (!Number.isFinite(tokens)) return "—";
-    if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(tokens >= 10_000_000 ? 1 : 2)}M`;
-    if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(tokens >= 100_000 ? 0 : 1)}K`;
-    return Math.round(tokens).toLocaleString();
+    const unit = [
+      [1_000_000_000_000, "T"],
+      [1_000_000_000, "B"],
+      [1_000_000, "M"],
+      [1_000, "K"]
+    ].find(([threshold]) => Math.abs(tokens) >= threshold);
+    if (!unit) return Math.round(tokens).toLocaleString();
+    const scaled = Math.round((tokens / unit[0]) * 10) / 10;
+    return `${scaled.toLocaleString(undefined, { maximumFractionDigits: 1 })}${unit[1]}`;
   }
 
   function drawContextChart() {
@@ -652,9 +663,25 @@
 
     const available = Boolean(usage?.available);
     document.getElementById("run-token-total").textContent = available ? formatTokens(usage.total_tokens) : "—";
-    document.getElementById("run-token-average").textContent = available
-      ? formatTokens(usage.average_tokens_per_action)
+    document.getElementById("run-token-input").textContent = available ? formatTokens(usage.input_tokens) : "—";
+    document.getElementById("run-token-output").textContent = available ? formatTokens(usage.output_tokens) : "—";
+    const inputDetail = document.getElementById("run-token-input-detail");
+    const inputParts = [
+      usage?.cache_read_input_tokens ? `${formatTokens(usage.cache_read_input_tokens)} cache reads` : "",
+      usage?.cache_creation_input_tokens ? `${formatTokens(usage.cache_creation_input_tokens)} cache writes` : "",
+      usage?.uncached_input_tokens ? `${formatTokens(usage.uncached_input_tokens)} new` : ""
+    ].filter(Boolean);
+    inputDetail.textContent = inputParts.join(" · ");
+
+    const cost = Number(usage?.api_cost_estimate_usd);
+    document.getElementById("run-token-cost").textContent = Number.isFinite(cost) && cost >= 0
+      ? cost.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 })
       : "—";
+    const costDetail = document.getElementById("run-token-cost-detail");
+    const pricing = usage?.api_pricing;
+    costDetail.textContent = pricing
+      ? `$${pricing.input}/M new · $${pricing.cache_read}/M reads · $${pricing.cache_write_1h}/M 1h writes · $${pricing.output}/M out`
+      : cost ? "Provider-reported API-equivalent cost" : "Pricing unavailable";
     document.getElementById("run-token-context").textContent = usage?.current_context_tokens
       ? formatTokens(usage.current_context_tokens)
       : "—";
@@ -700,6 +727,132 @@
   }
 
   window.addEventListener("resize", () => requestAnimationFrame(drawContextChart), { passive: true });
+
+  function drawMetricChart(canvas, points, key, color) {
+    if (!canvas || !points.length) return;
+    const width = Math.max(280, Math.floor(canvas.clientWidth));
+    const height = Math.max(170, Math.floor(canvas.clientHeight));
+    const ratio = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.floor(width * ratio);
+    canvas.height = Math.floor(height * ratio);
+    const context = canvas.getContext("2d");
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, width, height);
+
+    const padding = { top: 15, right: 14, bottom: 28, left: 42 };
+    const plotWidth = width - padding.left - padding.right;
+    const plotHeight = height - padding.top - padding.bottom;
+    const firstAction = points[0].action;
+    const lastAction = points[points.length - 1].action;
+    const maxValue = Math.max(1, ...points.map((point) => point[key]));
+    const ceiling = maxValue <= 4 ? maxValue : Math.ceil(maxValue * 1.05);
+    const tickCount = Math.min(4, Math.max(1, ceiling));
+    const x = (action) => padding.left + (lastAction === firstAction
+      ? plotWidth / 2
+      : ((action - firstAction) / (lastAction - firstAction)) * plotWidth);
+    const y = (value) => padding.top + plotHeight - (value / ceiling) * plotHeight;
+
+    context.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
+    context.textBaseline = "middle";
+    for (let index = 0; index <= tickCount; index += 1) {
+      const lineY = padding.top + (plotHeight / tickCount) * index;
+      context.strokeStyle = "rgba(124, 143, 255, 0.11)";
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(padding.left, lineY);
+      context.lineTo(width - padding.right, lineY);
+      context.stroke();
+      context.fillStyle = "rgba(154, 163, 199, 0.76)";
+      context.textAlign = "right";
+      context.fillText(String(Math.round(ceiling * (1 - index / tickCount))), padding.left - 8, lineY);
+    }
+
+    const fill = context.createLinearGradient(0, padding.top, 0, padding.top + plotHeight);
+    fill.addColorStop(0, `${color}33`);
+    fill.addColorStop(1, `${color}00`);
+    context.beginPath();
+    points.forEach((point, index) => {
+      if (index === 0) context.moveTo(x(point.action), y(point[key]));
+      else context.lineTo(x(point.action), y(point[key]));
+    });
+    context.lineTo(x(lastAction), padding.top + plotHeight);
+    context.lineTo(x(firstAction), padding.top + plotHeight);
+    context.closePath();
+    context.fillStyle = fill;
+    context.fill();
+
+    context.beginPath();
+    points.forEach((point, index) => {
+      if (index === 0) context.moveTo(x(point.action), y(point[key]));
+      else context.lineTo(x(point.action), y(point[key]));
+    });
+    context.strokeStyle = color;
+    context.lineWidth = 2.25;
+    context.lineJoin = "round";
+    context.lineCap = "round";
+    context.shadowColor = `${color}66`;
+    context.shadowBlur = 8;
+    context.stroke();
+    context.shadowBlur = 0;
+
+    const latest = points[points.length - 1];
+    context.beginPath();
+    context.arc(x(latest.action), y(latest[key]), 3.5, 0, Math.PI * 2);
+    context.fillStyle = color;
+    context.fill();
+    context.strokeStyle = "#070811";
+    context.lineWidth = 1.5;
+    context.stroke();
+
+    const actionLabels = [...new Set([firstAction, Math.round((firstAction + lastAction) / 2), lastAction])];
+    context.fillStyle = "rgba(154, 163, 199, 0.76)";
+    context.textBaseline = "alphabetic";
+    actionLabels.forEach((action, index) => {
+      context.textAlign = index === 0 ? "left" : index === actionLabels.length - 1 ? "right" : "center";
+      context.fillText(String(action), x(action), height - 7);
+    });
+  }
+
+  function explorationPoints() {
+    const startingRoom = levelLabel(state.run?.level_id);
+    const visitedRooms = new Set(startingRoom ? [startingRoom] : []);
+    return [...state.moves.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([action, move]) => {
+        if (move.room) visitedRooms.add(move.room);
+        return {
+          action: Number(action),
+          rooms: visitedRooms.size,
+          gems: Math.max(0, Number(move.gems) || 0)
+        };
+      });
+  }
+
+  function drawExplorationCharts() {
+    const points = explorationPoints();
+    drawMetricChart(roomsChart, points, "rooms", "#65f3d4");
+    drawMetricChart(gemsChart, points, "gems", "#ffd15c");
+  }
+
+  function renderExplorationCharts() {
+    const points = explorationPoints();
+    const signature = JSON.stringify(points);
+    if (signature === state.explorationSignature) return;
+    state.explorationSignature = signature;
+    const available = points.length > 0;
+    explorationGrid.hidden = !available;
+    explorationEmpty.hidden = available;
+    if (!available) return;
+
+    const latest = points[points.length - 1];
+    document.getElementById("run-rooms-latest").textContent = latest.rooms.toLocaleString();
+    document.getElementById("run-gems-latest").textContent = latest.gems.toLocaleString();
+    roomsChart.setAttribute("aria-label", `${latest.rooms.toLocaleString()} rooms visited by action ${latest.action.toLocaleString()}`);
+    gemsChart.setAttribute("aria-label", `${latest.gems.toLocaleString()} gems collected by action ${latest.action.toLocaleString()}`);
+    requestAnimationFrame(drawExplorationCharts);
+  }
+
+  window.addEventListener("resize", () => requestAnimationFrame(drawExplorationCharts), { passive: true });
 
   // ---- combined moves + reasoning feed --------------------------------------
 
@@ -995,6 +1148,7 @@
         // usage, boards, and replay are enriched from the finalized sample.
         ingestActions(progress.actions || []);
         ingestReasoning(progress.reasoning || []);
+        renderExplorationCharts();
         renderFeed();
         renderMainReplayControls();
         const seeEmpty = document.getElementById("run-see-empty");
@@ -1005,6 +1159,7 @@
       } else {
         ingestActions(progress.actions || []);
         ingestReasoning(progress.reasoning || []);
+        renderExplorationCharts();
         renderFeed();
         renderMainReplayControls();
 

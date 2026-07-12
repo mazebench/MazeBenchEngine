@@ -25,10 +25,27 @@
     {
       id: "prime",
       name: "Prime Intellect",
-      envKey: "uv",
+      envKey: "prime",
       logo: '<img src="/logos/prime.png" alt="" loading="lazy">'
     }
   ];
+  const PROVIDER_SETUP = {
+    codex: {
+      docs: "https://help.openai.com/en/articles/11096431-openai-codex-cli-getting-started",
+      install: "npm install -g @openai/codex\ncodex --login",
+      login: "codex --login"
+    },
+    claude: {
+      docs: "https://docs.anthropic.com/en/docs/claude-code/getting-started",
+      install: "npm install -g @anthropic-ai/claude-code\nclaude",
+      login: "claude"
+    },
+    prime: {
+      docs: "https://docs.primeintellect.ai/cli-reference/introduction",
+      install: "uv tool install -U prime\nprime login",
+      login: "prime login"
+    }
+  };
   const RUN_COMPANY_NAMES = {
     codex: "OpenAI",
     claude: "Anthropic",
@@ -350,12 +367,14 @@
   function renderProviders(selectionFrom = null) {
     const host = document.getElementById("provider-picker");
     host.innerHTML = PROVIDERS.map((provider) => {
-      const available = Boolean(data.environment?.[provider.envKey]);
+      const availability = providerAvailability(provider.id);
+      const statusClass = availability.checking ? "is-checking" : availability.available ? "is-ok" : "is-missing";
+      const statusLabel = availability.checking ? "CHECKING" : availability.available ? "ACTIVE" : "INACTIVE";
       return `<button type="button" class="provider-card${state.provider === provider.id ? " is-selected" : ""}"
           data-provider="${provider.id}" role="radio" aria-checked="${state.provider === provider.id}">
         <span class="provider-card__logo">${provider.logo}</span>
         <span class="provider-card__name">${escapeText(provider.name)}</span>
-        <span class="provider-card__avail ${available ? "is-ok" : "is-missing"}">${available ? "ACTIVE" : "INACTIVE"}</span>
+        <span class="provider-card__avail ${statusClass}">${statusLabel}</span>
       </button>`;
     }).join("");
 
@@ -365,7 +384,67 @@
     renderSelectionSlider(host, ".provider-card.is-selected", selectionFrom, "provider");
   }
 
+  function providerAvailability(providerId) {
+    const env = data.environment || {};
+    if (env.checking || !Object.keys(env).length) {
+      return { checking: true, available: false, installed: false, authenticated: false };
+    }
+    const provider = PROVIDERS.find((entry) => entry.id === providerId);
+    const installed = env[`${providerId}_installed`] ?? Boolean(env[provider?.envKey]);
+    const authenticated = env[`${providerId}_authenticated`] ?? Boolean(env[provider?.envKey]);
+    const runtimeReady = providerId !== "prime" || Boolean(env.uv);
+    return {
+      checking: false,
+      available: Boolean(env[provider?.envKey]) && runtimeReady,
+      installed: Boolean(installed),
+      authenticated: Boolean(authenticated),
+      runtimeReady
+    };
+  }
+
+  function showProviderSetup(providerId) {
+    const provider = PROVIDERS.find((entry) => entry.id === providerId);
+    const setup = PROVIDER_SETUP[providerId];
+    const availability = providerAvailability(providerId);
+    const modal = document.getElementById("provider-setup-modal");
+    if (!provider || !setup || !modal) return;
+    document.getElementById("provider-setup-logo").innerHTML = provider.logo;
+    document.getElementById("provider-setup-title").textContent = `${provider.name} is inactive`;
+    const missingRuntime = providerId === "prime" && availability.installed && availability.authenticated && !availability.runtimeReady;
+    document.getElementById("provider-setup-message").textContent = !availability.installed
+      ? `Install ${provider.name}, then sign in once from your terminal.`
+      : !availability.authenticated
+        ? `${provider.name} is installed. Sign in once from your terminal, then refresh this page.`
+        : missingRuntime
+          ? "Prime is ready, but MazeBench also needs uv installed to run verifiers."
+          : `Finish ${provider.name} setup in your terminal, then refresh this page.`;
+    document.getElementById("provider-setup-command").textContent = missingRuntime
+      ? "curl -LsSf https://astral.sh/uv/install.sh | sh"
+      : availability.installed ? setup.login : setup.install;
+    document.getElementById("provider-setup-docs").href = setup.docs;
+    modal.hidden = false;
+    window.requestAnimationFrame(() => modal.classList.add("open"));
+    window.setTimeout(() => document.getElementById("provider-setup-close")?.focus(), 30);
+  }
+
+  function closeProviderSetup() {
+    const modal = document.getElementById("provider-setup-modal");
+    modal?.classList.remove("open");
+    window.setTimeout(() => {
+      if (modal && !modal.classList.contains("open")) modal.hidden = true;
+    }, 180);
+  }
+
   function selectProvider(providerId) {
+    const availability = providerAvailability(providerId);
+    if (availability.checking) {
+      setStatus("Checking provider setup…");
+      return;
+    }
+    if (!availability.available) {
+      showProviderSetup(providerId);
+      return;
+    }
     if (state.provider === providerId) return;
     const providerHost = document.getElementById("provider-picker");
     const providerSelectionFrom = selectedRect(providerHost, ".provider-card.is-selected");
@@ -1105,6 +1184,8 @@
   async function refreshEnvironment() {
     const env = await api("/api/agent/environment");
     data.environment = env;
+    renderProviders();
+    syncIsolationPicker();
     return env;
   }
 
@@ -1574,5 +1655,19 @@
   wireSelectionResize();
   wireRunsToolbar();
   refreshRuns();
+  document.getElementById("provider-setup-close")?.addEventListener("click", closeProviderSetup);
+  document.getElementById("provider-setup-modal")?.addEventListener("click", (event) => {
+    if (event.target.id === "provider-setup-modal") closeProviderSetup();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.getElementById("provider-setup-modal")?.classList.contains("open")) {
+      closeProviderSetup();
+    }
+  });
+  refreshEnvironment().catch((error) => {
+    data.environment = { checking: false };
+    renderProviders();
+    setStatus(error.message, true);
+  });
   syncComposerSteps(false);
 })();

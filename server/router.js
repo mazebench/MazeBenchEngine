@@ -99,13 +99,15 @@ function createRequestRouter({
         response.end();
         return;
       }
-      sendJson(response, 200, training.bootstrap({ fresh: url.searchParams.get("refresh") === "1" }));
+      sendJson(response, 200, await training.bootstrapAsync({ fresh: url.searchParams.get("refresh") === "1" }));
       return;
     }
 
     if (url.pathname === "/api/train/runs") {
       if (request.method === "GET") {
-        sendJson(response, 200, training.listRuns());
+        sendJson(response, 200, await training.listRunsAsync({
+          limit: Number(url.searchParams.get("limit")) || 10
+        }));
         return;
       }
       if (request.method === "POST") {
@@ -169,7 +171,7 @@ function createRequestRouter({
         return;
       }
 
-      sendJson(response, 200, agentRuns.getEnvironment({ fresh: true }));
+      sendJson(response, 200, await agentRuns.getEnvironmentAsync({ fresh: true }));
       return;
     }
 

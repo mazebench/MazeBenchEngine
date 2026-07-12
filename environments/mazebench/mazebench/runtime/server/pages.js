@@ -1022,7 +1022,9 @@ function createPageRenderer({
           </div>
           <div class="run-token-stats">
             <div class="run-token-stat"><span>Total</span><strong id="run-token-total">—</strong></div>
-            <div class="run-token-stat"><span>Per action</span><strong id="run-token-average">—</strong></div>
+            <div class="run-token-stat"><span>Input</span><strong id="run-token-input">—</strong><small id="run-token-input-detail"></small></div>
+            <div class="run-token-stat"><span>Output</span><strong id="run-token-output">—</strong></div>
+            <div class="run-token-stat"><span>API estimate</span><strong id="run-token-cost">—</strong><small id="run-token-cost-detail"></small></div>
             <div class="run-token-stat"><span>Context</span><strong id="run-token-context">—</strong><small id="run-token-context-detail"></small></div>
           </div>
           <div id="run-token-chart" class="run-token-chart" hidden></div>
@@ -1042,6 +1044,20 @@ function createPageRenderer({
           </div>
           <video id="run-video" class="run-video" controls playsinline hidden></video>
         </section>`;
+    const explorationSection = `<section class="panel run-exploration" id="run-exploration-section">
+          <h2>Exploration progress</h2>
+          <div class="run-exploration__grid" id="run-exploration-grid" hidden>
+            <article class="run-metric-chart">
+              <div class="run-metric-chart__head"><span class="run-metric-chart__label run-metric-chart__label--rooms">${TRAIN_REWARD_ICONS.rooms}<span>Rooms visited</span></span><strong id="run-rooms-latest">—</strong></div>
+              <canvas id="run-rooms-chart" class="run-metric-chart__canvas" role="img" aria-label="Rooms visited by action"></canvas>
+            </article>
+            <article class="run-metric-chart">
+              <div class="run-metric-chart__head"><span class="run-metric-chart__label run-metric-chart__label--gems">${TRAIN_REWARD_ICONS.gems}<span>Gems collected</span></span><strong id="run-gems-latest">—</strong></div>
+              <canvas id="run-gems-chart" class="run-metric-chart__canvas" role="img" aria-label="Gems collected by action"></canvas>
+            </article>
+          </div>
+          <p id="run-exploration-empty" class="muted">Waiting for the agent's first action…</p>
+        </section>`;
     // Hosted Prime Evaluations expose lifecycle/log state immediately and their
     // scored sample after the rollout completes. Move zero is local; the move
     // feed and replay sync back from that scored sample at completion.
@@ -1055,6 +1071,8 @@ function createPageRenderer({
         ${replaySection}
 
         ${tokenSection}
+
+        ${explorationSection}
 
         <section class="panel">
           <h2>Moves &amp; reasoning</h2>
@@ -1094,6 +1112,8 @@ function createPageRenderer({
         ${replaySection}
 
         ${tokenSection}
+
+        ${explorationSection}
 
         <section class="panel">
           <h2>Moves &amp; reasoning</h2>
@@ -1135,7 +1155,7 @@ function createPageRenderer({
           <pre id="run-log" class="agent-log"></pre>
         </section>
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)};</script>
-        <script src="/agent-run.js?v=20260710-hosted-evals-67" defer></script>`
+        <script src="/agent-run.js?v=20260712-metric-icons-70" defer></script>`
     });
   }
 

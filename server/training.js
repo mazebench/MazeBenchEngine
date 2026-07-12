@@ -1,7 +1,10 @@
 const fs = require("fs");
 const path = require("path");
-const { spawnSync } = require("child_process");
+const { execFile, spawnSync } = require("child_process");
+const { promisify } = require("util");
 const { enrichedPathEnv } = require("./agent-runs");
+
+const execFileAsync = promisify(execFile);
 
 const CACHE_MS = 30_000;
 
@@ -66,9 +69,34 @@ function createTrainingService({ buildWorlds, getGame, rootDir, worldMaps }) {
     return result;
   }
 
+  async function runPrimeAsync(args, options = {}) {
+    try {
+      return await execFileAsync("prime", ["--plain", ...args], {
+        cwd: rootDir,
+        encoding: "utf8",
+        env: enrichedPathEnv(),
+        timeout: options.timeout || 60_000,
+        maxBuffer: 8 * 1024 * 1024
+      });
+    } catch (error) {
+      if (error?.code === "ENOENT") throw new Error(`Prime CLI is unavailable: ${error.message}`);
+      if (error?.killed || error?.code === "ETIMEDOUT") throw new Error("Prime CLI timed out.");
+      throw new Error(stripAnsi(error?.stderr || error?.stdout) || `Prime CLI exited with status ${error?.code ?? "unknown"}.`);
+    }
+  }
+
   function probe(args, options = {}) {
     try {
       const result = runPrime(args, options);
+      return { ok: true, output: stripAnsi(result.stdout) };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  }
+
+  async function probeAsync(args, options = {}) {
+    try {
+      const result = await runPrimeAsync(args, options);
       return { ok: true, output: stripAnsi(result.stdout) };
     } catch (error) {
       return { ok: false, error: error.message };
@@ -98,8 +126,46 @@ function createTrainingService({ buildWorlds, getGame, rootDir, worldMaps }) {
       : { ok: false, error: stripAnsi(result.stderr || result.stdout) || "MazeBench v1 failed to import." };
   }
 
+  async function localEnvironmentProbeAsync() {
+    try {
+      await execFileAsync(
+        "uv",
+        [
+          "run",
+          "--directory",
+          environmentDir,
+          "python",
+          "-c",
+          "from mazebench.mazebench import MazeBenchConfig, load_environment; import verifiers.v1 as vf; c=MazeBenchConfig(); assert c.id == 'mazebench'; assert callable(load_environment); assert vf.Taskset is not None"
+        ],
+        {
+          cwd: rootDir,
+          encoding: "utf8",
+          env: enrichedPathEnv(),
+          timeout: 30_000,
+          maxBuffer: 8 * 1024 * 1024
+        }
+      );
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: stripAnsi(error?.stderr || error?.stdout) || "MazeBench v1 failed to import." };
+    }
+  }
+
   function liveModels() {
     const payload = parseJsonOutput(runPrime(["train", "models", "--output", "json"]).stdout) || {};
+    return (payload.models || []).map((model) => ({
+      id: model.name,
+      at_capacity: Boolean(model.at_capacity),
+      training_price_per_mtok: model.effective_training_price_per_mtok ?? model.training_price_per_mtok ?? null,
+      input_price_per_mtok: model.effective_inference_input_price_per_mtok ?? model.inference_input_price_per_mtok ?? null,
+      output_price_per_mtok: model.effective_inference_output_price_per_mtok ?? model.inference_output_price_per_mtok ?? null,
+      promo_label: model.promo_label || ""
+    }));
+  }
+
+  async function liveModelsAsync() {
+    const payload = parseJsonOutput((await runPrimeAsync(["train", "models", "--output", "json"])).stdout) || {};
     return (payload.models || []).map((model) => ({
       id: model.name,
       at_capacity: Boolean(model.at_capacity),
@@ -117,6 +183,42 @@ function createTrainingService({ buildWorlds, getGame, rootDir, worldMaps }) {
       gem_total: game ? buildWorlds.countWorldGems(game) : 0,
       room_total: game?.worldMap?.levels?.length || 0,
       start_level_id: game ? worldMaps.defaultLevelIdForGame(game) : "level_HxI"
+    };
+  }
+
+  function bootstrapValue({ cli, account, published, local, models, modelsError = "" }) {
+    const readiness = {
+      cli: cli.ok,
+      account: account.ok,
+      local_environment: local.ok,
+      published_environment: published.ok,
+      ready: cli.ok && account.ok && local.ok && published.ok && models.length > 0,
+      environment_id: environmentId,
+      version: cli.output || "",
+      issue:
+        (!cli.ok && cli.error) ||
+        (!account.ok && account.error) ||
+        (!local.ok && local.error) ||
+        (!published.ok && `Publish ${environmentId} to the Prime Environments Hub before launching.`) ||
+        modelsError ||
+        (!models.length ? "No Hosted Training models are currently available." : "")
+    };
+    return {
+      readiness,
+      models,
+      defaults: {
+        ...worldDefaults(),
+        observation_mode: "ascii",
+        gem_reward_weight: 1,
+        room_reward_weight: 0.1,
+        push_reward_weight: 0.05,
+        max_actions: 256,
+        max_steps: 100,
+        batch_size: 512,
+        rollouts_per_example: 16,
+        max_tokens: 1024,
+        temperature: 1
+      }
     };
   }
 
@@ -141,45 +243,42 @@ function createTrainingService({ buildWorlds, getGame, rootDir, worldMaps }) {
       }
     }
 
-    const readiness = {
-      cli: cli.ok,
-      account: account.ok,
-      local_environment: local.ok,
-      published_environment: published.ok,
-      ready: cli.ok && account.ok && local.ok && published.ok && models.length > 0,
-      environment_id: environmentId,
-      version: cli.output || "",
-      issue:
-        (!cli.ok && cli.error) ||
-        (!account.ok && account.error) ||
-        (!local.ok && local.error) ||
-        (!published.ok && `Publish ${environmentId} to the Prime Environments Hub before launching.`) ||
-        modelsError ||
-        (!models.length ? "No Hosted Training models are currently available." : "")
-    };
-    const value = {
-      readiness,
-      models,
-      defaults: {
-        ...worldDefaults(),
-        observation_mode: "ascii",
-        gem_reward_weight: 1,
-        room_reward_weight: 0.1,
-        push_reward_weight: 0.05,
-        max_actions: 256,
-        max_steps: 100,
-        batch_size: 512,
-        rollouts_per_example: 16,
-        max_tokens: 1024,
-        temperature: 1
-      }
-    };
+    const value = bootstrapValue({ cli, account, published, local, models, modelsError });
+    bootstrapCache = { at: Date.now(), value };
+    return value;
+  }
+
+  async function bootstrapAsync(options = {}) {
+    if (!options.fresh && bootstrapCache && Date.now() - bootstrapCache.at < CACHE_MS) {
+      return bootstrapCache.value;
+    }
+
+    // These probes are independent. Running them together removes several
+    // seconds of serialized CLI startup and, unlike spawnSync, keeps the local
+    // web server responsive while Prime and uv initialize.
+    const [cli, account, publishedProbe, local, modelsResult] = await Promise.all([
+      probeAsync(["--version"]),
+      probeAsync(["whoami"]),
+      probeAsync(["env", "info", environmentId], { timeout: 30_000 }),
+      localEnvironmentProbeAsync(),
+      liveModelsAsync().then((models) => ({ models, error: "" })).catch((error) => ({ models: [], error: error.message }))
+    ]);
+    const published = account.ok ? publishedProbe : { ok: false, error: "Sign in to Prime first." };
+    const models = account.ok ? modelsResult.models : [];
+    const modelsError = account.ok ? modelsResult.error : "";
+    const value = bootstrapValue({ cli, account, published, local, models, modelsError });
     bootstrapCache = { at: Date.now(), value };
     return value;
   }
 
   function listRuns() {
     const payload = parseJsonOutput(runPrime(["train", "list", "--num", "50", "--output", "json"]).stdout) || {};
+    return { runs: payload.runs || [], total: Number(payload.total) || 0 };
+  }
+
+  async function listRunsAsync(options = {}) {
+    const limit = Math.max(1, Math.min(50, Math.floor(Number(options.limit) || 10)));
+    const payload = parseJsonOutput((await runPrimeAsync(["train", "list", "--num", String(limit), "--output", "json"])).stdout) || {};
     return { runs: payload.runs || [], total: Number(payload.total) || 0 };
   }
 
@@ -277,9 +376,11 @@ function createTrainingService({ buildWorlds, getGame, rootDir, worldMaps }) {
 
   return {
     bootstrap,
+    bootstrapAsync,
     environmentId,
     launch,
     listRuns,
+    listRunsAsync,
     trainingConfigToml
   };
 }
