@@ -3077,6 +3077,58 @@ body.play-body {
 
 /* ---- replay progress bar ---- */
 
+.run-replay__head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.run-replay__head h2 {
+  margin: 0;
+}
+
+.run-replay-progress-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 14px 18px;
+}
+
+.run-replay-progress-panel__copy {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.run-replay-progress-panel__copy strong {
+  color: #7ff7df;
+  font-size: 13px;
+}
+
+.run-video-action {
+  align-items: center;
+  display: inline-flex;
+  gap: 7px;
+}
+
+.run-video-action svg {
+  height: 17px;
+  width: 17px;
+}
+
+.run-video-action.is-rendering svg {
+  animation: replay-render-pulse 1.15s ease-in-out infinite;
+}
+
+@keyframes replay-render-pulse {
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(52, 231, 240, 0)); opacity: 0.55; }
+  50% { filter: drop-shadow(0 0 7px rgba(52, 231, 240, 0.8)); opacity: 1; }
+}
+
 .replay-progress {
   align-items: center;
   display: flex;
@@ -3105,7 +3157,9 @@ body.play-body {
 
 .run-video {
   border-radius: 9px;
+  display: block;
   max-width: 100%;
+  width: 100%;
 }
 
 /* ---- Agent page: run composer ---- */

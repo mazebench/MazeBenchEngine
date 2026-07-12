@@ -39,6 +39,8 @@ Options:
   --fast               Capture only settled states, not animation tweens.
   --draft              Lower replay DPR and disable the fuzzy effect for
                        faster capture.
+  --intro              Begin with the blue edge-reveal zoom used by Maze Bench.
+  --ascii-side-by-side Render the visual maze and ASCII observation together.
   --no-edges           Drop the black outline pass (on by default, matching
                        how the game looks in the browser).
   --move-speed <n>     Movement animation speed multiplier. Default: 5.
@@ -96,6 +98,14 @@ function parseCli(argv) {
       options.draft = true;
     } else if (arg === "--no-draft") {
       options.draft = false;
+    } else if (arg === "--intro") {
+      options.intro = true;
+    } else if (arg === "--no-intro") {
+      options.intro = false;
+    } else if (arg === "--ascii-side-by-side") {
+      options.asciiSideBySide = true;
+    } else if (arg === "--no-ascii-side-by-side") {
+      options.asciiSideBySide = false;
     } else if (arg === "--edges") {
       options.edges = true;
     } else if (arg === "--no-edges") {
@@ -142,6 +152,7 @@ function parseCli(argv) {
 
 function defaultReplayOptions() {
   return {
+    asciiSideBySide: false,
     browser: "",
     cameraStepDegrees: 18,
     cameraTiltDegrees: 58,
@@ -155,6 +166,7 @@ function defaultReplayOptions() {
     format: "mp4",
     height: 400,
     index: 0,
+    intro: false,
     keepFrames: false,
     moveSpeed: 5,
     outDir: "",
@@ -312,7 +324,8 @@ function canonicalFromBridgeMessage(message) {
 // Adapt a local codex-play.js session.json into the same row shape the eval
 // path produces, so extractActions/extractMazeOptions/existingScorecard work.
 function rowFromSession(session) {
-  const actions = (session.actions || [])
+  const sessionActions = Array.isArray(session.actions) ? session.actions : [];
+  const actions = sessionActions
     .map((action) => ({
       command: canonicalFromBridgeMessage(action.message) || String(action.command_text || "").trim(),
       valid: true
@@ -323,6 +336,10 @@ function rowFromSession(session) {
     : {};
 
   return {
+    maze_ascii_frames: [
+      String(session.initial?.level || ""),
+      ...sessionActions.map((action) => String(action?.status?.level || ""))
+    ],
     maze_actions: actions,
     maze_scorecard: scorecard,
     maze_replay: {
@@ -337,6 +354,13 @@ function rowFromSession(session) {
       scorecard
     }
   };
+}
+
+function extractAsciiFrames(row) {
+  const info = row.info || {};
+  const replay = row.maze_replay || info.maze_replay || {};
+  const frames = row.maze_ascii_frames || info.maze_ascii_frames || replay.ascii_frames;
+  return Array.isArray(frames) ? frames.map((frame) => String(frame || "")) : [];
 }
 
 function readJsonl(filePath) {
@@ -856,10 +880,18 @@ function writeReplayProgress(payload) {
   }
 }
 
-function createProgressReporter({ estimateBytes = 0, label, total, unit = "frames", phase = "" }) {
+function createProgressReporter({
+  estimateBytes = 0,
+  label,
+  overallEnd = 100,
+  overallStart = 0,
+  total,
+  unit = "frames",
+  phase = ""
+}) {
   const startedAtMs = Date.now();
   const tty = Boolean(process.stdout.isTTY);
-  const safeTotal = Math.max(1, Number(total) || 1);
+  let safeTotal = Math.max(1, Number(total) || 1);
   let current = 0;
   let lastLineLength = 0;
   let lastWriteMs = 0;
@@ -872,18 +904,24 @@ function createProgressReporter({ estimateBytes = 0, label, total, unit = "frame
     return `${Math.round(value)}/${Math.round(safeTotal)} ${unit}`;
   }
 
-  function render(value = current, { force = false, nextEstimateBytes = estimateBytes } = {}) {
+  function render(value = current, {
+    force = false,
+    nextEstimateBytes = estimateBytes,
+    nextTotal = safeTotal
+  } = {}) {
     current = Math.max(0, Number(value) || 0);
     estimateBytes = nextEstimateBytes;
+    safeTotal = Math.max(current, Number(nextTotal) || safeTotal, 1);
     const now = Date.now();
     const percent = Math.max(0, Math.min(1, current / safeTotal));
 
-    if (!force && !tty && now - lastWriteMs < 5000) {
+    if (!force && !tty && now - lastWriteMs < 1000) {
       return;
     }
 
     const elapsedMs = now - startedAtMs;
     const etaMs = percent > 0 ? (elapsedMs / percent) * (1 - percent) : Infinity;
+    const overallPercent = overallStart + percent * (overallEnd - overallStart);
     const line = `${label} ${progressBar(percent)} ${Math.round(
       percent * 100
     )}% | ${progressText(current)} | ETA ${formatDuration(
@@ -899,10 +937,13 @@ function createProgressReporter({ estimateBytes = 0, label, total, unit = "frame
 
     writeReplayProgress({
       phase: phase || label,
-      percent: Math.round(percent * 100),
+      percent: Math.round(overallPercent),
+      phase_percent: Math.round(percent * 100),
       current: Math.round(current),
       total: Math.round(safeTotal),
       unit,
+      elapsed_ms: elapsedMs,
+      rate_per_second: elapsedMs > 0 ? Math.round((current / elapsedMs) * 100_000) / 100 : null,
       eta_ms: Number.isFinite(etaMs) ? Math.round(etaMs) : null
     });
 
@@ -952,16 +993,17 @@ function estimatedActionSeconds(parsed, options) {
 function estimateCaptureFrameCount(actions, options) {
   const parsedActions = actions.map(parseCommandLine).filter(Boolean);
   const tailFrames = Math.round(options.tailSeconds * options.fps);
+  const introFrames = options.intro ? Math.round(2.4 * options.fps) : 0;
 
   if (options.fast) {
-    return Math.max(1, 1 + parsedActions.length + tailFrames);
+    return Math.max(1, 1 + introFrames + parsedActions.length + tailFrames);
   }
 
   const actionFrames = parsedActions.reduce(
     (total, parsed) => total + Math.max(1, Math.ceil(estimatedActionSeconds(parsed, options) * options.fps)),
     0
   );
-  return Math.max(1, 1 + actionFrames + tailFrames);
+  return Math.max(1, 1 + introFrames + actionFrames + tailFrames);
 }
 
 function estimatedVideoBytes(frameCount, options) {
@@ -1002,6 +1044,8 @@ async function encodeVideo(ffmpegArgs, { durationSeconds, estimateBytes }) {
     estimateBytes,
     label: "Encoding video",
     phase: "encoding",
+    overallStart: 92,
+    overallEnd: 100,
     total: Math.max(0.1, durationSeconds),
     unit: "seconds"
   });
@@ -1049,7 +1093,7 @@ async function encodeVideo(ffmpegArgs, { durationSeconds, estimateBytes }) {
   progress.finish(`Encoded video; expected MP4 ~${humanBytes(estimateBytes)}.`);
 }
 
-async function renderReplayVideo(actions, mazeOptions, outDir, options) {
+async function renderReplayVideo(actions, mazeOptions, outDir, options, asciiFrames = []) {
   const ffmpegCheck = spawnSync("ffmpeg", ["-version"], { encoding: "utf8" });
 
   if (ffmpegCheck.error || ffmpegCheck.status !== 0) {
@@ -1074,9 +1118,10 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
   ensureDir(framesDir);
 
   try {
+    const visualWidth = options.asciiSideBySide ? Math.floor(options.width / 2) : options.width;
     const page = await browser.newPage({
       deviceScaleFactor: 1,
-      viewport: { width: options.width, height: options.height }
+      viewport: { width: visualWidth, height: options.height }
     });
     const levelUrl = `http://127.0.0.1:${server.port}/play/${encodeURIComponent(
       mazeOptions.gameId
@@ -1128,8 +1173,95 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
         }
       `
     });
-    await page.evaluate(async ({ draft, edges, fast, fps, height, motionScale, moveSpeed, width }) => {
+    await page.evaluate(async ({ asciiSideBySide, draft, edges, fast, fps, height, motionScale, moveSpeed, outputWidth, width }) => {
       const app = window.__PIXEL_GAME_APP__;
+      const pngDataUrl = (canvas) => new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            reject(new Error("Could not encode replay frame"));
+            return;
+          }
+          const reader = new FileReader();
+          reader.onerror = () => reject(reader.error || new Error("Could not read replay frame"));
+          reader.onload = () => resolve(reader.result);
+          reader.readAsDataURL(blob);
+        }, "image/png");
+      });
+
+      window.__MAZE_REPLAY_COMPOSITE__ = {
+        action: 0,
+        ascii: "",
+        enabled: asciiSideBySide,
+        height,
+        width: outputWidth
+      };
+      window.__captureMazeReplayFrame__ = async () => {
+        const source =
+          app?.canvas ||
+          app?.viewCanvas ||
+          app?.sceneCanvas ||
+          document.getElementById("maze-canvas");
+        if (!source) throw new Error("Could not find a replay canvas");
+
+        const composite = window.__MAZE_REPLAY_COMPOSITE__;
+        if (!composite?.enabled) return pngDataUrl(source);
+
+        const canvas = document.createElement("canvas");
+        canvas.width = composite.width;
+        canvas.height = composite.height;
+        const context = canvas.getContext("2d");
+        const visualWidth = Math.floor(canvas.width / 2);
+        const asciiX = visualWidth;
+        context.fillStyle = "#050713";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+
+        const visualScale = Math.min(visualWidth / source.width, canvas.height / source.height);
+        const drawWidth = source.width * visualScale;
+        const drawHeight = source.height * visualScale;
+        context.drawImage(
+          source,
+          (visualWidth - drawWidth) / 2,
+          (canvas.height - drawHeight) / 2,
+          drawWidth,
+          drawHeight
+        );
+
+        const divider = context.createLinearGradient(0, 0, 0, canvas.height);
+        divider.addColorStop(0, "rgba(52,231,240,0)");
+        divider.addColorStop(0.18, "rgba(52,231,240,0.75)");
+        divider.addColorStop(0.82, "rgba(139,123,255,0.75)");
+        divider.addColorStop(1, "rgba(139,123,255,0)");
+        context.fillStyle = divider;
+        context.fillRect(asciiX - 1, 0, 2, canvas.height);
+
+        context.textBaseline = "top";
+        const lines = String(composite.ascii || "").split(/\r?\n/);
+        const maxColumns = Math.max(1, ...lines.map((line) => line.length));
+        const availableWidth = canvas.width - asciiX - 44;
+        const availableHeight = canvas.height - 64;
+        const fontSize = Math.max(
+          5,
+          Math.min(13, availableHeight / Math.max(1, lines.length), availableWidth / (maxColumns * 0.62))
+        );
+        context.fillStyle = "#d9e4ff";
+        context.font = `${fontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+        lines.forEach((line, index) => context.fillText(line, asciiX + 22, 54 + index * fontSize));
+
+        // Paint the title rail last so dense observations can never visually
+        // interfere with the persistent mode/action labels.
+        context.fillStyle = "rgba(5,7,19,0.96)";
+        context.fillRect(asciiX + 2, 0, visualWidth - 2, 47);
+        context.fillStyle = "#65f3d4";
+        context.font = "700 15px ui-monospace, SFMono-Regular, Menlo, monospace";
+        context.textAlign = "left";
+        context.fillText("ASCII OBSERVATION", asciiX + 22, 18);
+        context.fillStyle = "rgba(154,163,199,0.82)";
+        context.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
+        context.textAlign = "right";
+        context.fillText(`ACTION ${composite.action}`, canvas.width - 22, 21);
+        context.textAlign = "left";
+        return pngDataUrl(canvas);
+      };
 
       if (draft) {
         const replayScale = Math.max(
@@ -1192,8 +1324,21 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
       height: options.height,
       motionScale: options.motionScale,
       moveSpeed: options.moveSpeed,
-      width: options.width
+      outputWidth: options.width,
+      width: visualWidth,
+      asciiSideBySide: Boolean(options.asciiSideBySide)
     });
+
+    async function setAsciiObservation(board, action) {
+      if (!options.asciiSideBySide) return;
+      await page.evaluate(({ actionNumber, ascii }) => {
+        if (!window.__MAZE_REPLAY_COMPOSITE__) return;
+        window.__MAZE_REPLAY_COMPOSITE__.action = actionNumber;
+        window.__MAZE_REPLAY_COMPOSITE__.ascii = ascii;
+      }, { actionNumber: action, ascii: String(board || "") });
+    }
+
+    await setAsciiObservation(asciiFrames[0], 0);
 
     function writeFrameDataUrl(dataUrl) {
       const base64 = String(dataUrl || "").split(",")[1];
@@ -1212,18 +1357,7 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
     async function captureFrame() {
       const dataUrl = await page.evaluate(async () => {
         await new Promise((resolve) => window.requestAnimationFrame(resolve));
-        const app = window.__PIXEL_GAME_APP__;
-        const canvas =
-          app?.canvas ||
-          app?.viewCanvas ||
-          app?.sceneCanvas ||
-          document.getElementById("maze-canvas");
-
-        if (!canvas) {
-          throw new Error("Could not find a replay canvas");
-        }
-
-        return canvas.toDataURL("image/png");
+        return window.__captureMazeReplayFrame__();
       });
       writeFrameDataUrl(dataUrl);
     }
@@ -1245,18 +1379,7 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
       const maxFrames = Math.max(1, Math.ceil(maxSeconds * options.fps));
       const dataUrls = await page.evaluate(async ({ captureFrames, frameLimit }) => {
         function captureReplayFrame() {
-          const app = window.__PIXEL_GAME_APP__;
-          const canvas =
-            app?.canvas ||
-            app?.viewCanvas ||
-            app?.sceneCanvas ||
-            document.getElementById("maze-canvas");
-
-          if (!canvas) {
-            throw new Error("Could not find a replay canvas");
-          }
-
-          return canvas.toDataURL("image/png");
+          return window.__captureMazeReplayFrame__();
         }
 
         function replayIsBusy() {
@@ -1282,7 +1405,7 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
           }
         }
 
-        return frames;
+        return Promise.all(frames);
       }, { captureFrames: capture, frameLimit: maxFrames });
 
       dataUrls.forEach(writeFrameDataUrl);
@@ -1295,6 +1418,19 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
       } else {
         await waitUntilSettled(maxSeconds);
       }
+    }
+
+    async function captureFixedFrames(count) {
+      const frameLimit = Math.max(1, Math.floor(Number(count) || 1));
+      const dataUrls = await page.evaluate(async (limit) => {
+        const frames = [];
+        for (let index = 0; index < limit; index += 1) {
+          await new Promise((resolve) => window.requestAnimationFrame(resolve));
+          frames.push(window.__captureMazeReplayFrame__());
+        }
+        return Promise.all(frames);
+      }, frameLimit);
+      dataUrls.forEach(writeFrameDataUrl);
     }
 
     let cameraTiltDegrees = options.cameraTiltDegrees;
@@ -1325,23 +1461,85 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
       );
     }
 
+    async function captureIntro() {
+      if (!options.intro || options.fast) return false;
+      // Headless Chromium advances at roughly 60 RAFs/sec. Capture the tuned
+      // number of output frames while running the reveal faster in wall time,
+      // yielding a smooth ~2.2-second opening at the requested output FPS.
+      const outputFrames = Math.max(1, Math.round(2.2 * options.fps));
+      const durationMs = Math.max(550, Math.round((outputFrames / 60) * 1000));
+      await page.evaluate(({ duration, tiltDegrees, yawTurns, zoom }) => {
+        const app = window.__PIXEL_GAME_APP__;
+        const renderer = app?.threeRenderer;
+        if (!renderer) return;
+        app.homeVectorTheme = true;
+        app.vectorGlowAmount = 1;
+        renderer.cancelHomeEdgeReveal?.();
+        renderer.setDebugCameraView?.({
+          animate: false,
+          mode: "perspective",
+          tilt: 1.28,
+          yaw: yawTurns * (Math.PI / 2),
+          zoom: 0.24,
+          skipRender: true
+        });
+        renderer.primeHomeEdgeReveal?.();
+        renderer.invalidateSceneCache?.();
+        app.render?.();
+        renderer.beginHomeEdgeReveal?.({ durationMs: duration });
+        renderer.setDebugCameraView?.({
+          animate: true,
+          durationMs: duration,
+          mode: "perspective",
+          tilt: (tiltDegrees * Math.PI) / 180,
+          yaw: yawTurns * (Math.PI / 2),
+          zoom
+        });
+      }, {
+        duration: durationMs,
+        tiltDegrees: cameraTiltDegrees,
+        yawTurns: cameraYawTurns,
+        zoom: options.cameraZoom
+      });
+      await captureFixedFrames(outputFrames);
+      await page.evaluate(() => {
+        const app = window.__PIXEL_GAME_APP__;
+        if (!app) return;
+        app.homeVectorTheme = false;
+        app.vectorGlowAmount = 0;
+        app.threeRenderer?.cancelHomeEdgeReveal?.();
+        app.threeRenderer?.invalidateSceneCache?.();
+        app.render?.();
+      });
+      await captureFrame();
+      return true;
+    }
+
     captureProgress = createProgressReporter({
       estimateBytes: estimatedBytes,
       label: "Capturing replay frames",
+      overallStart: 0,
+      overallEnd: 92,
       phase: "capturing",
       total: estimatedFrames
     });
     captureProgress.render(0, { force: true });
 
-    await setCameraView({ animate: false });
-    await settleAndCapture(1);
+    const introCaptured = await captureIntro();
+    if (!introCaptured) {
+      await setCameraView({ animate: false });
+      await settleAndCapture(1);
+    }
 
-    for (const commandText of actions) {
-      const parsed = parseCommandLine(commandText);
+    const actionEntries = actions
+      .map((commandText, sourceIndex) => ({ parsed: parseCommandLine(commandText), sourceIndex }))
+      .filter((entry) => entry.parsed);
+    const actionFrameStart = frameIndex;
+    let completedActions = 0;
 
-      if (!parsed) {
-        continue;
-      }
+    for (const entry of actionEntries) {
+      const parsed = entry.parsed;
+      await setAsciiObservation(asciiFrames[entry.sourceIndex + 1], entry.sourceIndex + 1);
 
       if (parsed.command === "move") {
         const key = {
@@ -1402,6 +1600,18 @@ async function renderReplayVideo(actions, mazeOptions, outDir, options) {
       } else if (parsed.command === "quit") {
         await captureFrame();
       }
+
+      completedActions += 1;
+      const actionFrames = Math.max(1, frameIndex - actionFrameStart);
+      const averageFrames = actionFrames / completedActions;
+      const remainingActions = actionEntries.length - completedActions;
+      const tailFrames = Math.round(options.tailSeconds * options.fps);
+      const measuredTotal = Math.ceil(frameIndex + averageFrames * remainingActions + tailFrames);
+      estimatedBytes = estimatedVideoBytes(measuredTotal, options);
+      captureProgress.render(frameIndex, {
+        nextEstimateBytes: estimatedBytes,
+        nextTotal: measuredTotal
+      });
     }
 
     duplicateLastFrame(Math.round(options.tailSeconds * options.fps));
@@ -1518,6 +1728,7 @@ async function main() {
   const outDir = options.outDir || sourceDir;
   const mazeOptions = extractMazeOptions(row, metadata);
   const actions = extractActions(row);
+  const asciiFrames = extractAsciiFrames(row);
 
   if (actions.length === 0) {
     throw new Error(
@@ -1534,7 +1745,7 @@ async function main() {
 
   if (options.video) {
     console.log("Rendering maze replay video...");
-    const rendered = await renderReplayVideo(actions, mazeOptions, outDir, options);
+    const rendered = await renderReplayVideo(actions, mazeOptions, outDir, options, asciiFrames);
     console.log(`Wrote ${rendered.videoPath} (${humanSize(rendered.videoPath)})`);
   }
 }

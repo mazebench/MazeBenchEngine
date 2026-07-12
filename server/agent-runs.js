@@ -3147,7 +3147,7 @@ function createAgentRunService({
   }
 
   function resumeRun(runId) {
-    const meta = readRunMeta(runId);
+    let meta = readRunMeta(runId);
 
     if (!meta) {
       throw new Error(`Unknown run "${runId}".`);
@@ -3156,6 +3156,8 @@ function createAgentRunService({
     if (meta.status !== "paused") {
       return summarizeRun(runId);
     }
+
+    meta = discardRunVideo(runId, meta);
 
     const needsRelaunch =
       ["quota", "provider_backoff"].includes(meta.pause_reason) ||
@@ -3395,7 +3397,7 @@ function createAgentRunService({
       Boolean(conversationId) &&
       (meta.container === false || hasPersistedContainerConversation(runId, meta, conversationId));
     if (canResumeConversation) {
-      return continueLocalInPlace(runId, meta, add, conversationId);
+      return continueLocalInPlace(runId, discardRunVideo(runId, meta), add, conversationId);
     }
 
     const base = {
@@ -3415,8 +3417,8 @@ function createAgentRunService({
       throw new Error(`Unknown run "${runId}".`);
     }
 
-    if (meta.status !== "finished") {
-      throw new Error("A replay video can be generated after the run finishes.");
+    if (!["paused", "finished", "stopped"].includes(meta.status)) {
+      throw new Error("Pause or finish the run before generating a replay video.");
     }
 
     const runDir = runDirFor(runId);
@@ -3436,17 +3438,34 @@ function createAgentRunService({
       throw new Error("This run has no saved session or eval result to render.");
     }
 
+    const snapshotTurns = readActions(runId).length;
+    const generationId = crypto.randomUUID();
     fs.writeFileSync(
       path.join(runDir, "replay-progress.json"),
-      `${JSON.stringify({ phase: "starting", percent: 0 })}\n`
+      `${JSON.stringify({ phase: "starting", percent: 0, current: 0, total: snapshotTurns, unit: "actions", eta_ms: null })}\n`
     );
 
     const logFd = fs.openSync(path.join(runDir, "launcher.log"), "a");
     let child;
     try {
+      const videoArgs = [
+        replayScript,
+        runDir,
+        "--out-dir", runDir,
+        "--fps", "24",
+        "--crf", "19",
+        "--preset", "slower",
+        "--tail-seconds", "1",
+        "--intro"
+      ];
+      if (meta.mode === "text") {
+        videoArgs.push("--width", "1280", "--height", "720", "--ascii-side-by-side");
+      } else {
+        videoArgs.push("--width", "960", "--height", "960");
+      }
       child = spawn(
         process.execPath,
-        [replayScript, runDir, "--out-dir", runDir, "--draft", "--width", "640", "--height", "640"],
+        videoArgs,
         {
           cwd: rootDir,
           detached: true,
@@ -3461,8 +3480,9 @@ function createAgentRunService({
     const { video_error: _previousVideoError, ...cleanMeta } = meta;
     writeRunMeta(runId, {
       ...cleanMeta,
-      video: true,
+      video_generation_id: generationId,
       video_pid: child.pid,
+      video_snapshot_turns: snapshotTurns,
       video_status: "rendering"
     });
 
@@ -3474,12 +3494,13 @@ function createAgentRunService({
       settled = true;
       videoChildren.delete(runId);
       const current = readRunMeta(runId);
-      if (!current) return;
+      if (!current || current.video_generation_id !== generationId) return;
 
       const rendered = fs.existsSync(videoPath);
       const { video_pid: _videoPid, ...rest } = current;
       writeRunMeta(runId, {
         ...rest,
+        video_generation_id: undefined,
         video_status: rendered ? "ready" : "failed",
         ...(rendered
           ? { video_error: undefined }
@@ -3490,6 +3511,57 @@ function createAgentRunService({
     child.on("error", (error) => finish(null, error));
 
     return summarizeRun(runId);
+  }
+
+  function discardRunVideo(runId, meta = readRunMeta(runId)) {
+    if (!meta) return meta;
+    const runDir = runDirFor(runId);
+    const activeVideo = videoChildren.get(runId);
+    const hasArtifacts = Boolean(
+      activeVideo ||
+      meta.video_status ||
+      meta.video_pid ||
+      fs.existsSync(path.join(runDir, "maze_replay.mp4")) ||
+      fs.existsSync(path.join(runDir, "replay-progress.json"))
+    );
+    if (!hasArtifacts) return meta;
+
+    if (activeVideo?.pid) {
+      try {
+        process.kill(-activeVideo.pid, "SIGKILL");
+      } catch (_error) {
+        try {
+          process.kill(activeVideo.pid, "SIGKILL");
+        } catch (_innerError) {
+          /* renderer already exited */
+        }
+      }
+    } else if (meta.video_pid && pidAlive(meta.video_pid)) {
+      try {
+        process.kill(-meta.video_pid, "SIGKILL");
+      } catch (_error) {
+        try {
+          process.kill(meta.video_pid, "SIGKILL");
+        } catch (_innerError) {
+          /* renderer already exited */
+        }
+      }
+    }
+    videoChildren.delete(runId);
+    fs.rmSync(path.join(runDir, "maze_replay.mp4"), { force: true });
+    fs.rmSync(path.join(runDir, "replay-progress.json"), { force: true });
+    fs.rmSync(path.join(runDir, ".maze_replay_frames"), { force: true, recursive: true });
+
+    const {
+      video_error: _videoError,
+      video_generation_id: _videoGenerationId,
+      video_pid: _videoPid,
+      video_snapshot_turns: _videoSnapshotTurns,
+      video_status: _videoStatus,
+      ...cleanMeta
+    } = meta;
+    writeRunMeta(runId, cleanMeta);
+    return cleanMeta;
   }
 
   function cancelPrimeEvaluation(runId) {

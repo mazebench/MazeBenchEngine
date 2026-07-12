@@ -27,6 +27,18 @@ fs.writeFileSync(
   "setInterval(() => {}, 1000); process.on('SIGTERM', () => process.exit(0));\n",
   "utf8"
 );
+fs.writeFileSync(
+  path.join(scriptsDir, "maze-export-replay.js"),
+  `const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const outIndex = args.indexOf("--out-dir");
+const outDir = outIndex >= 0 ? args[outIndex + 1] : process.cwd();
+fs.writeFileSync(path.join(outDir, "video-args.json"), JSON.stringify(args));
+setInterval(() => {}, 1000);
+`,
+  "utf8"
+);
 
 function loadJson(filePath, fallback) {
   try {
@@ -267,9 +279,29 @@ try {
   assert.equal(pausedHostRun.pause_reason, "manual");
   assert.equal(pausedHostRun.pause_mode, "cold");
   assert.equal(pausedHostRun.pid, null);
+  fs.writeFileSync(path.join(hostRunDir, "session.json"), "{}\n");
+  const renderingVideo = service.generateRunVideo(hostReadOnlySwarm.id);
+  assert.equal(renderingVideo.video_status, "rendering");
+  assert.equal(renderingVideo.has_video, false);
+  assert.equal(fs.existsSync(path.join(hostRunDir, "replay-progress.json")), true);
+  const videoArgsDeadline = Date.now() + 3000;
+  while (!fs.existsSync(path.join(hostRunDir, "video-args.json")) && Date.now() < videoArgsDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  const videoArgs = loadJson(path.join(hostRunDir, "video-args.json"), []);
+  assert(videoArgs.includes("--intro"));
+  assert(videoArgs.includes("--ascii-side-by-side"));
+  assert.equal(videoArgs.includes("--draft"), false);
+  assert.equal(videoArgs[videoArgs.indexOf("--preset") + 1], "slower");
   const resumedHostRun = service.resumeRun(hostReadOnlySwarm.id);
   assert.equal(resumedHostRun.status, "running");
   assert.match(resumedHostRun.command, /resume=cold-pause-thread/);
+  assert.equal(resumedHostRun.video_status, "idle");
+  assert.equal(resumedHostRun.has_video, false);
+  assert.equal(fs.existsSync(path.join(hostRunDir, "replay-progress.json")), false);
+  const resumedHostMeta = loadJson(path.join(hostRunDir, "run.json"), {});
+  assert.equal("video_pid" in resumedHostMeta, false);
+  assert.equal("video_generation_id" in resumedHostMeta, false);
   const stopAlias = service.stopRun(hostReadOnlySwarm.id);
   assert.equal(stopAlias.status, "pausing", "local Stop aliases the same resumable cold pause");
   service.deleteRun(hostReadOnlySwarm.id);

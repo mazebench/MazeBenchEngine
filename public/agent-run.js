@@ -16,6 +16,7 @@
   const resumeButton = document.getElementById("resume-run");
   const continueButton = document.getElementById("continue-run");
   const generateVideoButton = document.getElementById("generate-video");
+  const downloadVideoButton = document.getElementById("download-video");
   const deleteButton = document.getElementById("delete-run");
   const liveImage = document.getElementById("run-live-image");
   const livePlaceholder = document.getElementById("run-live-placeholder");
@@ -532,10 +533,13 @@
     pauseButton.hidden = !run.pausable;
     resumeButton.hidden = !run.resumable;
     continueButton.hidden = !run.continuable;
-    generateVideoButton.disabled = run.video_status === "rendering";
-    generateVideoButton.hidden = !(
-      run.status === "finished" && !run.has_video && run.video_status !== "rendering"
-    );
+    const renderingVideo = run.video_status === "rendering";
+    const canGenerateVideo = ["paused", "finished", "stopped"].includes(run.status) && !run.has_video;
+    generateVideoButton.disabled = renderingVideo;
+    generateVideoButton.hidden = !canGenerateVideo && !renderingVideo;
+    generateVideoButton.classList.toggle("is-rendering", renderingVideo);
+    const generateLabel = generateVideoButton.querySelector("span");
+    if (generateLabel) generateLabel.textContent = renderingVideo ? "Generating…" : "Generate video";
   }
 
   function formatTokens(value) {
@@ -1089,40 +1093,55 @@
     const label = document.getElementById("run-replay-label");
     const progressBox = document.getElementById("run-replay-progress");
     const video = document.getElementById("run-video");
+    const videoUrl = `/agent-runs/${encodeURIComponent(runId)}/files/maze_replay.mp4`;
 
     if (run.has_video) {
       section.hidden = false;
       progressBox.hidden = true;
+      downloadVideoButton.href = videoUrl;
+      downloadVideoButton.hidden = false;
       if (!state.videoShown) {
-        video.src = `/agent-runs/${encodeURIComponent(runId)}/files/maze_replay.mp4`;
+        video.src = `${videoUrl}?v=${encodeURIComponent(run.video_snapshot_turns || run.turns || Date.now())}`;
         video.hidden = false;
         state.videoShown = true;
       }
       return;
     }
 
+    downloadVideoButton.hidden = true;
+
     if (run.video_status === "failed") {
-      section.hidden = false;
+      section.hidden = true;
       progressBox.hidden = false;
       bar.style.width = "0%";
       label.textContent = run.video_error || "Video generation failed. You can try again.";
       return;
     }
 
-    // Rendering in progress (run finished but the mp4 isn't ready yet).
+    // Rendering in progress (paused snapshot or terminal replay).
     const rendering = run.video_status === "rendering";
     if (rendering || (progress && progress.percent != null && progress.phase !== "done")) {
-      section.hidden = false;
+      section.hidden = true;
       progressBox.hidden = false;
       const pct = progress && Number.isFinite(progress.percent) ? progress.percent : 0;
       bar.style.width = `${pct}%`;
       const phase = progress && progress.phase ? progress.phase : "starting";
-      const eta = progress && progress.eta_ms ? ` · about ${Math.ceil(progress.eta_ms / 1000)}s left` : "";
+      const eta = progress && Number.isFinite(progress.eta_ms)
+        ? ` · about ${formatDuration(progress.eta_ms)} left`
+        : " · measuring render speed…";
       const detail = progress && progress.current != null && progress.total != null
         ? ` (${progress.current}/${progress.total} ${progress.unit || ""})`
         : "";
       label.textContent = `Rendering replay video — ${phase}${detail} ${pct}%${eta}`;
+      return;
     }
+
+    section.hidden = true;
+    progressBox.hidden = true;
+    video.hidden = true;
+    video.removeAttribute("src");
+    video.load();
+    state.videoShown = false;
   }
 
   // ---- poll loop ------------------------------------------------------------
@@ -1212,7 +1231,9 @@
         }
         state.timer = setTimeout(poll, 1500);
       } else if (waitingForVideo) {
-        setStatus("Run finished — rendering the replay video…");
+        setStatus(progress.run.status === "paused"
+          ? "Paused — rendering a replay snapshot…"
+          : "Rendering the replay video…");
         state.timer = setTimeout(poll, 2000);
       } else if (progress.run.status === "waiting") {
         setStatus("Waiting for the active Claude Code run to finish.");
@@ -1296,6 +1317,9 @@
         return;
       }
       setStatus("Resumed.");
+      state.run = payload.run || state.run;
+      renderControls(state.run);
+      updateReplay(state.run, null);
       clearTimeout(state.timer);
       poll();
     } catch (error) {

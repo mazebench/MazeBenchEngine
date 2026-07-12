@@ -16,6 +16,12 @@ const TRASH_ICON = `<svg class="trash-icon" viewBox="0 0 24 24" fill="none" stro
 
 // Folder Closed from Lucide Icons (ISC License).
 const FOLDER_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path><path d="M2 10h20"></path></svg>`;
+// Clapperboard and Download from Lucide Icons (ISC License).
+// https://lucide.dev/
+const VIDEO_ICONS = Object.freeze({
+  clapperboard: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12.296 3.464 3.02 3.956"></path><path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z"></path><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="m6.18 5.276 3.1 3.899"></path></svg>`,
+  download: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"></path><path d="m7 10 5 5 5-5"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path></svg>`
+});
 const PLAY_ASSET_VERSION = "20260711-world-map-fit-2";
 
 const TRAIN_REWARD_ICONS = Object.freeze({
@@ -1036,11 +1042,17 @@ function createPageRenderer({
             <div class="run-live__board-label">ASCII board (what the agent reads)</div>
             <pre id="run-board" class="agent-board"></pre>
           </div>`;
-    const replaySection = `<section class="panel" id="run-replay-section" hidden>
-          <h2>Replay</h2>
-          <div id="run-replay-progress" class="replay-progress" hidden>
-            <div class="replay-progress__track"><div id="run-replay-bar" class="replay-progress__fill"></div></div>
+    const replayProgress = `<section class="panel run-replay-progress-panel" id="run-replay-progress" aria-live="polite" hidden>
+          <div class="run-replay-progress-panel__copy">
+            <strong>Rendering replay video</strong>
             <span id="run-replay-label" class="muted"></span>
+          </div>
+          <div class="replay-progress__track"><div id="run-replay-bar" class="replay-progress__fill"></div></div>
+        </section>`;
+    const replaySection = `<section class="panel" id="run-replay-section" hidden>
+          <div class="run-replay__head">
+            <h2>Replay</h2>
+            <a id="download-video" class="button run-video-action" href="#" download="maze-replay.mp4" hidden>${VIDEO_ICONS.download}<span>Download</span></a>
           </div>
           <video id="run-video" class="run-video" controls playsinline hidden></video>
         </section>`;
@@ -1128,7 +1140,7 @@ function createPageRenderer({
             <button id="pause-run" class="button" type="button" hidden>Pause</button>
             <button id="resume-run" class="button--primary" type="button" hidden>Resume</button>
             <button id="continue-run" class="button" type="button" hidden>Continue</button>
-            <button id="generate-video" class="button" type="button" hidden>Generate video</button>
+            <button id="generate-video" class="button run-video-action" type="button" hidden>${VIDEO_ICONS.clapperboard}<span>Generate video</span></button>
             ${isPrime ? '<a id="open-prime-evaluation" class="button" href="#" target="_blank" rel="noreferrer" hidden>Open in Prime ↗</a>' : ""}
             ${isPrime ? '<button id="stop-run" class="button--coral" type="button" hidden>Cancel Run</button>' : ""}
             <button id="delete-run" class="button--ghost delete-button" type="button" title="Delete run">${TRASH_ICON}<span>Delete</span></button>
@@ -1148,6 +1160,8 @@ function createPageRenderer({
           <p id="run-status" class="author-status" role="status" aria-live="polite"></p>
         </div>
 
+        ${replayProgress}
+
         ${mazeSections}
 
         <section class="panel">
@@ -1155,7 +1169,7 @@ function createPageRenderer({
           <pre id="run-log" class="agent-log"></pre>
         </section>
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)};</script>
-        <script src="/agent-run.js?v=20260712-metric-icons-70" defer></script>`
+        <script src="/agent-run.js?v=20260712-fast-video-72" defer></script>`
     });
   }
 
