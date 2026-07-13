@@ -11,7 +11,7 @@ const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "
 assert.match(pages, /id="run-heatmap-canvas"[^>]+aria-label="Player visit heatmap across the explored world"/);
 assert.match(pages, /Less visited[\s\S]*Most visited/);
 assert.equal((pages.match(/\$\{heatmapSection\}/g) || []).length, 2);
-assert.match(pages, /\$\{explorationSection\}[\s\S]*?\$\{heatmapSection\}[\s\S]*?<h2>Moves &amp; reasoning<\/h2>/);
+assert.match(pages, /\$\{explorationSection\}[\s\S]*?\$\{heatmapSection\}[\s\S]*?\$\{movesSection\}/);
 assert.match(runService, /initial_player: readInitialPlayer\(runId\)/);
 assert.match(runScript, /if \(!roomVisits\.has\(room\)\) roomVisits\.set\(room, new Map\(\)\)/);
 assert.match(runScript, /state\.moves\.forEach\(\(move\) => add\(move\.player, move\.roomId \|\| move\.room\)\)/);

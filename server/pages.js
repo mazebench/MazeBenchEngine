@@ -80,7 +80,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css?v=20260710-card-parity-1">
-    <link rel="stylesheet" href="/local-site.css?v=20260713-world-heatmap-82">
+    <link rel="stylesheet" href="/local-site.css?v=20260713-clean-feed-85">
     ${extraHeadHtml}`
     })}
   </head>
@@ -243,7 +243,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css?v=${PLAY_ASSET_VERSION}">
-    <link rel="stylesheet" href="/local-site.css?v=20260713-world-heatmap-82">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260713-clean-feed-85">`;
   }
 
   function renderPlayPage(game, level) {
@@ -453,7 +453,7 @@ function createPageRenderer({
     ${includeRuntimeStyles ? '<link rel="stylesheet" href="/styles.css">' : ""}
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260713-world-heatmap-82">' : ""}`;
+    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260713-clean-feed-85">' : ""}`;
   }
 
   function renderAuthorPage(game, level) {
@@ -1138,6 +1138,27 @@ function createPageRenderer({
           </div>
           <p id="run-heatmap-empty" class="muted">Waiting for the player's first position…</p>
         </section>`;
+    const movesSection = `<section class="panel run-moves" id="run-moves-section">
+          <div class="run-moves__head">
+            <div>
+              <h2>Moves &amp; reasoning</h2>
+              <p class="muted">Search actions, rooms, status, and reasoning. JSON export always includes the complete log.</p>
+            </div>
+            <span id="run-feed-result" class="run-moves__count" aria-live="polite">Waiting for moves</span>
+          </div>
+          <div class="run-feed-toolbar" role="search">
+            <div class="run-feed-search">
+              <label class="sr-only" for="run-feed-search">Search moves and reasoning</label>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+              <input id="run-feed-search" type="search" placeholder="Search moves, rooms, reasoning…" autocomplete="off" spellcheck="false" maxlength="200" aria-controls="run-feed">
+              <button id="run-feed-search-clear" class="run-feed-search__clear" type="button" aria-label="Clear search" title="Clear search" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10"></path><path d="m17 7-10 10"></path></svg>
+              </button>
+            </div>
+            <button id="run-feed-export" class="button run-feed-export" type="button" title="Export every move and its reasoning as JSON" disabled>${VIDEO_ICONS.download}<span>Export JSON</span></button>
+          </div>
+          <div id="run-feed" class="agent-feed" aria-label="Moves and reasoning log"></div>
+        </section>`;
     // Hosted Prime Evaluations expose lifecycle/log state immediately and their
     // scored sample after the rollout completes. Move zero is local; the move
     // feed and replay sync back from that scored sample at completion.
@@ -1156,11 +1177,7 @@ function createPageRenderer({
 
         ${heatmapSection}
 
-        <section class="panel">
-          <h2>Moves &amp; reasoning</h2>
-          <p class="muted">Each move the agent made, with the reasoning tokens it produced. Full progress, rewards, and scores stream in the runner log below.</p>
-          <div id="run-feed" class="agent-feed"></div>
-        </section>`
+        ${movesSection}`
       : `<section class="panel run-live">
           <h2>Live view</h2>
           <div id="run-live-grid" class="run-live__grid">
@@ -1199,10 +1216,7 @@ function createPageRenderer({
 
         ${heatmapSection}
 
-        <section class="panel">
-          <h2>Moves &amp; reasoning</h2>
-          <div id="run-feed" class="agent-feed"></div>
-        </section>`;
+        ${movesSection}`;
 
     return renderSitePage({
       title: `Run ${run.id} — Maze Bench`,
@@ -1243,7 +1257,7 @@ function createPageRenderer({
           <pre id="run-log" class="agent-log"></pre>
         </section>
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260713-world-heatmap-82" defer></script>`
+        <script src="/agent-run.js?v=20260713-clean-feed-85" defer></script>`
     });
   }
 

@@ -10,6 +10,10 @@
   const boardEl = document.getElementById("run-board");
   const boardWrap = document.getElementById("run-board-wrap");
   const feedEl = document.getElementById("run-feed");
+  const feedSearch = document.getElementById("run-feed-search");
+  const feedSearchClear = document.getElementById("run-feed-search-clear");
+  const feedResult = document.getElementById("run-feed-result");
+  const feedExportButton = document.getElementById("run-feed-export");
   const logEl = document.getElementById("run-log");
   const stopButton = document.getElementById("stop-run");
   const primeEvaluationLink = document.getElementById("open-prime-evaluation");
@@ -98,7 +102,10 @@
     swarmSignature: "",
     contextPoints: [],
     feedVersion: 0,
-    renderedFeedVersion: -1
+    renderedFeedVersion: -1,
+    feedQuery: "",
+    renderedFeedQuery: "",
+    expandedReasoning: new Set()
   };
 
   function setStatus(message, isError = false) {
@@ -1481,18 +1488,150 @@
     }
   }
 
-  function renderFeed() {
-    if (state.renderedFeedVersion === state.feedVersion) return;
-    const moveNums = [...state.moves.keys()].sort((a, b) => a - b);
-    if (!moveNums.length) {
+  function feedSearchTerms(query) {
+    const parts = String(query || "").match(/"[^"]+"|\S+/g) || [];
+    return [...new Set(parts.map((part) => part.replace(/^"|"$/g, "").trim().toLowerCase()).filter(Boolean))];
+  }
+
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function highlightText(value, terms) {
+    if (!terms.length) return escapeText(value);
+    const pattern = new RegExp(`(${terms.slice().sort((left, right) => right.length - left.length).map(escapeRegExp).join("|")})`, "gi");
+    return String(value ?? "").split(pattern).map((part, index) =>
+      index % 2 ? `<mark>${escapeText(part)}</mark>` : escapeText(part)
+    ).join("");
+  }
+
+  function formatReasoning(reasoning, terms) {
+    const text = String(reasoning || "");
+    let formatted = "";
+    let offset = 0;
+    text.replace(/\*\*([\s\S]*?)\*\*/g, (match, strong, index) => {
+      formatted += highlightText(text.slice(offset, index), terms);
+      formatted += `<strong>${highlightText(strong, terms)}</strong>`;
+      offset = index + match.length;
+      return match;
+    });
+    formatted += highlightText(text.slice(offset), terms);
+    return formatted.replace(/\r?\n/g, "<br>");
+  }
+
+  function moveSearchText(num, move, reasoning, activeAgents, moveTokens) {
+    return [
+      num,
+      move.action,
+      move.room,
+      move.roomId,
+      `${move.gems} gems`,
+      ...(move.flags || []),
+      move.player ? `x ${move.player.x} y ${move.player.y}` : "",
+      move.timestamp,
+      activeAgents ? `${activeAgents} agents` : "",
+      Number.isFinite(moveTokens) ? `${moveTokens} tokens` : "",
+      reasoning
+    ].filter(Boolean).join(" ").toLowerCase();
+  }
+
+  function isMultiAgentRun() {
+    return Boolean(state.run.swarm || Number(state.run.explorer_instances) > 0);
+  }
+
+  function feedExportPayload() {
+    const moves = [...state.moves.keys()].sort((left, right) => left - right).map((turn) => {
+      const move = state.moves.get(turn);
+      const tokens = state.tokenCounts.get(turn);
+      return {
+        turn: Number(turn),
+        timestamp: move.timestamp || null,
+        action: move.action || "",
+        room: move.roomId || levelId(move.room),
+        player: move.player || null,
+        gem_count: Math.max(0, Number(move.gems) || 0),
+        flags: [...(move.flags || [])],
+        active_agents: state.agentCounts.get(turn) || (state.run.swarm ? 0 : 1),
+        tokens: Number.isFinite(tokens) ? tokens : null,
+        reasoning: state.reasoning.get(turn) || null
+      };
+    });
+    return {
+      schema_version: 1,
+      exported_at: new Date().toISOString(),
+      export_scope: "all_moves",
+      run: {
+        id: runId,
+        game_id: state.run.game_id || null,
+        level_id: state.run.level_id || null,
+        status: state.run.status || null,
+        provider: state.run.provider || state.run.model || null,
+        model: state.run.model_name || state.run.model || null,
+        observation_mode: state.run.mode || null,
+        launch_parameters: state.run.launch_params || null
+      },
+      move_count: moves.length,
+      moves
+    };
+  }
+
+  function exportFeedJson() {
+    const payload = feedExportPayload();
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `agent-run-${String(runId).replace(/[^a-z0-9_-]+/gi, "-")}-moves.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function renderFeed({ resetScroll = false } = {}) {
+    const query = state.feedQuery.trim();
+    if (state.renderedFeedVersion === state.feedVersion && state.renderedFeedQuery === query) return;
+    const terms = feedSearchTerms(query);
+    const multiAgentRun = isMultiAgentRun();
+    const allMoveNums = [...state.moves.keys()].sort((a, b) => a - b);
+    const moveNums = allMoveNums.filter((num) => {
+      if (!terms.length) return true;
+      const move = state.moves.get(num);
+      const text = moveSearchText(
+        num,
+        move,
+        state.reasoning.get(num),
+        multiAgentRun ? state.agentCounts.get(num) || 0 : 0,
+        state.tokenCounts.get(num)
+      );
+      return terms.every((term) => text.includes(term));
+    });
+    if (feedExportButton) feedExportButton.disabled = allMoveNums.length === 0;
+    if (feedResult) {
+      feedResult.textContent = terms.length
+        ? `${moveNums.length.toLocaleString()} of ${allMoveNums.length.toLocaleString()} moves`
+        : allMoveNums.length
+          ? `${allMoveNums.length.toLocaleString()} move${allMoveNums.length === 1 ? "" : "s"}`
+          : "Waiting for moves";
+    }
+    if (!allMoveNums.length) {
       feedEl.innerHTML = '<p class="muted">Waiting for the agent\'s first move…</p>';
       state.renderedFeedVersion = state.feedVersion;
+      state.renderedFeedQuery = query;
+      return;
+    }
+
+    if (!moveNums.length) {
+      feedEl.innerHTML = `<div class="agent-feed__empty"><strong>No matching moves</strong><span>Try fewer terms or clear “${escapeText(query)}”.</span></div>`;
+      state.renderedFeedVersion = state.feedVersion;
+      state.renderedFeedQuery = query;
+      feedEl.scrollTop = 0;
       return;
     }
 
     const previousTop = feedEl.scrollTop;
     const distanceFromBottom = feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight;
-    const followLatest = distanceFromBottom <= 40;
+    const followLatest = !terms.length && !resetScroll && distanceFromBottom <= 40;
     const feedTop = feedEl.getBoundingClientRect().top;
     let anchorMove = "";
     let anchorOffset = 0;
@@ -1517,10 +1656,14 @@
         const timestamp = parsedTimestamp && Number.isFinite(parsedTimestamp.getTime())
           ? parsedTimestamp.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" })
           : "";
-        const meta = [`${escapeText(move.room)}`, `${escapeText(move.gems)} gems`, ...move.flags.map(escapeText)]
-          .filter(Boolean)
-          .join(" · ");
-        const agentBadge = activeAgents
+        const statusClass = move.flags.includes("died")
+          ? " is-danger"
+          : move.flags.includes("blocked")
+            ? " is-blocked"
+            : move.flags.includes("SOLVED")
+              ? " is-solved"
+              : "";
+        const agentBadge = multiAgentRun && activeAgents
           ? `<span class="agent-feed__agents" role="img" aria-label="${escapeText(activeAgents)} agent${activeAgents === 1 ? "" : "s"} active" title="Agents active on this move">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               <strong>${escapeText(activeAgents)}</strong>
@@ -1532,22 +1675,43 @@
               <strong>${escapeText(formatTokens(moveTokens))}</strong>
             </span>`
           : "";
-        return `<div class="agent-feed__row" data-move="${escapeText(num)}">
+        const flagBadges = move.flags.map((flag) =>
+          `<span class="agent-feed__flag is-${escapeText(flag.toLowerCase())}">${highlightText(flag, terms)}</span>`
+        ).join("");
+        const longReasoning = Boolean(reasoning && reasoning.length > 280);
+        const expanded = state.expandedReasoning.has(num) || terms.length > 0;
+        return `<article class="agent-feed__row${statusClass}" data-move="${escapeText(num)}">
           <div class="agent-feed__head">
-            <span class="agent-feed__num">${escapeText(num)}</span>
-            <span class="agent-feed__action">${escapeText(move.action)}</span>
-            ${tokenBadge}
-            ${agentBadge}
-            <span class="agent-feed__meta">${meta}</span>
+            <div class="agent-feed__identity">
+              <span class="agent-feed__num">Move ${escapeText(num)}</span>
+              <strong class="agent-feed__action">${highlightText(move.action || "Unknown action", terms)}</strong>
+            </div>
             ${timestamp ? `<time class="agent-feed__time" datetime="${escapeText(move.timestamp)}">${escapeText(timestamp)}</time>` : ""}
           </div>
-          ${reasoning ? `<p class="agent-feed__reasoning">${escapeText(reasoning)}</p>` : ""}
-        </div>`;
+          <div class="agent-feed__details">
+            <span class="agent-feed__meta"><b>Room</b>${highlightText(move.room || "—", terms)}</span>
+            <span class="agent-feed__meta"><b>Gems</b>${highlightText(move.gems, terms)}</span>
+            ${move.player ? `<span class="agent-feed__meta"><b>Position</b>${highlightText(`${move.player.x}, ${move.player.y}`, terms)}</span>` : ""}
+            ${tokenBadge}
+            ${agentBadge}
+            ${flagBadges}
+          </div>
+          ${reasoning ? `<section class="agent-feed__reasoning${longReasoning ? " is-collapsible" : ""}${expanded ? " is-expanded" : ""}">
+            <div class="agent-feed__reasoning-head">
+              <span>Reasoning</span>
+              ${longReasoning ? `<button type="button" data-feed-expand="${escapeText(num)}" aria-expanded="${expanded ? "true" : "false"}">${expanded ? "Show less" : "Show more"}</button>` : ""}
+            </div>
+            <p>${formatReasoning(reasoning, terms)}</p>
+          </section>` : `<p class="agent-feed__no-reasoning">No reasoning recorded for this move.</p>`}
+        </article>`;
       })
       .join("");
     state.renderedFeedVersion = state.feedVersion;
+    state.renderedFeedQuery = query;
 
-    if (followLatest) {
+    if (resetScroll) {
+      feedEl.scrollTop = 0;
+    } else if (followLatest) {
       feedEl.scrollTop = feedEl.scrollHeight;
     } else if (anchorMove) {
       const nextAnchor = [...feedEl.querySelectorAll(".agent-feed__row")].find(
@@ -1562,6 +1726,43 @@
       feedEl.scrollTop = previousTop;
     }
   }
+
+  let feedSearchFrame = 0;
+  feedSearch?.addEventListener("input", () => {
+    state.feedQuery = feedSearch.value;
+    feedSearchClear.hidden = !state.feedQuery;
+    cancelAnimationFrame(feedSearchFrame);
+    feedSearchFrame = requestAnimationFrame(() => renderFeed({ resetScroll: true }));
+  });
+  feedSearch?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && feedSearch.value) {
+      event.preventDefault();
+      feedSearch.value = "";
+      state.feedQuery = "";
+      feedSearchClear.hidden = true;
+      renderFeed({ resetScroll: true });
+    }
+  });
+  feedSearchClear?.addEventListener("click", () => {
+    feedSearch.value = "";
+    state.feedQuery = "";
+    feedSearchClear.hidden = true;
+    feedSearch.focus();
+    renderFeed({ resetScroll: true });
+  });
+  feedExportButton?.addEventListener("click", exportFeedJson);
+  feedEl?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-feed-expand]");
+    if (!button) return;
+    const move = Number(button.dataset.feedExpand);
+    const reasoning = button.closest(".agent-feed__reasoning");
+    const expanded = !reasoning.classList.contains("is-expanded");
+    reasoning.classList.toggle("is-expanded", expanded);
+    button.setAttribute("aria-expanded", String(expanded));
+    button.textContent = expanded ? "Show less" : "Show more";
+    if (expanded) state.expandedReasoning.add(move);
+    else state.expandedReasoning.delete(move);
+  });
 
   // ---- live image -----------------------------------------------------------
 
