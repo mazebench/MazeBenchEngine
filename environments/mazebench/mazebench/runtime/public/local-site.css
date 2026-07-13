@@ -3102,6 +3102,98 @@ body.play-body {
   width: 100%;
 }
 
+.run-heatmap__head {
+  align-items: flex-start;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+}
+
+.run-heatmap__head h2,
+.run-heatmap__head p {
+  margin: 0;
+}
+
+.run-heatmap__head p {
+  margin-top: 5px;
+}
+
+.run-heatmap__summary {
+  color: #dce1ff;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.run-heatmap__viewport {
+  align-items: center;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(239, 62, 84, 0.07), transparent 56%),
+    rgba(3, 6, 16, 0.72);
+  border: 1px solid rgba(124, 143, 255, 0.18);
+  border-radius: 12px;
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+  min-height: 120px;
+  overflow: hidden;
+  padding: 14px;
+  position: relative;
+}
+
+.run-heatmap__viewport[hidden] {
+  display: none;
+}
+
+.run-heatmap__canvas {
+  border: 1px solid rgba(255, 216, 77, 0.14);
+  box-shadow: 0 0 26px rgba(239, 62, 84, 0.09);
+  display: block;
+  image-rendering: pixelated;
+  max-width: 100%;
+}
+
+.run-heatmap__tooltip {
+  background: rgba(7, 10, 22, 0.96);
+  border: 1px solid rgba(255, 151, 45, 0.48);
+  border-radius: 7px;
+  color: #fff3d7;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  padding: 6px 8px;
+  pointer-events: none;
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 8px));
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.run-heatmap__legend {
+  align-items: center;
+  color: var(--muted, #9aa3c7);
+  display: grid;
+  font-size: 9px;
+  font-weight: 800;
+  gap: 10px;
+  grid-template-columns: auto minmax(120px, 260px) auto;
+  justify-content: center;
+  letter-spacing: 0.08em;
+  margin-top: 11px;
+  text-transform: uppercase;
+}
+
+.run-heatmap__legend[hidden] {
+  display: none;
+}
+
+.run-heatmap__legend i {
+  background: linear-gradient(90deg, #ffd84d 0%, #ff972d 34%, #ef3e54 67%, #8b4cdc 100%);
+  border-radius: 999px;
+  box-shadow: 0 0 12px rgba(239, 62, 84, 0.18);
+  height: 8px;
+}
+
 html.has-run-world-map {
   overflow: hidden;
 }
@@ -3345,6 +3437,24 @@ html.has-run-world-map {
 
   .run-metric-chart__canvas {
     height: 180px;
+  }
+
+  .run-heatmap__head {
+    display: grid;
+  }
+
+  .run-heatmap__summary {
+    text-align: left;
+  }
+
+  .run-heatmap__viewport {
+    padding: 9px;
+  }
+
+  .run-heatmap__legend {
+    font-size: 8px;
+    gap: 7px;
+    grid-template-columns: auto minmax(70px, 1fr) auto;
   }
 
   .run-world-map {

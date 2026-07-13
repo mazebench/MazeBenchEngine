@@ -184,7 +184,12 @@ try {
     })).join("\n") + "\n"
   );
   fs.writeFileSync(path.join(swarmWorkerDir, "frames", "frame-007.png"), "png");
+  fs.writeFileSync(
+    path.join(rootDir, "outputs", "maze-local", "site", hostReadOnlySwarm.id, "initial-status.json"),
+    JSON.stringify({ player: { elevation: 3, x: 4, y: 12 } })
+  );
   const swarmProgress = service.getRunProgress(hostReadOnlySwarm.id);
+  assert.deepEqual(swarmProgress.initial_player, { x: 4, y: 12 });
   assert.equal(swarmProgress.swarm_views.length, 1);
   assert.equal(swarmProgress.swarm_views[0].id, "scout_one");
   assert.equal(swarmProgress.swarm_views[0].room, "level_GxH");

@@ -38,6 +38,13 @@
   const roomsMapClose = document.getElementById("run-rooms-map-close");
   const roomsMapGrid = document.getElementById("run-rooms-map-grid");
   const roomsMapSummary = document.getElementById("run-rooms-map-summary");
+  const heatmapSection = document.getElementById("run-heatmap-section");
+  const heatmapViewport = document.getElementById("run-heatmap-viewport");
+  const heatmapCanvas = document.getElementById("run-heatmap-canvas");
+  const heatmapTooltip = document.getElementById("run-heatmap-tooltip");
+  const heatmapSummary = document.getElementById("run-heatmap-summary");
+  const heatmapLegend = document.getElementById("run-heatmap-legend");
+  const heatmapEmpty = document.getElementById("run-heatmap-empty");
   const swarmSection = document.getElementById("run-swarm-section");
   const swarmGrid = document.getElementById("run-swarm-grid");
   const swarmCount = document.getElementById("run-swarm-count");
@@ -83,6 +90,10 @@
     videoShown: false,
     tokenSignature: "",
     explorationSignature: "",
+    initialPlayer: initial.initial_player || null,
+    initialRoom: String(initial.level_id || ""),
+    heatmapDirty: true,
+    heatmapData: null,
     worldMapSignature: "",
     swarmSignature: "",
     contextPoints: [],
@@ -1035,6 +1046,180 @@
       });
   }
 
+  function heatmapPosition(player) {
+    const x = Number(player?.x);
+    const y = Number(player?.y);
+    return Number.isFinite(x) && Number.isFinite(y)
+      ? { x: Math.round(x), y: Math.round(y) }
+      : null;
+  }
+
+  function heatmapVisitData() {
+    const roomSize = 16;
+    const roomVisits = new Map();
+    const counts = [];
+    let totalVisits = 0;
+    const add = (player, roomValue) => {
+      const position = heatmapPosition(player);
+      if (!position) return;
+      if (position.x < 0 || position.x >= roomSize || position.y < 0 || position.y >= roomSize) return;
+      const room = levelId(roomValue) || state.initialRoom;
+      if (!room) return;
+      if (!roomVisits.has(room)) roomVisits.set(room, new Map());
+      const visits = roomVisits.get(room);
+      const key = `${position.x},${position.y}`;
+      visits.set(key, (visits.get(key) || 0) + 1);
+      totalVisits += 1;
+    };
+    add(state.initialPlayer, state.initialRoom);
+    state.moves.forEach((move) => add(move.player, move.roomId || move.room));
+    if (!roomVisits.size) return null;
+
+    const worldLevels = new Map(runWorldMapLevels().map((level) => [level.id, level]));
+    const rooms = [...roomVisits.entries()].flatMap(([id, visits]) => {
+      const label = levelLabel(id);
+      const mapped = worldLevels.get(id);
+      const match = label.match(/^([A-Z])x([A-Z])$/i);
+      const columnIndex = mapped?.columnIndex ?? worldAxisIndex(match?.[1]);
+      const rowIndex = mapped?.rowIndex ?? worldAxisIndex(match?.[2]);
+      if (columnIndex < 0 || rowIndex < 0) return [];
+      const roomCounts = [...visits.values()];
+      counts.push(...roomCounts);
+      return [{
+        id,
+        label,
+        columnIndex,
+        rowIndex,
+        visits,
+        totalVisits: roomCounts.reduce((sum, count) => sum + count, 0),
+        uniqueCells: visits.size
+      }];
+    });
+    if (!rooms.length) return null;
+    const minRoomColumn = Math.min(...rooms.map((room) => room.columnIndex));
+    const maxRoomColumn = Math.max(...rooms.map((room) => room.columnIndex));
+    const minRoomRow = Math.min(...rooms.map((room) => room.rowIndex));
+    const maxRoomRow = Math.max(...rooms.map((room) => room.rowIndex));
+    const visits = new Map();
+    rooms.forEach((room) => {
+      room.visits.forEach((count, key) => {
+        const [x, y] = key.split(",").map(Number);
+        visits.set(`${room.columnIndex * roomSize + x},${room.rowIndex * roomSize + y}`, count);
+      });
+    });
+    return {
+      rooms,
+      roomsByPosition: new Map(rooms.map((room) => [`${room.columnIndex},${room.rowIndex}`, room])),
+      roomSize,
+      visits,
+      totalVisits,
+      uniqueCells: rooms.reduce((sum, room) => sum + room.uniqueCells, 0),
+      maxCount: Math.max(...counts),
+      minCount: Math.min(...counts),
+      minRoomColumn,
+      maxRoomColumn,
+      minRoomRow,
+      maxRoomRow,
+      minX: minRoomColumn * roomSize,
+      maxX: (maxRoomColumn + 1) * roomSize - 1,
+      minY: minRoomRow * roomSize,
+      maxY: (maxRoomRow + 1) * roomSize - 1,
+      columns: (maxRoomColumn - minRoomColumn + 1) * roomSize,
+      rows: (maxRoomRow - minRoomRow + 1) * roomSize
+    };
+  }
+
+  function heatmapColor(intensity) {
+    const stops = [
+      [0, [255, 216, 77]],
+      [0.34, [255, 151, 45]],
+      [0.67, [239, 62, 84]],
+      [1, [139, 76, 220]]
+    ];
+    const value = Math.max(0, Math.min(1, intensity));
+    const upperIndex = stops.findIndex(([stop]) => stop >= value);
+    if (upperIndex <= 0) return `rgb(${stops[0][1].join(", ")})`;
+    const [lowerStop, lowerColor] = stops[upperIndex - 1];
+    const [upperStop, upperColor] = stops[upperIndex];
+    const amount = (value - lowerStop) / (upperStop - lowerStop);
+    const color = lowerColor.map((channel, index) => Math.round(channel + (upperColor[index] - channel) * amount));
+    return `rgb(${color.join(", ")})`;
+  }
+
+  function drawHeatmap() {
+    const data = state.heatmapData;
+    if (!heatmapCanvas || !heatmapViewport || !data || heatmapViewport.hidden) return;
+    const availableWidth = Math.max(1, heatmapViewport.clientWidth - 28);
+    const cellSize = Math.max(1, Math.min(40, availableWidth / data.columns, 720 / data.rows));
+    const width = Math.max(1, Math.floor(cellSize * data.columns));
+    const height = Math.max(1, Math.floor(cellSize * data.rows));
+    const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+    heatmapCanvas.style.width = `${width}px`;
+    heatmapCanvas.style.height = `${height}px`;
+    heatmapCanvas.width = Math.max(1, Math.round(width * pixelRatio));
+    heatmapCanvas.height = Math.max(1, Math.round(height * pixelRatio));
+
+    const context = heatmapCanvas.getContext("2d");
+    if (!context) return;
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = "#070a16";
+    context.fillRect(0, 0, width, height);
+
+    const cellWidth = width / data.columns;
+    const cellHeight = height / data.rows;
+    const gap = Math.min(1.25, Math.min(cellWidth, cellHeight) * 0.08);
+    const low = Math.log1p(data.minCount);
+    const range = Math.log1p(data.maxCount) - low;
+    for (let y = data.minY; y <= data.maxY; y += 1) {
+      for (let x = data.minX; x <= data.maxX; x += 1) {
+        const count = data.visits.get(`${x},${y}`) || 0;
+        const left = (x - data.minX) * cellWidth + gap;
+        const top = (y - data.minY) * cellHeight + gap;
+        context.fillStyle = count
+          ? heatmapColor(range > 0 ? (Math.log1p(count) - low) / range : 0)
+          : "rgba(21, 26, 51, 0.72)";
+        context.fillRect(left, top, Math.max(0.5, cellWidth - gap * 2), Math.max(0.5, cellHeight - gap * 2));
+      }
+    }
+
+    context.strokeStyle = "rgba(124, 143, 255, 0.52)";
+    context.lineWidth = Math.max(1, Math.min(2, cellSize * 0.08));
+    context.beginPath();
+    for (let column = data.minRoomColumn; column <= data.maxRoomColumn + 1; column += 1) {
+      const x = (column - data.minRoomColumn) * data.roomSize * cellWidth;
+      context.moveTo(x, 0);
+      context.lineTo(x, height);
+    }
+    for (let row = data.minRoomRow; row <= data.maxRoomRow + 1; row += 1) {
+      const y = (row - data.minRoomRow) * data.roomSize * cellHeight;
+      context.moveTo(0, y);
+      context.lineTo(width, y);
+    }
+    context.stroke();
+  }
+
+  function renderHeatmap() {
+    if (!heatmapSection || !state.heatmapDirty) return;
+    state.heatmapDirty = false;
+    const data = heatmapVisitData();
+    state.heatmapData = data;
+    const available = Boolean(data);
+    heatmapViewport.hidden = !available;
+    heatmapSummary.hidden = !available;
+    heatmapLegend.hidden = !available;
+    heatmapEmpty.hidden = available;
+    if (!data) return;
+
+    const roomLabels = data.rooms.map((room) => room.label);
+    heatmapSummary.textContent = `${data.rooms.length.toLocaleString()} room${data.rooms.length === 1 ? "" : "s"} · ${data.uniqueCells.toLocaleString()} cells · ${data.totalVisits.toLocaleString()} visits · ${roomLabels.join(", ")}`;
+    heatmapCanvas.setAttribute(
+      "aria-label",
+      `Player visit heatmap across rooms ${roomLabels.join(", ")}; each room is 16 by 16 cells and positioned on the world map; ${data.uniqueCells.toLocaleString()} visited cells and ${data.totalVisits.toLocaleString()} total visits; elevation combined`
+    );
+    requestAnimationFrame(drawHeatmap);
+  }
+
   function drawExplorationCharts() {
     const points = explorationPoints();
     drawMetricChart(roomsChart, points, "rooms", "#65f3d4");
@@ -1162,6 +1347,7 @@
   }
 
   function renderExplorationCharts() {
+    renderHeatmap();
     const points = explorationPoints();
     const signature = JSON.stringify(points);
     if (roomsMapDialog?.hidden === false) renderRunWorldMap();
@@ -1195,9 +1381,34 @@
   window.addEventListener("resize", () => {
     requestAnimationFrame(() => {
       drawExplorationCharts();
+      drawHeatmap();
       if (roomsMapDialog?.hidden === false) renderRunWorldMap({ force: true });
     });
   }, { passive: true });
+
+  heatmapCanvas?.addEventListener("pointermove", (event) => {
+    const data = state.heatmapData;
+    if (!data || !heatmapTooltip) return;
+    const bounds = heatmapCanvas.getBoundingClientRect();
+    const column = Math.max(0, Math.min(data.columns - 1, Math.floor((event.clientX - bounds.left) / bounds.width * data.columns)));
+    const row = Math.max(0, Math.min(data.rows - 1, Math.floor((event.clientY - bounds.top) / bounds.height * data.rows)));
+    const worldX = data.minX + column;
+    const worldY = data.minY + row;
+    const roomColumn = Math.floor(worldX / data.roomSize);
+    const roomRow = Math.floor(worldY / data.roomSize);
+    const room = data.roomsByPosition.get(`${roomColumn},${roomRow}`);
+    const x = worldX - roomColumn * data.roomSize;
+    const y = worldY - roomRow * data.roomSize;
+    const count = data.visits.get(`${worldX},${worldY}`) || 0;
+    const viewportBounds = heatmapViewport.getBoundingClientRect();
+    heatmapTooltip.textContent = `${room?.label || "Unvisited room"} · x ${x} · y ${y} · ${count.toLocaleString()} visit${count === 1 ? "" : "s"}`;
+    heatmapTooltip.style.left = `${event.clientX - viewportBounds.left}px`;
+    heatmapTooltip.style.top = `${event.clientY - viewportBounds.top}px`;
+    heatmapTooltip.hidden = false;
+  });
+  heatmapCanvas?.addEventListener("pointerleave", () => {
+    if (heatmapTooltip) heatmapTooltip.hidden = true;
+  });
 
   // ---- combined moves + reasoning feed --------------------------------------
 
@@ -1213,6 +1424,7 @@
         room: levelLabel(action.current_room),
         roomId: levelId(action.current_room),
         gems: action.gem_count ?? 0,
+        player: heatmapPosition(action.player),
         timestamp: action.timestamp || null,
         flags
       };
@@ -1222,10 +1434,13 @@
         previousMove.action !== nextMove.action ||
         previousMove.room !== nextMove.room ||
         previousMove.gems !== nextMove.gems ||
+        previousMove.player?.x !== nextMove.player?.x ||
+        previousMove.player?.y !== nextMove.player?.y ||
         previousMove.timestamp !== nextMove.timestamp ||
         previousMove.flags.join("|") !== nextMove.flags.join("|")
       ) {
         state.moves.set(action.turn, nextMove);
+        state.heatmapDirty = true;
         state.feedVersion += 1;
       }
       if (action.level && !isVision && !state.replayCursors.has("primary")) {
@@ -1531,6 +1746,14 @@
       if (!response.ok) throw new Error(`progress failed (${response.status})`);
       const progress = await response.json();
       state.run = progress.run;
+      const initialPlayer = heatmapPosition(progress.initial_player);
+      if (
+        initialPlayer &&
+        (initialPlayer.x !== state.initialPlayer?.x || initialPlayer.y !== state.initialPlayer?.y)
+      ) {
+        state.initialPlayer = initialPlayer;
+        state.heatmapDirty = true;
+      }
       state.instanceActivity = progress.instance_activity || state.instanceActivity;
 
       describeRun(progress.run);

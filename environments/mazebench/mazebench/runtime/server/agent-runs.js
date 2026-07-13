@@ -112,6 +112,7 @@ function createAgentRunService({
   const primeResultsPaths = new Map();
   const tokenUsageCache = new Map();
   const jsonLineIndexes = new Map();
+  const initialPlayerCache = new Map();
   const stableCodexCatalogPath = path.join(runsDir, ".codex-model-catalog.json");
   let stableCodexCatalog;
   let claudeQueueOrder = Date.now() * 1000;
@@ -801,6 +802,21 @@ function createAgentRunService({
         solved: Boolean(record.status?.solved),
         level: record.status?.level || null
       }));
+  }
+
+  function readInitialPlayer(runId) {
+    if (initialPlayerCache.has(runId)) return initialPlayerCache.get(runId);
+    const runDir = runDirFor(runId);
+    const initialStatus = loadJson(path.join(runDir, "initial-status.json"), null);
+    // Older runs predate initial-status.json. Parse their session once so the
+    // heatmap still includes move zero without making every poll pay that cost.
+    const status = initialStatus || loadJson(path.join(runDir, "session.json"), null)?.initial || null;
+    const x = Number(status?.player?.x);
+    const y = Number(status?.player?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const player = { x, y };
+    initialPlayerCache.set(runId, player);
+    return player;
   }
 
   function readPrimeLiveTurns(runDir) {
@@ -2216,6 +2232,7 @@ function createAgentRunService({
     return {
       run: summary,
       actions: readActions(runId, Number(afterTurn) || 0),
+      initial_player: readInitialPlayer(runId),
       log_chunk: log.chunk,
       log_offset: log.offset,
       token_usage: readTokenUsage(runId, summary),
@@ -3662,6 +3679,7 @@ function createAgentRunService({
     liveChildren.delete(runId);
     stopLegacyClaudeSnapshots(runId);
     stopLiveRenderer(runId);
+    initialPlayerCache.delete(runId);
     for (const filePath of jsonLineIndexes.keys()) {
       if (filePath.startsWith(`${runDir}${path.sep}`)) jsonLineIndexes.delete(filePath);
     }
