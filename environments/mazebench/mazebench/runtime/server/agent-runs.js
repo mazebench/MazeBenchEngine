@@ -3410,8 +3410,9 @@ function createAgentRunService({
         "--out-dir", runDir,
         "--fps", "24",
         "--crf", "19",
-        "--preset", "slower",
+        "--preset", "veryfast",
         "--tail-seconds", "1",
+        "--accelerated",
         "--intro"
       ];
       if (meta.mode === "text") {

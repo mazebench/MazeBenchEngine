@@ -4,6 +4,7 @@ const path = require("node:path");
 
 const root = path.join(__dirname, "..");
 const appSource = fs.readFileSync(path.join(root, "server", "app.js"), "utf8");
+const agentScript = fs.readFileSync(path.join(root, "public", "agent.js"), "utf8");
 const buildScript = fs.readFileSync(path.join(root, "public", "build.js"), "utf8");
 const buildTheme = fs.readFileSync(path.join(root, "public", "build-theme.css"), "utf8");
 const pageChrome = fs.readFileSync(path.join(root, "server", "page-chrome.js"), "utf8");
@@ -50,6 +51,15 @@ assert.doesNotMatch(favicon, /Minotaur icon by Lorc|M189\.78 118\.22|<ellipse/);
 assert.match(favicon, /stroke="#34e7f0" stroke-width="3"/);
 assert.match(pageChrome, /BRAND_MARK_SVG = `[\s\S]*?M 358\.428 591\.327/);
 
+assert.match(
+  pages,
+  /id="train-model-loading" class="models-loading" role="status" aria-live="polite"><span class="inline-spinner" aria-hidden="true"><\/span><span class="models-loading__label">Loading models<\/span>/
+);
+assert.match(pages, /rel="preload" as="image" href="\/logos\/codex\.png"[^>]*fetchpriority="high"/);
+assert.match(pages, /rel="preload" as="image" href="\/logos\/claude\.png"[^>]*fetchpriority="high"/);
+assert.match(pages, /rel="preload" as="image" href="\/logos\/prime\.png"[^>]*fetchpriority="high"/);
+assert.doesNotMatch(agentScript, /logos\/(?:codex|claude|prime)\.png" alt="" loading="lazy"/);
+assert.equal((agentScript.match(/loading="eager" decoding="sync" fetchpriority="high"/g) || []).length, 3);
 assert.match(pages, /window\.__PLAY_WORLD_DATA__/);
 assert.match(pages, /maze-frame is-loading/);
 assert.match(pages, /class="maze-load-label">Loading</);
@@ -99,16 +109,22 @@ assert.match(pages, /play-theme\.css\?v=\$\{PLAY_ASSET_VERSION\}/);
 assert.match(pages, /play\.js\?v=\$\{PLAY_ASSET_VERSION\}/);
 assert.match(appSource, /STATIC_CACHE_CONTROL = "no-cache, max-age=0, must-revalidate"/);
 assert.match(playScript, /function renderPlayWorldMap\(\)/);
-assert.match(playScript, /async function switchPlayWorldLevel\(levelId\)/);
+assert.match(playScript, /async function switchPlayWorldLevel\(levelId, options = \{\}\)/);
+assert.match(playScript, /window\.__PIXEL_GAME_REPLAY_CAPTURE__ !== true/);
+assert.match(playScript, /options\.reloadCurrent !== true/);
 assert.match(playScript, /app\.switchPlayWorldLevel = switchPlayWorldLevel/);
-assert.match(replayExporter, /app\.switchPlayWorldLevel\(nextLevelId\)/);
+assert.match(replayExporter, /app\.switchPlayWorldLevel\(nextLevelId, \{ reloadCurrent: true \}\)/);
 assert.match(replayExporter, /const terminalColumns = 64/);
 assert.match(replayExporter, /const terminalRows = 64/);
 assert.match(replayExporter, /What the model sees:/);
 assert.match(replayExporter, /app\.autoUndoPlayerFalls = false/);
 assert.match(replayExporter, /--use-angle=swiftshader/);
-assert.doesNotMatch(replayExporter, /startRawVideoEncoder/);
-assert.doesNotMatch(replayExporter, /__advanceMazeReplayFrame__/);
+assert.match(replayExporter, /function startRawVideoEncoder/);
+assert.match(replayExporter, /__advanceMazeReplayFrame__/);
+assert.match(replayExporter, /new MediaRecorder\(stream/);
+assert.match(replayExporter, /Native replay recorder retained/);
+assert.match(replayExporter, /Accelerated replay produced a blank gameplay frame/);
+assert.match(replayExporter, /Accelerated replay diverged after action/);
 assert.doesNotMatch(replayExporter, /ASCII OBSERVATION/);
 assert.match(pages, /id="regenerate-video"/);
 assert.match(pages, /id="cancel-video"/);

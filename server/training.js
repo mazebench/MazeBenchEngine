@@ -7,6 +7,18 @@ const { enrichedPathEnv } = require("./agent-runs");
 const execFileAsync = promisify(execFile);
 
 const CACHE_MS = 30_000;
+const HOSTED_TRAINING_DEFAULTS = Object.freeze({
+  observation_mode: "ascii",
+  gem_reward_weight: 1,
+  room_reward_weight: 0.1,
+  push_reward_weight: 0.05,
+  max_actions: 64,
+  max_steps: 10,
+  batch_size: 32,
+  rollouts_per_example: 4,
+  max_tokens: 512,
+  temperature: 1
+});
 
 function stripAnsi(value) {
   return String(value || "").replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "").trim();
@@ -208,16 +220,7 @@ function createTrainingService({ buildWorlds, getGame, rootDir, worldMaps }) {
       models,
       defaults: {
         ...worldDefaults(),
-        observation_mode: "ascii",
-        gem_reward_weight: 1,
-        room_reward_weight: 0.1,
-        push_reward_weight: 0.05,
-        max_actions: 256,
-        max_steps: 100,
-        batch_size: 512,
-        rollouts_per_example: 16,
-        max_tokens: 1024,
-        temperature: 1
+        ...HOSTED_TRAINING_DEFAULTS
       }
     };
   }
@@ -289,16 +292,30 @@ function createTrainingService({ buildWorlds, getGame, rootDir, worldMaps }) {
       throw new Error("Choose an available Hosted Training model.");
     }
 
-    const rolloutsPerExample = integerInRange(payload.rollouts_per_example, "Rollouts per example", 2, 128, 16);
-    const batchSize = integerInRange(payload.batch_size, "Batch size", rolloutsPerExample, 8192, 512);
+    const rolloutsPerExample = integerInRange(
+      payload.rollouts_per_example,
+      "Rollouts per example",
+      2,
+      128,
+      HOSTED_TRAINING_DEFAULTS.rollouts_per_example
+    );
+    const defaultBatchSize =
+      Math.ceil(HOSTED_TRAINING_DEFAULTS.batch_size / rolloutsPerExample) * rolloutsPerExample;
+    const batchSize = integerInRange(
+      payload.batch_size,
+      "Batch size",
+      rolloutsPerExample,
+      8192,
+      defaultBatchSize
+    );
     if (batchSize % rolloutsPerExample !== 0) {
       throw new Error("Batch size must be divisible by rollouts per example.");
     }
 
     const rewards = {
-      gems: numberInRange(payload.gem_reward_weight, "Gem reward", 0, 100, 1),
-      rooms: numberInRange(payload.room_reward_weight, "Room reward", 0, 100, 0.1),
-      pushes: numberInRange(payload.push_reward_weight, "Block reward", 0, 100, 0.05)
+      gems: numberInRange(payload.gem_reward_weight, "Gem reward", 0, 100, HOSTED_TRAINING_DEFAULTS.gem_reward_weight),
+      rooms: numberInRange(payload.room_reward_weight, "Room reward", 0, 100, HOSTED_TRAINING_DEFAULTS.room_reward_weight),
+      pushes: numberInRange(payload.push_reward_weight, "Block reward", 0, 100, HOSTED_TRAINING_DEFAULTS.push_reward_weight)
     };
     if (rewards.gems + rewards.rooms + rewards.pushes <= 0) {
       throw new Error("At least one reward value must be greater than zero.");
@@ -316,12 +333,12 @@ function createTrainingService({ buildWorlds, getGame, rootDir, worldMaps }) {
       rewards,
       startLevelId: String(payload.start_level_id || defaults.start_level_id),
       gameWonGemCount: Math.max(1, defaults.gem_total || 1),
-      maxActions: integerInRange(payload.max_actions, "Actions per rollout", 1, 100_000, 256),
-      maxSteps: integerInRange(payload.max_steps, "Training steps", 1, 100_000, 100),
+      maxActions: integerInRange(payload.max_actions, "Actions per rollout", 1, 100_000, HOSTED_TRAINING_DEFAULTS.max_actions),
+      maxSteps: integerInRange(payload.max_steps, "Training steps", 1, 100_000, HOSTED_TRAINING_DEFAULTS.max_steps),
       batchSize,
       rolloutsPerExample,
-      maxTokens: integerInRange(payload.max_tokens, "Tokens per turn", 64, 131_072, 1024),
-      temperature: numberInRange(payload.temperature, "Temperature", 0, 2, 1)
+      maxTokens: integerInRange(payload.max_tokens, "Tokens per turn", 64, 131_072, HOSTED_TRAINING_DEFAULTS.max_tokens),
+      temperature: numberInRange(payload.temperature, "Temperature", 0, 2, HOSTED_TRAINING_DEFAULTS.temperature)
     };
   }
 
@@ -385,4 +402,4 @@ function createTrainingService({ buildWorlds, getGame, rootDir, worldMaps }) {
   };
 }
 
-module.exports = { createTrainingService };
+module.exports = { HOSTED_TRAINING_DEFAULTS, createTrainingService };

@@ -14,19 +14,19 @@
       id: "codex",
       name: "Codex",
       envKey: "codex",
-      logo: '<img src="/logos/codex.png" alt="" loading="lazy">'
+      logo: '<img src="/logos/codex.png" alt="" width="128" height="128" loading="eager" decoding="sync" fetchpriority="high">'
     },
     {
       id: "claude",
       name: "Claude Code",
       envKey: "claude",
-      logo: '<img src="/logos/claude.png" alt="" loading="lazy">'
+      logo: '<img src="/logos/claude.png" alt="" width="128" height="128" loading="eager" decoding="sync" fetchpriority="high">'
     },
     {
       id: "prime",
       name: "Prime Intellect",
       envKey: "prime",
-      logo: '<img src="/logos/prime.png" alt="" loading="lazy">'
+      logo: '<img src="/logos/prime.png" alt="" width="128" height="128" loading="eager" decoding="sync" fetchpriority="high">'
     }
   ];
   const PROVIDER_SETUP = {

@@ -718,7 +718,7 @@ function createPageRenderer({
 
           <section class="composer-section train-section train-section--model">
             <div class="composer-section-title"><span class="composer-step">01</span><div><h3>Base model</h3></div></div>
-            <div id="train-model-loading" class="train-model-loading"><span class="model-loading-spinner" aria-hidden="true"></span><span>Loading models</span></div>
+            <div id="train-model-loading" class="models-loading" role="status" aria-live="polite"><span class="inline-spinner" aria-hidden="true"></span><span class="models-loading__label">Loading models</span></div>
             <div id="train-model-picker" class="train-model-grid" role="radiogroup" aria-label="Base model" hidden></div>
           </section>
 
@@ -808,6 +808,9 @@ function createPageRenderer({
 
     return renderSitePage({
       title: "Agent — Maze Bench",
+      extraHeadHtml: `<link rel="preload" as="image" href="/logos/codex.png" type="image/png" fetchpriority="high">
+    <link rel="preload" as="image" href="/logos/claude.png" type="image/png" fetchpriority="high">
+    <link rel="preload" as="image" href="/logos/prime.png" type="image/png" fetchpriority="high">`,
       main: `<div class="page-head agent-page-head">
           <h1>Agent</h1>
           <p id="agent-status" class="author-status" role="status" aria-live="polite"></p>
@@ -1016,7 +1019,7 @@ function createPageRenderer({
           </div>
         </section>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
-        <script src="/agent.js?v=20260710-quit-policy-66" defer></script>`
+        <script src="/agent.js?v=20260712-provider-logos-68" defer></script>`
     });
   }
 

@@ -1,8 +1,9 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { collectedAllWorldGems } = require("../server/agent-runs");
-const { createTrainingService } = require("../server/training");
+const { HOSTED_TRAINING_DEFAULTS, createTrainingService } = require("../server/training");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 
@@ -11,6 +12,26 @@ assert.equal(collectedAllWorldGems(68, 69), false);
 assert.equal(collectedAllWorldGems(69, 69), true);
 assert.equal(collectedAllWorldGems(70, 69), true);
 assert.equal(collectedAllWorldGems(1, null), false);
+
+assert.deepEqual(HOSTED_TRAINING_DEFAULTS, {
+  observation_mode: "ascii",
+  gem_reward_weight: 1,
+  room_reward_weight: 0.1,
+  push_reward_weight: 0.05,
+  max_actions: 64,
+  max_steps: 10,
+  batch_size: 32,
+  rollouts_per_example: 4,
+  max_tokens: 512,
+  temperature: 1
+});
+
+const starterConfig = fs.readFileSync(path.join(ROOT_DIR, "configs", "rl", "mazebench.toml"), "utf8");
+assert.match(starterConfig, /max_steps = 10/);
+assert.match(starterConfig, /batch_size = 32/);
+assert.match(starterConfig, /rollouts_per_example = 4/);
+assert.match(starterConfig, /max_tokens = 512/);
+assert.match(starterConfig, /max_actions = 64/);
 
 const service = createTrainingService({
   buildWorlds: { countWorldGems: () => 69 },

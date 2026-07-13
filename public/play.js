@@ -117,6 +117,7 @@
   const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
   const shouldRunWorldBoot =
     !reducedMotion &&
+    window.__PIXEL_GAME_REPLAY_CAPTURE__ !== true &&
     Array.isArray(playWorldData?.existingLevels) &&
     playWorldData.existingLevels.length > 0 &&
     typeof window.AuthorPlayData?.createAdapter === "function";
@@ -640,9 +641,9 @@
     syncPlayHud();
   }
 
-  async function switchPlayWorldLevel(levelId) {
+  async function switchPlayWorldLevel(levelId, options = {}) {
     if (!levelId || worldMapSwitching) return;
-    if (levelId === app.currentLevelId) {
+    if (levelId === app.currentLevelId && options.reloadCurrent !== true) {
       setWorldMapOpen(false);
       return;
     }

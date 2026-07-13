@@ -3,12 +3,12 @@
 # adapter, while the package also retains its native v1 Taskset for local evals.
 name = "MazeBench"
 model = "Qwen/Qwen3.5-0.8B"
-max_steps = 100
-batch_size = 512
-rollouts_per_example = 16
+max_steps = 10
+batch_size = 32
+rollouts_per_example = 4
 
 [sampling]
-max_tokens = 1024
+max_tokens = 512
 temperature = 1.0
 
 [[env]]
@@ -22,6 +22,6 @@ game_won_gem_count = 69
 gem_reward_weight = 1.0
 room_reward_weight = 0.1
 push_reward_weight = 0.05
-max_actions = 256
+max_actions = 64
 allow_quit = false
 observation_mode = "ascii"

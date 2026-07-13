@@ -292,7 +292,8 @@ try {
   assert(videoArgs.includes("--intro"));
   assert(videoArgs.includes("--ascii-side-by-side"));
   assert.equal(videoArgs.includes("--draft"), false);
-  assert.equal(videoArgs[videoArgs.indexOf("--preset") + 1], "slower");
+  assert.equal(videoArgs[videoArgs.indexOf("--preset") + 1], "veryfast");
+  assert.ok(videoArgs.includes("--accelerated"));
   const canceledVideo = service.cancelRunVideo(hostReadOnlySwarm.id);
   assert.equal(canceledVideo.video_status, "idle");
   assert.equal(fs.existsSync(path.join(hostRunDir, "replay-progress.json")), false);
