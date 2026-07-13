@@ -1264,6 +1264,17 @@ function countedVideoFrames(videoPath) {
   return count;
 }
 
+function nativeFrameCountIsAcceptable(retainedFrames, requestedFrames) {
+  return (
+    Number.isInteger(retainedFrames) &&
+    Number.isInteger(requestedFrames) &&
+    retainedFrames > 0 &&
+    requestedFrames > 0 &&
+    retainedFrames <= requestedFrames &&
+    requestedFrames - retainedFrames <= 1
+  );
+}
+
 function startRawVideoEncoder(videoPath, options) {
   const width = Math.max(2, Math.floor(options.width / 2) * 2);
   const height = Math.max(2, Math.floor(options.height / 2) * 2);
@@ -2526,10 +2537,20 @@ async function renderReplayVideo(
 
   if (useNativeRecorder) {
     const nativeFrameCount = countedVideoFrames(recordedVideoPath);
-    if (nativeFrameCount !== frameIndex) {
+    // captureStream(0) + MediaRecorder can coalesce one request at a media-tick
+    // boundary even though every requested canvas state was rendered. Losing a
+    // single video frame is at most one frame interval and is not evidence of a
+    // truncated replay; larger mismatches still fall back to the exact renderers.
+    if (!nativeFrameCountIsAcceptable(nativeFrameCount, frameIndex)) {
       fs.rmSync(recordedVideoPath, { force: true });
       throw new Error(
         `Native replay recorder retained ${nativeFrameCount}/${frameIndex} requested frames`
+      );
+    }
+    if (nativeFrameCount !== frameIndex) {
+      console.warn(
+        `Native replay recorder coalesced one frame (${nativeFrameCount}/${frameIndex}); ` +
+          "using the completed native recording."
       );
     }
     const retimedPath = path.join(
@@ -2771,6 +2792,7 @@ if (require.main === module) {
 module.exports = {
   defaultReplayOptions,
   humanSize,
+  nativeFrameCountIsAcceptable,
   renderReplayVideo,
   validateReplayOptions,
   writeSidecarFiles

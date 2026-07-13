@@ -16,6 +16,7 @@ const playTheme = fs.readFileSync(path.join(root, "public", "play-theme.css"), "
 const replayExporter = fs.readFileSync(path.join(root, "scripts", "maze-export-replay.js"), "utf8");
 const favicon = fs.readFileSync(path.join(root, "public", "favicon.svg"), "utf8");
 const router = fs.readFileSync(path.join(root, "server", "router.js"), "utf8");
+const { nativeFrameCountIsAcceptable } = require(path.join(root, "scripts", "maze-export-replay.js"));
 
 assert.match(buildScript, /world-card new-world-card/);
 assert.match(buildScript, /world-card world-card--draft/);
@@ -126,6 +127,10 @@ assert.match(replayExporter, /function startRawVideoEncoder/);
 assert.match(replayExporter, /__advanceMazeReplayFrame__/);
 assert.match(replayExporter, /new MediaRecorder\(stream/);
 assert.match(replayExporter, /Native replay recorder retained/);
+assert.equal(nativeFrameCountIsAcceptable(2698, 2698), true);
+assert.equal(nativeFrameCountIsAcceptable(2697, 2698), true);
+assert.equal(nativeFrameCountIsAcceptable(2696, 2698), false);
+assert.equal(nativeFrameCountIsAcceptable(2699, 2698), false);
 assert.match(replayExporter, /Accelerated replay produced a blank gameplay frame/);
 assert.match(replayExporter, /Accelerated replay diverged after action/);
 assert.doesNotMatch(replayExporter, /ASCII OBSERVATION/);
