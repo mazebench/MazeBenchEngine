@@ -23,7 +23,7 @@ const VIDEO_ICONS = Object.freeze({
   clapperboard: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12.296 3.464 3.02 3.956"></path><path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z"></path><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="m6.18 5.276 3.1 3.899"></path></svg>`,
   download: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"></path><path d="m7 10 5 5 5-5"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path></svg>`
 });
-const PLAY_ASSET_VERSION = "20260711-world-map-fit-2";
+const PLAY_ASSET_VERSION = "20260714-play-hud-stats-2";
 
 const TRAIN_REWARD_ICONS = Object.freeze({
   gems: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12l4 6-10 12L2 9Z"></path><path d="m11 3-3 6 4 12 4-12-3-6"></path><path d="M2 9h20"></path></svg>`,
@@ -33,6 +33,13 @@ const TRAIN_REWARD_ICONS = Object.freeze({
 
 // Map from Lucide Icons (ISC License). Shared with the play-page world map.
 const MAP_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4.5 6.5 9 4l6 3 4.5-2.5v13L15 20l-6-3-4.5 2.5v-13Z"></path><path d="M9 4v13"></path><path d="M15 7v13"></path></svg>`;
+
+// Gem and Door Open from Lucide Icons (ISC License). Shared by the compact
+// play HUD in MazeBench and its hosted MazeJam shell.
+const PLAY_HUD_ICONS = Object.freeze({
+  gems: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10.5 3 8 9l4 13 4-13-2.5-6"></path><path d="M17 3a2 2 0 0 1 1.6.8l3 4a2 2 0 0 1 .013 2.382l-7.99 10.986a2 2 0 0 1-3.247 0l-7.99-10.986A2 2 0 0 1 2.4 7.8l2.998-3.997A2 2 0 0 1 7 3z"></path><path d="M2 9h20"></path></svg>`,
+  rooms: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11 20H2"></path><path d="M11 4.562v16.157a1 1 0 0 0 1.242.97L19 20V5.562a2 2 0 0 0-1.515-1.94l-4-1A2 2 0 0 0 11 4.561z"></path><path d="M11 4H8a2 2 0 0 0-2 2v14"></path><path d="M14 12h.01"></path><path d="M22 20h-3"></path></svg>`
+});
 
 // Page renderers. Shared chrome and the complete world-editor frontend are
 // canonical in this repo; Maze Jam consumes them during its build:
@@ -290,12 +297,12 @@ function createPageRenderer({
                 <a class="control-button" data-play-author-link href="/author/${encodeURIComponent(game.id)}/${encodeURIComponent(level.id)}">Edit</a>
               </div>
               <div id="play-hud" class="play-hud" aria-live="polite">
-                <span id="play-hud-room">Room --</span>
-                <span id="play-hud-gems">Gems 0</span>
+                <span id="play-hud-rooms" class="play-hud-stat play-hud-stat--rooms" aria-label="1 room visited">${PLAY_HUD_ICONS.rooms}<strong data-play-hud-value>1</strong></span>
+                <span id="play-hud-gems" class="play-hud-stat play-hud-stat--gems" aria-label="0 gems collected">${PLAY_HUD_ICONS.gems}<strong data-play-hud-value>0</strong></span>
               </div>
               <div class="top-play-right">
                 <div class="top-play-actions">
-                  <button class="control-button play-icon-button" type="button" data-action="undo" aria-label="Undo" title="Undo"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg></button>
+                  <button class="control-button" type="button" data-action="undo" aria-label="Undo last move">Undo</button>
                   <button class="control-button" type="button" data-action="reset" aria-label="Reset level">Reset</button>
                   <button class="control-button play-icon-button" type="button" data-action="controls" aria-label="Controls settings" title="Controls"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h9"></path><circle cx="16" cy="7" r="2.5"></circle><path d="M18.5 7H20"></path><path d="M4 17h2.5"></path><circle cx="9.5" cy="17" r="2.5"></circle><path d="M12 17h8"></path></svg></button>
                 </div>

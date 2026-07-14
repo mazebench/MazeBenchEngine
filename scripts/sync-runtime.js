@@ -45,6 +45,7 @@ const MIRRORED_FILES = [
   "public/play-render-three.js",
   "public/play-render.js",
   "public/play-rules.js",
+  "public/play-theme.css",
   "public/play-world-transitions.js",
   "public/play.js",
   "public/site.css",

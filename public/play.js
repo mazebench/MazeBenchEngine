@@ -126,6 +126,7 @@
   let worldMapCloseTimer = 0;
   let worldMapSwitching = false;
   let worldSolverController = null;
+  const visitedPlayRoomIds = new Set();
 
   // The controls synchronize overlay/input state immediately, so every piece
   // of state they read must exist before installation begins.
@@ -192,15 +193,25 @@
   }
 
   function syncPlayHud() {
-    const roomTarget = document.getElementById("play-hud-room");
+    // Hosted shells can restore a persisted room total that is broader than
+    // this runtime instance's session-local room set. In that case the host
+    // is the single HUD writer; otherwise this 200ms sync would make the
+    // counter bounce between the persisted total and 1.
+    if (playData.hostOwnsPlayHud === true) return;
+    const roomTarget = document.getElementById("play-hud-rooms");
     const gemTarget = document.getElementById("play-hud-gems");
-    const roomMatch = String(app.currentLevelId || playData.levelId || "").match(/^level_([^x]+)x(.+)$/);
+    const currentLevelId = String(app.currentLevelId || playData.levelId || "");
+    if (currentLevelId) visitedPlayRoomIds.add(currentLevelId);
+    const roomCount = Math.max(currentLevelId ? 1 : 0, visitedPlayRoomIds.size);
+    const gemCount = app.collectedGemIds instanceof Set ? app.collectedGemIds.size : 0;
 
     if (roomTarget) {
-      roomTarget.textContent = `Room ${roomMatch ? `${roomMatch[1]}x${roomMatch[2]}` : "--"}`;
+      roomTarget.querySelector("[data-play-hud-value]").textContent = String(roomCount);
+      roomTarget.setAttribute("aria-label", `${roomCount} room${roomCount === 1 ? "" : "s"} visited`);
     }
     if (gemTarget) {
-      gemTarget.textContent = `Gems ${app.collectedGemIds instanceof Set ? app.collectedGemIds.size : 0}`;
+      gemTarget.querySelector("[data-play-hud-value]").textContent = String(gemCount);
+      gemTarget.setAttribute("aria-label", `${gemCount} gem${gemCount === 1 ? "" : "s"} collected`);
     }
   }
 
