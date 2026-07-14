@@ -17,6 +17,16 @@ jobs:
           node-version: 22
           cache: npm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          cache-dependency-glob: environments/mazebench/uv.lock
+
       - run: npm ci
 
       - name: Node test suite
@@ -24,10 +34,6 @@ jobs:
 
       - name: Stage the Python runtime
         run: node scripts/build-python-runtime.js
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
 
       - name: Build wheel + sdist
         run: |
