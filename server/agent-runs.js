@@ -1101,11 +1101,20 @@ function createAgentRunService({
     const scorecardRoomTotal = Number(scorecard?.rooms?.total);
     const scorecardGemCount = Number(scorecard?.gems?.collected);
     const scorecardGemTotal = Number(scorecard?.gems?.total);
+    const scorecardActionCount = Number(scorecard?.actions?.total);
+    // A scorecard is a point-in-time snapshot. Continued runs keep the prior
+    // file while actions.jsonl resumes growing, so collected/visited values in
+    // that file must not override newer live action state. Older terminal
+    // scorecards may not record an action total; they remain authoritative once
+    // the run can no longer advance.
+    const scorecardStatsCurrent = Number.isFinite(scorecardActionCount)
+      ? scorecardActionCount === actions.length
+      : ["finished", "stopped", "failed"].includes(meta.status);
     const turns = meta.kind === "prime" ? Math.max(actions.length, readPrimeLiveTurns(runDir)) : actions.length;
     const game = getGame(meta.game_id);
     const defaultLevelId = game ? worldMaps.defaultLevelIdForGame(game) : "";
     const instanceMetrics = readInstanceMetrics(runId);
-    const gemCount = Number.isFinite(scorecardGemCount)
+    const gemCount = scorecardStatsCurrent && Number.isFinite(scorecardGemCount)
       ? scorecardGemCount
       : Math.max(0, Number(last?.gem_count) || 0);
     const gemTotal = Number.isFinite(scorecardGemTotal)
@@ -1136,7 +1145,7 @@ function createAgentRunService({
       explorer_instances: instanceMetrics.instances,
       gem_count: gemCount,
       gem_total: gemTotal,
-      room_count: Number.isFinite(scorecardRooms) ? scorecardRooms : observedRooms.size,
+      room_count: scorecardStatsCurrent && Number.isFinite(scorecardRooms) ? scorecardRooms : observedRooms.size,
       room_total: Number.isFinite(scorecardRoomTotal) ? scorecardRoomTotal : meta.room_total ?? null,
       progress: progressForRun(meta, turns),
       start_room_is_default: Boolean(defaultLevelId && meta.level_id === defaultLevelId),

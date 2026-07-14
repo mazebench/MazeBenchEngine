@@ -516,9 +516,23 @@ try {
     fs.writeFileSync(path.join(runDir, "actions.jsonl"), `${actionRows.map(JSON.stringify).join("\n")}\n`);
     fs.writeFileSync(
       path.join(runDir, "maze_scorecard.json"),
-      `${JSON.stringify({ rooms: { visited: rooms, total: 256 }, gems: { total: 69 } })}\n`
+      `${JSON.stringify({ actions: { total: actions }, rooms: { visited: rooms, total: 256 }, gems: { collected: gems, total: 69 } })}\n`
     );
   });
+
+  const continuedFixtureDir = path.join(rootDir, "outputs", "maze-local", "site", runs[0].id);
+  fs.writeFileSync(
+    path.join(continuedFixtureDir, "maze_scorecard.json"),
+    `${JSON.stringify({
+      actions: { total: 0 },
+      rooms: { visited: 1, total: 256 },
+      gems: { collected: 2, total: 69 }
+    })}\n`
+  );
+  const continuedFixtureSummary = service.summarizeRun(runs[0].id);
+  assert.equal(continuedFixtureSummary.turns, 1);
+  assert.equal(continuedFixtureSummary.gem_count, 3, "continued runs ignore stale collected-gem scorecards");
+  assert.equal(continuedFixtureSummary.room_count, 2, "continued runs ignore stale visited-room scorecards");
 
   assert.deepEqual(
     service.listRuns({ sort: "actions", pageSize: 10 }).runs.map((run) => run.id),
