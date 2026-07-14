@@ -167,7 +167,10 @@ allowed commands.`
     : config.mode === "json"
       ? `This is JSON mode. Read json_observation.objects instead of an ASCII
 board. Coordinates are [x,y,elevation]. Directional object names such as
-ice_slope_up and puncher_left are relative to the current camera. ${
+ice_slope_up and puncher_left are relative to the current camera. Dynamic
+player lifts include their live state in their name:
+player_lift_lowered/player_lift_raised. Orange walls remain orange_wall and
+their elevation coordinate drops by one while an orange button is pressed. ${
   config.omniscient
     ? "The observation is omniscient and contains every object in the current room, so camera rotation is not needed for visibility."
     : "Only objects with at least one character visible in the equivalent ASCII view are included, so rotate the camera to reveal occluded objects."
@@ -274,7 +277,7 @@ x/y/elevation, allowed_commands). The first command boots a headless browser
     : config.mode === "json"
       ? `This is JSON mode. Every helper command prints json_observation.objects,
 grouped by object type with [x,y,elevation] coordinates, and no ASCII board.
-Directional names are camera-relative. ${config.omniscient ? "Every room object is included, so rotating the camera is unnecessary for visibility." : "Only objects visible in the equivalent ASCII view are included; rotate the camera to uncover occluded objects."}
+Directional names are camera-relative. Player lifts include live state in their name: player_lift_lowered/player_lift_raised. Orange walls remain orange_wall and their elevation coordinate drops by one while an orange button is pressed. ${config.omniscient ? "Every room object is included, so rotating the camera is unnecessary for visibility." : "Only objects visible in the equivalent ASCII view are included; rotate the camera to uncover occluded objects."}
 ${config.hideNames ? "Names except player and gem are stable random letter IDs for this run." : "Names are literal."}`
       : `This is ASCII mode. Every helper command prints a JSON observation with an
 ASCII board in the "level" field plus a short status. Read the JSON to choose

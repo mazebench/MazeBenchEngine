@@ -173,6 +173,15 @@ Common options (all accept `key=value` or `--key value`):
 | `fast`, `draft` | faster/cheaper video capture | off |
 | `dry_run` | print the agent command + prompt and exit | off |
 
+In ASCII mode, a lowered player lift uses `>` on top; a raised lift uses `L` on
+top, and both use `l` on their sides. Orange walls use `O` on top and `o` on
+their sides; `o` is a face character, not a lowered-wall state. Orange buttons
+are top-only surface attachments rendered as `8`, with no side character.
+Pressing a button moves the wall geometry down one elevation. In JSON mode,
+lifts use
+`player_lift_lowered`/`player_lift_raised`; orange walls remain `orange_wall`
+and their elevation coordinate decreases by one while pressed.
+
 Use `dry_run=on` to preview exactly what will run (the container/agent command
 and the full play prompt) without spending any tokens or needing Docker.
 
@@ -336,8 +345,8 @@ npm run maze:terminal
 Controls:
 
 - Arrow keys: move
-- `i` / `k`: rotate camera up / down
-- `j` / `l`: rotate camera left / right
+- `W` / `S`: pitch camera up / down
+- `A` / `D`: yaw camera left / right
 - `z` or `u`: undo
 - `r`: reset
 - `q`: quit and print the scorecard

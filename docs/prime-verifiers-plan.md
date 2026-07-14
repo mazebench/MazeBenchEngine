@@ -91,6 +91,12 @@ Objects use explicit `top/side` glyph pairs, so the ASCII renderer can keep
 every visible object distinct even when the set is larger than the alphabet.
 The repo-local terminal runner and packaged mazebench runtime use the same
 glyph contract.
+Player lifts use `>` on top when lowered, `L` on top when raised, and `l` on
+their sides. Orange walls use `O` on top and `o` on their sides, where `o` is a
+face character rather than a lowered-state sprite. Orange buttons are top-only
+surface attachments rendered as `8`, with no side face. Pressing a button moves
+the wall geometry down one elevation, with only the top face remaining visible
+when the lowered volume overlaps supporting terrain.
 For example, floor uses `A/a` and renders from top-down through side view as:
 
 ```text

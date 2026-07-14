@@ -212,6 +212,13 @@ Prime CLI 0.6.x passes these settings under `[env.args]` to MazeBench's hosted c
 | `vision_view` | string | `1` | Experimental vision radius: `1`–`26` rings or `world`. |
 | `system_prompt` | string | packaged prompt | Optional instruction override. |
 
+Player lifts are state-labeled in model observations: ASCII uses `>` on top
+when lowered, `L` on top when raised, and `l` on lift sides; JSON uses
+`player_lift_lowered`/`player_lift_raised`. Orange walls use `O` on top and `o`
+on the sides (`o` is not a lowered state). Orange buttons are top-only surface
+attachments rendered as `8`, with no side character. Pressing a button moves
+each `orange_wall` down one elevation, reflected in its JSON coordinate.
+
 Framework controls such as `max_turns`, token limits, sampling, batch size, and rollout count belong outside the taskset configuration.
 
 ## Experimental local vision

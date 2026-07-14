@@ -88,13 +88,21 @@ const TERRAIN_GLYPHS = {
   ice: glyphPair("I", "i"),
   ice_block: glyphPair("K", "k"),
   ice_slope: glyphPair("~", "-"),
-  orange_button: glyphPair("N", "n"),
   orange_wall: glyphPair("O", "o"),
   player_gate: glyphPair("Y", "y"),
-  player_lift: glyphPair("L", "l"),
   shrub: glyphPair("S", "s"),
   tree: glyphPair("T", "t"),
   wall: glyphPair("W", "w")
+};
+const PLAYER_LIFT_GLYPHS = {
+  player_lift: {
+    loweredTop: ">",
+    raisedTop: "L",
+    side: "l"
+  }
+};
+const ORANGE_BUTTON_GLYPHS = {
+  orange_button: glyphPair("8", " ")
 };
 const BLOCK_ASSET_GLYPHS = {
   1: glyphPair("!", "1"),
@@ -113,7 +121,6 @@ const ACTOR_GLYPHS = {
   clone: glyphPair("{", "["),
   floating_floor: glyphPair("F", "f"),
   gem: glyphPair("G", "g"),
-  orange_button: glyphPair("*", "8"),
   player: glyphPair("P", "p"),
   puncher: glyphPair("}", "]"),
   weightless_box: glyphPair(";", "_")
@@ -160,7 +167,8 @@ const JSON_OBJECT_NAME_UNIVERSE = Object.freeze([
   "orange_button",
   "orange_wall",
   "player_gate",
-  "player_lift",
+  "player_lift_lowered",
+  "player_lift_raised",
   "puncher_down",
   "puncher_left",
   "puncher_right",
@@ -177,6 +185,8 @@ function assertUniqueGlyphPairs(groups) {
 
   Object.entries(groups).forEach(([groupName, group]) => {
     Object.entries(group).forEach(([name, pair]) => {
+      const owner = `${groupName}.${name}`;
+
       Object.entries(pair).forEach(([role, symbol]) => {
         if (symbol === " ") {
           return;
@@ -187,11 +197,11 @@ function assertUniqueGlyphPairs(groups) {
         }
 
         const previous = used.get(symbol);
-        if (previous) {
-          throw new Error(`Duplicate ASCII glyph ${JSON.stringify(symbol)} in ${previous} and ${groupName}.${name}.${role}`);
+        if (previous && previous.owner !== owner) {
+          throw new Error(`Duplicate ASCII glyph ${JSON.stringify(symbol)} in ${previous.path} and ${owner}.${role}`);
         }
 
-        used.set(symbol, `${groupName}.${name}.${role}`);
+        used.set(symbol, { owner, path: `${owner}.${role}` });
       });
     });
   });
@@ -202,6 +212,8 @@ assertUniqueGlyphPairs({
   BLOCK_ASSET_GLYPHS,
   CLONE_GLYPHS,
   ICE_SLOPE_DIRECTION_GLYPHS,
+  ORANGE_BUTTON_GLYPHS,
+  PLAYER_LIFT_GLYPHS,
   PUNCHER_DIRECTION_GLYPHS,
   TERRAIN_GLYPHS,
   UNKNOWN_GLYPHS,
@@ -324,8 +336,8 @@ Options:
 
 Interactive controls:
   Arrow keys         Up/Down/Left/Right movement relative to the current view.
-	  i/k               Rotate Camera Up/Down.
-	  j/l               Rotate Camera Left/Right.
+	  W/S               Pitch Camera Up/Down.
+	  A/D               Yaw Camera Left/Right.
 	  z/u               Undo.
 	  r                 Reset level.
 	  q                 Quit and print scorecard.`);
@@ -648,6 +660,18 @@ function cellIndex(playData, x, y) {
   return y * playData.width + x;
 }
 
+function orangeButtonsPressedForState(engine, state) {
+  return typeof engine?.areOrangeButtonsPressed === "function"
+    ? engine.areOrangeButtonsPressed(state)
+    : false;
+}
+
+function pressedOrangeWallLowersAsBlock(engine, state, x, y, elevation) {
+  return typeof engine?.pressedOrangeWallLowersAsBlock === "function"
+    ? engine.pressedOrangeWallLowersAsBlock(state, x, y, elevation)
+    : false;
+}
+
 function terrainStateOverridesCell(stateType, cell) {
   if (!stateType) {
     return false;
@@ -675,7 +699,7 @@ function terrainTypeAt(playData, state, typeNames, x, y) {
   return cell.type || "empty";
 }
 
-function terrainLayerHeight(layer, state, index, type) {
+function terrainLayerHeight(layer, state, index, type, orangeButtonsPressed = false) {
   const layerElevation = layer.elevation ?? 0;
 
   if (
@@ -697,7 +721,7 @@ function terrainLayerHeight(layer, state, index, type) {
   }
 
   if (type === "orange_wall") {
-    return layerElevation + 1;
+    return layerElevation + (orangeButtonsPressed ? 0 : 1);
   }
 
   if (type === "player_gate") {
@@ -946,12 +970,28 @@ function normalizeGlyph(value) {
   return glyphPair(top, top.toLowerCase());
 }
 
-function terrainGlyph(layerOrType) {
+function terrainGlyph(layerOrType, state = null, index = -1, orangeButtonsPressed = false) {
   const layer =
     typeof layerOrType === "object" && layerOrType !== null
       ? layerOrType
       : { type: layerOrType };
   const type = layer.type || "";
+
+  if (type === "player_lift") {
+    const raised = index >= 0 && state?.liftRaised
+      ? state.liftRaised[index] === 1
+      : layer.raised === true;
+    const glyph = PLAYER_LIFT_GLYPHS.player_lift;
+    return glyphPair(raised ? glyph.raisedTop : glyph.loweredTop, glyph.side);
+  }
+
+  if (type === "orange_wall") {
+    return TERRAIN_GLYPHS.orange_wall;
+  }
+
+  if (type === "orange_button") {
+    return ORANGE_BUTTON_GLYPHS.orange_button;
+  }
 
   if (type === "block_asset") {
     return BLOCK_ASSET_GLYPHS[blockAssetVariant(layer)] || TERRAIN_GLYPHS.block_asset;
@@ -967,16 +1007,16 @@ function terrainGlyph(layerOrType) {
   return TERRAIN_GLYPHS[type] || UNKNOWN_GLYPHS.terrain;
 }
 
-function terrainLetter(layerOrType) {
-  return terrainGlyph(layerOrType).top;
-}
-
 function actorGlyph(actorOrType) {
   const actor =
     typeof actorOrType === "object" && actorOrType !== null
       ? actorOrType
       : { type: actorOrType };
   const type = actor.type || "";
+
+  if (type === "orange_button") {
+    return ORANGE_BUTTON_GLYPHS.orange_button;
+  }
 
   if (type === "clone") {
     return CLONE_GLYPHS[cloneVariant(actor)] || ACTOR_GLYPHS.clone;
@@ -1180,7 +1220,15 @@ function addBoxFaces(faces, box, glyphOrLetter, options = {}) {
   }
 }
 
-function terrainBoxForLayer(playData, state, layer, x, y) {
+function terrainBoxForLayer(
+  playData,
+  engine,
+  state,
+  layer,
+  x,
+  y,
+  orangeButtonsPressed = false
+) {
   const index = cellIndex(playData, x, y);
   const type = layer.type || "empty";
 
@@ -1188,9 +1236,20 @@ function terrainBoxForLayer(playData, state, layer, x, y) {
     return null;
   }
 
-  const top = terrainLayerHeight(layer, state, index, type);
+  const top = terrainLayerHeight(layer, state, index, type, orangeButtonsPressed);
   const elevation = layer.elevation ?? 0;
-  const bottom = top > elevation ? elevation : top - FLOOR_THICKNESS;
+  const orangeWallLowersAsBlock =
+    type === "orange_wall" &&
+    orangeButtonsPressed &&
+    pressedOrangeWallLowersAsBlock(engine, state, x, y, elevation);
+  const bottom =
+    type === "orange_wall" && orangeButtonsPressed
+      ? orangeWallLowersAsBlock
+        ? elevation - 1
+        : top
+      : top > elevation
+        ? elevation
+        : top - FLOOR_THICKNESS;
 
   return {
     x0: x,
@@ -1202,7 +1261,14 @@ function terrainBoxForLayer(playData, state, layer, x, y) {
   };
 }
 
-function terrainTopHeightAt(playData, state, typeNames, x, y) {
+function terrainTopHeightAt(
+  playData,
+  state,
+  typeNames,
+  x,
+  y,
+  orangeButtonsPressed = false
+) {
   if (x < 0 || y < 0 || x >= playData.width || y >= playData.height) {
     return -Infinity;
   }
@@ -1218,25 +1284,45 @@ function terrainTopHeightAt(playData, state, typeNames, x, y) {
     }
 
     const index = cellIndex(playData, x, y);
-    height = Math.max(height, terrainLayerHeight(layer, state, index, type));
+    height = Math.max(
+      height,
+      terrainLayerHeight(layer, state, index, type, orangeButtonsPressed)
+    );
   });
 
   return height;
 }
 
-function exposedTerrainSides(playData, state, typeNames, box, x, y) {
+function exposedTerrainSides(
+  playData,
+  state,
+  typeNames,
+  box,
+  x,
+  y,
+  orangeButtonsPressed = false
+) {
   const sideFloor = (neighborHeight) => Math.max(box.z0, neighborHeight);
 
   return {
-    east: sideFloor(terrainTopHeightAt(playData, state, typeNames, x + 1, y)),
-    north: sideFloor(terrainTopHeightAt(playData, state, typeNames, x, y - 1)),
-    south: sideFloor(terrainTopHeightAt(playData, state, typeNames, x, y + 1)),
-    west: sideFloor(terrainTopHeightAt(playData, state, typeNames, x - 1, y))
+    east: sideFloor(
+      terrainTopHeightAt(playData, state, typeNames, x + 1, y, orangeButtonsPressed)
+    ),
+    north: sideFloor(
+      terrainTopHeightAt(playData, state, typeNames, x, y - 1, orangeButtonsPressed)
+    ),
+    south: sideFloor(
+      terrainTopHeightAt(playData, state, typeNames, x, y + 1, orangeButtonsPressed)
+    ),
+    west: sideFloor(
+      terrainTopHeightAt(playData, state, typeNames, x - 1, y, orangeButtonsPressed)
+    )
   };
 }
 
 function buildSceneFaces(playData, engine, state) {
   const typeNames = terrainTypeNameByValue(engine.terrainTypes);
+  const orangeButtonsPressed = orangeButtonsPressedForState(engine, state);
   const faces = [];
 
   for (let y = 0; y < playData.height; y += 1) {
@@ -1244,12 +1330,29 @@ function buildSceneFaces(playData, engine, state) {
       const layers = terrainLayersAt(playData, state, typeNames, x, y);
 
       layers.forEach((layer) => {
-        const box = terrainBoxForLayer(playData, state, layer, x, y);
+        const index = cellIndex(playData, x, y);
+        const box = terrainBoxForLayer(
+          playData,
+          engine,
+          state,
+          layer,
+          x,
+          y,
+          orangeButtonsPressed
+        );
 
         if (box) {
-          addBoxFaces(faces, box, terrainGlyph(layer), {
+          addBoxFaces(faces, box, terrainGlyph(layer, state, index, orangeButtonsPressed), {
             layer: 0,
-            sides: exposedTerrainSides(playData, state, typeNames, box, x, y)
+            sides: exposedTerrainSides(
+              playData,
+              state,
+              typeNames,
+              box,
+              x,
+              y,
+              orangeButtonsPressed
+            )
           });
         }
       });
@@ -1263,6 +1366,24 @@ function buildSceneFaces(playData, engine, state) {
 
     const actor = playData.actors[index] || {};
     const type = engine.actorTypes[index] || actor.type || "";
+
+    if (type === "orange_button") {
+      const elevation = state.actorElevation[index] || 0;
+      addBoxFaces(
+        faces,
+        {
+          x0: state.actorX[index],
+          x1: state.actorX[index] + 1,
+          y0: state.actorY[index],
+          y1: state.actorY[index] + 1,
+          z0: elevation,
+          z1: elevation
+        },
+        actorGlyph({ ...actor, type }),
+        { layer: 10 }
+      );
+      continue;
+    }
 
     if (type === "gem") {
       const glyph = actorGlyph({ ...actor, type });
@@ -1492,7 +1613,7 @@ function worldCoordinatesForDisplay(playData, yaw, x, y) {
   }
 }
 
-function terrainTopAt(playData, state, typeNames, x, y) {
+function terrainTopAt(playData, state, typeNames, x, y, orangeButtonsPressed = false) {
   if (x < 0 || y < 0 || x >= playData.width || y >= playData.height) {
     return null;
   }
@@ -1508,7 +1629,7 @@ function terrainTopAt(playData, state, typeNames, x, y) {
     }
 
     const index = cellIndex(playData, x, y);
-    const height = terrainLayerHeight(layer, state, index, type);
+    const height = terrainLayerHeight(layer, state, index, type, orangeButtonsPressed);
 
     if (!top || height >= top.height) {
       top = {
@@ -1521,7 +1642,15 @@ function terrainTopAt(playData, state, typeNames, x, y) {
   return top;
 }
 
-function terrainBlocksAt(playData, state, typeNames, x, y) {
+function terrainBlocksAt(
+  playData,
+  engine,
+  state,
+  typeNames,
+  x,
+  y,
+  orangeButtonsPressed = false
+) {
   return terrainLayersAt(playData, state, typeNames, x, y)
     .map((layer, layerIndex) => {
       const type = layer.type || "empty";
@@ -1531,15 +1660,25 @@ function terrainBlocksAt(playData, state, typeNames, x, y) {
       }
 
       const index = cellIndex(playData, x, y);
-      const bottom = layer.elevation ?? 0;
-      const top = Math.max(bottom, terrainLayerHeight(layer, state, index, type));
-      const glyph = terrainGlyph(layer);
+      const elevation = layer.elevation ?? 0;
+      const isPressedOrangeWall = type === "orange_wall" && orangeButtonsPressed;
+      const lowersAsBlock =
+        isPressedOrangeWall &&
+        pressedOrangeWallLowersAsBlock(engine, state, x, y, elevation);
+      const bottom = isPressedOrangeWall
+        ? lowersAsBlock
+          ? elevation - 1
+          : elevation
+        : elevation;
+      const top = terrainLayerHeight(layer, state, index, type, orangeButtonsPressed);
+      const glyph = terrainGlyph(layer, state, index, orangeButtonsPressed);
 
       return {
         bottom,
         letter: glyph.top,
         objectId: terrainObjectId(x, y, layerIndex),
         sideLetter: glyph.side,
+        surfaceOnly: isPressedOrangeWall && !lowersAsBlock,
         top,
         type
       };
@@ -1548,12 +1687,26 @@ function terrainBlocksAt(playData, state, typeNames, x, y) {
     .sort((left, right) => left.bottom - right.bottom || left.top - right.top);
 }
 
-function maxTerrainStackHeight(playData, state, typeNames) {
+function maxTerrainStackHeight(
+  playData,
+  engine,
+  state,
+  typeNames,
+  orangeButtonsPressed = false
+) {
   let maxHeight = 0;
 
   for (let y = 0; y < playData.height; y += 1) {
     for (let x = 0; x < playData.width; x += 1) {
-      terrainBlocksAt(playData, state, typeNames, x, y).forEach((block) => {
+      terrainBlocksAt(
+        playData,
+        engine,
+        state,
+        typeNames,
+        x,
+        y,
+        orangeButtonsPressed
+      ).forEach((block) => {
         maxHeight = Math.max(maxHeight, block.top);
       });
     }
@@ -1573,6 +1726,7 @@ function actorRows(playData, engine, state, yaw) {
     const type = engine.actorTypes[index] || playData.actors[index]?.type || "";
     const actor = playData.actors[index] || {};
     const glyph = actorGlyph({ ...actor, type });
+    const surfaceOnly = type === "orange_button";
     const display = displayCoordinatesForWorld(
       playData,
       yaw,
@@ -1585,7 +1739,9 @@ function actorRows(playData, engine, state, yaw) {
       elevation: state.actorElevation[index] || 0,
       letter: glyph.top,
       objectId: actorObjectId(index),
-      sideLetter: glyph.side
+      sideLetter: glyph.side,
+      surfaceOnly,
+      topElevation: (state.actorElevation[index] || 0) + (surfaceOnly ? 0 : 1)
     };
 
     if (!rows.has(display.y)) {
@@ -1692,7 +1848,7 @@ function drawTerrainSideForLevel(
   level,
   ownerCanvas = null
 ) {
-  if (sideRows <= 0) {
+  if (sideRows <= 0 || block.surfaceOnly) {
     return;
   }
 
@@ -1741,6 +1897,11 @@ function actorCells(playData, engine, state, yaw) {
     }
 
     const type = engine.actorTypes[index] || playData.actors[index]?.type || "";
+
+    if (type === "orange_button") {
+      continue;
+    }
+
     const actor = playData.actors[index] || {};
     const glyph = actorGlyph({ ...actor, type });
     const display = displayCoordinatesForWorld(
@@ -1773,17 +1934,33 @@ function visibleObjectIdsFromOwnerCanvas(ownerCanvas) {
   return new Set(ownerCanvas ? ownerCanvas.flat().filter(Boolean) : []);
 }
 
+function maxRenderedActorHeight(engine, state) {
+  return Math.max(
+    0,
+    ...Array.from({ length: engine.actorCount }, (_, index) => {
+      if (state.actorRemoved[index]) {
+        return 0;
+      }
+
+      const elevation = state.actorElevation[index] || 0;
+      return engine.actorTypes[index] === "orange_button" ? elevation : elevation + 1;
+    })
+  );
+}
+
 function renderAsciiSideScene(playData, engine, state, options, trackOwners = false) {
   const yaw = normalizeYaw(options.yaw);
   const typeNames = terrainTypeNameByValue(engine.terrainTypes);
+  const orangeButtonsPressed = orangeButtonsPressedForState(engine, state);
   const dimensions = displayDimensions(playData, yaw);
-  const maxTerrainHeight = maxTerrainStackHeight(playData, state, typeNames);
-  const maxActorHeight = Math.max(
-    0,
-    ...Array.from({ length: engine.actorCount }, (_, index) =>
-      state.actorRemoved[index] ? 0 : (state.actorElevation[index] || 0) + 1
-    )
+  const maxTerrainHeight = maxTerrainStackHeight(
+    playData,
+    engine,
+    state,
+    typeNames,
+    orangeButtonsPressed
   );
+  const maxActorHeight = maxRenderedActorHeight(engine, state);
   const maxHeight = Math.max(1, maxTerrainHeight, maxActorHeight);
   const baseline = maxHeight * TILE_GRANULARITY;
   const width = dimensions.width * TILE_GRANULARITY;
@@ -1798,9 +1975,21 @@ function renderAsciiSideScene(playData, engine, state, options, trackOwners = fa
     for (let displayX = 0; displayX < dimensions.width; displayX += 1) {
       const screenX = displayX * TILE_GRANULARITY;
       const { x, y } = worldCoordinatesForDisplay(playData, yaw, displayX, displayY);
-      const blocks = terrainBlocksAt(playData, state, typeNames, x, y);
+      const blocks = terrainBlocksAt(
+        playData,
+        engine,
+        state,
+        typeNames,
+        x,
+        y,
+        orangeButtonsPressed
+      );
 
       blocks.forEach((block) => {
+        if (block.surfaceOnly) {
+          return;
+        }
+
         const letter = block.sideLetter;
 
         if (block.top > block.bottom) {
@@ -1856,17 +2045,19 @@ function renderAsciiLayeredScene(playData, engine, state, options, trackOwners =
   const yaw = normalizeYaw(options.yaw);
   const pitch = clampPitch(options.pitch);
   const typeNames = terrainTypeNameByValue(engine.terrainTypes);
+  const orangeButtonsPressed = orangeButtonsPressedForState(engine, state);
   const dimensions = displayDimensions(playData, yaw);
   const topRows = TILE_GRANULARITY - pitch;
   const sideRows = pitch;
   const rowStep = Math.max(1, topRows);
-  const maxTerrainHeight = maxTerrainStackHeight(playData, state, typeNames);
-  const maxActorHeight = Math.max(
-    0,
-    ...Array.from({ length: engine.actorCount }, (_, index) =>
-      state.actorRemoved[index] ? 0 : (state.actorElevation[index] || 0) + 1
-    )
+  const maxTerrainHeight = maxTerrainStackHeight(
+    playData,
+    engine,
+    state,
+    typeNames,
+    orangeButtonsPressed
   );
+  const maxActorHeight = maxRenderedActorHeight(engine, state);
   const topMargin = Math.max(maxTerrainHeight, maxActorHeight) * sideRows + 1;
   const width = dimensions.width * TILE_GRANULARITY;
   const height =
@@ -1889,7 +2080,15 @@ function renderAsciiLayeredScene(playData, engine, state, options, trackOwners =
     for (let level = 0; level <= maxSceneHeight; level += 1) {
       for (let displayX = 0; displayX < dimensions.width; displayX += 1) {
         const { x, y } = worldCoordinatesForDisplay(playData, yaw, displayX, displayY);
-        const blocks = terrainBlocksAt(playData, state, typeNames, x, y);
+        const blocks = terrainBlocksAt(
+          playData,
+          engine,
+          state,
+          typeNames,
+          x,
+          y,
+          orangeButtonsPressed
+        );
         const screenX = displayX * TILE_GRANULARITY;
 
         semanticTerrainLayersAt(playData, state, typeNames, x, y)
@@ -1915,7 +2114,14 @@ function renderAsciiLayeredScene(playData, engine, state, options, trackOwners =
         }
 
         const front = worldCoordinatesForDisplay(playData, yaw, displayX, displayY + 1);
-        const frontTop = terrainTopAt(playData, state, typeNames, front.x, front.y);
+        const frontTop = terrainTopAt(
+          playData,
+          state,
+          typeNames,
+          front.x,
+          front.y,
+          orangeButtonsPressed
+        );
         const frontHeight = frontTop?.height ?? -1;
 
         blocks.forEach((block) => {
@@ -1947,13 +2153,22 @@ function renderAsciiLayeredScene(playData, engine, state, options, trackOwners =
       }
 
       rowActors
-        .filter((actor) => actor.elevation === level || actor.elevation + 1 === level)
-        .sort((left, right) => left.displayX - right.displayX || left.elevation - right.elevation)
+        .filter(
+          (actor) =>
+            actor.topElevation === level ||
+            (!actor.surfaceOnly && actor.elevation === level)
+        )
+        .sort(
+          (left, right) =>
+            left.displayX - right.displayX ||
+            left.elevation - right.elevation ||
+            Number(right.surfaceOnly) - Number(left.surfaceOnly)
+        )
         .forEach((actor) => {
           const screenX = actor.displayX * TILE_GRANULARITY;
-          const topY = baseY - (actor.elevation + 1) * sideRows;
+          const topY = baseY - actor.topElevation * sideRows;
 
-          if (actor.elevation + 1 === level) {
+          if (actor.topElevation === level) {
             drawRect(
               canvas,
               screenX,
@@ -1966,7 +2181,7 @@ function renderAsciiLayeredScene(playData, engine, state, options, trackOwners =
             );
           }
 
-          if (actor.elevation === level) {
+          if (!actor.surfaceOnly && actor.elevation === level) {
             drawRect(
               canvas,
               screenX,
@@ -2037,18 +2252,45 @@ function semanticObjectName(type, source, yaw) {
   return type || "unknown";
 }
 
+function semanticTerrainObjectName(type, source, yaw, state, index, orangeButtonsPressed) {
+  if (type === "player_lift") {
+    return state.liftRaised[index] === 1
+      ? "player_lift_raised"
+      : "player_lift_lowered";
+  }
+
+  if (type === "orange_wall") {
+    return "orange_wall";
+  }
+
+  return semanticObjectName(type, source, yaw);
+}
+
 function jsonObservationObjects(context) {
   const { engine, options, playData, state } = context;
   const typeNames = terrainTypeNameByValue(engine.terrainTypes);
+  const orangeButtonsPressed = orangeButtonsPressedForState(engine, state);
   const objects = [];
 
   for (let y = 0; y < playData.height; y += 1) {
     for (let x = 0; x < playData.width; x += 1) {
+      const index = cellIndex(playData, x, y);
       semanticTerrainLayersAt(playData, state, typeNames, x, y).forEach((layer, layerIndex) => {
+        const type = layer.type || "empty";
         objects.push({
-          elevation: layer.elevation ?? 0,
+          elevation:
+            type === "orange_wall" && orangeButtonsPressed
+              ? (layer.elevation ?? 0) - 1
+              : layer.elevation ?? 0,
           id: terrainObjectId(x, y, layerIndex),
-          name: semanticObjectName(layer.type || "empty", layer, options.yaw),
+          name: semanticTerrainObjectName(
+            type,
+            layer,
+            options.yaw,
+            state,
+            index,
+            orangeButtonsPressed
+          ),
           x,
           y
         });
@@ -3075,7 +3317,18 @@ function interactiveHelpText(context) {
     return `\n${DEATH_MESSAGE}\nz/u undo. r resets.`;
   }
 
-  return "\nArrows move in screen direction. i/k pitch camera. j/l yaw camera. z/u undo. r resets. q quits with scorecard.";
+  return "\nArrows move in screen direction. W/S pitch camera. A/D yaw camera. z/u undo. r resets. q quits with scorecard.";
+}
+
+const INTERACTIVE_CAMERA_DIRECTIONS = Object.freeze({
+  a: "left",
+  d: "right",
+  s: "down",
+  w: "up"
+});
+
+function cameraDirectionForInteractiveKey(keyName) {
+  return INTERACTIVE_CAMERA_DIRECTIONS[String(keyName || "").toLowerCase()] || null;
 }
 
 function startInteractive(context) {
@@ -3136,15 +3389,13 @@ function startInteractive(context) {
   process.stdin.on("keypress", (_text, key = {}) => {
     let shouldRender = true;
     const dead = isPlayerDead(context);
+    const cameraDirection = cameraDirectionForInteractiveKey(key.name);
     const blockedDeadKey = dead && (
       key.name === "up" ||
       key.name === "down" ||
       key.name === "left" ||
       key.name === "right" ||
-      key.name === "i" ||
-      key.name === "k" ||
-      key.name === "j" ||
-      key.name === "l"
+      cameraDirection !== null
     );
 
     if (blockedDeadKey) {
@@ -3161,14 +3412,8 @@ function startInteractive(context) {
       applyMove(context, "L");
     } else if (key.name === "right") {
       applyMove(context, "R");
-    } else if (key.name === "i") {
-      rotateCamera(context, "up");
-    } else if (key.name === "k") {
-      rotateCamera(context, "down");
-    } else if (key.name === "j") {
-      rotateCamera(context, "left");
-    } else if (key.name === "l") {
-      rotateCamera(context, "right");
+    } else if (cameraDirection) {
+      rotateCamera(context, cameraDirection);
     } else if (key.name === "z" || key.name === "u") {
       undoMove(context);
     } else if (key.name === "r") {
@@ -3230,6 +3475,7 @@ module.exports = {
   buildJsonObservation,
   buildJsonPayload,
   buildScorecard,
+  cameraDirectionForInteractiveKey,
   createTerminalContext,
   GAME_WON_GEM_COUNT,
   isPlayerDead,

@@ -611,6 +611,31 @@
       );
     }
 
+    function pressedOrangeWallLowersAsBlock(state, x, y, elevation) {
+      if (!isInsideBoard(x, y) || !areOrangeButtonsPressed(state)) {
+        return false;
+      }
+
+      const cell = cellIndex(x, y);
+      const layer = terrainLayersForCell(state, cell).find(
+        (candidate) =>
+          candidate.type === terrainTypes.orange_wall &&
+          (candidate.elevation ?? 0) === elevation
+      );
+
+      if (!layer) {
+        return false;
+      }
+
+      return shouldLowerPressedOrangeWallAsBlock(
+        state,
+        cell,
+        layer,
+        computeRaisedPlayerGateSet(state),
+        true
+      );
+    }
+
     function terrainLayerSurfaceHeight(state, cell, layer, gateState, orangeButtonsPressed) {
       if (
         layer.type === terrainTypes.empty ||
@@ -8211,6 +8236,7 @@
       actorCount,
       actorGroupIds,
       actorTypes,
+      areOrangeButtonsPressed,
       cellCount,
       cellIndex,
       cloneState,
@@ -8225,6 +8251,7 @@
       isSolved,
       move,
       moveForSearch,
+      pressedOrangeWallLowersAsBlock,
       stateKey,
       terrainTypes,
       undoMove,

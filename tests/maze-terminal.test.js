@@ -13,6 +13,7 @@ const {
   applyMove,
   buildJsonObservation,
   buildScorecard,
+  cameraDirectionForInteractiveKey,
   createTerminalContext,
   GAME_WON_GEM_COUNT,
   isGameWon,
@@ -156,6 +157,26 @@ function syntheticFloor(width, height) {
 }
 
 {
+  assert.equal(cameraDirectionForInteractiveKey("w"), "up");
+  assert.equal(cameraDirectionForInteractiveKey("W"), "up");
+  assert.equal(cameraDirectionForInteractiveKey("s"), "down");
+  assert.equal(cameraDirectionForInteractiveKey("a"), "left");
+  assert.equal(cameraDirectionForInteractiveKey("d"), "right");
+  assert.equal(cameraDirectionForInteractiveKey("i"), null);
+  assert.equal(cameraDirectionForInteractiveKey("k"), null);
+  assert.equal(cameraDirectionForInteractiveKey("j"), null);
+  assert.equal(cameraDirectionForInteractiveKey("l"), null);
+}
+
+{
+  const output = runTerminal(["--help"]);
+
+  assert.match(output, /W\/S\s+Pitch Camera Up\/Down/);
+  assert.match(output, /A\/D\s+Yaw Camera Left\/Right/);
+  assert.doesNotMatch(output, /i\/k|j\/l/);
+}
+
+{
   const terrain = syntheticFloor(2, 1);
   terrain[0][0] = {
     type: "ice_slope",
@@ -180,6 +201,211 @@ function syntheticFloor(width, height) {
     assert.deepEqual(observation.objects[`ice_slope_${direction}`], [[0, 0, 0]]);
     assert.deepEqual(observation.objects[`puncher_${direction}`], [[1, 0, 0]]);
   });
+}
+
+{
+  const terrain = syntheticFloor(2, 1);
+  terrain[0][1] = {
+    type: "player_lift",
+    raised: false,
+    layers: [{ type: "player_lift", elevation: 0, raised: false }]
+  };
+  const playData = {
+    actors: [],
+    gameId: "maze",
+    height: 1,
+    levelId: "player_lift_top_diagonal",
+    terrain,
+    width: 2
+  };
+  const context = syntheticContext(playData, { pitch: 1 });
+
+  assert.equal(
+    body(renderScreen(context)),
+    ["AAAA>>>>", "AAAA>>>>", "AAAA>>>>", "aaaallll"].join("\n")
+  );
+
+  context.state.liftRaised[1] = 1;
+
+  assert.equal(
+    body(renderScreen(context)),
+    ["    LLLL", "AAAALLLL", "AAAALLLL", "AAAAllll", "aaaa    "].join("\n")
+  );
+
+  context.options.pitch = 4;
+
+  assert.equal(
+    body(renderScreen(context)),
+    ["    llll", "    llll", "    llll", "    llll", "aaaa    "].join("\n")
+  );
+}
+
+{
+  const terrain = syntheticFloor(3, 1);
+  terrain[0][0] = {
+    type: "wall",
+    layers: [{ type: "wall", elevation: 0 }]
+  };
+  terrain[0][1] = {
+    type: "player_lift",
+    raised: true,
+    layers: [{ type: "player_lift", elevation: 0, raised: true }]
+  };
+  terrain[0][2] = {
+    type: "wall",
+    layers: [{ type: "wall", elevation: 0 }]
+  };
+  const playData = {
+    actors: [],
+    gameId: "maze",
+    height: 1,
+    levelId: "raised_player_lift_between_walls",
+    terrain,
+    width: 3
+  };
+  const context = syntheticContext(playData, { pitch: 1 });
+
+  assert.equal(
+    body(renderScreen(context)),
+    [
+      "WWWWLLLLWWWW",
+      "WWWWLLLLWWWW",
+      "WWWWLLLLWWWW",
+      "wwwwllllwwww"
+    ].join("\n")
+  );
+}
+
+{
+  const terrain = syntheticFloor(3, 1);
+  terrain[0][1] = {
+    type: "player_lift",
+    raised: false,
+    layers: [{ type: "player_lift", elevation: 0, raised: false }]
+  };
+  terrain[0][2] = {
+    type: "wall",
+    layers: [{ type: "wall", elevation: 0 }]
+  };
+  const playData = {
+    actors: [{ type: "player", x: 0, y: 0, removed: false, elevation: 0 }],
+    gameId: "maze",
+    height: 1,
+    levelId: "dynamic_player_lift_observation",
+    terrain,
+    width: 3
+  };
+  const context = syntheticContext(playData, { pitch: 0 });
+  const loweredAscii = body(renderScreen(context));
+  const loweredJson = buildJsonObservation(context, { omniscient: true });
+
+  assert.match(loweredAscii, />>>>/);
+  assert.deepEqual(loweredJson.objects.player_lift_lowered, [[1, 0, 0]]);
+  assert.equal(loweredJson.objects.player_lift_raised, undefined);
+
+  const ontoLift = context.engine.move(context.state, 1, 0);
+  const raisedJson = buildJsonObservation(context, { omniscient: true });
+
+  assert.equal(ontoLift.moved, true);
+  assert.deepEqual(ontoLift.liftToggles, [{ x: 1, y: 0, raised: true }]);
+  assert.deepEqual(raisedJson.objects.player_lift_raised, [[1, 0, 0]]);
+  assert.equal(raisedJson.objects.player_lift_lowered, undefined);
+  assert.deepEqual(raisedJson.objects.player, [[1, 0, 1]]);
+
+  const offLift = context.engine.move(context.state, 1, 0);
+  const raisedAscii = body(renderScreen(context));
+
+  assert.equal(offLift.moved, true);
+  assert.match(raisedAscii, /LLLL/);
+  assert.doesNotMatch(raisedAscii, /llll/);
+}
+
+{
+  const terrain = syntheticFloor(3, 1);
+  terrain[0][2] = {
+    type: "orange_wall",
+    layers: [{ type: "orange_wall", elevation: 0 }]
+  };
+  const playData = {
+    actors: [
+      { type: "player", x: 1, y: 0, removed: false, elevation: 0 },
+      { type: "orange_button", x: 0, y: 0, removed: false, elevation: 0 }
+    ],
+    gameId: "maze",
+    height: 1,
+    levelId: "dynamic_orange_wall_observation",
+    terrain,
+    width: 3
+  };
+  const context = syntheticContext(playData, { pitch: 0 });
+  const raisedAscii = body(renderScreen(context));
+  const raisedJson = buildJsonObservation(context, { omniscient: true });
+
+  assert.match(raisedAscii, /OOOO/);
+  assert.deepEqual(raisedJson.objects.orange_wall, [[2, 0, 0]]);
+
+  context.options.pitch = 4;
+  const raisedSideAscii = body(renderScreen(context));
+  const ontoButton = context.engine.move(context.state, -1, 0);
+  const loweredSideAscii = body(renderScreen(context));
+  const loweredJson = buildJsonObservation(context, { omniscient: true });
+
+  assert.equal(ontoButton.moved, true);
+  assert.equal(countMatches(raisedSideAscii, /o/g), 16);
+  assert.equal(countMatches(loweredSideAscii, /o/g), 0);
+  assert.deepEqual(loweredJson.objects.orange_wall, [[2, 0, -1]]);
+
+  context.options.pitch = 0;
+  const loweredAscii = body(renderScreen(context));
+  assert.match(loweredAscii, /OOOO/);
+  assert.doesNotMatch(loweredAscii, /oooo/);
+
+  const offButton = context.engine.move(context.state, 1, 0);
+  const releasedJson = buildJsonObservation(context, { omniscient: true });
+
+  assert.equal(offButton.moved, true);
+  assert.deepEqual(releasedJson.objects.orange_wall, [[2, 0, 0]]);
+}
+
+{
+  const terrain = syntheticFloor(3, 1);
+  terrain[0][2] = {
+    type: "wall",
+    layers: [
+      { type: "wall", elevation: 0 },
+      { type: "orange_wall", elevation: 1 }
+    ]
+  };
+  const playData = {
+    actors: [
+      { type: "player", x: 1, y: 0, removed: false, elevation: 0 },
+      { type: "orange_button", x: 0, y: 0, removed: false, elevation: 0 }
+    ],
+    gameId: "maze",
+    height: 1,
+    levelId: "supported_orange_wall_observation",
+    terrain,
+    width: 3
+  };
+  const context = syntheticContext(playData, { pitch: 1 });
+  const raisedJson = buildJsonObservation(context, { omniscient: true });
+
+  assert.deepEqual(raisedJson.objects.orange_wall, [[2, 0, 1]]);
+
+  const ontoButton = context.engine.move(context.state, -1, 0);
+  const loweredTopDiagonal = body(renderScreen(context));
+  const loweredJson = buildJsonObservation(context, { omniscient: true });
+
+  assert.equal(ontoButton.moved, true);
+  assert.equal(countMatches(loweredTopDiagonal, /O/g), 12);
+  assert.equal(countMatches(loweredTopDiagonal, /w/g), 4);
+  assert.deepEqual(loweredJson.objects.orange_wall, [[2, 0, 0]]);
+
+  context.options.pitch = 4;
+  const loweredSide = body(renderScreen(context));
+
+  assert.equal(countMatches(loweredSide, /O/g), 0);
+  assert.equal(countMatches(loweredSide, /w/g), 16);
 }
 
 {
@@ -577,10 +803,54 @@ function syntheticFloor(width, height) {
     width: 1
   };
   const output = renderSynthetic(playData, { pitch: 0 });
+  const topDiagonalOutput = renderSynthetic(playData, { pitch: 1 });
   const sideOutput = renderSynthetic(playData, { pitch: 4 });
 
-  assert.match(body(output), /\*\*\*\*/);
-  assert.match(body(sideOutput), /8888/);
+  assert.equal(body(output), ["8888", "8888", "8888", "8888"].join("\n"));
+  assert.equal(body(topDiagonalOutput), ["8888", "8888", "8888", "aaaa"].join("\n"));
+  assert.equal(body(sideOutput), "aaaa");
+}
+
+{
+  const terrain = syntheticFloor(1, 1);
+  terrain[0][0] = {
+    type: "wall",
+    layers: [{ type: "wall", elevation: 0 }]
+  };
+  const playData = {
+    actors: [{ type: "orange_button", x: 0, y: 0, removed: false, elevation: 1 }],
+    gameId: "maze",
+    height: 1,
+    levelId: "orange_button_on_wall_face",
+    levelLabel: "Orange Button On Wall Face",
+    terrain,
+    width: 1
+  };
+  const topDiagonalOutput = renderSynthetic(playData, { pitch: 1 });
+  const sideOutput = renderSynthetic(playData, { pitch: 4 });
+
+  assert.equal(body(topDiagonalOutput), ["8888", "8888", "8888", "wwww"].join("\n"));
+  assert.equal(body(sideOutput), ["wwww", "wwww", "wwww", "wwww"].join("\n"));
+}
+
+{
+  const playData = {
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false, elevation: 0 },
+      { type: "orange_button", x: 0, y: 0, removed: false, elevation: 0 }
+    ],
+    gameId: "maze",
+    height: 1,
+    levelId: "player_over_orange_button",
+    levelLabel: "Player Over Orange Button",
+    terrain: syntheticFloor(1, 1),
+    width: 1
+  };
+
+  assert.equal(
+    body(renderSynthetic(playData, { pitch: 0 })),
+    ["PPPP", "PPPP", "PPPP", "PPPP"].join("\n")
+  );
 }
 
 {
