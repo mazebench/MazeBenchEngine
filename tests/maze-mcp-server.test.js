@@ -141,6 +141,37 @@ try {
     "a direct blocked quit must also consume no action"
   );
 
+  const jsonDir = path.join(runDir, "json-mode");
+  fs.mkdirSync(jsonDir, { recursive: true });
+  const jsonRequests = [
+    { jsonrpc: "2.0", id: 25, method: "initialize", params: { protocolVersion: "2024-11-05" } },
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+    { jsonrpc: "2.0", id: 26, method: "tools/call", params: { name: "maze_start", arguments: {} } },
+    { jsonrpc: "2.0", id: 27, method: "tools/call", params: { name: "maze_observe", arguments: {} } }
+  ];
+  const jsonResult = spawnSync(process.execPath, [path.join(rootDir, "scripts", "maze-mcp-server.js")], {
+    cwd: rootDir,
+    encoding: "utf8",
+    input: `${jsonRequests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+    env: {
+      ...process.env,
+      MAZEBENCH_REPO_ROOT: rootDir,
+      MAZEBENCH_RUN_DIR: jsonDir,
+      MAZEBENCH_SESSION_FILE: path.join(jsonDir, "session.json"),
+      MAZEBENCH_MODE: "json",
+      MAZEBENCH_OMNISCIENT: "1",
+      MAZEBENCH_HIDE_NAMES: "1"
+    }
+  });
+  assert.equal(jsonResult.status, 0, jsonResult.stderr);
+  const jsonResponses = jsonResult.stdout.trim().split("\n").map((line) => JSON.parse(line));
+  const jsonStatus = jsonResponses.find((response) => response.id === 27)?.result?.structuredContent;
+  assert.equal(jsonStatus.observation_mode, "json");
+  assert.equal(jsonStatus.level, undefined);
+  assert.equal(jsonStatus.json_observation.omniscient, true);
+  assert.equal(jsonStatus.json_observation.hide_names, true);
+  assert.equal(jsonStatus.json_observation.objects.player.length > 0, true);
+
   const unlimitedDir = path.join(runDir, "unlimited");
   fs.mkdirSync(unlimitedDir, { recursive: true });
   const unlimitedRequests = [

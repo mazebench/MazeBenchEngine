@@ -3,12 +3,15 @@
   const runWorld = window.__AGENT_RUN_WORLD__ || null;
   const runId = initial.id;
   const isVision = initial.mode === "vision";
+  const isJson = initial.mode === "json";
   // Hosted Prime evaluations expose lifecycle state immediately and the scored
   // sample at completion, so skip the local-only frame renderer while active.
   const isPrime = initial.kind === "prime" || initial.model === "prime";
   const statusEl = document.getElementById("run-status");
   const boardEl = document.getElementById("run-board");
   const boardWrap = document.getElementById("run-board-wrap");
+  let jsonEl = document.getElementById("run-json");
+  let jsonWrap = document.getElementById("run-json-wrap");
   const feedEl = document.getElementById("run-feed");
   const feedSearch = document.getElementById("run-feed-search");
   const feedSearchClear = document.getElementById("run-feed-search-clear");
@@ -56,6 +59,31 @@
   const finishedGrid = document.getElementById("run-finished-grid");
   const finishedCount = document.getElementById("run-finished-count");
 
+  // Keep already-open servers compatible with the JSON run UI. The run page
+  // HTML comes from a long-lived Node process, while this static script reloads
+  // from disk; creating the panel here means a normal browser refresh is enough
+  // after upgrading, without interrupting an active maze run to restart Node.
+  if (isJson && boardWrap) {
+    const boardLabel = boardWrap.querySelector(".run-live__board-label");
+    if (boardLabel) boardLabel.textContent = "ASCII view — the model does not see this";
+    liveGrid?.classList.add("is-json-mode");
+    if (!jsonWrap) {
+      jsonWrap = document.createElement("div");
+      jsonWrap.id = "run-json-wrap";
+      jsonWrap.className = "run-live__board run-live__json";
+      jsonWrap.hidden = true;
+      const label = document.createElement("div");
+      label.className = "run-live__board-label";
+      label.textContent = "JSON observation — this is what the model sees";
+      jsonEl = document.createElement("pre");
+      jsonEl.id = "run-json";
+      jsonEl.className = "agent-board";
+      jsonWrap.append(label, jsonEl);
+      if (liveGrid) liveGrid.append(jsonWrap);
+      else boardWrap.insertAdjacentElement("afterend", jsonWrap);
+    }
+  }
+
   if (isPrime && stopButton) stopButton.textContent = "Cancel Run";
 
   const state = {
@@ -89,6 +117,8 @@
     lastImageUrl: null,
     frameRendering: false,
     frameFailures: 0,
+    jsonObservationTurn: -1,
+    jsonObservationPending: false,
     replayFrameRequest: 0,
     replayFrameTimer: null,
     videoShown: false,
@@ -149,6 +179,13 @@
     boardEl.textContent = board;
     boardWrap.hidden = false;
     requestAnimationFrame(fitAsciiBoard);
+  }
+
+  function showJsonObservation(observation, turn = null) {
+    if (!observation || !jsonEl || !jsonWrap) return;
+    jsonEl.textContent = JSON.stringify(observation, null, 2);
+    jsonWrap.hidden = false;
+    if (turn != null) state.jsonObservationTurn = Math.max(0, Number(turn) || 0);
   }
 
   // Chevrons, Play, and Pause from Lucide Icons (ISC License).
@@ -460,6 +497,7 @@
         ? {
             ...worker,
             board: history.board,
+            json_observation: history.json_observation,
             frame_url: history.frame_url,
             gem_count: history.gem_count,
             player: history.player,
@@ -473,7 +511,7 @@
         ? `<img class="run-swarm-card__image" src="${escapeText(displayed.frame_url)}" alt="${escapeText(worker.id)} exact observation">`
         : displayed.observation_mode === "vision"
           ? `<div class="run-swarm-card__waiting">Waiting for vision frame…</div>`
-          : `<pre class="run-swarm-card__text" aria-label="${escapeText(worker.id)} exact text observation">${escapeText(displayed.board || "Waiting for observation…")}</pre>`;
+          : `<pre class="run-swarm-card__text" aria-label="${escapeText(worker.id)} exact ${displayed.observation_mode === "json" ? "JSON" : "text"} observation">${escapeText(displayed.observation_mode === "json" && displayed.json_observation ? JSON.stringify(displayed.json_observation, null, 2) : displayed.board || "Waiting for observation…")}</pre>`;
       const owner = worker.owner_kind === "tool" ? "tool branch" : "subagent";
       const attempts = Math.max(0, Number(worker.auxiliary_action_attempts) || 0);
       const applied = Math.max(0, Number(worker.auxiliary_actions) || 0);
@@ -581,9 +619,14 @@
     const moves = prime
       ? configuredValue(params, "max_turns", run.moves)
       : configuredValue(params, "moves", run.moves);
-    const observation = prime
-      ? (configuredFlag(params, "vision", run.mode === "vision") ? "Vision" : "Text")
-      : titleCase(configuredValue(params, "mode", run.mode || "text"));
+    const observationMode = String(
+      configuredValue(
+        params,
+        "mode",
+        prime && configuredFlag(params, "vision", run.mode === "vision") ? "vision" : run.mode || "text"
+      )
+    );
+    const observation = observationMode === "text" ? "ASCII" : titleCase(observationMode);
     const allowQuit = configuredFlag(params, "allow_quit", run.allow_quit !== false);
     const reasoning = configuredValue(params, "reasoning", run.reasoning || "");
     const items = [
@@ -596,6 +639,15 @@
       ["Reasoning", reasoning ? titleCase(reasoning) : "Off"],
       ["Allow quit", allowQuit ? "Yes" : "No"]
     ];
+
+    if (String(observation).toLowerCase() === "json") {
+      const omniscient = configuredFlag(params, "omniscient", run.omniscient);
+      const hideNames = configuredFlag(params, "hide_names", run.hide_names);
+      items.push(
+        ["JSON visibility", omniscient ? "Omniscient" : "Visible only", omniscient],
+        ["Object names", hideNames ? "Hidden" : "Literal", hideNames]
+      );
+    }
 
     if (!prime) {
       if (run.model === "codex" && Object.prototype.hasOwnProperty.call(params, "codex_fast")) {
@@ -1450,8 +1502,11 @@
         state.heatmapDirty = true;
         state.feedVersion += 1;
       }
-      if (action.level && !isVision && !state.replayCursors.has("primary")) {
-        showAsciiBoard(action.level);
+      if (!state.replayCursors.has("primary")) {
+        if (action.level && !isVision) showAsciiBoard(action.level);
+        if (isJson && action.json_observation) {
+          showJsonObservation(action.json_observation, action.turn);
+        }
       }
       state.afterTurn = Math.max(state.afterTurn, Number(action.turn) || 0);
     }
@@ -1822,8 +1877,11 @@
   function applyMainObservation(observation) {
     if (!observation) return;
     const turn = Math.max(0, Number(observation.turn) || 0);
-    if (observation.board && observation.mode === "text") {
+    if (observation.board && observation.mode !== "vision") {
       showAsciiBoard(observation.board);
+    }
+    if (observation.mode === "json" && observation.json_observation) {
+      showJsonObservation(observation.json_observation, turn);
     }
     if (observation.frame_url) {
       cancelReplayFrameResolution();
@@ -1844,7 +1902,32 @@
       captionEl.textContent = hasRenderedImage ? `${turnLabel} · rendered view catching up` : turnLabel;
       captionEl.hidden = false;
     }
-    if (observation.mode === "text" && state.playingView !== "primary") resolveReplayFrame(turn);
+    if (observation.mode !== "vision" && state.playingView !== "primary") resolveReplayFrame(turn);
+  }
+
+  async function refreshLatestJsonObservation() {
+    if (
+      !isJson ||
+      state.jsonObservationPending ||
+      state.replayCursors.has("primary") ||
+      state.jsonObservationTurn >= state.afterTurn
+    ) return;
+
+    const turn = state.afterTurn;
+    state.jsonObservationPending = true;
+    try {
+      const response = await fetch(
+        `/api/agent/runs/${encodeURIComponent(runId)}/observation?instance=primary&turn=${turn}`
+      );
+      if (!response.ok) return;
+      const observation = await response.json();
+      if (observation.board) showAsciiBoard(observation.board);
+      if (observation.json_observation) {
+        showJsonObservation(observation.json_observation, observation.turn);
+      }
+    } finally {
+      state.jsonObservationPending = false;
+    }
   }
 
   // Text-mode runs always use an on-demand frame. Vision runs use the same
@@ -1966,6 +2049,7 @@
         // Hosted Prime lifecycle and logs stream immediately. The actions,
         // usage, boards, and replay are enriched from the finalized sample.
         ingestActions(progress.actions || []);
+        if (isJson) void refreshLatestJsonObservation();
         ingestReasoning(progress.reasoning || []);
         renderExplorationCharts();
         renderFeed();
@@ -1977,6 +2061,7 @@
         updateReplay(progress.run, progress.replay_progress);
       } else {
         ingestActions(progress.actions || []);
+        if (isJson) void refreshLatestJsonObservation();
         ingestReasoning(progress.reasoning || []);
         renderExplorationCharts();
         renderFeed();

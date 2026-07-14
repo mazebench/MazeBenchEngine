@@ -80,7 +80,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css?v=20260710-card-parity-1">
-    <link rel="stylesheet" href="/local-site.css?v=20260713-clean-feed-85">
+    <link rel="stylesheet" href="/local-site.css?v=20260713-json-observation-86">
     ${extraHeadHtml}`
     })}
   </head>
@@ -243,7 +243,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css?v=${PLAY_ASSET_VERSION}">
-    <link rel="stylesheet" href="/local-site.css?v=20260713-clean-feed-85">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260713-json-observation-86">`;
   }
 
   function renderPlayPage(game, level) {
@@ -453,7 +453,7 @@ function createPageRenderer({
     ${includeRuntimeStyles ? '<link rel="stylesheet" href="/styles.css">' : ""}
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260713-clean-feed-85">' : ""}`;
+    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260713-json-observation-86">' : ""}`;
   }
 
   function renderAuthorPage(game, level) {
@@ -897,10 +897,15 @@ function createPageRenderer({
               <div id="local-settings" class="settings-deck">
               <article class="setting-card setting-card--observation">
                 <div class="setting-card__head"><span>Observation mode</span></div>
-                <div class="animated-segmented" id="mode-picker" role="radiogroup" aria-label="Observation mode">
+                <div class="animated-segmented observation-mode-picker" id="mode-picker" role="radiogroup" aria-label="Observation mode">
                   <span class="segmented__glider" aria-hidden="true"></span>
-                  <button type="button" class="segmented__option" data-mode="text" aria-pressed="false"><span class="segmented__icon">TXT</span><span>Text</span></button>
                   <button type="button" class="segmented__option" data-mode="vision" aria-pressed="false"><span class="segmented__icon">IMG</span><span>Vision</span></button>
+                  <button type="button" class="segmented__option" data-mode="text" aria-pressed="false"><span class="segmented__icon">TXT</span><span>ASCII</span></button>
+                  <button type="button" class="segmented__option" data-mode="json" aria-pressed="false"><span class="segmented__icon">{ }</span><span>JSON</span></button>
+                </div>
+                <div id="json-mode-options" class="json-mode-options" hidden>
+                  <div class="json-mode-option"><label class="switch"><input type="checkbox" data-json-option="omniscient"><span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span><span class="switch__label">Omniscient</span></label><span class="json-mode-info-wrap"><button class="json-mode-info" type="button" aria-label="About Omniscient mode" aria-describedby="omniscient-mode-tip">i</button><span id="omniscient-mode-tip" class="json-mode-info__tooltip" role="tooltip">Omniscient mode reveals all blocks, even ones obstructed from view</span></span></div>
+                  <label class="switch"><input type="checkbox" data-json-option="hideNames"><span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span><span class="switch__label">Hide names</span></label>
                 </div>
               </article>
               <article class="setting-card setting-card--access is-gated" inert aria-hidden="true">
@@ -950,10 +955,15 @@ function createPageRenderer({
               <div id="prime-settings" class="settings-deck settings-deck--prime" hidden>
               <article class="setting-card setting-card--observation">
                 <div class="setting-card__head"><span>Observation mode</span></div>
-                <div class="animated-segmented" id="prime-mode-picker" role="radiogroup" aria-label="Observation mode">
+                <div class="animated-segmented observation-mode-picker" id="prime-mode-picker" role="radiogroup" aria-label="Observation mode">
                   <span class="segmented__glider" aria-hidden="true"></span>
-                  <button type="button" class="segmented__option" data-mode="text" aria-pressed="false"><span class="segmented__icon">TXT</span><span>Text</span></button>
                   <button type="button" class="segmented__option" data-mode="vision" aria-pressed="false"><span class="segmented__icon">IMG</span><span>Vision</span></button>
+                  <button type="button" class="segmented__option" data-mode="text" aria-pressed="false"><span class="segmented__icon">TXT</span><span>ASCII</span></button>
+                  <button type="button" class="segmented__option" data-mode="json" aria-pressed="false"><span class="segmented__icon">{ }</span><span>JSON</span></button>
+                </div>
+                <div id="prime-json-mode-options" class="json-mode-options" hidden>
+                  <div class="json-mode-option"><label class="switch"><input type="checkbox" data-json-option="omniscient"><span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span><span class="switch__label">Omniscient</span></label><span class="json-mode-info-wrap"><button class="json-mode-info" type="button" aria-label="About Omniscient mode" aria-describedby="prime-omniscient-mode-tip">i</button><span id="prime-omniscient-mode-tip" class="json-mode-info__tooltip" role="tooltip">Omniscient mode reveals all blocks, even ones obstructed from view</span></span></div>
+                  <label class="switch"><input type="checkbox" data-json-option="hideNames"><span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span><span class="switch__label">Hide names</span></label>
                 </div>
                 <p id="prime-vision-note" class="muted" hidden></p>
               </article>
@@ -1062,9 +1072,15 @@ function createPageRenderer({
         </section>`;
     // Shared building blocks for both layouts (Prime vs local runner).
     const boardWrap = `<div id="run-board-wrap" class="run-live__board" hidden>
-            <div class="run-live__board-label">ASCII board (what the agent reads)</div>
+            <div class="run-live__board-label">${run.mode === "json" ? "ASCII view — the model does not see this" : "ASCII board — this is what the model sees"}</div>
             <pre id="run-board" class="agent-board"></pre>
           </div>`;
+    const jsonWrap = run.mode === "json"
+      ? `<div id="run-json-wrap" class="run-live__board run-live__json" hidden>
+            <div class="run-live__board-label">JSON observation — this is what the model sees</div>
+            <pre id="run-json" class="agent-board"></pre>
+          </div>`
+      : "";
     const replayProgress = `<section class="panel run-replay-progress-panel" id="run-replay-progress" aria-live="polite" hidden>
           <div class="run-replay-progress-panel__copy">
             <strong>Rendering replay video</strong>
@@ -1166,6 +1182,7 @@ function createPageRenderer({
       ? `<section class="panel" id="run-see-section">
           <h2>What the agent sees</h2>
           ${boardWrap}
+          ${jsonWrap}
           <p id="run-see-empty" class="muted">Move zero is ready locally. Scored moves and replay appear when Prime finalizes the evaluation sample.</p>
         </section>
 
@@ -1180,7 +1197,7 @@ function createPageRenderer({
         ${movesSection}`
       : `<section class="panel run-live">
           <h2>Live view</h2>
-          <div id="run-live-grid" class="run-live__grid">
+          <div id="run-live-grid" class="run-live__grid${run.mode === "json" ? " is-json-mode" : ""}">
             <div class="run-live__viewer">
               <figure class="run-live__frame">
                 <img id="run-live-image" alt="Live maze view" hidden>
@@ -1192,6 +1209,7 @@ function createPageRenderer({
               </figure>
             </div>
             ${boardWrap}
+            ${jsonWrap}
           </div>
           <div class="replay-controls replay-controls--main" id="run-main-replay-controls"></div>
         </section>
@@ -1257,7 +1275,7 @@ function createPageRenderer({
           <pre id="run-log" class="agent-log"></pre>
         </section>
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260713-clean-feed-85" defer></script>`
+        <script src="/agent-run.js?v=20260713-json-observation-86" defer></script>`
     });
   }
 

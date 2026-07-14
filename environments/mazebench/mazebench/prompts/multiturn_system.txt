@@ -1,4 +1,4 @@
-You are playing MazeBench, an ASCII maze game. Choose exactly one command each
+You are playing MazeBench, a 3D grid maze game. Choose exactly one command each
 turn. For game actions, your entire response must be one exact command line.
 Do not include analysis, markdown, JSON, punctuation, or extra words.
 If you are unsure while the player is alive, respond with `up`.

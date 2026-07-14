@@ -20,7 +20,9 @@
 //   tool_use     read-only | offline                         (default read-only)
 //   tools        legacy boolean alias (false=read-only, true=offline)
 //   swarm        true lets the lead spawn identical-model workers
-//   mode         text (ASCII board) | vision (rendered PNGs) (default text)
+//   mode         text (ASCII) | json (structured room) | vision (PNG) (default text)
+//   omniscient   JSON mode includes every object in the room (default false)
+//   hide_names   JSON mode replaces object names except player/gem with letters
 //   moves        maze action budget shown to the agent       (default 20)
 //   game         game directory under games/ (default maze; draft/online
 //                worlds created in Build Mode use their games/<id> dirs)
@@ -120,6 +122,38 @@ function positiveInt(value, fallback) {
   return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
 }
 
+function migrateSeedSessionObservation(config) {
+  if (!config.seed || !fs.existsSync(config.sessionFile)) return;
+
+  let session;
+  try {
+    session = JSON.parse(fs.readFileSync(config.sessionFile, "utf8"));
+  } catch (_error) {
+    return;
+  }
+  if (!session || typeof session !== "object" || Array.isArray(session)) return;
+
+  const hideNamesSeed = String(session.hideNamesSeed || "").trim() || crypto.randomBytes(16).toString("hex");
+  const next = {
+    ...session,
+    observationMode: config.mode,
+    vision: config.mode === "vision",
+    omniscient: config.mode === "json" && config.omniscient,
+    hideNames: config.mode === "json" && config.hideNames,
+    hideNamesSeed
+  };
+  const unchanged = session.observationMode === next.observationMode &&
+    session.vision === next.vision &&
+    session.omniscient === next.omniscient &&
+    session.hideNames === next.hideNames &&
+    session.hideNamesSeed === next.hideNamesSeed;
+  if (unchanged) return;
+
+  const temporary = `${config.sessionFile}.observation-${process.pid}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`);
+  fs.renameSync(temporary, config.sessionFile);
+}
+
 function timestampSlug() {
   return new Date().toISOString().replace(/[:.]/g, "-").replace(/Z$/, "");
 }
@@ -130,7 +164,19 @@ function buildMcpPrompt(config) {
 an MCP image attachment. Inspect that image before choosing a move; there is no
 ASCII board. The status also includes the room, gems, player position, and
 allowed commands.`
-    : `This is TEXT mode. Maze observations contain an ASCII board in the level
+    : config.mode === "json"
+      ? `This is JSON mode. Read json_observation.objects instead of an ASCII
+board. Coordinates are [x,y,elevation]. Directional object names such as
+ice_slope_up and puncher_left are relative to the current camera. ${
+  config.omniscient
+    ? "The observation is omniscient and contains every object in the current room, so camera rotation is not needed for visibility."
+    : "Only objects with at least one character visible in the equivalent ASCII view are included, so rotate the camera to reveal occluded objects."
+} ${
+  config.hideNames
+    ? "Object type names are stable random letter IDs for this run; player and gem remain literal. Infer the hidden types from interaction."
+    : "Object type names are literal."
+}`
+      : `This is ASCII mode. Maze observations contain an ASCII board in the level
 field plus the current status.`;
   const capability = config.toolUse === "offline"
     ? config.hostAccess
@@ -204,7 +250,7 @@ stop after the first observation while budget remains. Before every primary
 maze_action, write one short sentence explaining the choice. Valid action
 strings include ${validActions}.
 
-After every action, inspect the returned ${config.mode === "vision" ? "frame and status" : "board and status"} before choosing the next move. Collect as many
+After every action, inspect the returned ${config.mode === "vision" ? "frame and status" : config.mode === "json" ? "JSON observation and status" : "board and status"} before choosing the next move. Collect as many
 unique gems as possible. If the player dies, recover with undo, reset, or a room
 change. Before finishing, always call maze_scorecard on the primary maze and
 give a one-line summary of the route and gems collected.`;
@@ -212,9 +258,11 @@ give a one-line summary of the route and gems collected.`;
 
 function buildPrompt(config) {
   if (config.mcpEnabled) return buildMcpPrompt(config);
-  const visionFlags = config.mode === "vision"
+  const observationFlags = config.mode === "vision"
     ? ` --vision --vision-width ${config.visionWidth} --vision-height ${config.visionHeight}` +
       (config.visionView ? ` --vision-view ${config.visionView}` : "")
+    : config.mode === "json"
+      ? ` --json-observation${config.omniscient ? " --omniscient" : ""}${config.hideNames ? " --hide-names" : ""}`
     : "";
   const observation = config.mode === "vision"
     ? `This is VISION mode. Every helper command prints JSON containing a
@@ -223,7 +271,12 @@ and LOOK AT that image to decide your next move — there is NO ASCII board. The
 JSON also carries a short text status (current_room, gem_count, player
 x/y/elevation, allowed_commands). The first command boots a headless browser
 (a few seconds); later commands render quickly.`
-    : `This is TEXT mode. Every helper command prints a JSON observation with an
+    : config.mode === "json"
+      ? `This is JSON mode. Every helper command prints json_observation.objects,
+grouped by object type with [x,y,elevation] coordinates, and no ASCII board.
+Directional names are camera-relative. ${config.omniscient ? "Every room object is included, so rotating the camera is unnecessary for visibility." : "Only objects visible in the equivalent ASCII view are included; rotate the camera to uncover occluded objects."}
+${config.hideNames ? "Names except player and gem are stable random letter IDs for this run." : "Names are literal."}`
+      : `This is ASCII mode. Every helper command prints a JSON observation with an
 ASCII board in the "level" field plus a short status. Read the JSON to choose
 your next move.`;
   const toolsNote = config.tools
@@ -278,14 +331,14 @@ stands right now:
 Then ${config.unlimited ? "keep taking maze actions from that state" : `continue playing up to ${config.moves} MORE maze action(s) from that state`},`
     : `Your FIRST shell command must start the session (run it exactly once):
 
-  node "${HELPER}" start --repo-root "${ROOT_DIR}" --state "${config.sessionFile}" --game "${config.gameId}" --level "${config.levelId}" --view "${config.view}" --yaw "${config.yaw}" --game-won-gem-count "${config.gems}"${visionFlags}
+  node "${HELPER}" start --repo-root "${ROOT_DIR}" --state "${config.sessionFile}" --game "${config.gameId}" --level "${config.levelId}" --view "${config.view}" --yaw "${config.yaw}" --game-won-gem-count "${config.gems}"${observationFlags}
 
 Then ${config.unlimited ? "keep taking maze actions" : `play up to ${config.moves} maze action(s)`},`} ${
   config.unlimited
     ? "This run has NO MOVE LIMIT. Continue until the maze is won or the user stops the run."
     : "unless the game reaches a terminal state earlier."
 } Do not stop right after the first command: choose and run at least one action. After each action, read the
-observation (${config.mode === "vision" ? "the frame_image PNG plus the JSON status" : "the JSON board"}) and choose the next command.
+observation (${config.mode === "vision" ? "the frame_image PNG plus the JSON status" : config.mode === "json" ? "json_observation plus the status" : "the JSON board"}) and choose the next command.
 
 Before you run each action command, write one short sentence (as normal text,
 not a comment) explaining why you are choosing that move.
@@ -328,6 +381,8 @@ function mcpEnvironment(config, workerOnly = false) {
     MAZEBENCH_SWARM: config.swarm ? "1" : "0",
     MAZEBENCH_ALLOW_LEAD_CLONES: config.toolUse === "offline" ? "1" : "0",
     MAZEBENCH_MODE: config.mode,
+    MAZEBENCH_OMNISCIENT: config.omniscient ? "1" : "0",
+    MAZEBENCH_HIDE_NAMES: config.hideNames ? "1" : "0",
     MAZEBENCH_VISION_WIDTH: String(config.visionWidth),
     MAZEBENCH_VISION_HEIGHT: String(config.visionHeight),
     MAZEBENCH_VISION_VIEW: config.visionView || "",
@@ -1386,7 +1441,7 @@ function runInContainer(config, raw) {
   // path options (out/session) are intentionally dropped; the inner run writes
   // under the mounted /app/outputs/maze-local.
   const forwardKeys = [
-    "model", "moves", "unlimited", "allow_quit", "mode", "tools", "tool_use", "swarm", "game", "level", "view", "yaw", "gems",
+    "model", "moves", "unlimited", "allow_quit", "mode", "omniscient", "hide_names", "tools", "tool_use", "swarm", "game", "level", "view", "yaw", "gems",
     "video", "no_video", "fast", "draft", "width", "height", "fps",
     "vision_width", "vision_height", "vision_view", "model_name", "llm",
     "reasoning", "effort", "codex_fast", "resume", "seed",
@@ -1705,9 +1760,21 @@ async function runWizard(raw) {
   out.moves = moves;
 
   out.mode = await promptSelect("Observation mode?", [
-    { label: "Text", value: "text", hint: "ASCII board" },
+    { label: "ASCII", value: "text", hint: "text grid" },
+    { label: "JSON", value: "json", hint: "structured room objects" },
     { label: "Vision", value: "vision", hint: "rendered images (slower)" }
   ]);
+
+  if (out.mode === "json") {
+    out.omniscient = await promptSelect("JSON visibility?", [
+      { label: "Visible only", value: "false", hint: "camera occlusion applies" },
+      { label: "Omniscient", value: "true", hint: "all room objects" }
+    ]);
+    out.hide_names = await promptSelect("JSON object names?", [
+      { label: "Normal", value: "false", hint: "literal type names" },
+      { label: "Hidden", value: "true", hint: "stable random letters" }
+    ]);
+  }
 
   out.container = await promptSelect("Access?", [
     { label: "Container", value: "true", hint: "isolated from your files — recommended" },
@@ -1797,6 +1864,8 @@ async function main() {
   const swarmDir = path.join(outDir, "swarm");
   const swarmWorkspaceDir = path.join(outDir, "swarm-workspaces");
 
+  const requestedMode = String(raw.mode || raw.observation || "text").toLowerCase();
+  const mode = ["json", "vision"].includes(requestedMode) ? requestedMode : "text";
   const config = {
     claudeBin: raw.claude_bin || "claude",
     claudeAllowedTools: raw.claude_allowed_tools || "",
@@ -1811,7 +1880,9 @@ async function main() {
     gems: positiveInt(raw.gems, 100),
     height: raw.height ? positiveInt(raw.height, undefined) : undefined,
     levelId: normalizeLevelId(raw.level),
-    mode: String(raw.mode || raw.observation || "text").toLowerCase() === "vision" ? "vision" : "text",
+    mode,
+    omniscient: mode === "json" && isTruthy(raw.omniscient, false),
+    hideNames: mode === "json" && isTruthy(raw.hide_names, false),
     tools: toolUse !== "read-only",
     toolUse,
     swarm,
@@ -1864,6 +1935,7 @@ async function main() {
   fs.mkdirSync(config.workspaceDir, { recursive: true });
   fs.mkdirSync(config.swarmDir, { recursive: true });
   fs.mkdirSync(config.swarmWorkspaceDir, { recursive: true });
+  migrateSeedSessionObservation(config);
   const privateMcp = config.inContainer ? await startPrivateMcpServer(config) : null;
   prepareAgentRuntime(config);
 

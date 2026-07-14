@@ -52,6 +52,20 @@ try {
   const sampling = JSON.parse(argv[argv.indexOf("-S") + 1]);
   assert.deepEqual(sampling, { max_tokens: 64, reasoning_effort: "low" });
 
+  const jsonOptions = parseArgs([
+    "--hosted",
+    "--out", outDir,
+    "--observation-mode", "json",
+    "--omniscient",
+    "--hide-names"
+  ]);
+  const jsonArgv = hostedEvalArgs(jsonOptions);
+  const jsonEnvArgs = JSON.parse(jsonArgv[jsonArgv.indexOf("-a") + 1]);
+  assert.equal(jsonOptions.observationMode, "json");
+  assert.equal(jsonEnvArgs.observation_mode, "json");
+  assert.equal(jsonEnvArgs.omniscient, true);
+  assert.equal(jsonEnvArgs.hide_names, true);
+
   const sample = {
     reward: 1.25,
     prompt: [{ role: "user", content: "start" }],

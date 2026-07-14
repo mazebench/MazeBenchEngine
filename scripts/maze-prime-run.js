@@ -12,7 +12,7 @@
 //
 // Usage:
 //   node maze-prime-run.js --env-dir <dir> --out <runDir> [--model <id>]
-//     --max-turns <n> [--vision] [--no-video]
+//     --max-turns <n> [--observation-mode <ascii|json|vision>] [--no-video]
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -34,6 +34,9 @@ function parseArgs(argv) {
     levelId: "level_HxI",
     maxTurns: 20,
     model: "",
+    observationMode: "ascii",
+    omniscient: false,
+    hideNames: false,
     outDir: "",
     reasoning: "",
     runId: "",
@@ -55,7 +58,17 @@ function parseArgs(argv) {
     else if (arg === "--game-won-gem-count") opts.gameWonGemCount = Math.max(1, Number(next()) || 69);
     else if (arg === "--max-turns") opts.maxTurns = Math.max(1, Math.min(500, Number(next()) || 20));
     else if (arg === "--hosted") opts.hosted = true;
-    else if (arg === "--vision") opts.vision = true;
+    else if (arg === "--vision") {
+      opts.vision = true;
+      opts.observationMode = "vision";
+    }
+    else if (arg === "--observation-mode") {
+      const mode = String(next() || "ascii").toLowerCase();
+      opts.observationMode = ["json", "vision"].includes(mode) ? mode : "ascii";
+      opts.vision = opts.observationMode === "vision";
+    }
+    else if (arg === "--omniscient") opts.omniscient = true;
+    else if (arg === "--hide-names") opts.hideNames = true;
     else if (arg === "--reasoning") opts.reasoning = String(next() || "").trim();
     else if (arg === "--no-quit") opts.allowQuit = false;
     else if (arg === "--no-video") opts.video = false;
@@ -148,8 +161,12 @@ function hostedEvalArgs(opts) {
     game_won_gem_count: opts.gameWonGemCount,
     max_actions: opts.maxTurns,
     allow_quit: opts.allowQuit,
-    observation_mode: "ascii"
+    observation_mode: opts.observationMode
   };
+  if (opts.observationMode === "json") {
+    envArgs.omniscient = opts.omniscient;
+    envArgs.hide_names = opts.hideNames;
+  }
   const samplingArgs = { max_tokens: 64 };
   if (opts.reasoning) samplingArgs.reasoning_effort = opts.reasoning;
   const evalName = `MazeBench Agent ${opts.runId || path.basename(opts.outDir)}`;
@@ -362,6 +379,10 @@ function runEval(opts) {
 
   if (opts.vision) {
     argv.push("--taskset.observation-mode", "vision");
+  } else if (opts.observationMode === "json") {
+    argv.push("--taskset.observation-mode", "json");
+    if (opts.omniscient) argv.push("--taskset.omniscient", "True");
+    if (opts.hideNames) argv.push("--taskset.hide-names", "True");
   }
 
   if (!opts.allowQuit) {

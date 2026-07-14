@@ -55,6 +55,11 @@ function enrichedPathEnv() {
 // — no state beyond run.json survives a server restart, and none is needed.
 
 const VIEW_NAMES = ["top", "top-diagonal", "diagonal", "side-diagonal", "side"];
+
+function normalizeObservationMode(value) {
+  const mode = String(value || "text").toLowerCase();
+  return ["json", "vision"].includes(mode) ? mode : "text";
+}
 const MAX_LOCAL_MOVE_BUDGET = 100_000;
 const RUNNER_STARTUP_GRACE_MS = 15_000;
 const RUNNER_ACTIVITY_GRACE_MS = 120_000;
@@ -113,6 +118,7 @@ function createAgentRunService({
   const tokenUsageCache = new Map();
   const jsonLineIndexes = new Map();
   const initialPlayerCache = new Map();
+  const reconstructedJsonObservationCache = new Map();
   const stableCodexCatalogPath = path.join(runsDir, ".codex-model-catalog.json");
   let stableCodexCatalog;
   let claudeQueueOrder = Date.now() * 1000;
@@ -800,7 +806,8 @@ function createAgentRunService({
         player: record.status?.player || null,
         player_dead: Boolean(record.status?.player_dead),
         solved: Boolean(record.status?.solved),
-        level: record.status?.level || null
+        level: record.status?.level || null,
+        json_observation: record.status?.json_observation || null
       }));
   }
 
@@ -1850,6 +1857,7 @@ function createAgentRunService({
           label: String(metadata.label || entry.name),
           activity,
           board: String(status.level || ""),
+          json_observation: status.json_observation || null,
           frame_url: latestSwarmFrame(runId, entry.name, workerDir),
           gem_count: Math.max(0, Number(status.gem_count) || 0),
           player: status.player
@@ -1876,7 +1884,9 @@ function createAgentRunService({
           owner_kind: String(metadata.owner_kind || "subagent"),
           owner_agent_id: String(metadata.owner_agent_id || entry.name),
           parent_instance_id: String(metadata.parent_instance_id || "primary"),
-          observation_mode: String(metadata.observation_mode || (session?.vision ? "vision" : "text")),
+          observation_mode: normalizeObservationMode(
+            metadata.observation_mode || session?.observationMode || (session?.vision ? "vision" : "text")
+          ),
           updated_at: updatedAt ? new Date(updatedAt).toISOString() : null,
           view: String(status.current_view || ""),
           yaw: Number(status.yaw) || 0
@@ -2153,6 +2163,84 @@ function createAgentRunService({
     }
   }
 
+  function reconstructJsonObservation(runId, instanceId, instanceDir, absoluteTurn, summary, metadata) {
+    const sessionPath = path.join(instanceDir, "session.json");
+    const session = loadJson(sessionPath, null);
+    if (!session || !Array.isArray(session.actions)) return null;
+
+    let sessionMtime = 0;
+    try {
+      sessionMtime = fs.statSync(sessionPath).mtimeMs;
+    } catch (_error) {
+      return null;
+    }
+
+    const launchParams = summary.launch_params || {};
+    const omniscient = typeof session.omniscient === "boolean"
+      ? session.omniscient
+      : Boolean(metadata.omniscient ?? launchParams.omniscient);
+    const hideNames = typeof session.hideNames === "boolean"
+      ? session.hideNames
+      : Boolean(metadata.hide_names ?? launchParams.hide_names);
+    const seed = String(session.hideNamesSeed || `${runId}:${instanceId}`);
+    const cacheKey = [
+      runId,
+      instanceId,
+      absoluteTurn,
+      sessionMtime,
+      omniscient ? 1 : 0,
+      hideNames ? 1 : 0,
+      seed
+    ].join(":");
+    if (reconstructedJsonObservationCache.has(cacheKey)) {
+      return reconstructedJsonObservationCache.get(cacheKey);
+    }
+
+    const replay = session.actions
+      .slice(0, absoluteTurn)
+      .filter((action) => action?.message && action.replay !== false)
+      .map((action) => action.message);
+    const bridgeArgs = [
+      path.join(rootDir, "scripts", "maze-bridge.js"),
+      "--game", String(session.gameId || summary.game_id || "maze"),
+      "--level", String(session.levelId || summary.level_id || "level_HxI"),
+      "--view", String(session.view || summary.view || "top-diagonal"),
+      "--yaw", String(Number(session.yaw) || 0),
+      "--game-won-gem-count", String(Math.max(1, Number(session.gameWonGemCount) || 100)),
+      "--observation-mode", "json",
+      "--hide-names-seed", seed
+    ];
+    if (omniscient) bridgeArgs.push("--omniscient");
+    if (hideNames) bridgeArgs.push("--hide-names");
+
+    const messages = [...replay, { command: "observe" }, { command: "close" }];
+    const result = spawnSync(process.execPath, bridgeArgs, {
+      cwd: rootDir,
+      encoding: "utf8",
+      input: `${messages.map((message) => JSON.stringify(message)).join("\n")}\n`,
+      maxBuffer: 80 * 1024 * 1024,
+      timeout: 30_000
+    });
+    if (result.error || result.status !== 0) return null;
+
+    try {
+      const responses = String(result.stdout || "")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      const observation = responses[replay.length]?.json_observation || null;
+      if (!observation) return null;
+      if (reconstructedJsonObservationCache.size >= 64) {
+        reconstructedJsonObservationCache.delete(reconstructedJsonObservationCache.keys().next().value);
+      }
+      reconstructedJsonObservationCache.set(cacheKey, observation);
+      return observation;
+    } catch (_error) {
+      return null;
+    }
+  }
+
   function getRunObservation(runId, { instanceId = "primary", turn = 0 } = {}) {
     const summary = summarizeRun(runId);
     if (!summary) return null;
@@ -2183,7 +2271,10 @@ function createAgentRunService({
       }
     }
 
-    const mode = String(metadata.observation_mode || summary.mode || "text") === "vision" ? "vision" : "text";
+    const mode = normalizeObservationMode(metadata.observation_mode || summary.mode);
+    const jsonObservation = mode === "json" && !status?.json_observation
+      ? reconstructJsonObservation(runId, requestedInstance, instanceDir, absoluteTurn, summary, metadata)
+      : status?.json_observation || null;
     const frameName = `frame-${String(absoluteTurn).padStart(3, "0")}.png`;
     const exactFrame = path.join(instanceDir, "frames", frameName);
     let frameUrl = null;
@@ -2192,7 +2283,7 @@ function createAgentRunService({
       frameUrl = primary
         ? `/agent-runs/${encodeURIComponent(runId)}/files/frames/${frameName}`
         : `/agent-runs/${encodeURIComponent(runId)}/files/swarm/${encodeURIComponent(requestedInstance)}/frames/${frameName}`;
-    } else if (primary && mode === "text") {
+    } else if (primary && mode !== "vision") {
       const liveName = `live-${String(absoluteTurn).padStart(3, "0")}.png`;
       if (fs.existsSync(path.join(instanceDir, "frames", liveName))) {
         frameUrl = `/agent-runs/${encodeURIComponent(runId)}/files/frames/${liveName}`;
@@ -2208,6 +2299,7 @@ function createAgentRunService({
       total,
       command_text: String(record?.command_text || ""),
       board: String(status?.level || ""),
+      json_observation: jsonObservation,
       frame_url: frameUrl,
       current_room: String(status?.current_room || ""),
       gem_count: Math.max(0, Number(status?.gem_count) || 0),
@@ -2682,6 +2774,9 @@ function createAgentRunService({
         : "read-only";
     const swarm = params.swarm === true || params.swarm === "true";
     const allowQuit = !(params.allow_quit === false || params.allow_quit === "false");
+    const mode = normalizeObservationMode(params.mode);
+    const omniscient = mode === "json" && (params.omniscient === true || params.omniscient === "true");
+    const hideNames = mode === "json" && (params.hide_names === true || params.hide_names === "true");
 
     // Safety net for the UI toggle: container mode needs Docker installed AND
     // its daemon running.
@@ -2701,7 +2796,9 @@ function createAgentRunService({
       `allow_quit=${allowQuit ? "true" : "false"}`,
       `gems=${gems}`,
       `view=${view}`,
-      `mode=${String(params.mode) === "vision" ? "vision" : "text"}`,
+      `mode=${mode}`,
+      `omniscient=${omniscient ? "true" : "false"}`,
+      `hide_names=${hideNames ? "true" : "false"}`,
       `tools=${toolUse === "read-only" ? "false" : "true"}`,
       `tool_use=${toolUse}`,
       `swarm=${swarm ? "true" : "false"}`,
@@ -2788,7 +2885,7 @@ function createAgentRunService({
       args.push(`resume=${String(params.resume_id)}`);
     }
 
-    return { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit };
+    return { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit, mode, omniscient, hideNames };
   }
 
   // Prime text runs are real Hosted Evaluations, visible in Prime Evals from
@@ -2797,7 +2894,12 @@ function createAgentRunService({
   function buildPrimeCommand(params, runDir, runId, game) {
     const model = String(params.model_name || params.model || "").trim();
     const maxTurns = Math.max(1, Math.min(500, Number(params.max_turns) || 20));
-    const vision = params.vision === true || params.vision === "true";
+    const mode = normalizeObservationMode(
+      params.mode || (params.vision === true || params.vision === "true" ? "vision" : "text")
+    );
+    const vision = mode === "vision";
+    const omniscient = mode === "json" && (params.omniscient === true || params.omniscient === "true");
+    const hideNames = mode === "json" && (params.hide_names === true || params.hide_names === "true");
     const hosted = !vision;
     const wantVideo = !(params.video === false || params.video === "false");
     const allowQuit = !(params.allow_quit === false || params.allow_quit === "false");
@@ -2836,6 +2938,10 @@ function createAgentRunService({
 
     if (vision) {
       argv.push("--vision");
+    } else if (mode === "json") {
+      argv.push("--observation-mode", "json");
+      if (omniscient) argv.push("--omniscient");
+      if (hideNames) argv.push("--hide-names");
     }
 
     if (reasoning) {
@@ -2856,6 +2962,9 @@ function createAgentRunService({
       .concat(["--out", "<run>", "--max-turns", String(maxTurns)])
       .concat(model ? ["--model", model] : [])
       .concat(vision ? ["--vision"] : [])
+      .concat(mode === "json" ? ["--observation-mode", "json"] : [])
+      .concat(omniscient ? ["--omniscient"] : [])
+      .concat(hideNames ? ["--hide-names"] : [])
       .concat(reasoning ? ["--reasoning", reasoning] : [])
       .concat(!allowQuit ? ["--no-quit"] : [])
       .join(" ");
@@ -2866,7 +2975,10 @@ function createAgentRunService({
       display,
       model,
       maxTurns,
+      mode,
       vision,
+      omniscient,
+      hideNames,
       hosted,
       levelId,
       gemTotal,
@@ -2914,8 +3026,10 @@ function createAgentRunService({
           gem_total: command.gemTotal,
           room_total: game.worldMap?.levels?.length || 0,
           moves: command.maxTurns,
-          mode: command.vision ? "vision" : "text",
+          mode: command.mode,
           vision: command.vision,
+          omniscient: command.omniscient,
+          hide_names: command.hideNames,
           reasoning: command.reasoning,
           allow_quit: command.allowQuit,
           video: command.video,
@@ -2928,7 +3042,7 @@ function createAgentRunService({
         };
       } else {
         const game = normalizedGameForRun(params.game_id);
-        const { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit } = buildLocalRunArgs(runId, params, game);
+        const { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit, mode, omniscient, hideNames } = buildLocalRunArgs(runId, params, game);
         const requestedModelName = String(params.model_name || "");
         const exactModelName = model === "claude"
           ? resolveClaudeCatalogModelId(requestedModelName)
@@ -2968,7 +3082,9 @@ function createAgentRunService({
           segment_move_budget: moves,
           gems,
           view,
-          mode: String(params.mode) === "vision" ? "vision" : "text",
+          mode,
+          omniscient,
+          hide_names: hideNames,
           tools: toolUse !== "read-only",
           tool_use: toolUse,
           swarm,
@@ -3227,7 +3343,10 @@ function createAgentRunService({
       return {
         kind: "prime",
         model_name: model,
+        mode: normalizeObservationMode(meta.mode),
         vision: meta.mode === "vision",
+        omniscient: Boolean(meta.omniscient),
+        hide_names: Boolean(meta.hide_names),
         reasoning: meta.reasoning || "",
         allow_quit: meta.allow_quit !== false,
         video: meta.video !== false
@@ -3241,6 +3360,8 @@ function createAgentRunService({
       game_id: meta.game_id,
       level_id: meta.level_id,
       mode: meta.mode,
+      omniscient: Boolean(meta.omniscient),
+      hide_names: Boolean(meta.hide_names),
       reasoning: meta.reasoning || "",
       unlimited: Boolean(meta.unlimited),
       allow_quit: meta.allow_quit !== false,

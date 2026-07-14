@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
@@ -75,6 +76,11 @@ function parseArgs(argv) {
     else if (arg === "--game-won-gem-count") options.gameWonGemCount = next();
     else if (arg === "--node-bin") options.nodeBin = next();
     else if (arg === "--vision") options.vision = true;
+    else if (arg === "--json-observation") options.observationMode = "json";
+    else if (arg === "--observation-mode") options.observationMode = next();
+    else if (arg === "--omniscient") options.omniscient = true;
+    else if (arg === "--hide-names") options.hideNames = true;
+    else if (arg === "--hide-names-seed") options.hideNamesSeed = next();
     else if (arg === "--vision-width") options.visionWidth = next();
     else if (arg === "--vision-height") options.visionHeight = next();
     else if (arg === "--vision-view") options.visionView = next();
@@ -111,6 +117,11 @@ start options:
   --game-won-gem-count <n>  unique gems for game_won (default 100)
   --vision                  render a PNG each turn; output includes frame_image
                             (path) and drops the ASCII board
+  --json-observation        return a structured JSON room observation instead
+                            of the ASCII board
+  --omniscient              include every room object in JSON mode
+  --hide-names              replace JSON object names except player/gem with
+                            stable random letter IDs for this run
   --vision-width <px>       vision frame width (default 512)
   --vision-height <px>      vision frame height (default 512)
   --vision-view <n|world>   how far the frame sees: 1-26 rings of neighbor
@@ -118,7 +129,7 @@ start options:
 }
 
 function bridgeArgs(session) {
-  return [
+  const args = [
     path.join(session.repoRoot, "scripts", "maze-bridge.js"),
     "--game", session.gameId || "maze",
     "--level", normalizeLevelId(session.levelId),
@@ -126,6 +137,19 @@ function bridgeArgs(session) {
     "--yaw", String(normalizeYaw(session.yaw)),
     "--game-won-gem-count", String(positiveInt(session.gameWonGemCount, 100))
   ];
+
+  if (session.observationMode === "json") {
+    args.push(
+      "--observation-mode",
+      "json",
+      "--hide-names-seed",
+      String(session.hideNamesSeed || "mazebench-json")
+    );
+    if (session.omniscient) args.push("--omniscient");
+    if (session.hideNames) args.push("--hide-names");
+  }
+
+  return args;
 }
 
 function runBridge(session, message) {
@@ -419,6 +443,13 @@ async function renderVisionFrame(session, turnIndex, stateFile) {
 async function emitStatus(session, response, turnIndex, stateFile) {
   const status = response.status || response;
 
+  if (session.observationMode === "json") {
+    const printable = { ...status, observation_mode: "json" };
+    delete printable.level;
+    console.log(JSON.stringify(printable, null, 2));
+    return true;
+  }
+
   if (!session.vision) {
     console.log(JSON.stringify(status, null, 2));
     return true;
@@ -447,6 +478,11 @@ async function main() {
   }
 
   if (command === "start") {
+    const observationMode = options.vision
+      ? "vision"
+      : options.observationMode === "json"
+        ? "json"
+        : "text";
     const session = {
       actions: [],
       allowQuit: options.allowQuit !== false,
@@ -455,9 +491,14 @@ async function main() {
       gameWonGemCount: positiveInt(options.gameWonGemCount, 100),
       levelId: normalizeLevelId(options.level),
       nodeBin: options.nodeBin || process.execPath,
+      observationMode,
+      omniscient: observationMode === "json" && Boolean(options.omniscient),
+      hideNames: observationMode === "json" && Boolean(options.hideNames),
+      hideNamesSeed:
+        String(options.hideNamesSeed || "").trim() || crypto.randomBytes(16).toString("hex"),
       repoRoot: options.repoRoot,
       view: options.view || "top-diagonal",
-      vision: Boolean(options.vision),
+      vision: observationMode === "vision",
       visionHeight: positiveInt(options.visionHeight, 512),
       visionView: normalizeVisionView(options.visionView),
       visionWidth: positiveInt(options.visionWidth, 512),
@@ -499,7 +540,12 @@ async function main() {
     // A scorecard is structured text, not a new observation. Rendering another
     // vision frame here wastes a browser boot and used to strand Chromium after
     // provider failures. Print it directly and release any existing daemon.
-    console.log(JSON.stringify(response.status || response, null, 2));
+    const printable = { ...(response.status || response) };
+    if (session.observationMode === "json") {
+      printable.observation_mode = "json";
+      delete printable.level;
+    }
+    console.log(JSON.stringify(printable, null, 2));
     // The scorecard marks the end of the run — release the render daemon's
     // headless browser instead of waiting out its idle timer.
     if (session.vision) await stopRenderDaemon(options.state);

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import select
+import secrets
 import signal
 import shlex
 import subprocess
@@ -54,10 +55,12 @@ DEFAULT_TIMEOUT_SECONDS = 20
 DEFAULT_MAX_TURNS = 40
 DEFAULT_MAX_ACTIONS = env_int("MAZEBENCH_MAX_ACTIONS", 256, minimum=1)
 DEFAULT_TARGET_GEMS = 0
+_configured_observation_mode = str(
+    os.environ.get("MAZEBENCH_OBSERVATION_MODE", "ascii")
+).lower()
 DEFAULT_OBSERVATION_MODE = (
-    "vision"
-    if str(os.environ.get("MAZEBENCH_OBSERVATION_MODE", "ascii")).lower()
-    == "vision"
+    _configured_observation_mode
+    if _configured_observation_mode in {"ascii", "json", "vision"}
     else "ascii"
 )
 DEFAULT_VISION_HEIGHT = 512
@@ -424,6 +427,46 @@ def render_vision_user_prompt(
     return "\n".join(line for line in lines if line is not None)
 
 
+def render_json_user_prompt(
+    *,
+    status: dict[str, Any],
+    target_text: str,
+    result_text: str,
+) -> str:
+    observation = status.get("json_observation") or {}
+    visited_rooms = status.get("visited_levels") or []
+    fields = player_fields(status.get("player"))
+    lines = [
+        result_text,
+        "",
+        f"Objective: {target_text}",
+        "",
+        f"Current room: `{status.get('current_room') or '?'}`",
+        f"Current view: {status.get('current_view') or '?'}",
+        f"Yaw: {status.get('yaw', 0)}",
+        (
+            "Player: "
+            f"x={fields['player_x']} y={fields['player_y']} "
+            f"elevation={fields['player_elevation']}"
+        ),
+        f"Gems collected: {status.get('gem_count', 0)}",
+        "Visited rooms: " + (", ".join(str(room) for room in visited_rooms) or "(none)"),
+        death_text(status),
+        "",
+        "The current room is represented by JSON, not an ASCII board. Object coordinates are [x,y,elevation]. Directional names are camera-relative.",
+        "```json",
+        json.dumps(observation, indent=2),
+        "```",
+        "",
+        "Allowed commands:",
+        allowed_commands_text(status),
+        "",
+        terminal_note_text(status),
+        response_instruction(status),
+    ]
+    return "\n".join(line for line in lines if line is not None)
+
+
 async def run_blocking(func: Any, /, *args: Any, **kwargs: Any) -> Any:
     """Run blocking subprocess/pipe I/O off the event loop so rollouts overlap."""
     loop = asyncio.get_running_loop()
@@ -568,6 +611,10 @@ class MazeSession:
         *,
         game_won_gem_count: int,
         level_id: str,
+        observation_mode: str,
+        omniscient: bool,
+        hide_names: bool,
+        hide_names_seed: str,
         node_bin: str,
         repo_root: str,
         timeout_seconds: int,
@@ -576,8 +623,7 @@ class MazeSession:
     ) -> None:
         self.repo_root = Path(repo_root)
         self.timeout_seconds = int(timeout_seconds)
-        self.process = subprocess.Popen(
-            [
+        command = [
                 node_bin,
                 str(self.repo_root / "scripts" / "maze-bridge.js"),
                 "--game-won-gem-count",
@@ -588,7 +634,15 @@ class MazeSession:
                 view,
                 "--yaw",
                 str(int(yaw)),
-            ],
+            ]
+        if observation_mode == "json":
+            command.extend(["--observation-mode", "json", "--hide-names-seed", hide_names_seed])
+            if omniscient:
+                command.append("--omniscient")
+            if hide_names:
+                command.append("--hide-names")
+        self.process = subprocess.Popen(
+            command,
             cwd=self.repo_root,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -971,6 +1025,7 @@ def slim_status(status: dict[str, Any] | None) -> dict[str, Any]:
         "game_lost",
         "game_won",
         "gem_count",
+        "json_observation",
         "moved",
         "novel_push_count",
         "novel_pushes_this_action",
@@ -1049,7 +1104,10 @@ class MazeBenchTask(vf.Task):
     max_actions: int = DEFAULT_MAX_ACTIONS
     node_bin: str = DEFAULT_NODE_BIN
     observation: str = ""
-    observation_mode: Literal["ascii", "vision"] = DEFAULT_OBSERVATION_MODE
+    observation_mode: Literal["ascii", "json", "vision"] = DEFAULT_OBSERVATION_MODE
+    omniscient: bool = False
+    hide_names: bool = False
+    hide_names_seed: str = ""
     repo_root: str = ""
     target_gems: int = DEFAULT_TARGET_GEMS
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
@@ -1079,7 +1137,9 @@ class MazeBenchConfig(vf.TasksetConfig):
     push_reward_weight: float = Field(DEFAULT_PUSH_REWARD_WEIGHT, ge=0)
     max_actions: int = Field(DEFAULT_MAX_ACTIONS, ge=1)
     node_bin: str = DEFAULT_NODE_BIN
-    observation_mode: Literal["ascii", "vision"] = DEFAULT_OBSERVATION_MODE
+    observation_mode: Literal["ascii", "json", "vision"] = DEFAULT_OBSERVATION_MODE
+    omniscient: bool = False
+    hide_names: bool = False
     repo_root: str | None = None
     target_gems: int = DEFAULT_TARGET_GEMS
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
@@ -1115,6 +1175,10 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
         self.session = MazeSession(
             game_won_gem_count=task.game_won_gem_count,
             level_id=task.level_id,
+            observation_mode=task.observation_mode,
+            omniscient=task.omniscient,
+            hide_names=task.hide_names,
+            hide_names_seed=task.hide_names_seed,
             node_bin=task.node_bin,
             repo_root=task.repo_root or str(find_bridge_root()),
             timeout_seconds=task.timeout_seconds,
@@ -1153,11 +1217,23 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
     async def build_user_message(self, status: dict[str, Any], result_text: str) -> vf.Messages:
         task = self.task
         target_text = target_text_for_row(task.model_dump())
-        if task.observation_mode != "vision":
+        if task.observation_mode == "ascii":
             return [
                 {
                     "role": "user",
                     "content": render_multiturn_user_prompt(
+                        status=status,
+                        target_text=target_text,
+                        result_text=result_text,
+                    ),
+                }
+            ]
+
+        if task.observation_mode == "json":
+            return [
+                {
+                    "role": "user",
+                    "content": render_json_user_prompt(
                         status=status,
                         target_text=target_text,
                         result_text=result_text,
@@ -1346,6 +1422,9 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
                 node_bin=str(row["node_bin"]),
                 observation=str(row["observation"]),
                 observation_mode=self.config.observation_mode,
+                omniscient=bool(self.config.omniscient),
+                hide_names=bool(self.config.hide_names),
+                hide_names_seed=secrets.token_hex(16),
                 repo_root=str(row["repo_root"]),
                 target_gems=int(row["target_gems"]),
                 timeout_seconds=int(row["timeout_seconds"]),

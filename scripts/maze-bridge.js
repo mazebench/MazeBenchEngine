@@ -4,6 +4,7 @@ const readline = require("node:readline");
 
 const {
   applyMove,
+  buildJsonObservation,
   buildScorecard,
   createTerminalContext,
   GAME_WON_GEM_COUNT,
@@ -78,6 +79,10 @@ function parseArgs(argv) {
     gameId: "maze",
     gameWonGemCount: GAME_WON_GEM_COUNT,
     levelId: "level_HxI",
+    observationMode: "text",
+    omniscient: false,
+    hideNames: false,
+    hideNamesSeed: "mazebench-json",
     pitch: 1,
     yaw: 0
   };
@@ -98,6 +103,14 @@ function parseArgs(argv) {
       options.pitch = clampPitch(Number(next()));
     } else if (arg === "--yaw") {
       options.yaw = normalizeYaw(Number(next()));
+    } else if (arg === "--observation-mode") {
+      options.observationMode = next() === "json" ? "json" : "text";
+    } else if (arg === "--omniscient") {
+      options.omniscient = true;
+    } else if (arg === "--hide-names") {
+      options.hideNames = true;
+    } else if (arg === "--hide-names-seed") {
+      options.hideNamesSeed = next() || "mazebench-json";
     } else if (arg === "--help" || arg === "-h") {
       process.stdout.write(`Usage: node scripts/maze-bridge.js [options]
 
@@ -108,6 +121,12 @@ Options:
   --view <name>      top, top-diagonal, diagonal, side-diagonal, or side.
   --pitch <0-4>      Camera pitch; 0 is top-down, 4 is side.
   --yaw <0-3>        Camera yaw rotation.
+  --observation-mode <text|json>
+                     Choose the model-facing board representation.
+  --omniscient       Include every room object in JSON observations.
+  --hide-names       Replace JSON object names (except player/gem) with letters.
+  --hide-names-seed <value>
+                     Stable per-run seed for hidden object names.
 
 Commands are JSON lines on stdin:
   {"command":"observe"}
@@ -420,7 +439,7 @@ function sessionSnapshot(session, extra = {}) {
     terminalExtra.scorecard = sessionScorecard(session);
   }
 
-  return {
+  const snapshot = {
     ok: true,
     action_count: session.actionCount,
     allowed_commands: allowedCommandsForContext(context),
@@ -440,6 +459,16 @@ function sessionSnapshot(session, extra = {}) {
     _render_state: renderStateSnapshot(session),
     ...terminalExtra
   };
+
+  if (session.initialOptions.observationMode === "json") {
+    snapshot.json_observation = buildJsonObservation(context, {
+      hideNames: session.initialOptions.hideNames,
+      hideNamesSeed: session.initialOptions.hideNamesSeed,
+      omniscient: session.initialOptions.omniscient
+    });
+  }
+
+  return snapshot;
 }
 
 function createSession(options) {

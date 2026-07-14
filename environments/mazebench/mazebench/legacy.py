@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from typing import Any
 
 from datasets import Dataset
@@ -41,6 +42,7 @@ from .mazebench import (
     parse_level_ids,
     parse_text_action,
     record_maze_action,
+    render_json_user_prompt,
     render_multiturn_user_prompt,
     scorecard_text,
     set_maze_scorecard,
@@ -172,13 +174,36 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
         self,
         *,
         allow_quit: bool,
+        observation_mode: str,
+        omniscient: bool,
+        hide_names: bool,
         max_actions: int,
         rubric: vf.Rubric,
         **kwargs: Any,
     ) -> None:
         super().__init__(max_turns=-1, rubric=rubric, **kwargs)
         self.allow_quit = bool(allow_quit)
+        self.observation_mode = str(observation_mode)
+        self.omniscient = bool(omniscient)
+        self.hide_names = bool(hide_names)
         self.max_actions = max(1, int(max_actions))
+
+    def status_prompt(
+        self,
+        row: dict[str, Any],
+        status: dict[str, Any],
+        result_text: str,
+    ) -> str:
+        renderer = (
+            render_json_user_prompt
+            if self.observation_mode == "json"
+            else render_multiturn_user_prompt
+        )
+        return renderer(
+            status=status,
+            target_text=target_text_for_row(row),
+            result_text=result_text,
+        )
 
     async def get_prompt_messages(self, state: vf.State) -> vf.Messages:
         if not state["trajectory"]:
@@ -212,6 +237,10 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
         session = MazeSession(
             game_won_gem_count=int(row.get("game_won_gem_count") or GAME_WON_GEM_COUNT),
             level_id=str(row.get("level_id") or DEFAULT_START_LEVEL_ID),
+            observation_mode=self.observation_mode,
+            omniscient=self.omniscient,
+            hide_names=self.hide_names,
+            hide_names_seed=secrets.token_hex(16),
             node_bin=str(row.get("node_bin") or DEFAULT_NODE_BIN),
             repo_root=str(row.get("repo_root") or find_bridge_root()),
             timeout_seconds=int(row.get("timeout_seconds") or DEFAULT_TIMEOUT_SECONDS),
@@ -221,6 +250,12 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
         state["maze_session"] = session
         status = apply_quit_policy(session.request("observe"), self.allow_quit)
         state["maze_status"] = status
+        state["prompt"] = [
+            {
+                "role": "user",
+                "content": self.status_prompt(row, status, "Start of run."),
+            }
+        ]
         state["maze_replay"] = {
             "game_id": row.get("game_id") or DEFAULT_GAME_ID,
             "game_won_gem_count": int(row.get("game_won_gem_count") or GAME_WON_GEM_COUNT),
@@ -295,11 +330,7 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
         else:
             response = [
                 vf.UserMessage(
-                    content=render_multiturn_user_prompt(
-                        status=status,
-                        target_text=target_text_for_row(row),
-                        result_text=result_text,
-                    )
+                    content=self.status_prompt(row, status, result_text)
                 )
             ]
 
@@ -348,6 +379,8 @@ def load_environment(
     max_turns: int | None = None,
     allow_quit: bool | None = None,
     observation_mode: str | None = None,
+    omniscient: bool = False,
+    hide_names: bool = False,
     node_bin: str = DEFAULT_NODE_BIN,
     repo_root: str | None = None,
     target_gems: int = DEFAULT_TARGET_GEMS,
@@ -355,10 +388,10 @@ def load_environment(
     system_prompt: str | None = None,
     **kwargs: Any,
 ) -> vf.Environment:
-    """Load the hosted-compatible ASCII MazeBench environment."""
+    """Load the hosted-compatible ASCII or JSON MazeBench environment."""
     mode = str(observation_mode or os.environ.get("MAZEBENCH_OBSERVATION_MODE") or "ascii").lower()
-    if mode != "ascii":
-        raise ValueError("Hosted Training currently supports MazeBench ASCII observations only.")
+    if mode not in {"ascii", "json"}:
+        raise ValueError("Hosted Training supports MazeBench ASCII and JSON observations.")
 
     resolved_start = str(start_level_id or os.environ.get("MAZEBENCH_START_LEVEL_ID") or DEFAULT_START_LEVEL_ID)
     resolved_win_count = int(
@@ -431,6 +464,9 @@ def load_environment(
         eval_dataset=Dataset.from_list(eval_rows),
         system_prompt=system_prompt or MULTITURN_SYSTEM_PROMPT,
         allow_quit=resolved_allow_quit,
+        observation_mode=mode,
+        omniscient=bool(omniscient),
+        hide_names=bool(hide_names),
         max_actions=resolved_max_actions,
         rubric=rubric,
         **kwargs,

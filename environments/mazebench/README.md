@@ -15,6 +15,7 @@ Models navigate a real JavaScript maze world one action at a time, preserve stat
 | Capability | Hosted Training | Local evaluation |
 | --- | --- | --- |
 | ASCII observations | Supported | Supported |
+| JSON object observations | Supported | Supported |
 | Gem, room, and block rewards | Supported | Supported |
 | Configurable start room, view, yaw, and action limit | Supported | Supported |
 | Replay state and per-action metadata | Supported | Supported |
@@ -200,7 +201,9 @@ Prime CLI 0.6.x passes these settings under `[env.args]` to MazeBench's hosted c
 | `max_actions` | integer | `256` | Maximum accepted MazeBench actions. |
 | `allow_quit` | boolean | `true` | Whether `quit` may end the rollout. |
 | `target_gems` | integer | `0` | Optional gem-score normalization target. `0` uses raw gem count. |
-| `observation_mode` | `ascii` or `vision` | `ascii` | Observation surface. Hosted Training should currently use `ascii`. |
+| `observation_mode` | `ascii`, `json`, or `vision` | `ascii` | Observation surface. Hosted Training supports `ascii` and `json`. |
+| `omniscient` | boolean | `false` | JSON mode includes every object in the current room instead of only ASCII-visible objects. |
+| `hide_names` | boolean | `false` | JSON mode replaces object names except `player` and `gem` with stable per-rollout letter IDs. |
 | `repo_root` | string or null | `None` | Optional MazeBench runtime override. |
 | `node_bin` | string | `node` | Node executable used by the JS bridge. |
 | `timeout_seconds` | integer | `20` | Timeout for JS observation and scoring calls. |

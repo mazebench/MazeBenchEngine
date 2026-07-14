@@ -5,6 +5,7 @@ const path = require("node:path");
 const root = path.join(__dirname, "..");
 const pages = fs.readFileSync(path.join(root, "server", "pages.js"), "utf8");
 const runScript = fs.readFileSync(path.join(root, "public", "agent-run.js"), "utf8");
+const agentScript = fs.readFileSync(path.join(root, "public", "agent.js"), "utf8");
 const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "utf8");
 
 assert.match(pages, /id="run-meta" class="run-config" aria-label="Launch configuration"/);
@@ -26,6 +27,37 @@ for (const label of [
 ]) {
   assert.match(runScript, new RegExp(`\\["${label}"`), `missing ${label} launch parameter`);
 }
+assert.match(pages, /data-mode="json"/);
+assert.match(pages, /data-json-option="omniscient"/);
+assert.equal(
+  (pages.match(/Omniscient mode reveals all blocks, even ones obstructed from view/g) || []).length,
+  2
+);
+for (const pickerId of ["mode-picker", "prime-mode-picker"]) {
+  const pickerStart = pages.indexOf(`id="${pickerId}"`);
+  const pickerEnd = pages.indexOf("</div>", pickerStart);
+  const picker = pages.slice(pickerStart, pickerEnd);
+  assert.ok(picker.indexOf('data-mode="vision"') < picker.indexOf('data-mode="text"'));
+  assert.ok(picker.indexOf('data-mode="text"') < picker.indexOf('data-mode="json"'));
+}
+assert.match(pages, /class="json-mode-info"[^>]+aria-label="About Omniscient mode"/);
+assert.match(agentScript, /picker\.classList\.toggle\("is-second", mode === "text"\)/);
+assert.match(agentScript, /picker\.classList\.toggle\("is-third", mode === "json"\)/);
+assert.match(agentScript, /tweenResize\(card, \(\) => \{\s*options\.hidden = !show;/);
+assert.match(siteTheme, /\.json-mode-info__tooltip \{/);
+assert.match(pages, /data-json-option="hideNames"/);
+assert.match(agentScript, /omniscient: state\.mode === "json" && state\.omniscient/);
+assert.match(agentScript, /hide_names: state\.mode === "json" && state\.hideNames/);
+assert.match(runScript, /function showJsonObservation\(observation, turn = null\)/);
+assert.match(pages, /ASCII view — the model does not see this/);
+assert.match(pages, /JSON observation — this is what the model sees/);
+assert.match(pages, /id="run-json"/);
+assert.match(runScript, /let jsonEl = document\.getElementById\("run-json"\)/);
+assert.match(runScript, /liveGrid\?\.classList\.add\("is-json-mode"\)/);
+assert.match(runScript, /function refreshLatestJsonObservation\(\)/);
+assert.match(siteTheme, /\.run-live__grid\.is-json-mode \{[\s\S]*?repeat\(3/);
+assert.match(runScript, /\["JSON visibility"/);
+assert.match(runScript, /\["Object names"/);
 assert.match(runScript, /run\.model === "codex" && Object\.prototype\.hasOwnProperty\.call\(params, "codex_fast"\)/);
 assert.doesNotMatch(runScript, /`run \$\{run\.id\}`/);
 assert.match(runScript, /class="run-config__item\$\{active \? " is-active" : ""\}"/);

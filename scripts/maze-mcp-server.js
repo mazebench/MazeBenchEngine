@@ -154,6 +154,10 @@ function startMaze() {
     );
     const visionView = String(process.env.MAZEBENCH_VISION_VIEW || "").trim();
     if (visionView) args.push("--vision-view", visionView);
+  } else if (process.env.MAZEBENCH_MODE === "json") {
+    args.push("--json-observation");
+    if (process.env.MAZEBENCH_OMNISCIENT === "1") args.push("--omniscient");
+    if (process.env.MAZEBENCH_HIDE_NAMES === "1") args.push("--hide-names");
   }
   if (!ALLOW_QUIT) args.push("--no-quit");
   return runHelper(args);
@@ -306,7 +310,9 @@ function createWorker(requestedId, options = {}) {
     owner_kind: ownerKind,
     owner_agent_id: String(options.ownerAgentId || requestedId || id).slice(0, 80),
     label: String(options.label || requestedId || id).slice(0, 120),
-    observation_mode: process.env.MAZEBENCH_MODE === "vision" ? "vision" : "text"
+    observation_mode: ["json", "vision"].includes(process.env.MAZEBENCH_MODE)
+      ? process.env.MAZEBENCH_MODE
+      : "text"
   };
   fs.writeFileSync(path.join(directory, "worker.json"), `${JSON.stringify(metadata, null, 2)}\n`);
   writeJson(path.join(directory, "telemetry.json"), {

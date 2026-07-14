@@ -37,6 +37,7 @@ assert.match(siteTheme, /\.replay-control__icon \{[\s\S]*?pointer-events: none/)
 assert.match(siteTheme, /\.replay-control \{[\s\S]*?min-height: 40px/);
 assert.match(siteTheme, /\.run-live__grid \{[\s\S]*?align-items: stretch/);
 assert.match(siteTheme, /\.run-live__board \.agent-board \{[\s\S]*?height: 100%/);
+assert.match(siteTheme, /\.run-live__json \.agent-board \{[\s\S]*?overflow: auto/);
 assert.doesNotMatch(siteTheme, /\.run-live__grid\.is-text-history \.run-live__viewer/);
 assert.match(siteTheme, /\.replay-rate input \{/);
 assert.doesNotMatch(siteTheme, /\.replay-rate select \{/);

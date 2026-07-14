@@ -85,6 +85,8 @@
     worldId: null,
     levelId: null, // null = use the world's default from its metadata
     mode: null,
+    omniscient: false,
+    hideNames: false,
     isolation: null,
     toolUse: null,
     orchestration: null,
@@ -939,7 +941,7 @@
 
   // ---- run settings ---------------------------------------------------------
 
-  // Text/Vision segmented control. Both the local #mode-picker and the Prime
+  // Vision/ASCII/JSON segmented control. Both the local #mode-picker and the Prime
   // #prime-mode-picker drive the same state.mode, so selecting in one syncs the
   // visual state of both.
   function syncRunSettingCards() {
@@ -973,7 +975,21 @@
     });
     document.querySelectorAll("#mode-picker, #prime-mode-picker").forEach((picker) => {
       picker.classList.toggle("has-selection", Boolean(mode));
-      picker.classList.toggle("is-second", mode === "vision");
+      picker.classList.toggle("is-second", mode === "text");
+      picker.classList.toggle("is-third", mode === "json");
+    });
+    document.querySelectorAll(".json-mode-options").forEach((options) => {
+      const show = mode === "json";
+      const card = options.closest(".setting-card--observation");
+      tweenResize(card, () => {
+        options.hidden = !show;
+      }, 440);
+    });
+    document.querySelectorAll('[data-json-option="omniscient"]').forEach((input) => {
+      input.checked = state.omniscient;
+    });
+    document.querySelectorAll('[data-json-option="hideNames"]').forEach((input) => {
+      input.checked = state.hideNames;
     });
     syncRunSettingCards();
     if (syncSteps) syncComposerSteps();
@@ -983,6 +999,14 @@
     option.addEventListener("click", () => {
       if (option.disabled) return;
       setMode(option.dataset.mode);
+    });
+  });
+
+  document.querySelectorAll("[data-json-option]").forEach((input) => {
+    input.addEventListener("change", () => {
+      if (input.dataset.jsonOption === "omniscient") state.omniscient = input.checked;
+      if (input.dataset.jsonOption === "hideNames") state.hideNames = input.checked;
+      setMode(state.mode, false);
     });
   });
 
@@ -1261,7 +1285,10 @@
             kind: "prime",
             model_name: resolvedModelName(),
             max_turns: moveBudget(),
+            mode: state.mode,
             vision: state.mode === "vision",
+            omniscient: state.mode === "json" && state.omniscient,
+            hide_names: state.mode === "json" && state.hideNames,
             reasoning: state.reasoning,
             allow_quit: state.allowQuit,
             video: false
@@ -1275,6 +1302,8 @@
             unlimited: state.unlimited,
             allow_quit: state.allowQuit,
             mode: state.mode,
+            omniscient: state.mode === "json" && state.omniscient,
+            hide_names: state.mode === "json" && state.hideNames,
             vision_view: "",
             model_name: resolvedModelName(),
             reasoning: state.provider === "codex" || state.provider === "claude" ? state.reasoning : "",

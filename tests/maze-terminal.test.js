@@ -7,9 +7,11 @@ const path = require("node:path");
 const ROOT_DIR = path.resolve(__dirname, "..");
 const terminalScript = path.join(ROOT_DIR, "scripts", "maze-terminal.js");
 const bridgeScript = path.join(ROOT_DIR, "scripts", "maze-bridge.js");
+const codexPlayScript = path.join(ROOT_DIR, "scripts", "codex-play.js");
 const modelReplScript = path.join(ROOT_DIR, "scripts", "maze-model-repl.js");
 const {
   applyMove,
+  buildJsonObservation,
   buildScorecard,
   createTerminalContext,
   GAME_WON_GEM_COUNT,
@@ -59,6 +61,14 @@ function runModelRepl(input, args = []) {
     input,
     maxBuffer: 20 * 1024 * 1024
   });
+}
+
+function runCodexPlay(args) {
+  return JSON.parse(execFileSync(process.execPath, [codexPlayScript, ...args], {
+    cwd: ROOT_DIR,
+    encoding: "utf8",
+    maxBuffer: 20 * 1024 * 1024
+  }));
 }
 
 function body(output) {
@@ -121,6 +131,18 @@ function renderSynthetic(playData, overrides = {}) {
   });
 }
 
+function syntheticContext(playData, overrides = {}) {
+  const engine = mazeEngine.createEngine(playData);
+  return {
+    engine,
+    level: { id: playData.levelId },
+    options: { pitch: 1, yaw: 0, ...overrides },
+    playData,
+    state: engine.cloneState(engine.initialState),
+    stats: null
+  };
+}
+
 function syntheticFloor(width, height) {
   return Array.from({ length: height }, () =>
     Array.from({ length: width }, () => ({
@@ -131,6 +153,121 @@ function syntheticFloor(width, height) {
       raised: false
     }))
   );
+}
+
+{
+  const terrain = syntheticFloor(2, 1);
+  terrain[0][0] = {
+    type: "ice_slope",
+    layers: [{ type: "ice_slope", direction: "up", elevation: 0 }]
+  };
+  const playData = {
+    actors: [
+      { type: "puncher", direction: "up", x: 1, y: 0, removed: false, elevation: 0 }
+    ],
+    gameId: "maze",
+    height: 1,
+    levelId: "json_directions",
+    terrain,
+    width: 2
+  };
+  const context = syntheticContext(playData, { pitch: 0 });
+  const expected = ["up", "right", "down", "left"];
+
+  expected.forEach((direction, yaw) => {
+    context.options.yaw = yaw;
+    const observation = buildJsonObservation(context, { omniscient: true });
+    assert.deepEqual(observation.objects[`ice_slope_${direction}`], [[0, 0, 0]]);
+    assert.deepEqual(observation.objects[`puncher_${direction}`], [[1, 0, 0]]);
+  });
+}
+
+{
+  const playData = {
+    actors: [
+      { type: "box", x: 0, y: 0, removed: false, elevation: 0 },
+      { type: "player", x: 0, y: 1, removed: false, elevation: 0 }
+    ],
+    gameId: "maze",
+    height: 2,
+    levelId: "json_clipped_actor",
+    terrain: syntheticFloor(1, 2),
+    width: 1
+  };
+  const observation = buildJsonObservation(syntheticContext(playData, { pitch: 3 }), {
+    omniscient: false
+  });
+
+  // Only one four-character row of the rear box survives, but that is enough.
+  assert.deepEqual(observation.objects.box, [[0, 0, 0]]);
+}
+
+{
+  const terrain = syntheticFloor(1, 2);
+  terrain[1][0] = { type: "tree", layers: [{ type: "tree", elevation: 0 }] };
+  const playData = {
+    actors: [
+      { type: "box", x: 0, y: 0, removed: false, elevation: 0 },
+      { type: "player", x: 0, y: 1, removed: false, elevation: 0 }
+    ],
+    gameId: "maze",
+    height: 2,
+    levelId: "json_occluded_actor",
+    terrain,
+    width: 1
+  };
+  const context = syntheticContext(playData, { pitch: 2 });
+  const limited = buildJsonObservation(context, { omniscient: false });
+  const omniscient = buildJsonObservation(context, { omniscient: true });
+
+  assert.equal(limited.objects.box, undefined);
+  assert.deepEqual(omniscient.objects.box, [[0, 0, 0]]);
+}
+
+{
+  const terrain = [[
+    { type: "empty", label: "Empty" },
+    { type: "floor", label: "Floor" },
+    { type: "floor", label: "Floor" }
+  ]];
+  const playData = {
+    actors: [
+      { type: "player", x: 2, y: 0, removed: false, elevation: 0 },
+      { type: "gem", x: 1, y: 0, removed: false, elevation: 0 }
+    ],
+    gameId: "maze",
+    height: 1,
+    levelId: "json_empty_and_hidden_names",
+    terrain,
+    width: 3
+  };
+  const context = syntheticContext(playData, { pitch: 0 });
+  const visible = buildJsonObservation(context, { omniscient: false });
+  const hiddenA = buildJsonObservation(context, {
+    omniscient: true,
+    hideNames: true,
+    hideNamesSeed: "run-a"
+  });
+  const hiddenAAgain = buildJsonObservation(context, {
+    omniscient: true,
+    hideNames: true,
+    hideNamesSeed: "run-a"
+  });
+  const hiddenB = buildJsonObservation(context, {
+    omniscient: true,
+    hideNames: true,
+    hideNamesSeed: "run-b"
+  });
+
+  assert.deepEqual(visible.objects.empty, [[0, 0, 0]]);
+  assert.deepEqual(hiddenA, hiddenAAgain);
+  assert.deepEqual(hiddenA.objects.player, [[2, 0, 0]]);
+  assert.deepEqual(hiddenA.objects.gem, [[1, 0, 0]]);
+  assert.equal(
+    Object.keys(hiddenA.objects).every((name) => ["player", "gem"].includes(name) || /^[A-Za-z]$/.test(name)),
+    true
+  );
+  assert.notDeepEqual(Object.keys(hiddenA.objects).sort(), Object.keys(hiddenB.objects).sort());
 }
 
 {
@@ -636,6 +773,67 @@ function syntheticFloor(width, height) {
 
   assert.equal(closed.action, "close");
   assert.equal(closed.ok, true);
+}
+
+{
+  const [initial, rotated] = runBridge(
+    [
+      { command: "observe" },
+      { command: "rotate_camera", direction: "right" },
+      { command: "close" }
+    ],
+    [
+      "--level", "level_HxI",
+      "--view", "top-diagonal",
+      "--observation-mode", "json",
+      "--omniscient",
+      "--hide-names",
+      "--hide-names-seed", "bridge-run"
+    ]
+  );
+
+  assert.equal(initial.json_observation.observation_mode, "json");
+  assert.equal(initial.json_observation.omniscient, true);
+  assert.equal(initial.json_observation.hide_names, true);
+  assert.equal(initial.json_observation.objects.player.length > 0, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(initial, "level"), true);
+  assert.equal(rotated.json_observation.camera.yaw, 1);
+  assert.equal(rotated.json_observation.objects.player.length > 0, true);
+  assert.equal(
+    Object.keys(rotated.json_observation.objects).every(
+      (name) => ["player", "gem"].includes(name) || /^[A-Za-z]$/.test(name)
+    ),
+    true
+  );
+}
+
+{
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "maze-json-helper-"));
+  const stateFile = path.join(outDir, "session.json");
+
+  try {
+    const initial = runCodexPlay([
+      "start",
+      "--repo-root", ROOT_DIR,
+      "--state", stateFile,
+      "--level", "level_HxI",
+      "--json-observation",
+      "--omniscient",
+      "--hide-names"
+    ]);
+    const observed = runCodexPlay(["observe", "--state", stateFile]);
+    const session = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+
+    assert.equal(initial.observation_mode, "json");
+    assert.equal(Object.prototype.hasOwnProperty.call(initial, "level"), false);
+    assert.equal(initial.json_observation.omniscient, true);
+    assert.equal(initial.json_observation.hide_names, true);
+    assert.deepEqual(initial.json_observation.objects, observed.json_observation.objects);
+    assert.equal(typeof session.hideNamesSeed, "string");
+    assert.equal(session.hideNamesSeed.length, 32);
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
 }
 
 {

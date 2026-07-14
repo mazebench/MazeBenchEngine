@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
@@ -141,6 +142,35 @@ const UNKNOWN_GLYPHS = {
 };
 const DEFAULT_WORLD_AXIS = Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
 const WORLD_LEVEL_PATTERN = /^level_([A-Z])x([A-Z])$/;
+const JSON_OBJECT_NAME_UNIVERSE = Object.freeze([
+  "block_asset",
+  "box",
+  "clone",
+  "empty",
+  "exit",
+  "floor",
+  "floating_floor",
+  "hole",
+  "ice",
+  "ice_block",
+  "ice_slope_down",
+  "ice_slope_left",
+  "ice_slope_right",
+  "ice_slope_up",
+  "orange_button",
+  "orange_wall",
+  "player_gate",
+  "player_lift",
+  "puncher_down",
+  "puncher_left",
+  "puncher_right",
+  "puncher_up",
+  "shrub",
+  "tree",
+  "wall",
+  "weightless_box"
+]);
+const HIDDEN_NAME_ALPHABET = Array.from("ABCDEFGHJKLMNOQRSTUVWXYZabcdefghijklmnoqrstuvwxyz");
 
 function assertUniqueGlyphPairs(groups) {
   const used = new Map();
@@ -835,6 +865,19 @@ function terrainLayersAt(playData, state, typeNames, x, y) {
   return type && type !== "empty" ? [{ elevation: 0, type }] : [];
 }
 
+function semanticTerrainLayersAt(playData, state, typeNames, x, y) {
+  const layers = terrainLayersAt(playData, state, typeNames, x, y);
+  return layers.length > 0 ? layers : [{ elevation: 0, type: "empty" }];
+}
+
+function terrainObjectId(x, y, layerIndex) {
+  return `terrain:${x}:${y}:${layerIndex}`;
+}
+
+function actorObjectId(index) {
+  return `actor:${index}`;
+}
+
 function normalizeDirection(value) {
   const direction = String(value || "").toLowerCase();
   return ["down", "left", "right", "up"].includes(direction) ? direction : "";
@@ -1480,7 +1523,7 @@ function terrainTopAt(playData, state, typeNames, x, y) {
 
 function terrainBlocksAt(playData, state, typeNames, x, y) {
   return terrainLayersAt(playData, state, typeNames, x, y)
-    .map((layer) => {
+    .map((layer, layerIndex) => {
       const type = layer.type || "empty";
 
       if (type === "empty" || type === "hole") {
@@ -1495,6 +1538,7 @@ function terrainBlocksAt(playData, state, typeNames, x, y) {
       return {
         bottom,
         letter: glyph.top,
+        objectId: terrainObjectId(x, y, layerIndex),
         sideLetter: glyph.side,
         top,
         type
@@ -1540,6 +1584,7 @@ function actorRows(playData, engine, state, yaw) {
       displayY: display.y,
       elevation: state.actorElevation[index] || 0,
       letter: glyph.top,
+      objectId: actorObjectId(index),
       sideLetter: glyph.side
     };
 
@@ -1553,7 +1598,7 @@ function actorRows(playData, engine, state, yaw) {
   return rows;
 }
 
-function drawRect(canvas, left, top, width, height, letter) {
+function drawRect(canvas, left, top, width, height, letter, ownerCanvas = null, ownerId = "") {
   if (width <= 0 || height <= 0) {
     return;
   }
@@ -1562,12 +1607,24 @@ function drawRect(canvas, left, top, width, height, letter) {
     for (let x = left; x < left + width; x += 1) {
       if (canvas[y]?.[x] !== undefined) {
         canvas[y][x] = letter;
+        if (ownerCanvas && ownerId) {
+          ownerCanvas[y][x] = ownerId;
+        }
       }
     }
   }
 }
 
-function drawRectIfBlank(canvas, left, top, width, height, letter) {
+function drawRectIfBlank(
+  canvas,
+  left,
+  top,
+  width,
+  height,
+  letter,
+  ownerCanvas = null,
+  ownerId = ""
+) {
   if (width <= 0 || height <= 0) {
     return;
   }
@@ -1576,12 +1633,38 @@ function drawRectIfBlank(canvas, left, top, width, height, letter) {
     for (let x = left; x < left + width; x += 1) {
       if (canvas[y]?.[x] === " ") {
         canvas[y][x] = letter;
+        if (ownerCanvas && ownerId) {
+          ownerCanvas[y][x] = ownerId;
+        }
       }
     }
   }
 }
 
-function drawTerrainTopForLevel(canvas, block, screenX, baseY, topRows, sideRows, level) {
+function markBlankOwnerRect(canvas, ownerCanvas, left, top, width, height, ownerId) {
+  if (!ownerCanvas || !ownerId || width <= 0 || height <= 0) {
+    return;
+  }
+
+  for (let y = top; y < top + height; y += 1) {
+    for (let x = left; x < left + width; x += 1) {
+      if (canvas[y]?.[x] === " ") {
+        ownerCanvas[y][x] = ownerId;
+      }
+    }
+  }
+}
+
+function drawTerrainTopForLevel(
+  canvas,
+  block,
+  screenX,
+  baseY,
+  topRows,
+  sideRows,
+  level,
+  ownerCanvas = null
+) {
   if (block.top !== level) {
     return;
   }
@@ -1592,11 +1675,23 @@ function drawTerrainTopForLevel(canvas, block, screenX, baseY, topRows, sideRows
     baseY - block.top * sideRows,
     TILE_GRANULARITY,
     topRows,
-    block.letter
+    block.letter,
+    ownerCanvas,
+    block.objectId
   );
 }
 
-function drawTerrainSideForLevel(canvas, block, screenX, baseY, topRows, sideRows, frontHeight, level) {
+function drawTerrainSideForLevel(
+  canvas,
+  block,
+  screenX,
+  baseY,
+  topRows,
+  sideRows,
+  frontHeight,
+  level,
+  ownerCanvas = null
+) {
   if (sideRows <= 0) {
     return;
   }
@@ -1613,7 +1708,9 @@ function drawTerrainSideForLevel(canvas, block, screenX, baseY, topRows, sideRow
       baseY - (level + 1) * sideRows + topRows,
       TILE_GRANULARITY,
       (level + 1 - exposedBottom) * sideRows,
-      block.sideLetter
+      block.sideLetter,
+      ownerCanvas,
+      block.objectId
     );
     return;
   }
@@ -1629,7 +1726,9 @@ function drawTerrainSideForLevel(canvas, block, screenX, baseY, topRows, sideRow
     baseY - block.top * sideRows + topRows,
     TILE_GRANULARITY,
     (block.top - exposedBottom) * sideRows,
-    block.sideLetter
+    block.sideLetter,
+    ownerCanvas,
+    block.objectId
   );
 }
 
@@ -1656,6 +1755,7 @@ function actorCells(playData, engine, state, yaw) {
       displayY: display.y,
       elevation: state.actorElevation[index] || 0,
       letter: glyph.top,
+      objectId: actorObjectId(index),
       sideLetter: glyph.side
     };
 
@@ -1669,7 +1769,11 @@ function actorCells(playData, engine, state, yaw) {
   return cells;
 }
 
-function renderAsciiSide(playData, engine, state, options) {
+function visibleObjectIdsFromOwnerCanvas(ownerCanvas) {
+  return new Set(ownerCanvas ? ownerCanvas.flat().filter(Boolean) : []);
+}
+
+function renderAsciiSideScene(playData, engine, state, options, trackOwners = false) {
   const yaw = normalizeYaw(options.yaw);
   const typeNames = terrainTypeNameByValue(engine.terrainTypes);
   const dimensions = displayDimensions(playData, yaw);
@@ -1685,6 +1789,9 @@ function renderAsciiSide(playData, engine, state, options) {
   const width = dimensions.width * TILE_GRANULARITY;
   const height = baseline + 1;
   const canvas = Array.from({ length: height }, () => Array.from({ length: width }, () => " "));
+  const ownerCanvas = trackOwners
+    ? Array.from({ length: height }, () => Array.from({ length: width }, () => ""))
+    : null;
   const actorsByCell = actorCells(playData, engine, state, yaw);
 
   for (let displayY = dimensions.height - 1; displayY >= 0; displayY -= 1) {
@@ -1703,10 +1810,21 @@ function renderAsciiSide(playData, engine, state, options) {
             baseline - block.top * TILE_GRANULARITY,
             TILE_GRANULARITY,
             (block.top - block.bottom) * TILE_GRANULARITY,
-            letter
+            letter,
+            ownerCanvas,
+            block.objectId
           );
         } else {
-          drawRectIfBlank(canvas, screenX, baseline, TILE_GRANULARITY, 1, letter);
+          drawRectIfBlank(
+            canvas,
+            screenX,
+            baseline,
+            TILE_GRANULARITY,
+            1,
+            letter,
+            ownerCanvas,
+            block.objectId
+          );
         }
       });
 
@@ -1720,16 +1838,21 @@ function renderAsciiSide(playData, engine, state, options) {
             baseline - (actor.elevation + 1) * TILE_GRANULARITY,
             TILE_GRANULARITY,
             TILE_GRANULARITY,
-            actor.sideLetter
+            actor.sideLetter,
+            ownerCanvas,
+            actor.objectId
           );
         });
     }
   }
 
-  return trimCanvasRows(canvas.map((row) => row.join("")));
+  return {
+    text: trimCanvasRows(canvas.map((row) => row.join(""))),
+    visibleObjectIds: visibleObjectIdsFromOwnerCanvas(ownerCanvas)
+  };
 }
 
-function renderAsciiLayered(playData, engine, state, options) {
+function renderAsciiLayeredScene(playData, engine, state, options, trackOwners = false) {
   const yaw = normalizeYaw(options.yaw);
   const pitch = clampPitch(options.pitch);
   const typeNames = terrainTypeNameByValue(engine.terrainTypes);
@@ -1753,6 +1876,9 @@ function renderAsciiLayered(playData, engine, state, options) {
     Math.max(1, sideRows) +
     2;
   const canvas = Array.from({ length: height }, () => Array.from({ length: width }, () => " "));
+  const ownerCanvas = trackOwners
+    ? Array.from({ length: height }, () => Array.from({ length: width }, () => ""))
+    : null;
   const actorsByRow = actorRows(playData, engine, state, yaw);
   const maxSceneHeight = Math.max(maxTerrainHeight, maxActorHeight);
 
@@ -1764,18 +1890,45 @@ function renderAsciiLayered(playData, engine, state, options) {
       for (let displayX = 0; displayX < dimensions.width; displayX += 1) {
         const { x, y } = worldCoordinatesForDisplay(playData, yaw, displayX, displayY);
         const blocks = terrainBlocksAt(playData, state, typeNames, x, y);
+        const screenX = displayX * TILE_GRANULARITY;
+
+        semanticTerrainLayersAt(playData, state, typeNames, x, y)
+          .map((layer, layerIndex) => ({ layer, layerIndex }))
+          .filter(({ layer }) => layer.type === "empty" || layer.type === "hole")
+          .forEach(({ layer, layerIndex }) => {
+            const elevation = layer.elevation ?? 0;
+            if (elevation === level) {
+              markBlankOwnerRect(
+                canvas,
+                ownerCanvas,
+                screenX,
+                baseY - elevation * sideRows,
+                TILE_GRANULARITY,
+                topRows,
+                terrainObjectId(x, y, layerIndex)
+              );
+            }
+          });
 
         if (blocks.length === 0) {
           continue;
         }
 
-        const screenX = displayX * TILE_GRANULARITY;
         const front = worldCoordinatesForDisplay(playData, yaw, displayX, displayY + 1);
         const frontTop = terrainTopAt(playData, state, typeNames, front.x, front.y);
         const frontHeight = frontTop?.height ?? -1;
 
         blocks.forEach((block) => {
-          drawTerrainTopForLevel(canvas, block, screenX, baseY, topRows, sideRows, level);
+          drawTerrainTopForLevel(
+            canvas,
+            block,
+            screenX,
+            baseY,
+            topRows,
+            sideRows,
+            level,
+            ownerCanvas
+          );
         });
 
         blocks.forEach((block) => {
@@ -1787,7 +1940,8 @@ function renderAsciiLayered(playData, engine, state, options) {
             topRows,
             sideRows,
             frontHeight,
-            level
+            level,
+            ownerCanvas
           );
         });
       }
@@ -1800,25 +1954,196 @@ function renderAsciiLayered(playData, engine, state, options) {
           const topY = baseY - (actor.elevation + 1) * sideRows;
 
           if (actor.elevation + 1 === level) {
-            drawRect(canvas, screenX, topY, TILE_GRANULARITY, topRows, actor.letter);
+            drawRect(
+              canvas,
+              screenX,
+              topY,
+              TILE_GRANULARITY,
+              topRows,
+              actor.letter,
+              ownerCanvas,
+              actor.objectId
+            );
           }
 
           if (actor.elevation === level) {
-            drawRect(canvas, screenX, topY + topRows, TILE_GRANULARITY, sideRows, actor.sideLetter);
+            drawRect(
+              canvas,
+              screenX,
+              topY + topRows,
+              TILE_GRANULARITY,
+              sideRows,
+              actor.sideLetter,
+              ownerCanvas,
+              actor.objectId
+            );
           }
         });
     }
   }
 
-  return trimCanvasRows(canvas.map((row) => row.join("")));
+  return {
+    text: trimCanvasRows(canvas.map((row) => row.join(""))),
+    visibleObjectIds: visibleObjectIdsFromOwnerCanvas(ownerCanvas)
+  };
 }
 
-function renderAscii(_playData, _engine, _state, _options) {
-  if (clampPitch(_options.pitch) === MAX_PITCH) {
-    return renderAsciiSide(_playData, _engine, _state, _options);
+function renderAsciiDetailed(playData, engine, state, options, trackOwners = false) {
+  if (clampPitch(options.pitch) === MAX_PITCH) {
+    return renderAsciiSideScene(playData, engine, state, options, trackOwners);
   }
 
-  return renderAsciiLayered(_playData, _engine, _state, _options);
+  return renderAsciiLayeredScene(playData, engine, state, options, trackOwners);
+}
+
+function renderAscii(playData, engine, state, options) {
+  return renderAsciiDetailed(playData, engine, state, options, false).text;
+}
+
+const WORLD_DIRECTION_VECTORS = Object.freeze({
+  down: { dx: 0, dy: 1 },
+  left: { dx: -1, dy: 0 },
+  right: { dx: 1, dy: 0 },
+  up: { dx: 0, dy: -1 }
+});
+
+function cameraRelativeDirection(worldDirection, yaw) {
+  const normalized = normalizeDirection(worldDirection) || "up";
+  const target = WORLD_DIRECTION_VECTORS[normalized];
+  const screenDirections = [
+    ["up", "U"],
+    ["down", "D"],
+    ["left", "L"],
+    ["right", "R"]
+  ];
+
+  return (
+    screenDirections.find(([, move]) => {
+      const vector = screenMoveVector(move, yaw);
+      return vector?.dx === target.dx && vector?.dy === target.dy;
+    })?.[0] || normalized
+  );
+}
+
+function semanticObjectName(type, source, yaw) {
+  if (type === "circle_player") {
+    return "player";
+  }
+
+  if (type === "ice_slope" || type === "puncher") {
+    return `${type}_${cameraRelativeDirection(source?.direction, yaw)}`;
+  }
+
+  return type || "unknown";
+}
+
+function jsonObservationObjects(context) {
+  const { engine, options, playData, state } = context;
+  const typeNames = terrainTypeNameByValue(engine.terrainTypes);
+  const objects = [];
+
+  for (let y = 0; y < playData.height; y += 1) {
+    for (let x = 0; x < playData.width; x += 1) {
+      semanticTerrainLayersAt(playData, state, typeNames, x, y).forEach((layer, layerIndex) => {
+        objects.push({
+          elevation: layer.elevation ?? 0,
+          id: terrainObjectId(x, y, layerIndex),
+          name: semanticObjectName(layer.type || "empty", layer, options.yaw),
+          x,
+          y
+        });
+      });
+    }
+  }
+
+  for (let index = 0; index < engine.actorCount; index += 1) {
+    if (state.actorRemoved[index]) {
+      continue;
+    }
+
+    const source = playData.actors[index] || {};
+    const type = engine.actorTypes[index] || source.type || "unknown";
+    objects.push({
+      elevation: state.actorElevation[index] || 0,
+      id: actorObjectId(index),
+      name: semanticObjectName(type, source, options.yaw),
+      x: state.actorX[index],
+      y: state.actorY[index]
+    });
+  }
+
+  return objects;
+}
+
+function hiddenObjectNameMap(seed) {
+  const normalizedSeed = String(seed || "mazebench-json");
+  const names = JSON_OBJECT_NAME_UNIVERSE.slice().sort((left, right) => {
+    const leftHash = crypto.createHash("sha256").update(`${normalizedSeed}:${left}`).digest("hex");
+    const rightHash = crypto.createHash("sha256").update(`${normalizedSeed}:${right}`).digest("hex");
+    return leftHash.localeCompare(rightHash) || left.localeCompare(right);
+  });
+
+  return new Map(names.map((name, index) => [name, HIDDEN_NAME_ALPHABET[index]]));
+}
+
+function hiddenObjectName(name, seed, mapping) {
+  if (name === "player" || name === "gem") {
+    return name;
+  }
+
+  if (mapping.has(name)) {
+    return mapping.get(name);
+  }
+
+  const hash = crypto.createHash("sha256").update(`${seed}:${name}`).digest();
+  const first = HIDDEN_NAME_ALPHABET[hash[0] % HIDDEN_NAME_ALPHABET.length];
+  const second = HIDDEN_NAME_ALPHABET[hash[1] % HIDDEN_NAME_ALPHABET.length];
+  return `${first}${second}`;
+}
+
+function buildJsonObservation(context, observationOptions = {}) {
+  applyCollectedGemsToContext(context);
+  const omniscient = observationOptions.omniscient === true;
+  const hideNames = observationOptions.hideNames === true;
+  const hideNamesSeed = String(observationOptions.hideNamesSeed || "mazebench-json");
+  const visibleObjectIds = omniscient
+    ? null
+    : renderAsciiDetailed(
+        context.playData,
+        context.engine,
+        context.state,
+        context.options,
+        true
+      ).visibleObjectIds;
+  const nameMapping = hideNames ? hiddenObjectNameMap(hideNamesSeed) : null;
+  const grouped = {};
+
+  jsonObservationObjects(context)
+    .filter((object) => omniscient || visibleObjectIds.has(object.id))
+    .forEach((object) => {
+      const name = hideNames
+        ? hiddenObjectName(object.name, hideNamesSeed, nameMapping)
+        : object.name;
+      grouped[name] ||= [];
+      grouped[name].push([object.x, object.y, object.elevation]);
+    });
+
+  return {
+    observation_mode: "json",
+    omniscient,
+    hide_names: hideNames,
+    room: {
+      id: context.level.id,
+      width: context.playData.width,
+      height: context.playData.height
+    },
+    camera: {
+      view: VIEW_NAMES[context.options.pitch],
+      yaw: context.options.yaw
+    },
+    coordinate_format: "[x,y,elevation]",
+    objects: grouped
+  };
 }
 
 function renderAsciiProjected(playData, engine, state, options) {
@@ -2902,6 +3227,7 @@ if (require.main === module) {
 
 module.exports = {
   applyMove,
+  buildJsonObservation,
   buildJsonPayload,
   buildScorecard,
   createTerminalContext,
@@ -2912,6 +3238,7 @@ module.exports = {
   loadMazeSolver,
   normalizeGameWonGemCount,
   replayActionCommands,
+  renderAsciiDetailed,
   renderScreen,
   rotateCamera,
   resetLevel,

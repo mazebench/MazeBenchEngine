@@ -39,6 +39,21 @@ setInterval(() => {}, 1000);
 `,
   "utf8"
 );
+fs.writeFileSync(
+  path.join(scriptsDir, "maze-bridge.js"),
+  `const readline = require("node:readline");
+const args = process.argv.slice(2);
+const omniscient = args.includes("--omniscient");
+const hideNames = args.includes("--hide-names");
+readline.createInterface({ input: process.stdin, terminal: false }).on("line", (line) => {
+  const message = JSON.parse(line);
+  process.stdout.write(JSON.stringify(message.command === "close"
+    ? { ok: true, action: "close" }
+    : { ok: true, action: message.command, json_observation: { mode: "json", omniscient, hide_names: hideNames, objects: [] } }) + "\\n");
+});
+`,
+  "utf8"
+);
 
 function loadJson(filePath, fallback) {
   try {
@@ -107,6 +122,73 @@ try {
   assert.match(visionPrimeMeta.command, /--vision/);
   service.stopRun(visionPrime.id);
   service.deleteRun(visionPrime.id);
+
+  const [jsonPrime] = service.launchRuns({
+    kind: "prime",
+    model_name: "json-test",
+    max_turns: 1,
+    mode: "json",
+    omniscient: true,
+    hide_names: true,
+    video: false
+  });
+  launchedIds.push(jsonPrime.id);
+  const jsonPrimeMeta = loadJson(
+    path.join(rootDir, "outputs", "maze-local", "site", jsonPrime.id, "run.json")
+  );
+  assert.equal(jsonPrimeMeta.prime_execution, "hosted");
+  assert.equal(jsonPrimeMeta.mode, "json");
+  assert.equal(jsonPrimeMeta.omniscient, true);
+  assert.equal(jsonPrimeMeta.hide_names, true);
+  assert.match(jsonPrimeMeta.command, /--observation-mode json/);
+  assert.match(jsonPrimeMeta.command, /--omniscient/);
+  assert.match(jsonPrimeMeta.command, /--hide-names/);
+  service.stopRun(jsonPrime.id);
+  service.deleteRun(jsonPrime.id);
+
+  const [jsonLocal] = service.launchRuns({
+    kind: "local",
+    model: "codex",
+    game_id: "maze",
+    level_id: "level_HxI",
+    moves: 1,
+    mode: "json",
+    omniscient: true,
+    hide_names: true,
+    container: false,
+    video: false
+  });
+  launchedIds.push(jsonLocal.id);
+  const jsonLocalMeta = loadJson(
+    path.join(rootDir, "outputs", "maze-local", "site", jsonLocal.id, "run.json")
+  );
+  assert.equal(jsonLocalMeta.mode, "json");
+  assert.equal(jsonLocalMeta.omniscient, true);
+  assert.equal(jsonLocalMeta.hide_names, true);
+  assert.match(jsonLocalMeta.command, /mode=json/);
+  assert.match(jsonLocalMeta.command, /omniscient=true/);
+  assert.match(jsonLocalMeta.command, /hide_names=true/);
+  const jsonLocalDir = path.join(rootDir, "outputs", "maze-local", "site", jsonLocal.id);
+  fs.writeFileSync(path.join(jsonLocalDir, "session.json"), JSON.stringify({
+    actions: [],
+    gameId: "maze",
+    gameWonGemCount: 100,
+    levelId: "level_HxI",
+    view: "top-diagonal",
+    yaw: 0,
+    initial: { level: "ASCII-ONLY" }
+  }));
+  fs.writeFileSync(path.join(jsonLocalDir, "initial-status.json"), JSON.stringify({ level: "ASCII-ONLY" }));
+  const reconstructedJson = service.getRunObservation(jsonLocal.id, { turn: 0 });
+  assert.equal(reconstructedJson.board, "ASCII-ONLY");
+  assert.deepEqual(reconstructedJson.json_observation, {
+    mode: "json",
+    omniscient: true,
+    hide_names: true,
+    objects: []
+  });
+  service.stopRun(jsonLocal.id);
+  service.deleteRun(jsonLocal.id);
 
   const [hostReadOnlySwarm] = service.launchRuns({
     kind: "local",
