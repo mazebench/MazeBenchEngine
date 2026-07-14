@@ -188,10 +188,11 @@ and the full play prompt) without spending any tokens or needing Docker.
 ### Isolation: runs happen in a container by default
 
 Every local agent run executes inside a container (`container=true`, the
-default), so the agent **cannot touch your filesystem** — only an output
-directory is mounted, and API credentials are passed via environment variables.
-This is the strong, OS-level guarantee; it does not depend on the agent CLI
-behaving.
+default). Only the run's output directory is writable. The current maze runtime
+(`scripts`, `server`, `public`, and `games/maze`) is mounted read-only so a new
+run or branch immediately uses the latest ASCII, JSON, and gameplay behavior;
+the rest of your filesystem remains unavailable. This is an OS-level guarantee
+and does not depend on the agent CLI behaving.
 
 - One-time build: `mazebench build` (or `npm run maze:build-image`). The image
   bundles Node, the maze runtime, a headless Chromium + ffmpeg (for vision and

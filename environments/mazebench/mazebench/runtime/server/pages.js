@@ -87,7 +87,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css?v=20260710-card-parity-1">
-    <link rel="stylesheet" href="/local-site.css?v=20260714-map-no-room-labels-91">
+    <link rel="stylesheet" href="/local-site.css?v=20260714-heatmap-video-95">
     ${extraHeadHtml}`
     })}
   </head>
@@ -250,7 +250,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css?v=${PLAY_ASSET_VERSION}">
-    <link rel="stylesheet" href="/local-site.css?v=20260714-map-no-room-labels-91">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260714-heatmap-video-95">`;
   }
 
   function renderPlayPage(game, level) {
@@ -460,7 +460,7 @@ function createPageRenderer({
     ${includeRuntimeStyles ? '<link rel="stylesheet" href="/styles.css">' : ""}
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260714-map-no-room-labels-91">' : ""}`;
+    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260714-heatmap-video-95">' : ""}`;
   }
 
   function renderAuthorPage(game, level) {
@@ -1149,11 +1149,11 @@ function createPageRenderer({
         </section>`;
     const heatmapSection = `<section class="panel run-heatmap" id="run-heatmap-section">
           <div class="run-heatmap__head">
-            <div>
-              <h2>Heatmap</h2>
-              <p class="muted">Player visits by x/y position. Elevation is combined.</p>
+            <h2>Heatmap</h2>
+            <div class="run-heatmap__actions">
+              <span id="run-heatmap-summary" class="run-heatmap__summary" hidden></span>
+              <button id="run-heatmap-export" class="run-heatmap__export" type="button" title="Export a compact video of the heatmap forming" hidden>Export video</button>
             </div>
-            <span id="run-heatmap-summary" class="run-heatmap__summary" hidden></span>
           </div>
           <div id="run-heatmap-viewport" class="run-heatmap__viewport" hidden>
             <canvas id="run-heatmap-canvas" class="run-heatmap__canvas" role="img" aria-label="Player visit heatmap across the explored world"></canvas>
@@ -1285,7 +1285,7 @@ function createPageRenderer({
           <pre id="run-log" class="agent-log"></pre>
         </section>
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260714-map-no-room-labels-91" defer></script>`
+        <script src="/agent-run.js?v=20260714-heatmap-video-95" defer></script>`
     });
   }
 

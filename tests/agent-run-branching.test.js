@@ -8,6 +8,7 @@ const {
   providerEventPrefix,
   toolActivityPrefix
 } = require("../server/run-branch");
+const { branchLaunchParams } = require("../server/agent-runs");
 
 const oldCodexId = "00000000-0000-4000-8000-000000000001";
 const newCodexId = "00000000-0000-4000-8000-000000000002";
@@ -101,12 +102,39 @@ const activity = [
 assert.equal(toolActivityPrefix(activity, 1).trim().split("\n").length, 2);
 assert.equal(claudeProjectKey("/app/workspace"), "-app-workspace");
 
+const inheritedUnlimited = branchLaunchParams(
+  { unlimited: true, segment_move_budget: null },
+  { model: "codex", mode: "json", reasoning: "low", unlimited: true, moves: 50 },
+  "source-unlimited",
+  42
+);
+assert.equal(inheritedUnlimited.unlimited, true);
+assert.equal(inheritedUnlimited.model, "codex");
+assert.equal(inheritedUnlimited.mode, "json");
+assert.equal(inheritedUnlimited.reasoning, "low");
+assert.equal(inheritedUnlimited.branch_of, "source-unlimited");
+assert.equal(inheritedUnlimited.branch_turn, 42);
+
+const inheritedFinite = branchLaunchParams(
+  { unlimited: false, segment_move_budget: 12, moves: 90 },
+  { model: "claude", mode: "text", unlimited: false, moves: 35 },
+  "source-finite",
+  9
+);
+assert.equal(inheritedFinite.unlimited, false);
+assert.equal(inheritedFinite.moves, 35);
+assert.equal(inheritedFinite.model, "claude");
+
 const root = path.join(__dirname, "..");
 const router = fs.readFileSync(path.join(root, "server", "router.js"), "utf8");
 const runPage = fs.readFileSync(path.join(root, "public", "agent-run.js"), "utf8");
 assert.match(router, /segments\[4\] === "branch"/);
+assert.match(router, /branchRun\(runId, payload\?\.turn\)/);
+assert.doesNotMatch(router, /branchRun\(runId, payload\?\.turn, payload\?\.moves\)/);
 assert.match(runPage, /Branch from action/);
+assert.doesNotMatch(runPage, /Branch from action \$\{turn\}\. How many more moves/);
+assert.match(runPage, /body: JSON\.stringify\(\{ turn \}\)/);
 assert.match(runPage, /\["Branch point", `Action \$\{run\.branch_turn\}`\]/);
 assert.match(runPage, /data-replay-action="\$\{action\}"/);
 
-console.log("agent-run-branching: OK — provider transcripts and UI branch at exact successful action boundaries.");
+console.log("agent-run-branching: OK — branches inherit source configuration and start without a budget prompt.");

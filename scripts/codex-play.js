@@ -153,10 +153,24 @@ function bridgeArgs(session) {
 }
 
 function runBridge(session, message) {
+  const checkpoint = session.bridgeCheckpoint && typeof session.bridgeCheckpoint === "object"
+    ? session.bridgeCheckpoint
+    : null;
+  const checkpointTurn = checkpoint && Number.isFinite(Number(checkpoint.turn))
+    ? Math.max(0, Math.floor(Number(checkpoint.turn)))
+    : null;
   const replay = (session.actions || [])
-    .filter((action) => action && action.message && action.replay !== false)
+    .filter((action) =>
+      action &&
+      action.message &&
+      action.replay !== false &&
+      (checkpointTurn === null || Number(action.turn) > checkpointTurn)
+    )
     .map((action) => action.message);
-  const messages = [...replay, message, { command: "close" }];
+  const bootstrap = checkpoint
+    ? [{ command: "restore_checkpoint", checkpoint }]
+    : [];
+  const messages = [...bootstrap, ...replay, message, { command: "close" }];
   const result = spawnSync(session.nodeBin || process.execPath, bridgeArgs(session), {
     cwd: session.repoRoot,
     encoding: "utf8",
@@ -172,11 +186,12 @@ function runBridge(session, message) {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-  const previousFailure = responses.slice(0, replay.length).find((response) => !response.ok);
+  const responseIndex = bootstrap.length + replay.length;
+  const previousFailure = responses.slice(0, responseIndex).find((response) => !response.ok);
   if (previousFailure) {
     throw new Error(`Replay failed before requested command: ${previousFailure.error || "unknown error"}`);
   }
-  const response = responses[replay.length];
+  const response = responses[responseIndex];
   if (!response) throw new Error("maze bridge returned no response");
   if (!response.ok) throw new Error(response.error || "maze bridge command failed");
   return response;

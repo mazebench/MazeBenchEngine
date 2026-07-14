@@ -1245,6 +1245,94 @@ function syntheticFloor(width, height) {
 }
 
 {
+  const checkpoint = {
+    version: 1,
+    turn: 3065,
+    level_id: "level_LxD",
+    pitch: 0,
+    yaw: 0,
+    player: { type: "player", x: 4, y: 15, elevation: 0 },
+    visited_levels: ["level_HxI", "level_MxE", "level_LxD"],
+    collected_gems: ["level_HxH:gem:1,3,0"],
+    action_count: 3065,
+    push_count: 17,
+    novel_push_count: 9,
+    terrain_overrides: [{ index: 133, raised: false }],
+    extra_action_counts: { goto_level: 2, quit: 0 },
+    stats: {
+      action_counts: { move: 3000, rotate_camera: 40, undo: 20, reset: 3 },
+      move_attempts: { D: 700, L: 750, R: 760, U: 790 },
+      move_successes: { D: 680, L: 730, R: 740, U: 770 },
+      successful_moves: 2920,
+      blocked_moves: 80,
+      room_transitions: 30,
+      pitch_rotations: { up: 20, down: 20 },
+      yaw_rotations: { left: 0, right: 0 },
+      elevation_changes: 4,
+      elevation_gain: 2,
+      elevation_loss: 2,
+      min_elevation: 0,
+      max_elevation: 1,
+      starting_level_id: "level_HxI",
+      unique_tile_count: 900,
+      unique_elevation_tile_count: 905
+    }
+  };
+  const [restored, jumped, moved, closed] = runBridge(
+    [
+      { command: "restore_checkpoint", checkpoint },
+      { command: "goto_level", x: "M", y: "E" },
+      { command: "move", direction: "up" },
+      { command: "close" }
+    ],
+    ["--level", "level_HxI", "--view", "top-diagonal"]
+  );
+
+  assert.equal(restored.action, "restore_checkpoint");
+  assert.equal(restored.action_count, 3065);
+  assert.equal(restored.current_room, "level_LxD");
+  assert.equal(restored.current_view, "top");
+  assert.deepEqual(restored.player, checkpoint.player);
+  assert.deepEqual(restored.visited_levels, checkpoint.visited_levels);
+  assert.equal(restored.gem_count, 1);
+  assert.match(restored.level, /LLLL/);
+  assert.match(restored.level, />{4}/);
+  assert.equal(jumped.action, "goto_level");
+  assert.equal(jumped.current_room, "level_MxE");
+  assert.equal(jumped.action_count, 3066);
+  assert.equal(moved.action_count, 3067);
+  assert.equal(closed.ok, true);
+
+  const checkpointDir = fs.mkdtempSync(path.join(os.tmpdir(), "mazebench-checkpoint-test-"));
+  const checkpointState = path.join(checkpointDir, "session.json");
+  fs.writeFileSync(checkpointState, `${JSON.stringify({
+    actions: [{
+      turn: 1,
+      message: { command: "goto_level", x: "Z", y: "Z" },
+      status: { current_room: "level_ZxZ" }
+    }],
+    allowQuit: false,
+    bridgeCheckpoint: { ...checkpoint, expected_level: restored.level },
+    gameId: "maze",
+    gameWonGemCount: 100,
+    levelId: "level_HxI",
+    nodeBin: process.execPath,
+    observationMode: "text",
+    omniscient: false,
+    hideNames: false,
+    repoRoot: ROOT_DIR,
+    view: "top-diagonal",
+    vision: false,
+    yaw: 0
+  }, null, 2)}\n`);
+  const observed = runCodexPlay(["observe", "--state", checkpointState]);
+  assert.equal(observed.current_room, "level_LxD");
+  assert.equal(observed.action_count, 3065);
+  assert.deepEqual(observed.visited_levels, checkpoint.visited_levels);
+  fs.rmSync(checkpointDir, { recursive: true, force: true });
+}
+
+{
   const output = runModelRepl("", [
     "--level",
     "level_HxI",

@@ -174,6 +174,7 @@ const DEAD_INTERNAL_COMMANDS = new Set([
   "close",
   "goto_level",
   "observe",
+  "restore_checkpoint",
   "reset_level",
   "scorecard",
   "undo"
@@ -511,8 +512,125 @@ function resetSession(session) {
   session.visitedLevels = next.visitedLevels;
 }
 
+function finiteInteger(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.floor(number) : fallback;
+}
+
+function countedSet(prefix, count) {
+  return new Set(
+    Array.from({ length: Math.max(0, finiteInteger(count)) }, (_, index) => `${prefix}${index}`)
+  );
+}
+
+function restoreCheckpointStats(session, checkpoint) {
+  const stats = session.context.stats;
+  const saved = checkpoint?.stats || {};
+  const actionCounts = saved.action_counts || {};
+
+  stats.actionCounts.move = Math.max(0, finiteInteger(actionCounts.move));
+  stats.actionCounts.rotateCamera = Math.max(0, finiteInteger(actionCounts.rotate_camera));
+  stats.actionCounts.undo = Math.max(0, finiteInteger(actionCounts.undo));
+  stats.actionCounts.reset = Math.max(0, finiteInteger(actionCounts.reset));
+  stats.moveAttempts = { ...stats.moveAttempts, ...(saved.move_attempts || {}) };
+  stats.moveSuccesses = { ...stats.moveSuccesses, ...(saved.move_successes || {}) };
+  stats.successfulMoves = Math.max(0, finiteInteger(saved.successful_moves));
+  stats.blockedMoves = Math.max(0, finiteInteger(saved.blocked_moves));
+  stats.roomTransitions = Math.max(0, finiteInteger(saved.room_transitions));
+  stats.pitchRotations = { ...stats.pitchRotations, ...(saved.pitch_rotations || {}) };
+  stats.yawRotations = { ...stats.yawRotations, ...(saved.yaw_rotations || {}) };
+  stats.elevationChanges = Math.max(0, finiteInteger(saved.elevation_changes));
+  stats.elevationGain = Math.max(0, Number(saved.elevation_gain) || 0);
+  stats.elevationLoss = Math.max(0, Number(saved.elevation_loss) || 0);
+  stats.minElevation = Number.isFinite(Number(saved.min_elevation)) ? Number(saved.min_elevation) : null;
+  stats.maxElevation = Number.isFinite(Number(saved.max_elevation)) ? Number(saved.max_elevation) : null;
+  stats.startingLevelId = String(saved.starting_level_id || stats.startingLevelId || checkpoint.level_id);
+  stats.startedAtMs = Number.isFinite(Number(saved.started_at_ms)) ? Number(saved.started_at_ms) : Date.now();
+  stats.uniqueTiles = countedSet("checkpoint-tile:", saved.unique_tile_count);
+  stats.uniqueElevationTiles = countedSet("checkpoint-elevation-tile:", saved.unique_elevation_tile_count);
+  stats.visitedRooms = new Set(session.visitedLevels);
+  stats.collectedGemIds = new Set(session.collectedGemIds);
+}
+
+function restoreCheckpoint(session, checkpoint) {
+  if (!checkpoint || typeof checkpoint !== "object") {
+    throw new Error("restore_checkpoint requires a checkpoint object");
+  }
+
+  const levelId = normalizeLevelId(checkpoint.level_id);
+  const next = createSession({
+    ...session.initialOptions,
+    levelId,
+    pitch: clampPitch(finiteInteger(checkpoint.pitch, session.context.options.pitch)),
+    yaw: normalizeYaw(finiteInteger(checkpoint.yaw, session.context.options.yaw))
+  });
+  session.context = next.context;
+  session.initialOptions = { ...next.initialOptions };
+  session.actionCount = Math.max(0, finiteInteger(checkpoint.action_count, checkpoint.turn));
+  session.collectedGemIds = new Set(checkpoint.collected_gems || []);
+  session.visitedLevels = new Set(checkpoint.visited_levels || []);
+  session.visitedLevels.add(levelId);
+  session.pushCount = Math.max(0, finiteInteger(checkpoint.push_count));
+  session.novelPushStates = countedSet("checkpoint-push:", checkpoint.novel_push_count);
+  session.extraActionCounts = {
+    goto_level: Math.max(0, finiteInteger(checkpoint.extra_action_counts?.goto_level)),
+    quit: Math.max(0, finiteInteger(checkpoint.extra_action_counts?.quit))
+  };
+
+  const actors = Array.isArray(checkpoint.actors) ? checkpoint.actors : [];
+  actors.forEach((actor, index) => {
+    if (!actor || index >= session.context.engine.actorCount) return;
+    if (Number.isFinite(Number(actor.x))) session.context.state.actorX[index] = Number(actor.x);
+    if (Number.isFinite(Number(actor.y))) session.context.state.actorY[index] = Number(actor.y);
+    if (Number.isFinite(Number(actor.elevation))) {
+      session.context.state.actorElevation[index] = Number(actor.elevation);
+    }
+    if (actor.removed !== undefined) session.context.state.actorRemoved[index] = actor.removed ? 1 : 0;
+  });
+
+  if (actors.length === 0 && checkpoint.player) {
+    const playerIndex = session.context.engine.actorTypes.findIndex(isPlayerActorType);
+    if (playerIndex >= 0) {
+      session.context.state.actorX[playerIndex] = Number(checkpoint.player.x);
+      session.context.state.actorY[playerIndex] = Number(checkpoint.player.y);
+      session.context.state.actorElevation[playerIndex] = Number(checkpoint.player.elevation) || 0;
+      session.context.state.actorRemoved[playerIndex] = 0;
+    }
+  }
+
+  (checkpoint.terrain_overrides || []).forEach((override) => {
+    const index = finiteInteger(override?.index, -1);
+    if (index < 0 || index >= session.context.state.terrain.length) return;
+    if (override.type && session.context.engine.terrainTypes[override.type] !== undefined) {
+      session.context.state.terrain[index] = session.context.engine.terrainTypes[override.type];
+    }
+    if (override.raised !== undefined && index < session.context.state.liftRaised.length) {
+      session.context.state.liftRaised[index] = override.raised ? 1 : 0;
+    }
+  });
+
+  session.context.history = [];
+  session.context.entrySnapshot = {
+    engine: session.context.engine,
+    level: session.context.level,
+    playData: session.context.playData,
+    state: session.context.engine.cloneState(session.context.state)
+  };
+  restoreCheckpointStats(session, checkpoint);
+
+  const snapshot = sessionSnapshot(session, { action: "restore_checkpoint" });
+  if (checkpoint.expected_level !== undefined && snapshot.level !== checkpoint.expected_level) {
+    throw new Error("restored checkpoint does not match its authoritative ASCII grid");
+  }
+  return snapshot;
+}
+
 function handleCommand(session, message) {
   const command = String(message.command || "observe");
+
+  if (command === "restore_checkpoint") {
+    return restoreCheckpoint(session, message.checkpoint);
+  }
 
   if (command === "observe") {
     return sessionSnapshot(session, { action: "observe" });

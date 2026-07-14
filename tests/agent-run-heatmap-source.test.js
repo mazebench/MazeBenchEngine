@@ -10,6 +10,8 @@ const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "
 
 assert.match(pages, /id="run-heatmap-canvas"[^>]+aria-label="Player visit heatmap across the explored world"/);
 assert.match(pages, /Less visited[\s\S]*Most visited/);
+assert.doesNotMatch(pages, /Player visits by x\/y position\. Elevation is combined\./);
+assert.match(pages, /id="run-heatmap-export"[^>]+>Export video<\/button>/);
 assert.equal((pages.match(/\$\{heatmapSection\}/g) || []).length, 2);
 assert.match(pages, /\$\{explorationSection\}[\s\S]*?\$\{heatmapSection\}[\s\S]*?\$\{movesSection\}/);
 assert.match(runService, /initial_player: readInitialPlayer\(runId\)/);
@@ -24,9 +26,20 @@ assert.match(runScript, /each room is 16 by 16 cells and positioned on the world
 assert.match(runScript, /column - data\.minRoomColumn\) \* data\.roomSize \* cellWidth/);
 assert.match(runScript, /row - data\.minRoomRow\) \* data\.roomSize \* cellHeight/);
 assert.match(runScript, /Math\.log1p\(count\)/);
+assert.match(runScript, /data\.uniqueCells \/ data\.totalVisits \* 100/);
+assert.match(runScript, /\["cells", "Cells visited"\]/);
+assert.match(runScript, /\["visits", "Total visits"\]/);
+assert.match(runScript, /\["new-rate", "New-cell visits"\]/);
+assert.match(runScript, /function heatmapVisitSequence\(data\)/);
+assert.match(runScript, /const durationSeconds = 8/);
+assert.match(runScript, /const fps = 12/);
+assert.match(runScript, /videoBitsPerSecond: 240_000/);
+assert.match(runScript, /new MediaRecorder\(stream, options\)/);
+assert.match(runScript, /maze-heatmap-/);
 assert.match(runScript, /\[0, \[255, 216, 77\]\]/);
 assert.match(runScript, /\[1, \[139, 76, 220\]\]/);
 assert.match(runScript, /elevation combined/);
 assert.match(siteTheme, /linear-gradient\(90deg, #ffd84d 0%, #ff972d 34%, #ef3e54 67%, #8b4cdc 100%\)/);
+assert.match(siteTheme, /\.run-heatmap__summary \{[\s\S]*border-radius: 999px/);
 
 console.log("agent-run-heatmap-source: OK — 16×16 rooms share one world-positioned heatmap and elevation is ignored.");

@@ -92,6 +92,26 @@ const SERVABLE_RUN_FILES = new Set([
   "maze_replay.mp4"
 ]);
 
+function branchLaunchParams(meta, sourceParams, runId, turn) {
+  const params = { ...(sourceParams || {}) };
+  const unlimited = [meta?.unlimited, params.unlimited].some((value) => value === true || value === "true");
+  const moves = Math.max(
+    1,
+    Math.min(
+      MAX_LOCAL_MOVE_BUDGET,
+      Math.floor(Number(params.moves) || Number(meta?.segment_move_budget) || Number(meta?.moves) || 20)
+    )
+  );
+  return {
+    ...params,
+    kind: "local",
+    unlimited,
+    ...(unlimited ? {} : { moves }),
+    branch_of: runId,
+    branch_turn: turn
+  };
+}
+
 function collectedAllWorldGems(gemCount, gemTotal) {
   if (gemTotal === null || gemTotal === undefined || gemTotal === "") return false;
   const collected = Number(gemCount);
@@ -3784,7 +3804,7 @@ function createAgentRunService({
     return launchRun(base);
   }
 
-  function branchRun(runId, requestedTurn, additionalMoves) {
+  function branchRun(runId, requestedTurn) {
     const meta = readRunMeta(runId);
     if (!meta) throw new Error(`Unknown run "${runId}".`);
     if (meta.kind === "prime") {
@@ -3805,15 +3825,7 @@ function createAgentRunService({
     if (!Number.isFinite(turn) || turn < 0 || turn > total) {
       throw new Error(`Choose an action from 0 through ${total}.`);
     }
-    const moves = Math.max(1, Math.min(MAX_LOCAL_MOVE_BUDGET, Math.floor(Number(additionalMoves) || 10)));
-    const base = {
-      ...(meta.launch_params || reconstructParams(meta)),
-      kind: "local",
-      moves,
-      unlimited: false,
-      branch_of: runId,
-      branch_turn: turn
-    };
+    const base = branchLaunchParams(meta, meta.launch_params || reconstructParams(meta), runId, turn);
     return launchRun(base);
   }
 
@@ -4213,6 +4225,7 @@ function createAgentRunService({
 }
 
 module.exports = {
+  branchLaunchParams,
   collectedAllWorldGems,
   createAgentRunService,
   enrichedPathEnv

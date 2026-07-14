@@ -1428,9 +1428,25 @@ function loadCodexModels() {
   }
 }
 
-// Re-exec this runner inside a container so the agent is fully isolated from the
-// host filesystem: only the output directory is mounted, and credentials are
-// passed by env. Everything else the agent could touch lives in the image.
+const CONTAINER_RUNTIME_MOUNTS = Object.freeze([
+  ["scripts", "/app/scripts"],
+  ["server", "/app/server"],
+  ["public", "/app/public"],
+  [path.join("games", "maze"), "/app/games/maze"]
+]);
+
+function containerRuntimeMountArgs(rootDir) {
+  return CONTAINER_RUNTIME_MOUNTS.flatMap(([source, destination]) => [
+    "-v",
+    `${path.join(rootDir, source)}:${destination}:ro`
+  ]);
+}
+
+// Re-exec this runner inside a container so the agent remains isolated from the
+// host filesystem. The output directory is writable; the small maze runtime
+// surface is mounted read-only so every newly launched run or branch uses the
+// currently installed gameplay, ASCII, and JSON implementation instead of a
+// potentially stale copy baked into the agent image.
 function runInContainer(config, raw) {
   const hostOutputs = path.join(ROOT_DIR, "outputs", "maze-local");
   const cidFile = path.join(config.outDir, "container.cid");
@@ -1484,7 +1500,8 @@ function runInContainer(config, raw) {
     "--security-opt", "seccomp=unconfined",
     "--security-opt", "apparmor=unconfined",
     "-e", "MAZEBENCH_IN_CONTAINER=1",
-    "-v", `${hostOutputs}:/app/outputs/maze-local`
+    "-v", `${hostOutputs}:/app/outputs/maze-local`,
+    ...containerRuntimeMountArgs(ROOT_DIR)
   ];
   // Keep only this run's CLI conversation transcript across disposable
   // containers. These are the provider-owned stores consumed by `codex exec
@@ -1586,7 +1603,8 @@ function runInContainer(config, raw) {
   }
 
   console.log(`\n=== Running in container: ${config.image} ===`);
-  console.log(`Host FS is isolated; only ${hostOutputs} is mounted (writable).`);
+  console.log(`Host FS is isolated; only ${hostOutputs} is mounted writable.`);
+  console.log("The current maze runtime is mounted read-only so this run uses the latest behavior.");
   const hasCred =
     process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY ||
     process.env.CLAUDE_CODE_OAUTH_TOKEN || raw.codex_auth || raw.claude_auth ||
@@ -2026,6 +2044,7 @@ module.exports = {
   actionFromShellCommand,
   actionsFromShellCommand,
   actionsFromToolCall,
+  containerRuntimeMountArgs,
   distillClaudeEvents,
   distillCodexEvents,
   loadCodexModels,

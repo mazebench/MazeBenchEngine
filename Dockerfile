@@ -1,7 +1,9 @@
 # Container image for running MazeBench with a local coding agent (Codex CLI or
 # Claude Code) in full isolation from the host filesystem. The agent, Node, the
 # maze runtime, a headless Chromium (for vision + replay video) and ffmpeg all
-# live inside the image; only an output directory is mounted at run time.
+# live inside the image. At run time the output directory is mounted writable,
+# while the current maze runtime is overlaid read-only so new runs use current
+# gameplay and observation behavior even before the image is rebuilt.
 #
 # Build:
 #   docker build -t mazebench-agent .

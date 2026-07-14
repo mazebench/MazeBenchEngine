@@ -57,6 +57,7 @@
   const heatmapSummary = document.getElementById("run-heatmap-summary");
   const heatmapLegend = document.getElementById("run-heatmap-legend");
   const heatmapEmpty = document.getElementById("run-heatmap-empty");
+  let heatmapExportButton = document.getElementById("run-heatmap-export");
   const swarmSection = document.getElementById("run-swarm-section");
   const swarmGrid = document.getElementById("run-swarm-grid");
   const swarmCount = document.getElementById("run-swarm-count");
@@ -89,6 +90,48 @@
     }
   }
 
+  // The local server can outlive static asset updates. Upgrade older run-page
+  // markup in place so an active run only needs a refresh, not a server restart.
+  if (heatmapSection) {
+    heatmapSection.querySelector(".run-heatmap__head .muted")?.remove();
+    const head = heatmapSection.querySelector(".run-heatmap__head");
+    let actions = head?.querySelector(".run-heatmap__actions");
+    if (head && !actions) {
+      actions = document.createElement("div");
+      actions.className = "run-heatmap__actions";
+      heatmapSummary?.replaceWith(actions);
+      if (heatmapSummary) actions.append(heatmapSummary);
+      else head.append(actions);
+    }
+    if (heatmapSummary && !heatmapSummary.querySelector("[data-heatmap-stat]")) {
+      [
+        ["cells", "Cells visited"],
+        ["visits", "Total visits"],
+        ["new-rate", "New-cell visits"]
+      ].forEach(([key, label]) => {
+        const stat = document.createElement("span");
+        stat.className = "run-heatmap__stat";
+        const value = document.createElement("strong");
+        value.dataset.heatmapStat = key;
+        value.textContent = "—";
+        const caption = document.createElement("small");
+        caption.textContent = label;
+        stat.append(value, caption);
+        heatmapSummary.append(stat);
+      });
+    }
+    if (actions && !heatmapExportButton) {
+      heatmapExportButton = document.createElement("button");
+      heatmapExportButton.id = "run-heatmap-export";
+      heatmapExportButton.className = "run-heatmap__export";
+      heatmapExportButton.type = "button";
+      heatmapExportButton.title = "Export a compact video of the heatmap forming";
+      heatmapExportButton.textContent = "Export video";
+      heatmapExportButton.hidden = true;
+      actions.append(heatmapExportButton);
+    }
+  }
+
   if (isPrime && stopButton) stopButton.textContent = "Cancel Run";
 
   const state = {
@@ -114,6 +157,7 @@
     playbackGeneration: 0,
     playbackDeadline: 0,
     playbackPending: false,
+    branchPending: false,
     keyboardStepAt: 0,
     suppressCardToggleView: "",
     suppressCardToggleUntil: 0,
@@ -133,6 +177,7 @@
     initialRoom: String(initial.level_id || ""),
     heatmapDirty: true,
     heatmapData: null,
+    heatmapExporting: false,
     worldMapSignature: "",
     swarmSignature: "",
     contextPoints: [],
@@ -281,7 +326,8 @@
       previous: turn <= 0,
       play: total <= 0,
       next: turn >= total,
-      last: followingLatest
+      last: followingLatest,
+      branch: state.branchPending
     };
 
     controls.classList.toggle("is-active", state.activeReplay === viewId);
@@ -458,24 +504,22 @@
   }
 
   async function branchFromTurn(turn) {
-    const answer = window.prompt(`Branch from action ${turn}. How many more moves should the new run get?`, "10");
-    if (answer === null) return;
-    const moves = Math.max(1, Math.min(100000, Math.floor(Number(answer) || 0)));
-    if (!moves) {
-      setStatus("Enter a positive number of moves.", true);
-      return;
-    }
+    if (state.branchPending) return;
+    state.branchPending = true;
+    refreshReplayControls("primary");
     try {
       setStatus(`Creating a new run from action ${turn}…`);
       const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/branch`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ turn, moves })
+        body: JSON.stringify({ turn })
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);
       window.location.href = payload.run.url;
     } catch (error) {
+      state.branchPending = false;
+      refreshReplayControls("primary");
       setStatus(error.message, true);
     }
   }
@@ -1202,12 +1246,9 @@
 
     const latest = points[points.length - 1];
     context.beginPath();
-    context.arc(x(latest.action), y(latest[key]), 3.5, 0, Math.PI * 2);
+    context.arc(x(latest.action), y(latest[key]), 1.75, 0, Math.PI * 2);
     context.fillStyle = color;
     context.fill();
-    context.strokeStyle = "#070811";
-    context.lineWidth = 1.5;
-    context.stroke();
 
     const jumpTargets = [];
     let previousValue = key === "rooms" ? 1 : 0;
@@ -1220,12 +1261,9 @@
     });
     jumpTargets.forEach((target) => {
       context.beginPath();
-      context.arc(target.x, target.y, 5, 0, Math.PI * 2);
+      context.arc(target.x, target.y, 1.75, 0, Math.PI * 2);
       context.fillStyle = color;
       context.fill();
-      context.strokeStyle = "#070811";
-      context.lineWidth = 2;
-      context.stroke();
     });
     canvas._replayJumpTargets = jumpTargets;
     canvas.dataset.metricKey = key;
@@ -1320,6 +1358,7 @@
     });
     return {
       rooms,
+      roomsById: new Map(rooms.map((room) => [room.id, room])),
       roomsByPosition: new Map(rooms.map((room) => [`${room.columnIndex},${room.rowIndex}`, room])),
       roomSize,
       visits,
@@ -1340,6 +1379,26 @@
     };
   }
 
+  function heatmapVisitSequence(data) {
+    if (!data) return [];
+    const sequence = [];
+    const add = (player, roomValue) => {
+      const position = heatmapPosition(player);
+      if (!position || position.x < 0 || position.x >= data.roomSize || position.y < 0 || position.y >= data.roomSize) return;
+      const room = data.roomsById.get(levelId(roomValue) || state.initialRoom);
+      if (!room) return;
+      sequence.push({
+        x: room.columnIndex * data.roomSize + position.x,
+        y: room.rowIndex * data.roomSize + position.y
+      });
+    };
+    add(state.initialPlayer, state.initialRoom);
+    [...state.moves.entries()]
+      .sort(([left], [right]) => Number(left) - Number(right))
+      .forEach(([, move]) => add(move.player, move.roomId || move.room));
+    return sequence;
+  }
+
   function heatmapColor(intensity) {
     const stops = [
       [0, [255, 216, 77]],
@@ -1355,6 +1414,44 @@
     const amount = (value - lowerStop) / (upperStop - lowerStop);
     const color = lowerColor.map((channel, index) => Math.round(channel + (upperColor[index] - channel) * amount));
     return `rgb(${color.join(", ")})`;
+  }
+
+  function paintHeatmap(context, data, width, height, visits = data.visits) {
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = "#070a16";
+    context.fillRect(0, 0, width, height);
+
+    const cellWidth = width / data.columns;
+    const cellHeight = height / data.rows;
+    const gap = Math.min(1.25, Math.min(cellWidth, cellHeight) * 0.08);
+    const low = Math.log1p(data.minCount);
+    const range = Math.log1p(data.maxCount) - low;
+    for (let y = data.minY; y <= data.maxY; y += 1) {
+      for (let x = data.minX; x <= data.maxX; x += 1) {
+        const count = visits.get(`${x},${y}`) || 0;
+        const left = (x - data.minX) * cellWidth + gap;
+        const top = (y - data.minY) * cellHeight + gap;
+        context.fillStyle = count
+          ? heatmapColor(range > 0 ? (Math.log1p(count) - low) / range : 0)
+          : "rgba(21, 26, 51, 0.72)";
+        context.fillRect(left, top, Math.max(0.5, cellWidth - gap * 2), Math.max(0.5, cellHeight - gap * 2));
+      }
+    }
+
+    context.strokeStyle = "rgba(124, 143, 255, 0.52)";
+    context.lineWidth = Math.max(1, Math.min(2, Math.min(cellWidth, cellHeight) * 0.08));
+    context.beginPath();
+    for (let column = data.minRoomColumn; column <= data.maxRoomColumn + 1; column += 1) {
+      const x = (column - data.minRoomColumn) * data.roomSize * cellWidth;
+      context.moveTo(x, 0);
+      context.lineTo(x, height);
+    }
+    for (let row = data.minRoomRow; row <= data.maxRoomRow + 1; row += 1) {
+      const y = (row - data.minRoomRow) * data.roomSize * cellHeight;
+      context.moveTo(0, y);
+      context.lineTo(width, y);
+    }
+    context.stroke();
   }
 
   function drawHeatmap() {
@@ -1373,41 +1470,121 @@
     const context = heatmapCanvas.getContext("2d");
     if (!context) return;
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-    context.clearRect(0, 0, width, height);
-    context.fillStyle = "#070a16";
-    context.fillRect(0, 0, width, height);
+    paintHeatmap(context, data, width, height);
+  }
 
-    const cellWidth = width / data.columns;
-    const cellHeight = height / data.rows;
-    const gap = Math.min(1.25, Math.min(cellWidth, cellHeight) * 0.08);
-    const low = Math.log1p(data.minCount);
-    const range = Math.log1p(data.maxCount) - low;
-    for (let y = data.minY; y <= data.maxY; y += 1) {
-      for (let x = data.minX; x <= data.maxX; x += 1) {
-        const count = data.visits.get(`${x},${y}`) || 0;
-        const left = (x - data.minX) * cellWidth + gap;
-        const top = (y - data.minY) * cellHeight + gap;
-        context.fillStyle = count
-          ? heatmapColor(range > 0 ? (Math.log1p(count) - low) / range : 0)
-          : "rgba(21, 26, 51, 0.72)";
-        context.fillRect(left, top, Math.max(0.5, cellWidth - gap * 2), Math.max(0.5, cellHeight - gap * 2));
+  function heatmapVideoSupported() {
+    return typeof MediaRecorder !== "undefined" && typeof heatmapCanvas?.captureStream === "function";
+  }
+
+  function heatmapVideoMimeType() {
+    const candidates = [
+      "video/webm;codecs=vp9",
+      "video/webm;codecs=vp8",
+      "video/webm",
+      "video/mp4;codecs=avc1.42E01E",
+      "video/mp4"
+    ];
+    if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") return "";
+    return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+  }
+
+  function heatmapExportSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  async function exportHeatmapVideo() {
+    if (!heatmapExportButton || state.heatmapExporting) return;
+    const data = state.heatmapData || heatmapVisitData();
+    const sequence = heatmapVisitSequence(data);
+    if (!data || sequence.length === 0) {
+      setStatus("There are no heatmap visits to export yet.", true);
+      return;
+    }
+    if (!heatmapVideoSupported()) {
+      setStatus("This browser cannot record a canvas video.", true);
+      return;
+    }
+
+    state.heatmapExporting = true;
+    heatmapExportButton.disabled = true;
+    heatmapExportButton.textContent = "Preparing…";
+    setStatus("Building a compact heatmap video…");
+    let stream = null;
+    let recorder = null;
+    try {
+      const exportCanvas = document.createElement("canvas");
+      const maxDimension = 512;
+      const scale = Math.max(1, Math.min(4, maxDimension / data.columns, maxDimension / data.rows));
+      exportCanvas.width = Math.max(1, Math.round(data.columns * scale));
+      exportCanvas.height = Math.max(1, Math.round(data.rows * scale));
+      const context = exportCanvas.getContext("2d", { alpha: false });
+      if (!context) throw new Error("Could not create the video canvas.");
+
+      const fps = 12;
+      const durationSeconds = 8;
+      const totalFrames = fps * durationSeconds;
+      const holdFrames = fps;
+      const activeFrames = totalFrames - holdFrames;
+      const frameDelay = 1000 / fps;
+      const visits = new Map();
+      let visitIndex = 0;
+      const mimeType = heatmapVideoMimeType();
+      stream = exportCanvas.captureStream(fps);
+      const options = { videoBitsPerSecond: 240_000 };
+      if (mimeType) options.mimeType = mimeType;
+      recorder = new MediaRecorder(stream, options);
+      const chunks = [];
+      const stopped = new Promise((resolve, reject) => {
+        recorder.addEventListener("dataavailable", (event) => {
+          if (event.data?.size) chunks.push(event.data);
+        });
+        recorder.addEventListener("stop", resolve, { once: true });
+        recorder.addEventListener("error", (event) => reject(event.error || new Error("Video recording failed.")), { once: true });
+      });
+
+      recorder.start(1000);
+      for (let frame = 0; frame < totalFrames; frame += 1) {
+        const target = frame >= activeFrames - 1
+          ? sequence.length
+          : Math.floor(frame / Math.max(1, activeFrames - 1) * sequence.length);
+        while (visitIndex < target) {
+          const visit = sequence[visitIndex];
+          const key = `${visit.x},${visit.y}`;
+          visits.set(key, (visits.get(key) || 0) + 1);
+          visitIndex += 1;
+        }
+        paintHeatmap(context, data, exportCanvas.width, exportCanvas.height, visits);
+        heatmapExportButton.textContent = `Exporting ${Math.round(target / sequence.length * 100)}%`;
+        await new Promise((resolve) => window.setTimeout(resolve, frameDelay));
       }
-    }
+      recorder.stop();
+      await stopped;
 
-    context.strokeStyle = "rgba(124, 143, 255, 0.52)";
-    context.lineWidth = Math.max(1, Math.min(2, cellSize * 0.08));
-    context.beginPath();
-    for (let column = data.minRoomColumn; column <= data.maxRoomColumn + 1; column += 1) {
-      const x = (column - data.minRoomColumn) * data.roomSize * cellWidth;
-      context.moveTo(x, 0);
-      context.lineTo(x, height);
+      const type = recorder.mimeType || mimeType || "video/webm";
+      const blob = new Blob(chunks, { type });
+      if (!blob.size) throw new Error("The exported video was empty.");
+      const extension = type.startsWith("video/mp4") ? "mp4" : "webm";
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `maze-heatmap-${String(runId || "run").replace(/[^a-z0-9_-]+/gi, "-")}.${extension}`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setStatus(`Heatmap video exported (${heatmapExportSize(blob.size)}).`);
+    } catch (error) {
+      if (recorder?.state === "recording") recorder.stop();
+      setStatus(error.message || "Heatmap video export failed.", true);
+    } finally {
+      stream?.getTracks().forEach((track) => track.stop());
+      state.heatmapExporting = false;
+      heatmapExportButton.disabled = !heatmapVideoSupported();
+      heatmapExportButton.textContent = "Export video";
     }
-    for (let row = data.minRoomRow; row <= data.maxRoomRow + 1; row += 1) {
-      const y = (row - data.minRoomRow) * data.roomSize * cellHeight;
-      context.moveTo(0, y);
-      context.lineTo(width, y);
-    }
-    context.stroke();
   }
 
   function renderHeatmap() {
@@ -1420,10 +1597,24 @@
     heatmapSummary.hidden = !available;
     heatmapLegend.hidden = !available;
     heatmapEmpty.hidden = available;
+    if (heatmapExportButton) {
+      heatmapExportButton.hidden = !available;
+      heatmapExportButton.disabled = state.heatmapExporting || !heatmapVideoSupported();
+      heatmapExportButton.title = heatmapVideoSupported()
+        ? "Export a compact video of the heatmap forming"
+        : "Heatmap video export is not supported by this browser";
+    }
     if (!data) return;
 
     const roomLabels = data.rooms.map((room) => room.label);
-    heatmapSummary.textContent = `${data.rooms.length.toLocaleString()} room${data.rooms.length === 1 ? "" : "s"} · ${data.uniqueCells.toLocaleString()} cells · ${data.totalVisits.toLocaleString()} visits · ${roomLabels.join(", ")}`;
+    const newCellRate = data.totalVisits ? data.uniqueCells / data.totalVisits * 100 : 0;
+    heatmapSummary.querySelector('[data-heatmap-stat="cells"]').textContent = data.uniqueCells.toLocaleString();
+    heatmapSummary.querySelector('[data-heatmap-stat="visits"]').textContent = data.totalVisits.toLocaleString();
+    heatmapSummary.querySelector('[data-heatmap-stat="new-rate"]').textContent = `${newCellRate.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
+    heatmapSummary.setAttribute(
+      "aria-label",
+      `${data.uniqueCells.toLocaleString()} cells visited; ${data.totalVisits.toLocaleString()} total visits; ${newCellRate.toFixed(1)} percent of visits discovered a new cell`
+    );
     heatmapCanvas.setAttribute(
       "aria-label",
       `Player visit heatmap across rooms ${roomLabels.join(", ")}; each room is 16 by 16 cells and positioned on the world map; ${data.uniqueCells.toLocaleString()} visited cells and ${data.totalVisits.toLocaleString()} total visits; elevation combined`
@@ -1744,6 +1935,9 @@
   });
   heatmapCanvas?.addEventListener("pointerleave", () => {
     if (heatmapTooltip) heatmapTooltip.hidden = true;
+  });
+  heatmapExportButton?.addEventListener("click", () => {
+    void exportHeatmapVideo();
   });
 
   // ---- combined moves + reasoning feed --------------------------------------
