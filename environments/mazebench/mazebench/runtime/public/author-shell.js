@@ -323,6 +323,7 @@
         app.__mazebenchSidebarNormalViewport = null;
       }
       app.syncPlayLayout?.();
+      app.syncEditorCameraDownshift?.();
       app.setupCanvas?.();
       app.syncCameraTarget?.(true);
       app.render?.();

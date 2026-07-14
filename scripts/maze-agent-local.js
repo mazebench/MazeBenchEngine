@@ -40,6 +40,9 @@
 //   video        on | off                                     (default on)
 //   out          output directory for this run's artifacts
 //   session      explicit session.json path (overrides out)
+//   resume       provider conversation id to resume
+//   fork_session Claude: fork resume into session_id (internal branch support)
+//   session_id   Claude: id assigned to the forked conversation
 //   codex_bin    codex executable                             (default codex)
 //   claude_bin   claude executable                            (default claude)
 //   fast|draft   forwarded to the video renderer for speed
@@ -791,6 +794,10 @@ function agentCommand(config, prompt) {
     // Resume the prior conversation so the model keeps its full memory.
     if (config.resume) {
       argv.push("--resume", config.resume);
+      if (config.forkSession) {
+        argv.push("--fork-session");
+        if (config.sessionId) argv.push("--session-id", config.sessionId);
+      }
     }
     if (config.mcpEnabled) {
       const mcpTools = [
@@ -1447,7 +1454,7 @@ function runInContainer(config, raw) {
     "model", "moves", "unlimited", "allow_quit", "mode", "omniscient", "hide_names", "tools", "tool_use", "swarm", "game", "level", "view", "yaw", "gems",
     "video", "no_video", "fast", "draft", "width", "height", "fps",
     "vision_width", "vision_height", "vision_view", "model_name", "llm",
-    "reasoning", "effort", "codex_fast", "resume", "seed",
+    "reasoning", "effort", "codex_fast", "resume", "seed", "fork_session", "session_id",
     "codex_bin", "claude_bin", "claude_allowed_tools"
   ];
   const inner = ["node", "scripts/maze-agent-local.js", "container=false"];
@@ -1915,6 +1922,8 @@ async function main() {
     // resume=<conversation-id> additionally resumes the CLI conversation so the
     // model keeps its full memory (a true continue). resume implies seed.
     resume: String(raw.resume || "").trim(),
+    forkSession: isTruthy(raw.fork_session, false),
+    sessionId: String(raw.session_id || "").trim(),
     seed: isTruthy(raw.seed, false) || Boolean(String(raw.resume || "").trim()),
     sessionFile,
     video: isTruthy(raw.video, true) && !isTruthy(raw.no_video, false),

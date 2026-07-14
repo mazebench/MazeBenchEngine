@@ -44,6 +44,7 @@ assert.match(shell, /__MAZEBENCH_AUTHOR_MARK_READY__/);
 assert.match(shell, /function installChromeInteractionShield/);
 assert.match(shell, /function setSidebarCollapsed/);
 assert.match(shell, /function syncAuthorAppViewport/);
+assert.match(shell, /app\.syncEditorCameraDownshift\?\.\(\)/);
 assert.match(shell, /requestAnimationFrame\(announceResize\)/);
 assert.match(shell, /app\.hostFullBleedView = true/);
 assert.match(shell, /window\.setTimeout\(reveal, 8000\)/);

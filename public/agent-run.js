@@ -40,11 +40,16 @@
   const explorationEmpty = document.getElementById("run-exploration-empty");
   const roomsChart = document.getElementById("run-rooms-chart");
   const gemsChart = document.getElementById("run-gems-chart");
+  const roomsChartTooltip = document.getElementById("run-rooms-chart-tooltip");
+  const gemsChartTooltip = document.getElementById("run-gems-chart-tooltip");
+  const roomsLatest = document.getElementById("run-rooms-latest");
+  const gemsLatest = document.getElementById("run-gems-latest");
   const roomsMapButton = document.getElementById("run-rooms-map-button");
   const roomsMapDialog = document.getElementById("run-rooms-map-dialog");
   const roomsMapClose = document.getElementById("run-rooms-map-close");
   const roomsMapGrid = document.getElementById("run-rooms-map-grid");
   const roomsMapSummary = document.getElementById("run-rooms-map-summary");
+  const roomsMapTooltip = document.getElementById("run-rooms-map-tooltip");
   const heatmapSection = document.getElementById("run-heatmap-section");
   const heatmapViewport = document.getElementById("run-heatmap-viewport");
   const heatmapCanvas = document.getElementById("run-heatmap-canvas");
@@ -196,7 +201,8 @@
     play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"></path></svg>',
     pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="14" y="3" width="5" height="18" rx="1"></rect><rect x="5" y="3" width="5" height="18" rx="1"></rect></svg>',
     next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>',
-    last: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 17 5-5-5-5"></path><path d="m13 17 5-5-5-5"></path></svg>'
+    last: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 17 5-5-5-5"></path><path d="m13 17 5-5-5-5"></path></svg>',
+    branch: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="4" r="2"></circle><circle cx="18" cy="6" r="2"></circle><circle cx="6" cy="20" r="2"></circle><path d="M6 6v12"></path><path d="M8 8h4a6 6 0 0 0 6-6"></path></svg>'
   };
 
   function replayTotal(viewId) {
@@ -231,6 +237,15 @@
       `<button type="button" class="replay-control${extra}" data-replay-view="${escapeText(viewId)}" data-replay-action="${action}" aria-label="${label}" title="${label}"${disabled ? " disabled" : ""}>${icon}</button>`;
     const playPauseIcons = `<span class="replay-control__icon" data-replay-icon="play"${playing ? " hidden" : ""}>${REPLAY_ICONS.play}</span>
       <span class="replay-control__icon" data-replay-icon="pause"${playing ? "" : " hidden"}>${REPLAY_ICONS.pause}</span>`;
+    const branch = viewId === "primary" && state.run.branchable
+      ? button(
+          "branch",
+          `${REPLAY_ICONS.branch}<span>Branch here</span>`,
+          `Branch from action ${turn}`,
+          false,
+          " replay-control--branch"
+        )
+      : "";
     return `<div class="replay-controls__buttons${active}" data-replay-controls-view="${escapeText(viewId)}" role="group" aria-label="Observation playback">
       ${button("first", REPLAY_ICONS.first, "First observation", turn <= 0)}
       ${button("previous", REPLAY_ICONS.previous, "Previous observation", turn <= 0)}
@@ -241,13 +256,21 @@
         <input type="number" min="1" max="60" step="1" value="${rate}" inputmode="numeric" data-replay-rate data-replay-view="${escapeText(viewId)}" aria-label="Playback frames per second">
         <span aria-hidden="true">FPS</span>
       </label>
-      <span class="replay-controls__position" aria-live="polite">${turn} / ${total}</span>
+      <label class="replay-controls__position" title="Go to exact frame">
+        <span class="sr-only">Frame</span>
+        <input type="number" min="0" max="${total}" step="1" value="${turn}" inputmode="numeric" data-replay-turn data-replay-view="${escapeText(viewId)}" aria-label="Frame number">
+        <span aria-hidden="true">/ ${total}</span>
+      </label>
+      ${branch}
     </div>`;
   }
 
   function updateReplayControlsInPlace(container, viewId) {
     const controls = container?.querySelector("[data-replay-controls-view]");
     if (!controls || controls.dataset.replayControlsView !== viewId) return false;
+    const shouldHaveBranch = viewId === "primary" && Boolean(state.run.branchable);
+    const existingBranch = controls.querySelector('[data-replay-action="branch"]');
+    if (shouldHaveBranch !== Boolean(existingBranch)) return false;
     const total = replayTotal(viewId);
     const turn = Math.min(total, replayTurn(viewId));
     const playing = state.playingView === viewId;
@@ -283,8 +306,18 @@
 
     const rateInput = controls.querySelector("[data-replay-rate]");
     if (rateInput && document.activeElement !== rateInput) rateInput.value = String(rate);
-    const position = controls.querySelector(".replay-controls__position");
-    if (position) position.textContent = `${turn} / ${total}`;
+    const positionInput = controls.querySelector("[data-replay-turn]");
+    if (positionInput) {
+      positionInput.max = String(total);
+      if (document.activeElement !== positionInput) positionInput.value = String(turn);
+      const suffix = positionInput.nextElementSibling;
+      if (suffix) suffix.textContent = `/ ${total}`;
+    }
+    if (existingBranch) {
+      const label = `Branch from action ${turn}`;
+      existingBranch.setAttribute("aria-label", label);
+      existingBranch.title = label;
+    }
     return true;
   }
 
@@ -329,7 +362,10 @@
       if (playbackRequest && !isCurrentPlayback(viewId, playbackGeneration)) return null;
       state.replayCursors.set(viewId, turn);
       state.replayObservations.set(viewId, observation);
-      if (viewId === "primary") applyMainObservation(observation);
+      if (viewId === "primary") {
+        applyMainObservation(observation);
+        updateReplayJumpSelection(turn);
+      }
       refreshReplayControls(viewId);
       return observation;
     } catch (_error) {
@@ -342,6 +378,30 @@
     state.replayCursors.delete(viewId);
     if (viewId !== "primary") state.replayObservations.delete(viewId);
     refreshReplayControls(viewId);
+  }
+
+  function updateReplayJumpSelection(turn) {
+    document.querySelectorAll("[data-jump-turn]").forEach((control) => {
+      const selected = Number(control.dataset.jumpTurn) === Number(turn);
+      control.classList.toggle("is-current-frame", selected);
+      if (selected) control.setAttribute("aria-current", "true");
+      else control.removeAttribute("aria-current");
+    });
+  }
+
+  function jumpToPrimaryFrame(requestedTurn, { scroll = true } = {}) {
+    const turn = Math.max(0, Math.min(replayTotal("primary"), Math.floor(Number(requestedTurn) || 0)));
+    const previousActive = state.activeReplay;
+    stopPlayback();
+    state.activeReplay = "primary";
+    if (previousActive && previousActive !== "primary") refreshReplayControls(previousActive);
+    const pending = setReplayTurn("primary", turn);
+    if (scroll) {
+      window.requestAnimationFrame(() => {
+        liveGrid?.closest(".run-live")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+    return pending;
   }
 
   function isCurrentPlayback(viewId, generation) {
@@ -397,6 +457,29 @@
     schedulePlaybackTick(viewId, generation);
   }
 
+  async function branchFromTurn(turn) {
+    const answer = window.prompt(`Branch from action ${turn}. How many more moves should the new run get?`, "10");
+    if (answer === null) return;
+    const moves = Math.max(1, Math.min(100000, Math.floor(Number(answer) || 0)));
+    if (!moves) {
+      setStatus("Enter a positive number of moves.", true);
+      return;
+    }
+    try {
+      setStatus(`Creating a new run from action ${turn}…`);
+      const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/branch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ turn, moves })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);
+      window.location.href = payload.run.url;
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  }
+
   function handleReplayAction(viewId, action) {
     const previousActive = state.activeReplay;
     state.activeReplay = viewId;
@@ -408,6 +491,7 @@
     else if (action === "play") void startPlayback(viewId);
     else if (action === "next") void setReplayTurn(viewId, current + 1);
     else if (action === "last") void goToLatestObservation(viewId);
+    else if (action === "branch" && viewId === "primary") void branchFromTurn(current);
     refreshReplayControls(viewId);
   }
 
@@ -477,6 +561,42 @@
       control.addEventListener("keydown", (event) => {
         event.stopPropagation();
         if (event.key === "Enter") control.blur();
+      });
+    });
+    container?.querySelectorAll("[data-replay-turn]").forEach((control) => {
+      const viewId = control.dataset.replayView || "primary";
+      const reset = () => {
+        control.value = String(replayTurn(viewId));
+      };
+      const commit = () => {
+        const requested = Number(control.value);
+        if (!Number.isFinite(requested)) {
+          reset();
+          return;
+        }
+        const turn = Math.max(0, Math.min(replayTotal(viewId), Math.floor(requested)));
+        control.value = String(turn);
+        stopPlayback();
+        state.activeReplay = viewId;
+        void setReplayTurn(viewId, turn);
+      };
+      control.addEventListener("pointerdown", (event) => event.stopPropagation());
+      control.addEventListener("click", (event) => event.stopPropagation());
+      control.addEventListener("change", (event) => {
+        event.stopPropagation();
+        commit();
+      });
+      control.addEventListener("keydown", (event) => {
+        event.stopPropagation();
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit();
+          control.select();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          reset();
+          control.blur();
+        }
       });
     });
   }
@@ -619,6 +739,13 @@
     const moves = prime
       ? configuredValue(params, "max_turns", run.moves)
       : configuredValue(params, "moves", run.moves);
+    const budgetLabel = run.branch_of && !unlimited
+      ? `${moves || "Default"} more move${Number(moves) === 1 ? "" : "s"}`
+      : unlimited
+        ? "Unlimited"
+        : moves
+          ? `${moves} moves`
+          : "Default";
     const observationMode = String(
       configuredValue(
         params,
@@ -634,7 +761,8 @@
       ["Model", configuredValue(params, "model_name", run.model_name || run.model)],
       ["World", run.game_title || run.game_id],
       ["Start room", levelLabel(configuredValue(params, "level_id", run.level_id))],
-      ["Budget", unlimited ? "Unlimited" : moves ? `${moves} moves` : "Default"],
+      ...(run.branch_of ? [["Branch point", `Action ${run.branch_turn}`]] : []),
+      ["Budget", budgetLabel],
       ["Observation", observation, observation === "Vision"],
       ["Reasoning", reasoning ? titleCase(reasoning) : "Off"],
       ["Allow quit", allowQuit ? "Yes" : "No"]
@@ -1081,6 +1209,30 @@
     context.lineWidth = 1.5;
     context.stroke();
 
+    const jumpTargets = [];
+    let previousValue = key === "rooms" ? 1 : 0;
+    points.forEach((point) => {
+      const value = Number(point[key]) || 0;
+      if (value !== previousValue) {
+        jumpTargets.push({ action: point.action, value, x: x(point.action), y: y(value) });
+      }
+      previousValue = value;
+    });
+    jumpTargets.forEach((target) => {
+      context.beginPath();
+      context.arc(target.x, target.y, 5, 0, Math.PI * 2);
+      context.fillStyle = color;
+      context.fill();
+      context.strokeStyle = "#070811";
+      context.lineWidth = 2;
+      context.stroke();
+    });
+    canvas._replayJumpTargets = jumpTargets;
+    canvas.dataset.metricKey = key;
+    canvas.dataset.jumpSummary = jumpTargets.length
+      ? `Click a highlighted change to show its exact frame (${jumpTargets.length} change${jumpTargets.length === 1 ? "" : "s"})`
+      : `No ${key} changes yet`;
+
     const actionLabels = [...new Set([firstAction, Math.round((firstAction + lastAction) / 2), lastAction])];
     context.fillStyle = "rgba(154, 163, 199, 0.76)";
     context.textBaseline = "alphabetic";
@@ -1285,17 +1437,77 @@
     drawMetricChart(gemsChart, points, "gems", "#ffd15c");
   }
 
-  function visitedRoomIds() {
-    const visited = new Set();
+  function metricJumpAt(canvas, event) {
+    const targets = Array.isArray(canvas?._replayJumpTargets) ? canvas._replayJumpTargets : [];
+    if (!targets.length) return null;
+    const bounds = canvas.getBoundingClientRect();
+    const x = event.clientX - bounds.left;
+    const y = event.clientY - bounds.top;
+    return targets.reduce((nearest, target) => {
+      const distance = Math.hypot(target.x - x, target.y - y);
+      return distance <= 20 && (!nearest || distance < nearest.distance)
+        ? { ...target, distance }
+        : nearest;
+    }, null);
+  }
+
+  function metricTooltipFor(canvas) {
+    return canvas === roomsChart ? roomsChartTooltip : canvas === gemsChart ? gemsChartTooltip : null;
+  }
+
+  function hideMetricTooltip(canvas) {
+    const tooltip = metricTooltipFor(canvas);
+    canvas.classList.remove("has-jump-target");
+    if (tooltip) tooltip.hidden = true;
+  }
+
+  function showMetricTooltip(canvas, target, event) {
+    const tooltip = metricTooltipFor(canvas);
+    if (!tooltip) return;
+    const cardBounds = canvas.closest(".run-metric-chart")?.getBoundingClientRect();
+    if (!cardBounds) return;
+    const noun = canvas.dataset.metricKey === "rooms"
+      ? `${target.value.toLocaleString()} room${target.value === 1 ? "" : "s"} visited`
+      : `${target.value.toLocaleString()} gem${target.value === 1 ? "" : "s"} collected`;
+    tooltip.textContent = `Frame ${target.action.toLocaleString()} · ${noun}`;
+    tooltip.style.left = `${event.clientX - cardBounds.left}px`;
+    tooltip.style.top = `${event.clientY - cardBounds.top}px`;
+    tooltip.hidden = false;
+  }
+
+  function wireMetricChart(canvas) {
+    if (!canvas) return;
+    canvas.addEventListener("pointermove", (event) => {
+      const target = metricJumpAt(canvas, event);
+      canvas.classList.toggle("has-jump-target", Boolean(target));
+      if (target) showMetricTooltip(canvas, target, event);
+      else hideMetricTooltip(canvas);
+    });
+    canvas.addEventListener("pointerleave", () => hideMetricTooltip(canvas));
+    canvas.addEventListener("click", (event) => {
+      const target = metricJumpAt(canvas, event);
+      if (target) {
+        hideMetricTooltip(canvas);
+        void jumpToPrimaryFrame(target.action);
+      }
+    });
+  }
+
+  function firstRoomEntryTurns() {
+    const entries = new Map();
     const startingRoom = levelId(initial.level_id || state.run?.level_id);
-    if (startingRoom) visited.add(startingRoom);
+    if (startingRoom) entries.set(startingRoom, 0);
     [...state.moves.entries()]
       .sort(([left], [right]) => left - right)
-      .forEach(([, move]) => {
+      .forEach(([turn, move]) => {
         const room = levelId(move.roomId || move.room);
-        if (room) visited.add(room);
+        if (room && !entries.has(room)) entries.set(room, Number(turn));
       });
-    return visited;
+    return entries;
+  }
+
+  function visitedRoomIds() {
+    return new Set(firstRoomEntryTurns().keys());
   }
 
   function worldAxisIndex(value) {
@@ -1323,10 +1535,25 @@
     );
   }
 
+  function hideRunWorldMapTooltip() {
+    if (roomsMapTooltip) roomsMapTooltip.hidden = true;
+  }
+
+  function showRunWorldMapTooltip(cell) {
+    if (!roomsMapTooltip || !cell) return;
+    const turn = Number(cell.dataset.jumpTurn);
+    const bounds = cell.getBoundingClientRect();
+    roomsMapTooltip.textContent = `${cell.dataset.roomLabel} · First entered at Action ${turn}`;
+    roomsMapTooltip.style.left = `${bounds.left + bounds.width / 2}px`;
+    roomsMapTooltip.style.top = `${bounds.top}px`;
+    roomsMapTooltip.hidden = false;
+  }
+
   function renderRunWorldMap({ force = false } = {}) {
     if (!roomsMapGrid || roomsMapDialog?.hidden) return;
     const levels = runWorldMapLevels();
     if (levels.length === 0) return;
+    const firstEntries = firstRoomEntryTurns();
     const visited = visitedRoomIds();
     const currentRoom = levelId(state.run?.current_room || initial.current_room || initial.level_id);
     const minColumn = Math.min(...levels.map((level) => level.columnIndex));
@@ -1336,7 +1563,7 @@
     const columnCount = maxColumn - minColumn + 1;
     const rowCount = maxRow - minRow + 1;
     const tileSize = fittedRunWorldMapTileSize(columnCount, rowCount);
-    const signature = JSON.stringify({ currentRoom, tileSize, visited: [...visited].sort() });
+    const signature = JSON.stringify({ currentRoom, tileSize, entries: [...firstEntries.entries()].sort() });
     if (!force && signature === state.worldMapSignature) return;
     state.worldMapSignature = signature;
 
@@ -1351,15 +1578,29 @@
     roomsMapGrid.replaceChildren();
 
     levels.forEach((level) => {
-      const cell = document.createElement("div");
       const isVisited = visited.has(level.id);
       const isCurrent = level.id === currentRoom;
+      const firstEntryTurn = firstEntries.get(level.id);
+      const cell = document.createElement(isVisited ? "button" : "div");
+      if (isVisited) cell.type = "button";
       cell.className = "run-world-map__cell";
       cell.classList.toggle("is-visited", isVisited);
       cell.classList.toggle("is-current", isCurrent);
       cell.style.gridColumn = String(level.columnIndex - minColumn + 1);
       cell.style.gridRow = String(level.rowIndex - minRow + 1);
-      cell.title = `${levelLabel(level.id)} — ${isCurrent ? "current room" : isVisited ? "visited" : "not visited"}`;
+      if (isVisited) {
+        cell.dataset.jumpTurn = String(firstEntryTurn);
+        cell.dataset.roomLabel = levelLabel(level.id);
+        cell.setAttribute("aria-describedby", "run-rooms-map-tooltip");
+        cell.setAttribute("aria-label", `${levelLabel(level.id)}, first entered at Action ${firstEntryTurn}; show in viewer`);
+        cell.addEventListener("click", () => {
+          hideRunWorldMapTooltip();
+          setRunWorldMapOpen(false);
+          void jumpToPrimaryFrame(firstEntryTurn);
+        });
+      } else {
+        cell.title = `${levelLabel(level.id)} — not visited`;
+      }
 
       if (isVisited && level.preview_url) {
         const image = document.createElement("img");
@@ -1370,11 +1611,9 @@
         cell.append(image);
       }
 
-      const label = document.createElement("span");
-      label.textContent = levelLabel(level.id);
-      cell.append(label);
       roomsMapGrid.append(cell);
     });
+    updateReplayJumpSelection(replayTurn("primary"));
   }
 
   let roomsMapCloseTimer = 0;
@@ -1396,6 +1635,7 @@
       });
       return;
     }
+    hideRunWorldMapTooltip();
     roomsMapDialog.classList.remove("is-open");
     roomsMapButton.setAttribute("aria-expanded", "false");
     document.documentElement.classList.remove("has-run-world-map");
@@ -1418,16 +1658,53 @@
     if (!available) return;
 
     const latest = points[points.length - 1];
-    document.getElementById("run-rooms-latest").textContent = latest.rooms.toLocaleString();
-    document.getElementById("run-gems-latest").textContent = latest.gems.toLocaleString();
+    roomsLatest.textContent = latest.rooms.toLocaleString();
+    gemsLatest.textContent = latest.gems.toLocaleString();
+    const latestJump = (key, initialValue) => {
+      let previous = initialValue;
+      let found = null;
+      points.forEach((point) => {
+        if (point[key] !== previous) found = point;
+        previous = point[key];
+      });
+      return found;
+    };
+    const roomJump = latestJump("rooms", 1);
+    const gemJump = latestJump("gems", 0);
+    [[roomsLatest, roomJump], [gemsLatest, gemJump]].forEach(([control, jump]) => {
+      control.disabled = !jump;
+      if (jump) {
+        control.dataset.jumpTurn = String(jump.action);
+        control.setAttribute("aria-label", `Show frame ${jump.action}`);
+      } else {
+        delete control.dataset.jumpTurn;
+        control.removeAttribute("aria-label");
+      }
+    });
     roomsChart.setAttribute("aria-label", `${latest.rooms.toLocaleString()} rooms visited by action ${latest.action.toLocaleString()}`);
     gemsChart.setAttribute("aria-label", `${latest.gems.toLocaleString()} gems collected by action ${latest.action.toLocaleString()}`);
     requestAnimationFrame(drawExplorationCharts);
   }
 
   if (runWorldMapLevels().length === 0 && roomsMapButton) roomsMapButton.hidden = true;
+  wireMetricChart(roomsChart);
+  wireMetricChart(gemsChart);
+  [roomsLatest, gemsLatest].forEach((control) => control?.addEventListener("click", () => {
+    if (control.dataset.jumpTurn) void jumpToPrimaryFrame(Number(control.dataset.jumpTurn));
+  }));
   roomsMapButton?.addEventListener("click", () => setRunWorldMapOpen(true));
   roomsMapClose?.addEventListener("click", () => setRunWorldMapOpen(false));
+  roomsMapGrid?.addEventListener("pointerover", (event) => {
+    const cell = event.target.closest("button.run-world-map__cell[data-jump-turn]");
+    if (cell && roomsMapGrid.contains(cell)) showRunWorldMapTooltip(cell);
+    else hideRunWorldMapTooltip();
+  });
+  roomsMapGrid?.addEventListener("pointerleave", hideRunWorldMapTooltip);
+  roomsMapGrid?.addEventListener("focusin", (event) => {
+    const cell = event.target.closest("button.run-world-map__cell[data-jump-turn]");
+    if (cell) showRunWorldMapTooltip(cell);
+  });
+  roomsMapGrid?.addEventListener("focusout", hideRunWorldMapTooltip);
   roomsMapDialog?.addEventListener("click", (event) => {
     if (event.target === roomsMapDialog) setRunWorldMapOpen(false);
   });
@@ -1738,8 +2015,9 @@
         return `<article class="agent-feed__row${statusClass}" data-move="${escapeText(num)}">
           <div class="agent-feed__head">
             <div class="agent-feed__identity">
-              <span class="agent-feed__num">Move ${escapeText(num)}</span>
+              <span class="agent-feed__num" aria-label="Action ${escapeText(num)}">${escapeText(num)}</span>
               <strong class="agent-feed__action">${highlightText(move.action || "Unknown action", terms)}</strong>
+              <button type="button" class="agent-feed__jump" data-jump-turn="${escapeText(num)}">Jump to Action ${escapeText(num)}</button>
             </div>
             ${timestamp ? `<time class="agent-feed__time" datetime="${escapeText(move.timestamp)}">${escapeText(timestamp)}</time>` : ""}
           </div>
@@ -1763,6 +2041,7 @@
       .join("");
     state.renderedFeedVersion = state.feedVersion;
     state.renderedFeedQuery = query;
+    updateReplayJumpSelection(replayTurn("primary"));
 
     if (resetScroll) {
       feedEl.scrollTop = 0;
@@ -1807,6 +2086,12 @@
   });
   feedExportButton?.addEventListener("click", exportFeedJson);
   feedEl?.addEventListener("click", (event) => {
+    const frame = event.target.closest("[data-jump-turn]");
+    if (frame) {
+      event.preventDefault();
+      void jumpToPrimaryFrame(Number(frame.dataset.jumpTurn));
+      return;
+    }
     const button = event.target.closest("[data-feed-expand]");
     if (!button) return;
     const move = Number(button.dataset.feedExpand);

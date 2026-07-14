@@ -87,7 +87,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css?v=20260710-card-parity-1">
-    <link rel="stylesheet" href="/local-site.css?v=20260713-json-observation-86">
+    <link rel="stylesheet" href="/local-site.css?v=20260714-map-no-room-labels-91">
     ${extraHeadHtml}`
     })}
   </head>
@@ -250,7 +250,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css?v=${PLAY_ASSET_VERSION}">
-    <link rel="stylesheet" href="/local-site.css?v=20260713-json-observation-86">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260714-map-no-room-labels-91">`;
   }
 
   function renderPlayPage(game, level) {
@@ -460,7 +460,7 @@ function createPageRenderer({
     ${includeRuntimeStyles ? '<link rel="stylesheet" href="/styles.css">' : ""}
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260713-json-observation-86">' : ""}`;
+    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260714-map-no-room-labels-91">' : ""}`;
   }
 
   function renderAuthorPage(game, level) {
@@ -1109,15 +1109,17 @@ function createPageRenderer({
               <div class="run-metric-chart__head">
                 <span class="run-metric-chart__label run-metric-chart__label--rooms">${TRAIN_REWARD_ICONS.rooms}<span>Rooms visited</span></span>
                 <div class="run-metric-chart__actions">
-                  <strong id="run-rooms-latest">—</strong>
+                  <button id="run-rooms-latest" class="run-metric-chart__latest" type="button" title="Show the latest room-visit frame" disabled>—</button>
                   <button id="run-rooms-map-button" class="run-rooms-map-button" type="button" aria-controls="run-rooms-map-dialog" aria-expanded="false" aria-haspopup="dialog" title="View visited rooms map">${MAP_ICON}<span>Map</span></button>
                 </div>
               </div>
-              <canvas id="run-rooms-chart" class="run-metric-chart__canvas" role="img" aria-label="Rooms visited by action"></canvas>
+              <canvas id="run-rooms-chart" class="run-metric-chart__canvas" role="img" aria-label="Rooms visited by action" aria-describedby="run-rooms-chart-tooltip"></canvas>
+              <div id="run-rooms-chart-tooltip" class="run-metric-chart__tooltip" role="tooltip" hidden></div>
             </article>
             <article class="run-metric-chart">
-              <div class="run-metric-chart__head"><span class="run-metric-chart__label run-metric-chart__label--gems">${TRAIN_REWARD_ICONS.gems}<span>Gems collected</span></span><strong id="run-gems-latest">—</strong></div>
-              <canvas id="run-gems-chart" class="run-metric-chart__canvas" role="img" aria-label="Gems collected by action"></canvas>
+              <div class="run-metric-chart__head"><span class="run-metric-chart__label run-metric-chart__label--gems">${TRAIN_REWARD_ICONS.gems}<span>Gems collected</span></span><button id="run-gems-latest" class="run-metric-chart__latest" type="button" title="Show the latest gem-collection frame" disabled>—</button></div>
+              <canvas id="run-gems-chart" class="run-metric-chart__canvas" role="img" aria-label="Gems collected by action" aria-describedby="run-gems-chart-tooltip"></canvas>
+              <div id="run-gems-chart-tooltip" class="run-metric-chart__tooltip" role="tooltip" hidden></div>
             </article>
           </div>
           <p id="run-exploration-empty" class="muted">Waiting for the agent's first action…</p>
@@ -1134,7 +1136,7 @@ function createPageRenderer({
                 </button>
               </header>
               <div class="run-world-map__viewport">
-                <div id="run-rooms-map-grid" class="run-world-map__grid" role="img" aria-label="Visited rooms world map"></div>
+                <div id="run-rooms-map-grid" class="run-world-map__grid" role="group" aria-label="Visited rooms world map"></div>
               </div>
               <div class="run-world-map__legend" aria-hidden="true">
                 <span><i class="is-visited"></i>Visited</span>
@@ -1142,6 +1144,7 @@ function createPageRenderer({
                 <span><i></i>Not visited</span>
               </div>
             </div>
+            <div id="run-rooms-map-tooltip" class="run-world-map__tooltip" role="tooltip" hidden></div>
           </div>
         </section>`;
     const heatmapSection = `<section class="panel run-heatmap" id="run-heatmap-section">
@@ -1282,7 +1285,7 @@ function createPageRenderer({
           <pre id="run-log" class="agent-log"></pre>
         </section>
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260713-json-observation-86" defer></script>`
+        <script src="/agent-run.js?v=20260714-map-no-room-labels-91" defer></script>`
     });
   }
 

@@ -24,6 +24,7 @@
     grid: document.getElementById("author-grid"),
     gridShell: document.querySelector(".author-grid-shell"),
     hitGrid: document.getElementById("author-hit-grid"),
+    hotbar: document.getElementById("author-hotbar"),
     hillClimb: document.getElementById("hill-climb"),
     hillClimbMode: document.getElementById("hill-climb-mode"),
     hillClimbNext: document.getElementById("hill-climb-next"),
@@ -1536,6 +1537,25 @@
     });
   }
 
+  function syncEditorCameraDownshift(app = editorRenderer.app) {
+    if (!app) {
+      return;
+    }
+
+    const shellRect = elements.gridShell?.getBoundingClientRect();
+    const hotbarRect = elements.hotbar?.getBoundingClientRect();
+
+    if (!shellRect || !hotbarRect || shellRect.height <= 0 || hotbarRect.height <= 0) {
+      app.editorCameraDownshiftPx = 0;
+      return;
+    }
+
+    // The camera moves down by half of the bottom control clearance. That
+    // puts the room's center halfway between the top of the editor view and
+    // the hotbar's top edge while preserving the existing room scale.
+    app.editorCameraDownshiftPx = Math.max(0, shellRect.bottom - hotbarRect.top) / 2;
+  }
+
   function ensureEditorRenderApp(playData) {
     const modules = window.PlayModules || {};
 
@@ -1579,6 +1599,8 @@
     // room, distance dimming, cheap redraws while painting).
     app.editorWorldView = true;
     app.playSurroundingRadius = 26;
+    app.syncEditorCameraDownshift = () => syncEditorCameraDownshift(app);
+    app.syncEditorCameraDownshift();
     // Diagnostic handle, matching the other __MAZEBENCH_* globals.
     window.__MAZEBENCH_AUTHOR_APP__ = app;
     if (
@@ -1636,6 +1658,8 @@
     if (!app || typeof app.applyLevelState !== "function") {
       return;
     }
+
+    app.syncEditorCameraDownshift?.();
 
     app.applyLevelState(playData, {
       deferRender: true,

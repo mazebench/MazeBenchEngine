@@ -20,6 +20,13 @@ const {
   parsePrimeLiveUsage,
   parsePrimeResults
 } = require("./token-usage");
+const {
+  claudeProjectKey,
+  claudeTranscriptPrefix,
+  codexTranscriptPrefix,
+  providerEventPrefix,
+  toolActivityPrefix
+} = require("./run-branch");
 
 // GUI-launched servers (editors, preview harnesses) often get a minimal PATH
 // that misses the dirs where codex/claude/docker/prime live. Enrich the PATH
@@ -1173,6 +1180,11 @@ function createAgentRunService({
         (meta.container === false || Boolean(runContainerId(runId))),
       resumable: meta.status === "paused",
       continuable: meta.status === "finished" || meta.status === "stopped",
+      branchable:
+        meta.kind !== "prime" &&
+        ["codex", "claude"].includes(meta.model) &&
+        !meta.swarm &&
+        ["paused", "finished", "stopped", "failed"].includes(meta.status),
       url: `/agent/runs/${encodeURIComponent(runId)}`
     };
   }
@@ -2893,6 +2905,12 @@ function createAgentRunService({
     if (params.resume_id) {
       args.push(`resume=${String(params.resume_id)}`);
     }
+    if (params.fork_session) {
+      args.push("fork_session=true");
+    }
+    if (params.session_id) {
+      args.push(`session_id=${String(params.session_id)}`);
+    }
 
     return { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit, mode, omniscient, hideNames };
   }
@@ -3008,6 +3026,7 @@ function createAgentRunService({
     const logFd = fs.openSync(logPath, "a");
     let child = null;
     let meta = null;
+    let branchPreparation = null;
 
     try {
       if (kind === "prime") {
@@ -3050,14 +3069,33 @@ function createAgentRunService({
             : "Local Prime Verifiers vision evaluation. Hosted vision will replace this path once the published renderer is self-contained."
         };
       } else {
-        const game = normalizedGameForRun(params.game_id);
-        const { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit, mode, omniscient, hideNames } = buildLocalRunArgs(runId, params, game);
-        const requestedModelName = String(params.model_name || "");
+        let effectiveParams = params;
+        if (params.branch_of) {
+          const sourceMeta = readRunMeta(String(params.branch_of));
+          if (!sourceMeta) throw new Error(`Unknown source run "${params.branch_of}".`);
+          branchPreparation = prepareProviderBranch(
+            String(params.branch_of),
+            runId,
+            sourceMeta,
+            Math.max(0, Math.floor(Number(params.branch_turn) || 0))
+          );
+          effectiveParams = {
+            ...params,
+            resume_id: branchPreparation.resumeId,
+            fork_session: branchPreparation.forkSession,
+            session_id: branchPreparation.newConversationId
+          };
+        }
+
+        const game = normalizedGameForRun(effectiveParams.game_id);
+        const { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit, mode, omniscient, hideNames } = buildLocalRunArgs(runId, effectiveParams, game);
+        const requestedModelName = String(effectiveParams.model_name || "");
         const exactModelName = model === "claude"
           ? resolveClaudeCatalogModelId(requestedModelName)
           : requestedModelName;
         const gemTotal = buildWorlds.countWorldGems(game);
         const roomTotal = game.worldMap?.levels?.length || 0;
+        const segmentStartTurns = readActions(runId).length;
 
         const shouldWait = model === "claude" && (claudeSlotOccupied() || waitingClaudeRuns().length > 0);
         if (!shouldWait) {
@@ -3078,16 +3116,16 @@ function createAgentRunService({
           model,
           model_name: exactModelName,
           model_alias: exactModelName !== requestedModelName ? requestedModelName : "",
-          reasoning: params.reasoning || "",
+          reasoning: effectiveParams.reasoning || "",
           game_id: game.id,
           game_title: game.name,
           level_id: levelId,
           gem_total: gemTotal,
           room_total: roomTotal,
-          moves,
+          moves: unlimited ? null : segmentStartTurns + moves,
           unlimited,
           allow_quit: allowQuit,
-          segment_start_turns: readActions(runId).length,
+          segment_start_turns: segmentStartTurns,
           segment_move_budget: moves,
           gems,
           view,
@@ -3097,12 +3135,15 @@ function createAgentRunService({
           tools: toolUse !== "read-only",
           tool_use: toolUse,
           swarm,
-          container: !(params.container === false || params.container === "false"),
-          video: !(params.video === false || params.video === "false"),
-          launch_params: launchParamsOf(params),
-          continue_of: params.continue_of || null,
-          seeded: Boolean(params.seed_run),
-          conversation_persistence: !(params.container === false || params.container === "false")
+          container: !(effectiveParams.container === false || effectiveParams.container === "false"),
+          video: !(effectiveParams.video === false || effectiveParams.video === "false"),
+          launch_params: launchParamsOf(effectiveParams),
+          continue_of: effectiveParams.continue_of || null,
+          branch_of: effectiveParams.branch_of || null,
+          branch_turn: effectiveParams.branch_of ? segmentStartTurns : null,
+          branch_provider_id: branchPreparation?.newConversationId || null,
+          seeded: Boolean(effectiveParams.seed_run || effectiveParams.branch_of),
+          conversation_persistence: !(effectiveParams.container === false || effectiveParams.container === "false")
             ? "run-dir"
             : "cli"
         };
@@ -3112,6 +3153,7 @@ function createAgentRunService({
       }
     } catch (error) {
       fs.closeSync(logFd);
+      branchPreparation?.cleanup();
       fs.rmSync(runDir, { recursive: true, force: true });
       throw error;
     }
@@ -3214,7 +3256,17 @@ function createAgentRunService({
   // Strip internal orchestration keys so meta.launch_params holds just the
   // config, ready to relaunch verbatim for a Continue.
   function launchParamsOf(params) {
-    const { count, seed_run, continue_of, ...rest } = params || {};
+    const {
+      count,
+      seed_run,
+      continue_of,
+      branch_of,
+      branch_turn,
+      resume_id,
+      fork_session,
+      session_id,
+      ...rest
+    } = params || {};
     return rest;
   }
 
@@ -3413,6 +3465,181 @@ function createAgentRunService({
     return "";
   }
 
+  function providerConversationFile(runId, meta, conversationId) {
+    const runState = path.join(runDirFor(runId), "agent-state");
+    if (meta.model === "codex") {
+      const runFile = findCodexSessionFile(path.join(runState, "codex"), conversationId);
+      if (runFile) return runFile;
+      if (meta.container) return "";
+      return findCodexSessionFile(
+        process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
+        conversationId
+      );
+    }
+
+    if (meta.model === "claude") {
+      let runFile = findClaudeSessionFile(path.join(runState, "claude"), conversationId);
+      if (!runFile && meta.container) {
+        snapshotLegacyClaudeConversation(runId, meta, { force: true });
+        runFile = findClaudeSessionFile(path.join(runState, "claude"), conversationId);
+      }
+      if (runFile) return runFile;
+      if (meta.container) return "";
+      return findClaudeSessionFile(
+        process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"),
+        conversationId
+      );
+    }
+
+    return "";
+  }
+
+  function copyBranchFrames(sourceDir, targetDir, turn) {
+    const sourceFrames = path.join(sourceDir, "frames");
+    if (!fs.existsSync(sourceFrames)) return;
+    const targetFrames = path.join(targetDir, "frames");
+    for (const entry of fs.readdirSync(sourceFrames, { withFileTypes: true })) {
+      const match = entry.isFile() && entry.name.match(/^(?:frame|live)-(\d+)\.png$/);
+      if (!match || Number(match[1]) > turn) continue;
+      fs.mkdirSync(targetFrames, { recursive: true });
+      fs.copyFileSync(path.join(sourceFrames, entry.name), path.join(targetFrames, entry.name));
+    }
+  }
+
+  function prepareMazeBranchPrefix(sourceRunId, targetRunId, turn, oldConversationId, newConversationId, model) {
+    const sourceDir = runDirFor(sourceRunId);
+    const targetDir = runDirFor(targetRunId);
+    const sourceSession = loadJson(path.join(sourceDir, "session.json"), null);
+    if (!sourceSession || !Array.isArray(sourceSession.actions)) {
+      throw new Error("This run has no replayable maze session to branch.");
+    }
+
+    const actionLines = fs.existsSync(path.join(sourceDir, "actions.jsonl"))
+      ? fs.readFileSync(path.join(sourceDir, "actions.jsonl"), "utf8").split("\n").filter(Boolean)
+      : [];
+    if (turn > sourceSession.actions.length || turn > actionLines.length) {
+      throw new Error(`Action ${turn} is outside this run's saved ${Math.min(sourceSession.actions.length, actionLines.length)}-action prefix.`);
+    }
+
+    const actions = sourceSession.actions.slice(0, turn);
+    const session = {
+      ...sourceSession,
+      actions,
+      lastStatus: turn > 0 ? actions[turn - 1]?.status || sourceSession.initial : sourceSession.initial
+    };
+    delete session.scorecard;
+    fs.writeFileSync(path.join(targetDir, "session.json"), `${JSON.stringify(session, null, 2)}\n`);
+    fs.writeFileSync(
+      path.join(targetDir, "actions.jsonl"),
+      turn > 0 ? `${actionLines.slice(0, turn).join("\n")}\n` : ""
+    );
+
+    const initialStatus = path.join(sourceDir, "initial-status.json");
+    if (fs.existsSync(initialStatus)) fs.copyFileSync(initialStatus, path.join(targetDir, "initial-status.json"));
+    else if (sourceSession.initial) {
+      fs.writeFileSync(path.join(targetDir, "initial-status.json"), `${JSON.stringify(sourceSession.initial, null, 2)}\n`);
+    }
+
+    const sourceEvents = path.join(sourceDir, "agent-events.jsonl");
+    const eventPrefix = fs.existsSync(sourceEvents)
+      ? providerEventPrefix(
+          fs.readFileSync(sourceEvents, "utf8"),
+          model,
+          turn,
+          oldConversationId,
+          newConversationId
+        )
+      : "";
+    fs.writeFileSync(path.join(targetDir, "agent-events.jsonl"), eventPrefix);
+
+    const sourceActivity = path.join(sourceDir, "tool-activity.jsonl");
+    if (fs.existsSync(sourceActivity)) {
+      const activity = toolActivityPrefix(fs.readFileSync(sourceActivity, "utf8"), turn);
+      if (activity) fs.writeFileSync(path.join(targetDir, "tool-activity.jsonl"), activity);
+    }
+    copyBranchFrames(sourceDir, targetDir, turn);
+  }
+
+  function prepareProviderBranch(sourceRunId, targetRunId, meta, turn) {
+    const oldConversationId = readConversationId(sourceRunId);
+    if (!oldConversationId) {
+      throw new Error("This run did not save a Codex or Claude conversation id.");
+    }
+    const sourceFile = providerConversationFile(sourceRunId, meta, oldConversationId);
+    if (!sourceFile) {
+      throw new Error(
+        `The saved ${meta.model === "codex" ? "Codex" : "Claude"} transcript is unavailable, so its context prefix cannot be restored.`
+      );
+    }
+
+    const targetDir = runDirFor(targetRunId);
+    const newConversationId = crypto.randomUUID();
+    const sourceText = fs.readFileSync(sourceFile, "utf8");
+    const cleanupPaths = [];
+    let resumeId = newConversationId;
+    let forkSession = false;
+    let destination;
+
+    if (meta.model === "codex") {
+      const root = meta.container
+        ? path.join(targetDir, "agent-state", "codex")
+        : process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+      const now = new Date();
+      const destinationDir = path.join(
+        root,
+        "sessions",
+        String(now.getFullYear()),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0")
+      );
+      const sourceName = path.basename(sourceFile);
+      const destinationName = sourceName.includes(oldConversationId)
+        ? sourceName.replace(oldConversationId, newConversationId)
+        : `rollout-${timestampSlug()}-${newConversationId}.jsonl`;
+      destination = path.join(destinationDir, destinationName);
+      fs.mkdirSync(destinationDir, { recursive: true });
+      fs.writeFileSync(destination, codexTranscriptPrefix(sourceText, turn, newConversationId));
+    } else {
+      const claudeHome = meta.container
+        ? path.join(targetDir, "agent-state", "claude")
+        : process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
+      const providerCwd = meta.container ? "/app/workspace" : path.join(targetDir, "workspace");
+      const destinationDir = path.join(claudeHome, "projects", claudeProjectKey(providerCwd));
+      destination = path.join(destinationDir, `${oldConversationId}.jsonl`);
+      fs.mkdirSync(destinationDir, { recursive: true });
+      fs.writeFileSync(destination, claudeTranscriptPrefix(sourceText, turn));
+      resumeId = oldConversationId;
+      forkSession = true;
+    }
+
+    if (!destination.startsWith(`${targetDir}${path.sep}`)) cleanupPaths.push(destination);
+    prepareMazeBranchPrefix(
+      sourceRunId,
+      targetRunId,
+      turn,
+      oldConversationId,
+      newConversationId,
+      meta.model
+    );
+
+    return {
+      cleanup() {
+        for (const filePath of cleanupPaths) {
+          fs.rmSync(filePath, { force: true });
+          try {
+            const directory = path.dirname(filePath);
+            if (fs.existsSync(directory) && fs.readdirSync(directory).length === 0) fs.rmdirSync(directory);
+          } catch (_error) {
+            /* another provider session now owns the directory */
+          }
+        }
+      },
+      forkSession,
+      newConversationId,
+      resumeId
+    };
+  }
+
   function hasPersistedContainerConversation(runId, meta, conversationId) {
     if (!meta.container || !conversationId) return false;
     const stateRoot = path.join(runDirFor(runId), "agent-state");
@@ -3553,6 +3780,39 @@ function createAgentRunService({
       kind: "local",
       moves: add,
       seed_run: runId
+    };
+    return launchRun(base);
+  }
+
+  function branchRun(runId, requestedTurn, additionalMoves) {
+    const meta = readRunMeta(runId);
+    if (!meta) throw new Error(`Unknown run "${runId}".`);
+    if (meta.kind === "prime") {
+      throw new Error("Prime evaluations do not expose a resumable provider transcript.");
+    }
+    if (!["codex", "claude"].includes(meta.model)) {
+      throw new Error("Only Codex and Claude runs can preserve a provider context prefix.");
+    }
+    if (meta.swarm) {
+      throw new Error("Swarm rollback is not safe yet because worker conversation prefixes cannot be restored consistently.");
+    }
+    if (!["paused", "finished", "stopped", "failed"].includes(meta.status)) {
+      throw new Error("Pause or stop the run before branching from an action.");
+    }
+
+    const total = readActions(runId).length;
+    const turn = Math.floor(Number(requestedTurn));
+    if (!Number.isFinite(turn) || turn < 0 || turn > total) {
+      throw new Error(`Choose an action from 0 through ${total}.`);
+    }
+    const moves = Math.max(1, Math.min(MAX_LOCAL_MOVE_BUDGET, Math.floor(Number(additionalMoves) || 10)));
+    const base = {
+      ...(meta.launch_params || reconstructParams(meta)),
+      kind: "local",
+      moves,
+      unlimited: false,
+      branch_of: runId,
+      branch_turn: turn
     };
     return launchRun(base);
   }
@@ -3927,6 +4187,7 @@ function createAgentRunService({
   providerRetryTimer.unref?.();
 
   return {
+    branchRun,
     cancelRunVideo,
     continueRun,
     deleteRun,

@@ -5,6 +5,7 @@ const path = require("node:path");
 const root = path.join(__dirname, "..");
 const runScript = fs.readFileSync(path.join(root, "public", "agent-run.js"), "utf8");
 const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "utf8");
+const pages = fs.readFileSync(path.join(root, "server", "pages.js"), "utf8");
 
 assert.match(runScript, /type="number" min="1" max="60" step="1"[^>]+data-replay-rate/);
 assert.match(runScript, />FPS<\/span>/);
@@ -41,5 +42,20 @@ assert.match(siteTheme, /\.run-live__json \.agent-board \{[\s\S]*?overflow: auto
 assert.doesNotMatch(siteTheme, /\.run-live__grid\.is-text-history \.run-live__viewer/);
 assert.match(siteTheme, /\.replay-rate input \{/);
 assert.doesNotMatch(siteTheme, /\.replay-rate select \{/);
+assert.match(runScript, /data-replay-turn data-replay-view=/);
+assert.match(runScript, /function jumpToPrimaryFrame\(requestedTurn/);
+assert.match(runScript, /data-jump-turn="\$\{escapeText\(num\)\}"/);
+assert.match(runScript, /void jumpToPrimaryFrame\(Number\(frame\.dataset\.jumpTurn\)\)/);
+assert.match(runScript, /canvas\._replayJumpTargets = jumpTargets/);
+assert.match(runScript, /function wireMetricChart\(canvas\)/);
+assert.match(runScript, /void jumpToPrimaryFrame\(target\.action\)/);
+assert.match(pages, /id="run-rooms-latest" class="run-metric-chart__latest"/);
+assert.match(pages, /id="run-gems-latest" class="run-metric-chart__latest"/);
+assert.match(pages, /id="run-rooms-chart-tooltip" class="run-metric-chart__tooltip" role="tooltip" hidden/);
+assert.match(pages, /id="run-gems-chart-tooltip" class="run-metric-chart__tooltip" role="tooltip" hidden/);
+assert.match(runScript, /function showMetricTooltip\(canvas, target, event\)/);
+assert.match(runScript, /tooltip\.textContent = `Frame \$\{target\.action\.toLocaleString\(\)\} · \$\{noun\}`/);
+assert.match(siteTheme, /\.run-metric-chart__canvas\.has-jump-target/);
+assert.match(siteTheme, /\.run-metric-chart__tooltip \{/);
 
-console.log("agent-run-playback-source: OK — playback has editable FPS and race-safe scheduling.");
+console.log("agent-run-playback-source: OK — exact-frame input and linked logs/charts share race-safe replay navigation.");

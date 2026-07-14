@@ -94,6 +94,30 @@
     return;
   }
 
+  function syncPlayCameraDownshift() {
+    // MazeJam owns and sizes its play HUD separately. This compensation is
+    // only for MazeBench's direct play shell, whose full-height canvas begins
+    // below the site bar and is therefore clipped by that bar's height at the
+    // bottom of the viewport.
+    if (playData.hostOwnsPlayHud === true) {
+      app.playCameraDownshiftPx = 0;
+      return;
+    }
+
+    const shellRect = app.playShell?.getBoundingClientRect();
+    const visualViewport = window.visualViewport;
+    const viewportBottom = visualViewport
+      ? (Number(visualViewport.offsetTop) || 0) + visualViewport.height
+      : window.innerHeight;
+    const clippedBottom = shellRect
+      ? Math.max(0, shellRect.bottom - viewportBottom)
+      : 0;
+
+    // Moving the camera down by half the clipped band moves the room up to
+    // the center of the actually visible play area without changing its fit.
+    app.playCameraDownshiftPx = clippedBottom / 2;
+  }
+
   // Play renders the whole world around the current room by default;
   // ?view=<n> limits it to n rings of neighboring rooms (?view=1 restores
   // the classic 3x3 neighborhood).
@@ -1215,6 +1239,7 @@
   }
 
   app.syncPlayLayout();
+  syncPlayCameraDownshift();
   app.setupCanvas();
   app.syncCameraTarget(true);
   app.syncFuzzyToggle();
@@ -1234,6 +1259,7 @@
   });
   window.addEventListener("resize", function () {
     app.syncPlayLayout();
+    syncPlayCameraDownshift();
     app.setupCanvas();
     if (playBootComplete) {
       app.syncCameraTarget(true);

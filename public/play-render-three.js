@@ -8833,6 +8833,51 @@
       return { top, bottom, left, right, width, height };
     }
 
+    function applyCameraDownshift(center) {
+      if (app.isFlyoverMode || isPalettePreviewRenderMode()) {
+        return;
+      }
+
+      const downshiftPx = Math.max(
+        0,
+        Number(
+          isEditorRenderMode()
+            ? app.editorCameraDownshiftPx
+            : app.playCameraDownshiftPx
+        ) || 0
+      );
+      const canvasRect = app.canvas?.getBoundingClientRect?.();
+      const viewportHeight =
+        canvasRect?.height > 0
+          ? canvasRect.height
+          : app.boardRect.height / Math.max(1, Number(app.renderPixelScale) || 1);
+
+      if (downshiftPx <= 0 || viewportHeight <= 0) {
+        return;
+      }
+
+      let visibleWorldHeight;
+
+      if (camera.isPerspectiveCamera) {
+        const distance = camera.position.distanceTo(center);
+        const verticalFov = THREE.MathUtils.degToRad(camera.getEffectiveFOV());
+        visibleWorldHeight = 2 * distance * Math.tan(verticalFov / 2);
+      } else {
+        visibleWorldHeight = (camera.top - camera.bottom) / Math.max(0.0001, camera.zoom);
+      }
+
+      const worldDownshift = visibleWorldHeight * (downshiftPx / viewportHeight);
+
+      if (!Number.isFinite(worldDownshift) || worldDownshift <= 0) {
+        return;
+      }
+
+      const shiftedCenter = center.clone().addScaledVector(camera.up, -worldDownshift);
+      camera.position.addScaledVector(camera.up, -worldDownshift);
+      camera.lookAt(shiftedCenter);
+      camera.updateMatrixWorld(true);
+    }
+
     function cameraFlightFitOptions() {
       if (app.isFlyoverMode || isEditorRenderMode()) {
         return null;
@@ -9001,6 +9046,7 @@
           Math.min(canvasWidth / projectedWidth, canvasHeight / projectedHeight) * 1.025
         ) * cameraZoom;
         camera.updateProjectionMatrix();
+        applyCameraDownshift(center);
         applyViewFitOffset();
         return;
       }
@@ -9015,6 +9061,7 @@
         camera.lookAt(center);
         camera.updateProjectionMatrix();
         camera.updateMatrixWorld(true);
+        applyCameraDownshift(center);
         applyViewFitOffset();
         return;
       }
@@ -9057,6 +9104,7 @@
       camera.lookAt(center);
       camera.updateProjectionMatrix();
       camera.updateMatrixWorld(true);
+      applyCameraDownshift(center);
       applyViewFitOffset();
     }
 

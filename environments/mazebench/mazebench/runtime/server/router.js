@@ -286,6 +286,16 @@ function createRequestRouter({
         return;
       }
 
+      if (segments[4] === "branch" && request.method === "POST") {
+        const payload = await readJsonBody(request);
+        const run = agentRuns.branchRun(runId, payload?.turn, payload?.moves);
+        sendJson(response, 201, {
+          run,
+          message: `Branched action ${run.branch_turn} into run ${run.id}.`
+        });
+        return;
+      }
+
       if (segments[4] === "budget" && request.method === "POST") {
         const payload = await readJsonBody(request);
         const run = agentRuns.setRunMoveTarget(runId, payload?.moves);
