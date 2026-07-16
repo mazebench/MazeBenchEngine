@@ -30,6 +30,8 @@ try {
   const project = fs.readFileSync(path.join(root, "environments", "mazebench_agent", "pyproject.toml"), "utf8");
   const appSource = fs.readFileSync(path.join(root, "server", "app.js"), "utf8");
   const runsSource = fs.readFileSync(path.join(root, "server", "agent-runs.js"), "utf8");
+  const pagesSource = fs.readFileSync(path.join(root, "server", "pages.js"), "utf8");
+  const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "utf8");
 
   assert.match(agentSource, /id: "none",\s*name: "None"/);
   assert.match(agentSource, /id: "codex",\s*name: "Codex"/);
@@ -40,6 +42,22 @@ try {
   assert.match(agentSource, /const allowCustomModel = state\.execution === "local" \|\| state\.harness === "none"/);
   assert.doesNotMatch(agentSource, /harnessSupportsVision/);
   assert.match(agentSource, /function setExecution\(value\)/);
+  assert.match(agentSource, /async function checkLocalAvailability\(harnessId = state\.harness\)/);
+  assert.match(agentSource, /state\.localAvailability = "checking";[\s\S]*?await refreshEnvironment\(\)/);
+  assert.match(agentSource, /state\.localAvailability = "active"/);
+  assert.match(agentSource, /if \(localProviderId\(harnessId\)\) checkLocalAvailability\(harnessId\)/);
+  assert.match(agentSource, /if \(option\.dataset\.execution === "local"\) selectLocalRun\(\)/);
+  assert.doesNotMatch(agentSource, /provider-card__avail/);
+  assert.doesNotMatch(agentSource, /refreshEnvironment\(\)\.catch/);
+  assert.ok(
+    pagesSource.indexOf('id="provider-picker"') < pagesSource.indexOf('id="harness-execution"'),
+    "the contextual Run through picker must render below the harness choices"
+  );
+  assert.match(pagesSource, /data-execution="prime"[\s\S]*?src="\/logos\/prime\.png"/);
+  assert.match(pagesSource, /data-execution="local"[\s\S]*?<strong>Local Run<\/strong>/);
+  assert.match(pagesSource, /id="local-run-status"[^>]*hidden/);
+  assert.match(siteTheme, /\.execution-option__status\.is-active/);
+  assert.match(siteTheme, /\.execution-option__spinner[\s\S]*?animation: executionStatusSpin/);
   assert.match(appSource, /allowLegacyLocalLaunch: true/);
   assert.match(appSource, /codex.*\["login", "status"\]/s);
   assert.match(appSource, /claude.*\["auth", "status", "--json"\]/s);

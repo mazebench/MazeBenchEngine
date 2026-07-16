@@ -833,17 +833,23 @@ function createPageRenderer({
           <section class="composer-section composer-section--agent">
             <div class="composer-section-title">
               <span class="composer-step">01</span>
-              <div><h3>Harness</h3><p id="execution-note" class="muted">Prime supplies inference; choose an optional coding harness.</p></div>
-            </div>
-            <div class="harness-execution">
-              <span class="harness-execution__label">Run through</span>
-              <div id="execution-picker" class="animated-segmented harness-execution__picker" role="radiogroup" aria-label="Execution provider">
-                <span class="segmented__glider" aria-hidden="true"></span>
-                <button type="button" class="segmented__option" data-execution="prime" aria-pressed="true"><span class="segmented__icon">PI</span><span>Prime</span></button>
-                <button type="button" class="segmented__option" data-execution="local" aria-pressed="false"><span class="segmented__icon">ME</span><span>Local subscription</span></button>
-              </div>
+              <div><h3>Harness</h3><p id="execution-note" class="muted">Choose a harness. Prime supplies inference by default.</p></div>
             </div>
             <div id="provider-picker" class="provider-grid" role="radiogroup" aria-label="Agent harness"></div>
+            <div id="harness-execution" class="harness-execution" hidden>
+              <span class="harness-execution__label">Run through</span>
+              <div id="execution-picker" class="execution-picker" role="radiogroup" aria-label="Execution provider">
+                <button type="button" class="execution-option is-selected" data-execution="prime" aria-pressed="true">
+                  <span class="execution-option__logo"><img src="/logos/prime.png" alt="" width="128" height="128"></span>
+                  <span class="execution-option__copy"><strong>Prime</strong><small>Prime inference</small></span>
+                </button>
+                <button type="button" class="execution-option" data-execution="local" aria-pressed="false">
+                  <span class="execution-option__logo execution-option__logo--local" aria-hidden="true">LOCAL</span>
+                  <span class="execution-option__copy"><strong>Local Run</strong><small>Use your subscription</small></span>
+                  <span id="local-run-status" class="execution-option__status is-idle" hidden></span>
+                </button>
+              </div>
+            </div>
           </section>
 
           <section class="composer-section composer-section--model" hidden>
@@ -1059,7 +1065,7 @@ function createPageRenderer({
           </div>
         </div>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
-        <script src="/agent.js?v=20260716-local-subscriptions-1" defer></script>`
+        <script src="/agent.js?v=20260716-local-run-picker-1" defer></script>`
     });
   }
 

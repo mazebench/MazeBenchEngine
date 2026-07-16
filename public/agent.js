@@ -28,11 +28,6 @@
       logo: '<img src="/logos/claude.png" alt="" width="128" height="128" loading="eager" decoding="sync" fetchpriority="high">'
     }
   ];
-  const PRIME_SETUP = {
-    docs: "https://docs.primeintellect.ai/cli-reference/introduction",
-    install: "uv tool install -U prime\nprime login",
-    login: "prime login"
-  };
   const LOCAL_SETUP = {
     codex: {
       docs: "https://developers.openai.com/codex/cli/",
@@ -96,7 +91,8 @@
     catalogs: {},
     catalogRequests: {},
     openFolders: new Set(),
-    modelQuery: ""
+    modelQuery: "",
+    localAvailability: "idle"
   };
 
   function setStatus(message, isError = false) {
@@ -377,28 +373,39 @@
   }
 
   function renderExecutionPicker() {
+    const wrapper = document.getElementById("harness-execution");
     const picker = document.getElementById("execution-picker");
+    const supportsLocal = Boolean(localProviderId());
+    if (wrapper) wrapper.hidden = !supportsLocal;
     picker?.querySelectorAll("[data-execution]").forEach((option) => {
       const selected = option.dataset.execution === state.execution;
       option.classList.toggle("is-selected", selected);
       option.setAttribute("aria-pressed", String(selected));
     });
-    picker?.classList.toggle("has-selection", true);
-    picker?.classList.toggle("is-second", state.execution === "local");
+
+    const status = document.getElementById("local-run-status");
+    if (status) {
+      const labels = { checking: "Checking", active: "Active", inactive: "Setup needed" };
+      status.hidden = state.localAvailability === "idle";
+      status.innerHTML = state.localAvailability === "checking"
+        ? `<span class="execution-option__spinner" aria-hidden="true"></span><span>${labels.checking}</span>`
+        : labels[state.localAvailability] || "";
+      status.className = `execution-option__status is-${state.localAvailability}`;
+    }
+
     const note = document.getElementById("execution-note");
     if (note) {
       note.textContent = state.execution === "prime"
-        ? "Prime supplies inference; choose an optional coding harness."
-        : "Runs the signed-in CLI on this machine and uses your Codex or Claude subscription limits.";
+        ? "Choose a harness. Prime supplies inference by default."
+        : "This run uses the signed-in CLI and your local subscription limits.";
     }
   }
 
   function setExecution(value) {
     const next = value === "local" ? "local" : "prime";
+    if (next === "local" && !localProviderId()) return;
     if (state.execution === next) return;
     state.execution = next;
-    if (next === "local" && state.harness === "none") state.harness = null;
-    if (state.harness && !harnessAvailability(state.harness).available) state.harness = null;
     state.modelId = null;
     state.customModel = "";
     state.modelQuery = "";
@@ -417,25 +424,18 @@
     }, 440);
     tweenResize(document.querySelector(".model-browser"), renderModels, 440);
     syncComposerSteps();
-    if (state.harness && harnessAvailability(state.harness).available) {
+    if (state.harness) {
       loadModels(state.harness, { fresh: !state.catalogs[catalogKey()] });
     }
   }
 
   function renderHarnesses(selectionFrom = null) {
     const host = document.getElementById("provider-picker");
-    const harnesses = state.execution === "local"
-      ? HARNESSES.filter((harness) => harness.id !== "none")
-      : HARNESSES;
-    host.innerHTML = harnesses.map((harness) => {
-      const availability = harnessAvailability(harness.id);
-      const statusClass = availability.checking ? "is-checking" : availability.available ? "is-ok" : "is-missing";
-      const statusLabel = availability.checking ? "CHECKING" : availability.available ? "ACTIVE" : "INACTIVE";
+    host.innerHTML = HARNESSES.map((harness) => {
       return `<button type="button" class="provider-card${state.harness === harness.id ? " is-selected" : ""}"
           data-harness="${harness.id}" role="radio" aria-checked="${state.harness === harness.id}">
         <span class="provider-card__logo">${harness.logo}</span>
         <span class="provider-card__name">${escapeText(harness.name)}</span>
-        <span class="provider-card__avail ${statusClass}">${statusLabel}</span>
       </button>`;
     }).join("");
 
@@ -445,67 +445,43 @@
     renderSelectionSlider(host, ".provider-card.is-selected", selectionFrom, "harness");
   }
 
-  function harnessAvailability(harnessId = state.harness) {
-    const env = data.environment || {};
+  function localRunAvailability(harnessId = state.harness, env = data.environment || {}) {
     if (env.checking || !Object.keys(env).length) {
       return { checking: true, available: false, installed: false, authenticated: false };
     }
-    if (state.execution === "local") {
-      const provider = localProviderId(harnessId);
-      if (!provider) return { checking: false, available: false, installed: false, authenticated: false };
-      const installed = env[`${provider}_installed`] ?? Boolean(env[provider]);
-      const authenticated = env[`${provider}_authenticated`] ?? Boolean(env[provider]);
-      const subscription = env[`${provider}_subscription`] ?? Boolean(env[provider]);
-      return {
-        checking: false,
-        available: Boolean(env[provider]) && Boolean(subscription),
-        installed: Boolean(installed),
-        authenticated: Boolean(authenticated),
-        subscription: Boolean(subscription),
-        authMethod: env[`${provider}_auth_method`] || ""
-      };
-    }
-    const installed = env.prime_installed ?? Boolean(env.prime);
-    const authenticated = env.prime_authenticated ?? Boolean(env.prime);
-    const runtimeReady = Boolean(env.uv);
+    const provider = localProviderId(harnessId);
+    if (!provider) return { checking: false, available: false, installed: false, authenticated: false };
+    const installed = env[`${provider}_installed`] ?? Boolean(env[provider]);
+    const authenticated = env[`${provider}_authenticated`] ?? Boolean(env[provider]);
+    const subscription = env[`${provider}_subscription`] ?? Boolean(env[provider]);
     return {
       checking: false,
-      available: Boolean(env.prime) && runtimeReady,
+      available: Boolean(env[provider]) && Boolean(subscription),
       installed: Boolean(installed),
       authenticated: Boolean(authenticated),
-      runtimeReady
+      subscription: Boolean(subscription),
+      authMethod: env[`${provider}_auth_method`] || ""
     };
   }
 
-  function showHarnessSetup(harnessId = state.harness) {
-    const availability = harnessAvailability(harnessId);
+  function showLocalSetup(harnessId = state.harness, availability = localRunAvailability(harnessId)) {
     const modal = document.getElementById("provider-setup-modal");
     if (!modal) return;
-    const local = state.execution === "local";
     const harness = HARNESSES.find((entry) => entry.id === harnessId);
-    const setup = local ? LOCAL_SETUP[harnessId] : PRIME_SETUP;
-    document.getElementById("provider-setup-logo").innerHTML = local
-      ? harness?.logo || ""
-      : '<img src="/logos/prime.png" alt="" width="128" height="128">';
-    document.getElementById("provider-setup-title").textContent = local
-      ? `${harness?.name || "Local CLI"} subscription is inactive`
-      : "Prime Intellect is inactive";
-    const missingRuntime = !local && availability.installed && availability.authenticated && !availability.runtimeReady;
-    const wrongLocalAuth = local && availability.authenticated && !availability.subscription;
+    const setup = LOCAL_SETUP[harnessId];
+    document.getElementById("provider-setup-logo").innerHTML = harness?.logo || "";
+    document.getElementById("provider-setup-title").textContent = `${harness?.name || "Local CLI"} subscription is inactive`;
+    const wrongLocalAuth = availability.authenticated && !availability.subscription;
     document.getElementById("provider-setup-message").textContent = !availability.installed
-      ? `Install ${local ? harness?.name || "the CLI" : "Prime Intellect"}, then sign in once from your terminal.`
+      ? `Install ${harness?.name || "the CLI"}, then sign in once from your terminal.`
       : wrongLocalAuth
         ? `${harness?.name} is signed in with ${availability.authMethod || "non-subscription credentials"}. Sign out, then sign in with your subscription account.`
       : !availability.authenticated
-        ? `${local ? harness?.name : "Prime Intellect"} is installed. Sign in once from your terminal, then refresh this page.`
-        : missingRuntime
-          ? "Prime is ready, but MazeBench also needs uv installed to run verifiers."
-          : `Finish ${local ? harness?.name : "Prime Intellect"} setup in your terminal, then refresh this page.`;
-    document.getElementById("provider-setup-command").textContent = missingRuntime
-      ? "curl -LsSf https://astral.sh/uv/install.sh | sh"
-      : wrongLocalAuth
-        ? `${harnessId === "codex" ? "codex logout" : "claude auth logout"}\n${setup.login}`
-        : availability.installed ? setup.login : setup.install;
+        ? `${harness?.name} is installed. Sign in once from your terminal, then try Local Run again.`
+        : `Finish ${harness?.name} setup in your terminal, then try Local Run again.`;
+    document.getElementById("provider-setup-command").textContent = wrongLocalAuth
+      ? `${harnessId === "codex" ? "codex logout" : "claude auth logout"}\n${setup.login}`
+      : availability.installed ? setup.login : setup.install;
     document.getElementById("provider-setup-docs").href = setup.docs;
     modal.hidden = false;
     window.requestAnimationFrame(() => modal.classList.add("open"));
@@ -520,19 +496,62 @@
     }, 180);
   }
 
+  let localAvailabilityRequest = 0;
+
+  async function checkLocalAvailability(harnessId = state.harness) {
+    if (!localProviderId(harnessId)) return;
+    const requestId = ++localAvailabilityRequest;
+    state.localAvailability = "checking";
+    renderExecutionPicker();
+    const harnessName = HARNESSES.find((entry) => entry.id === harnessId)?.name || "Local";
+    setStatus(`Checking ${harnessName} subscription…`);
+
+    try {
+      const env = await refreshEnvironment();
+      if (requestId !== localAvailabilityRequest || state.harness !== harnessId) return;
+      const availability = localRunAvailability(harnessId, env);
+      if (!availability.available) {
+        if (state.execution === "local") setExecution("prime");
+        state.localAvailability = "inactive";
+        renderExecutionPicker();
+        setStatus("Local subscription setup is needed.", true);
+        return availability;
+      }
+
+      state.localAvailability = "active";
+      renderExecutionPicker();
+      setStatus(`${harnessName} local subscription is active.`);
+      return availability;
+    } catch (error) {
+      if (requestId !== localAvailabilityRequest || state.harness !== harnessId) return;
+      if (state.execution === "local") setExecution("prime");
+      state.localAvailability = "inactive";
+      renderExecutionPicker();
+      setStatus(error.message, true);
+    }
+  }
+
+  function selectLocalRun() {
+    const harnessId = state.harness;
+    if (!localProviderId(harnessId)) return;
+    if (state.localAvailability === "active") {
+      setExecution("local");
+      return;
+    }
+    if (state.localAvailability === "inactive") {
+      showLocalSetup(harnessId, localRunAvailability(harnessId));
+      return;
+    }
+    if (state.localAvailability === "idle") checkLocalAvailability(harnessId);
+  }
+
   function selectHarness(harnessId) {
-    const availability = harnessAvailability(harnessId);
-    if (availability.checking) {
-      setStatus(`Checking ${state.execution === "prime" ? "Prime" : "local subscription"} setup…`);
-      return;
-    }
-    if (!availability.available) {
-      showHarnessSetup(harnessId);
-      return;
-    }
     if (state.harness === harnessId) return;
     const providerHost = document.getElementById("provider-picker");
     const providerSelectionFrom = selectedRect(providerHost, ".provider-card.is-selected");
+    localAvailabilityRequest += 1;
+    state.execution = "prime";
+    state.localAvailability = "idle";
     state.harness = harnessId;
     state.modelId = null;
     state.customModel = "";
@@ -554,18 +573,16 @@
       card.setAttribute("aria-checked", String(selected));
     });
     renderSelectionSlider(providerHost, ".provider-card.is-selected", providerSelectionFrom, "harness");
+    renderExecutionPicker();
 
     tweenResize(document.querySelector(".settings-stage"), () => {
-      document.getElementById("local-settings").hidden = state.execution !== "local";
-      document.getElementById("prime-settings").hidden = state.execution !== "prime";
+      document.getElementById("local-settings").hidden = true;
+      document.getElementById("prime-settings").hidden = false;
     }, 440);
-    tweenResize(document.querySelector(".model-browser"), () => {
-      renderModels();
-    }, 440);
+    tweenResize(document.querySelector(".model-browser"), renderModels, 440);
     syncComposerSteps();
-    loadModels(harnessId, {
-      fresh: (state.execution === "local" && harnessId === "codex") || !state.catalogs[catalogKey(harnessId)]
-    });
+    loadModels(harnessId, { fresh: !state.catalogs[catalogKey(harnessId)] });
+    if (localProviderId(harnessId)) checkLocalAvailability(harnessId);
   }
 
   // ---- model picker ---------------------------------------------------------
@@ -1317,7 +1334,6 @@
   async function refreshEnvironment() {
     const env = await api("/api/agent/environment");
     data.environment = env;
-    renderHarnesses();
     syncIsolationPicker();
     return env;
   }
@@ -1778,7 +1794,10 @@
   renderWorlds();
   renderLevelSummary();
   document.querySelectorAll("[data-execution]").forEach((option) => {
-    option.addEventListener("click", () => setExecution(option.dataset.execution));
+    option.addEventListener("click", () => {
+      if (option.dataset.execution === "local") selectLocalRun();
+      else setExecution("prime");
+    });
   });
   document.querySelectorAll(".segmented__option[data-isolation]").forEach((option) => {
     option.addEventListener("click", () => {
@@ -1807,11 +1826,6 @@
     if (event.key === "Escape" && document.getElementById("provider-setup-modal")?.classList.contains("open")) {
       closeProviderSetup();
     }
-  });
-  refreshEnvironment().catch((error) => {
-    data.environment = { checking: false };
-    renderHarnesses();
-    setStatus(error.message, true);
   });
   syncComposerSteps(false);
 })();

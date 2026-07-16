@@ -69,6 +69,13 @@ assert.match(agentScript, /kind: "prime",\s*harness: state\.harness/);
 assert.match(agentScript, /kind: "local",\s*subscription: true/);
 assert.match(pages, /data-execution="prime"/);
 assert.match(pages, /data-execution="local"/);
+assert.match(pages, /data-execution="prime"[\s\S]*?src="\/logos\/prime\.png"/);
+assert.match(pages, /id="local-run-status"[^>]*hidden/);
+assert.doesNotMatch(agentScript, /provider-card__avail/);
+assert.ok(
+  pages.indexOf('id="provider-picker"') < pages.indexOf('id="harness-execution"'),
+  "Run through choices should appear beneath the selected harness"
+);
 assert.match(pages, /<h3>Harness<\/h3>/);
 assert.match(pages, /window\.__PLAY_WORLD_DATA__/);
 assert.match(pages, /maze-frame is-loading/);
