@@ -11,11 +11,12 @@
 
   // Harnesses are a small data registry on purpose: Prime can add another
   // built-in harness without changing the model or run-settings flow.
+  // Bot Off is from Lucide Icons (ISC License).
   const HARNESSES = [
     {
       id: "none",
       name: "None",
-      logo: '<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="18" fill="none" stroke="currentColor" stroke-width="3"></circle><path d="M12 36 36 12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path></svg>'
+      logo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.67 8H18a2 2 0 0 1 2 2v4.33"></path><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M22 22 2 2"></path><path d="M8 8H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 1.414-.586"></path><path d="M9 13v2"></path><path d="M9.67 4H12v2.33"></path></svg>'
     },
     {
       id: "codex",
@@ -442,7 +443,7 @@
     host.querySelectorAll(".provider-card").forEach((card) => {
       card.addEventListener("click", () => selectHarness(card.dataset.harness));
     });
-    renderSelectionSlider(host, ".provider-card.is-selected", selectionFrom, "harness");
+    renderSelectionSlider(host, ".provider-card.is-selected", selectionFrom, "provider");
   }
 
   function localRunAvailability(harnessId = state.harness, env = data.environment || {}) {
@@ -572,7 +573,7 @@
       card.classList.toggle("is-selected", selected);
       card.setAttribute("aria-checked", String(selected));
     });
-    renderSelectionSlider(providerHost, ".provider-card.is-selected", providerSelectionFrom, "harness");
+    renderSelectionSlider(providerHost, ".provider-card.is-selected", providerSelectionFrom, "provider");
     renderExecutionPicker();
 
     tweenResize(document.querySelector(".settings-stage"), () => {
