@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import asyncio
 import functools
 import json
@@ -9,7 +10,7 @@ import select
 import signal
 import shlex
 import subprocess
-import atexit
+import threading
 from importlib.resources import files
 from pathlib import Path
 from string import Template
@@ -502,6 +503,108 @@ async def run_blocking(func: Any, /, *args: Any, **kwargs: Any) -> Any:
     return await loop.run_in_executor(None, functools.partial(func, *args, **kwargs))
 
 
+PROCESS_SHUTDOWN_TIMEOUT_SECONDS = 20
+
+
+def process_command(pid: int) -> str:
+    if os.name != "posix" or int(pid) <= 1:
+        return ""
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(int(pid)), "-o", "command="],
+            capture_output=True,
+            encoding="utf8",
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def playwright_browser_children(parent_pid: int) -> set[int]:
+    if os.name != "posix" or int(parent_pid) <= 1:
+        return set()
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,command="],
+            capture_output=True,
+            encoding="utf8",
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+
+    children: set[int] = set()
+    for line in result.stdout.splitlines():
+        match = re.match(r"^\s*(\d+)\s+(\d+)\s+(.+)$", line)
+        if not match or int(match.group(2)) != int(parent_pid):
+            continue
+        command = match.group(3)
+        if (
+            "--remote-debugging-pipe" in command
+            and "playwright_chromiumdev_profile-" in command
+        ):
+            children.add(int(match.group(1)))
+    return children
+
+
+def signal_process_group(process: subprocess.Popen[Any], sig: signal.Signals) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, sig)
+        else:
+            process.send_signal(sig)
+    except (OSError, ProcessLookupError):
+        try:
+            process.send_signal(sig)
+        except (OSError, ProcessLookupError):
+            pass
+
+
+def kill_playwright_browsers(browser_pids: set[int]) -> None:
+    kill_signal = getattr(signal, "SIGKILL", signal.SIGTERM)
+    for pid in browser_pids:
+        command = process_command(pid)
+        if (
+            "--remote-debugging-pipe" not in command
+            or "playwright_chromiumdev_profile-" not in command
+        ):
+            continue
+        try:
+            if os.name == "posix":
+                os.killpg(pid, kill_signal)
+            else:
+                os.kill(pid, kill_signal)
+        except (OSError, ProcessLookupError):
+            pass
+
+
+def terminate_process(
+    process: subprocess.Popen[Any],
+    *,
+    browser_pids: set[int] | None = None,
+) -> None:
+    known_browsers = set(browser_pids or ())
+    if process.poll() is None:
+        known_browsers.update(playwright_browser_children(process.pid))
+        signal_process_group(process, signal.SIGTERM)
+        try:
+            process.wait(timeout=PROCESS_SHUTDOWN_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            known_browsers.update(playwright_browser_children(process.pid))
+            kill_playwright_browsers(known_browsers)
+            signal_process_group(process, getattr(signal, "SIGKILL", signal.SIGTERM))
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+    kill_playwright_browsers(known_browsers)
+
+
 def valid_action_commands(actions: list[dict[str, Any]]) -> list[str]:
     return [
         str(action.get("command") or "").strip()
@@ -526,17 +629,32 @@ def render_vision_frame_data_url(
         "width": int(task.vision_width),
         "yaw": int(task.yaw),
     }
-    result = subprocess.run(
+    process = subprocess.Popen(
         [
             task.node_bin,
             str(Path(task.repo_root) / "scripts" / "maze-render-frame.js"),
         ],
-        input=json.dumps(payload),
-        capture_output=True,
         cwd=task.repo_root,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         encoding="utf8",
-        timeout=max(30, int(task.timeout_seconds)),
-        check=False,
+        start_new_session=os.name == "posix",
+    )
+    try:
+        stdout, stderr = process.communicate(
+            json.dumps(payload), timeout=max(30, int(task.timeout_seconds))
+        )
+    except subprocess.TimeoutExpired as error:
+        browser_pids = playwright_browser_children(process.pid)
+        terminate_process(process, browser_pids=browser_pids)
+        raise TimeoutError("maze-render-frame.js timed out") from error
+
+    result = subprocess.CompletedProcess(
+        process.args,
+        process.returncode,
+        stdout=stdout,
+        stderr=stderr,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -677,6 +795,7 @@ class MazeSession:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             encoding="utf8",
+            start_new_session=os.name == "posix",
         )
 
     def request(self, command: str, **kwargs: Any) -> dict[str, Any]:
@@ -722,9 +841,9 @@ class MazeSession:
                     self.process.terminate()
         finally:
             try:
-                self.process.wait(timeout=2)
+                self.process.wait(timeout=PROCESS_SHUTDOWN_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
-                self.process.kill()
+                terminate_process(self.process)
 
 
 class VisionSession:
@@ -746,6 +865,7 @@ class VisionSession:
         }
         self.applied_actions: list[str] = []
         self.last_frame = ""
+        self.browser_pids: set[int] = set()
         self.process = subprocess.Popen(
             [
                 task.node_bin,
@@ -757,6 +877,7 @@ class VisionSession:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             encoding="utf8",
+            start_new_session=os.name == "posix",
         )
         try:
             self.last_frame = self.frame_from_response(
@@ -793,6 +914,13 @@ class VisionSession:
         if not result.get("ok"):
             raise RuntimeError(str(result.get("error") or "maze render command failed"))
 
+        try:
+            browser_pid = int(result.get("browser_pid") or 0)
+        except (TypeError, ValueError):
+            browser_pid = 0
+        if browser_pid > 1:
+            self.browser_pids.add(browser_pid)
+
         return result
 
     @staticmethod
@@ -826,7 +954,11 @@ class VisionSession:
 
     def close(self, kill: bool = False) -> None:
         process = getattr(self, "process", None)
-        if process is None or process.poll() is not None:
+        if process is None:
+            return
+        browser_pids = set(getattr(self, "browser_pids", set()))
+        if process.poll() is not None:
+            kill_playwright_browsers(browser_pids)
             return
 
         try:
@@ -839,9 +971,11 @@ class VisionSession:
                     process.terminate()
         finally:
             try:
-                process.wait(timeout=2)
+                process.wait(timeout=PROCESS_SHUTDOWN_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
-                process.kill()
+                terminate_process(process, browser_pids=browser_pids)
+            else:
+                kill_playwright_browsers(browser_pids)
 
     def __del__(self) -> None:
         try:
@@ -1217,7 +1351,8 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
             view=task.view,
             yaw=task.yaw,
         )
-        atexit.register(self.close_session)
+        self._atexit_callback = self.close_session
+        atexit.register(self._atexit_callback)
 
     def export_live_actions(self) -> None:
         write_live_actions(list(self.state.maze_actions or []))
@@ -1306,6 +1441,10 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
             session.close()
             self.session = None
         self.close_vision_session()
+        callback = getattr(self, "_atexit_callback", None)
+        if callback is not None:
+            atexit.unregister(callback)
+            self._atexit_callback = None
 
     def initialize_state(self, status: dict[str, Any]) -> None:
         task = self.task
@@ -1569,4 +1708,22 @@ __all__ = ["MazeBenchConfig", "MazeBenchEnvConfig", "MazeBenchTaskset"]
 
 
 if __name__ == "__main__":
+    original_parent_pid = os.getppid()
+
+    # A launcher can die in the narrow window before this module imports. In
+    # framework mode this process is never an intentional daemon, so starting
+    # already reparented to launchd means there is no rollout left to serve.
+    if original_parent_pid <= 1 and "VF_CONFIG" in os.environ:
+        raise SystemExit(0)
+
+    if original_parent_pid > 1:
+        parent_poll = threading.Event()
+
+        def stop_when_parent_exits() -> None:
+            while os.getppid() == original_parent_pid:
+                parent_poll.wait(2)
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        threading.Thread(target=stop_when_parent_exits, daemon=True).start()
+
     MazeBenchUser.run()

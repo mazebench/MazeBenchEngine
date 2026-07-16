@@ -4,6 +4,11 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const readline = require("node:readline");
+const {
+  cleanupPlaywrightProfile,
+  findPlaywrightBrowserChildren,
+  killPlaywrightBrowserProcess
+} = require("./playwright-process");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const DEFAULT_BROWSER_PATHS = [
@@ -13,6 +18,55 @@ const DEFAULT_BROWSER_PATHS = [
   "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
 ];
 const DIRECTIONS = new Set(["up", "down", "left", "right"]);
+const BROWSER_CLOSE_TIMEOUT_MS = 3_000;
+const ACTIVE_BROWSER_PROCESSES = new Map();
+
+// Playwright deliberately launches Chromium as a separate process-group
+// leader. If this renderer is forced to exit, kill that group synchronously so
+// Chromium cannot be reparented to launchd and survive the rollout that owned
+// it. Normal browser.close() remains the preferred path below.
+process.once("exit", () => {
+  for (const processInfo of ACTIVE_BROWSER_PROCESSES.values()) {
+    killPlaywrightBrowserProcess(processInfo);
+  }
+});
+
+function trackLaunchedBrowser() {
+  const processInfo = findPlaywrightBrowserChildren(process.pid)[0] || null;
+  if (processInfo) ACTIVE_BROWSER_PROCESSES.set(processInfo.pid, processInfo);
+  return processInfo;
+}
+
+async function closeBrowser(browser, processInfo) {
+  if (!browser && !processInfo) return;
+
+  let settled = false;
+  const closePromise = Promise.resolve()
+    .then(() => browser?.close())
+    .catch(() => {})
+    .finally(() => {
+      settled = true;
+    });
+
+  await Promise.race([
+    closePromise,
+    new Promise((resolve) => setTimeout(resolve, BROWSER_CLOSE_TIMEOUT_MS))
+  ]);
+
+  // browser.close() normally removes the profile itself. If it hung or Chrome
+  // ignored the close request, kill the browser's own process group explicitly.
+  if (!settled) killPlaywrightBrowserProcess(processInfo);
+  await Promise.race([
+    closePromise,
+    new Promise((resolve) => setTimeout(resolve, 1000))
+  ]);
+
+  if (processInfo) {
+    killPlaywrightBrowserProcess(processInfo);
+    cleanupPlaywrightProfile(processInfo);
+    ACTIVE_BROWSER_PROCESSES.delete(processInfo.pid);
+  }
+}
 
 function readStdin() {
   return fs.readFileSync(0, "utf8");
@@ -302,9 +356,11 @@ async function createRenderSession(payload) {
   const options = normalizeRenderOptions(payload);
   const server = await startServer();
   let browser = null;
+  let browserProcess = null;
 
   try {
     browser = await launchBrowser(chromium, options.browser);
+    browserProcess = trackLaunchedBrowser();
     const page = await browser.newPage({
       deviceScaleFactor: 1,
       viewport: { width: options.width, height: options.height }
@@ -442,6 +498,7 @@ async function createRenderSession(payload) {
     const session = {
       appliedActions: [],
       browser,
+      browserProcess,
       cameraTiltDegrees: options.cameraTiltDegrees,
       cameraYawTurns: ((options.yaw % 4) + 4) % 4,
       closed: false,
@@ -454,7 +511,7 @@ async function createRenderSession(payload) {
     await waitUntilSettled(page);
     return session;
   } catch (error) {
-    await browser?.close().catch(() => {});
+    await closeBrowser(browser, browserProcess);
     await server.close().catch(() => {});
     throw error;
   }
@@ -601,7 +658,7 @@ async function closeRenderSession(session) {
   }
 
   session.closed = true;
-  await session.browser.close().catch(() => {});
+  await closeBrowser(session.browser, session.browserProcess);
   await session.server.close().catch(() => {});
 }
 
@@ -713,12 +770,20 @@ function createServeHandler() {
     if (command === "init") {
       await closeSession();
       session = await initSession(message);
-      return { ok: true, frame: await captureSessionFrame(session) };
+      return {
+        ok: true,
+        browser_pid: session.browserProcess?.pid || null,
+        frame: await captureSessionFrame(session)
+      };
     }
 
     if (command === "render") {
       await syncSession(message);
-      return { ok: true, frame: await captureSessionFrame(session) };
+      return {
+        ok: true,
+        browser_pid: session.browserProcess?.pid || null,
+        frame: await captureSessionFrame(session)
+      };
     }
 
     if (command === "close") {
@@ -732,11 +797,20 @@ function createServeHandler() {
 
     if (command === "action") {
       const applied = await applySessionAction(session, message.action);
-      return { ok: true, applied, frame: await captureSessionFrame(session) };
+      return {
+        ok: true,
+        applied,
+        browser_pid: session.browserProcess?.pid || null,
+        frame: await captureSessionFrame(session)
+      };
     }
 
     if (command === "frame") {
-      return { ok: true, frame: await captureSessionFrame(session) };
+      return {
+        ok: true,
+        browser_pid: session.browserProcess?.pid || null,
+        frame: await captureSessionFrame(session)
+      };
     }
 
     throw new Error(`unknown command: ${message.command}`);
@@ -748,9 +822,12 @@ function createServeHandler() {
 function runServeMode() {
   const handler = createServeHandler();
   let queue = Promise.resolve();
+  let closing = false;
 
   function shutdown() {
-    const forceExit = setTimeout(() => process.exit(0), 2000);
+    if (closing) return;
+    closing = true;
+    const forceExit = setTimeout(() => process.exit(0), BROWSER_CLOSE_TIMEOUT_MS + 2000);
     queue = queue
       .then(() => handler.closeSession())
       .catch(() => {})
@@ -788,7 +865,7 @@ function runServeMode() {
       writeLine(response);
 
       if (response.ok && response.closing) {
-        process.exit(0);
+        shutdown();
       }
     });
   });
@@ -805,6 +882,14 @@ function runListenMode({ idleSeconds = 600, portFile = "" } = {}) {
   let queue = Promise.resolve();
   let lastActivity = Date.now();
   let closing = false;
+  let listeningInfo = null;
+
+  function writePortInfo(extra = {}) {
+    if (!portFile || !listeningInfo) return;
+    listeningInfo = { ...listeningInfo, ...extra };
+    fs.mkdirSync(path.dirname(portFile), { recursive: true });
+    fs.writeFileSync(portFile, `${JSON.stringify(listeningInfo)}\n`);
+  }
 
   function shutdown() {
     if (closing) {
@@ -822,7 +907,7 @@ function runListenMode({ idleSeconds = 600, portFile = "" } = {}) {
         }
 
         server.close(() => process.exit(0));
-        setTimeout(() => process.exit(0), 1000).unref();
+        setTimeout(() => process.exit(0), BROWSER_CLOSE_TIMEOUT_MS + 2000).unref();
       });
   }
 
@@ -857,6 +942,10 @@ function runListenMode({ idleSeconds = 600, portFile = "" } = {}) {
           }
 
           lastActivity = Date.now();
+
+          if (Number(response.browser_pid) > 0) {
+            writePortInfo({ browser_pid: Number(response.browser_pid) });
+          }
 
           if (!socket.destroyed) {
             socket.write(`${JSON.stringify(response)}\n`);
@@ -902,11 +991,9 @@ function runListenMode({ idleSeconds = 600, portFile = "" } = {}) {
   server.listen(0, "127.0.0.1", () => {
     const address = server.address();
     const info = { pid: process.pid, port: address.port };
+    listeningInfo = info;
 
-    if (portFile) {
-      fs.mkdirSync(path.dirname(portFile), { recursive: true });
-      fs.writeFileSync(portFile, `${JSON.stringify(info)}\n`);
-    }
+    writePortInfo();
 
     writeLine({ ok: true, listening: true, ...info });
   });

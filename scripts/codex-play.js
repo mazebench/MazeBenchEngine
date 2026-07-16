@@ -3,6 +3,12 @@ const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
+const {
+  findPlaywrightBrowserChildren,
+  killPlaywrightBrowserProcess,
+  playwrightBrowserProcess,
+  signalProcessGroup
+} = require("./playwright-process");
 
 const directions = new Set(["up", "down", "left", "right"]);
 
@@ -389,15 +395,10 @@ async function stopRenderDaemon(stateFile, { force = false } = {}) {
     }
   }
   if (force && Number(info.pid) > 0) {
-    try {
-      process.kill(-Number(info.pid), "SIGKILL");
-    } catch (_error) {
-      try {
-        process.kill(Number(info.pid), "SIGKILL");
-      } catch (_innerError) {
-        /* already gone */
-      }
-    }
+    signalProcessGroup(Number(info.pid), "SIGKILL");
+  }
+  if (force && Number(info.browser_pid) > 0) {
+    killPlaywrightBrowserProcess(Number(info.browser_pid));
   }
   fs.rmSync(daemonPortFile(stateFile), { force: true });
 }
@@ -405,19 +406,99 @@ async function stopRenderDaemon(stateFile, { force = false } = {}) {
 // One-shot fallback when the daemon can't be used: boots a browser, replays
 // every applied action, exits. Slow, but has no moving parts.
 function renderVisionFrameOneShot(session, payload) {
-  const result = spawnSync(session.nodeBin || process.execPath, [rendererScript(session)], {
-    cwd: session.repoRoot,
-    encoding: "utf8",
-    input: JSON.stringify(payload),
-    maxBuffer: 128 * 1024 * 1024,
-    timeout: 90000,
-    killSignal: "SIGKILL"
+  return new Promise((resolve, reject) => {
+    const child = spawn(session.nodeBin || process.execPath, [rendererScript(session)], {
+      cwd: session.repoRoot,
+      detached: process.platform !== "win32",
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    const browserProcesses = new Map();
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let outputError = null;
+    let settled = false;
+    let forceTimer = null;
+
+    const trackBrowsers = () => {
+      findPlaywrightBrowserChildren(child.pid).forEach((info) => {
+        browserProcesses.set(info.pid, info);
+      });
+    };
+    const cleanupBrowsers = () => {
+      trackBrowsers();
+      for (const info of browserProcesses.values()) {
+        killPlaywrightBrowserProcess(playwrightBrowserProcess(info.pid) || info);
+      }
+    };
+    const tracker = setInterval(trackBrowsers, 250);
+    tracker.unref?.();
+    const requestStop = () => {
+      trackBrowsers();
+      signalProcessGroup(child.pid, "SIGTERM");
+      if (!forceTimer) {
+        forceTimer = setTimeout(() => {
+          cleanupBrowsers();
+          signalProcessGroup(child.pid, "SIGKILL");
+        }, 17_000);
+        forceTimer.unref?.();
+      }
+    };
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      // Give the renderer and Playwright time to close Chromium cleanly. The
+      // old spawnSync(SIGKILL) path killed only Node and leaked Chrome's
+      // deliberately detached process group.
+      requestStop();
+    }, 90_000);
+
+    const finish = (error, code = null) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(tracker);
+      clearTimeout(timeout);
+      clearTimeout(forceTimer);
+      cleanupBrowsers();
+
+      if (error) {
+        reject(error);
+        return;
+      }
+      if (timedOut) {
+        reject(new Error("maze-render-frame.js timed out after 90 seconds"));
+        return;
+      }
+      if (code !== 0) {
+        reject(new Error((stderr || stdout || "maze-render-frame.js failed").trim()));
+        return;
+      }
+
+      try {
+        resolve(String(JSON.parse(stdout).data_url || ""));
+      } catch (parseError) {
+        reject(parseError);
+      }
+    };
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      if (Buffer.byteLength(stdout) > 128 * 1024 * 1024 && !outputError) {
+        outputError = new Error("maze-render-frame.js exceeded its output limit");
+        requestStop();
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      if (Buffer.byteLength(stderr) > 16 * 1024 * 1024) {
+        stderr = stderr.slice(-16 * 1024 * 1024);
+      }
+    });
+    child.once("error", (error) => finish(error));
+    child.once("close", (code) => finish(outputError, code));
+    child.stdin.end(JSON.stringify(payload));
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error((result.stderr || result.stdout || "maze-render-frame.js failed").trim());
-  }
-  return String(JSON.parse(result.stdout).data_url || "");
 }
 
 // Render the current maze view to a PNG via maze-render-frame.js (the same
@@ -438,7 +519,7 @@ async function renderVisionFrame(session, turnIndex, stateFile) {
     // Reap the broken browser before trying one clean one-shot render. Without
     // this, a timed-out GPU process and its fallback can run side-by-side.
     await stopRenderDaemon(stateFile, { force: true });
-    dataUrl = renderVisionFrameOneShot(session, payload);
+    dataUrl = await renderVisionFrameOneShot(session, payload);
   }
   const prefix = "data:image/png;base64,";
   if (!dataUrl.startsWith(prefix)) {

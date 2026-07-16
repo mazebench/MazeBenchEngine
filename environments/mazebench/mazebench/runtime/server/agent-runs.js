@@ -27,6 +27,12 @@ const {
   providerEventPrefix,
   toolActivityPrefix
 } = require("./run-branch");
+const {
+  findPlaywrightBrowserChildren,
+  killPlaywrightBrowserProcess,
+  playwrightBrowserProcess,
+  signalProcessGroup
+} = require("../scripts/playwright-process");
 
 // GUI-launched servers (editors, preview harnesses) often get a minimal PATH
 // that misses the dirs where codex/claude/docker/prime live. Enrich the PATH
@@ -458,6 +464,9 @@ function createAgentRunService({
           }
         }
       }
+      if (Number(info?.browser_pid) > 0) {
+        killPlaywrightBrowserProcess(Number(info.browser_pid));
+      }
       fs.rmSync(portFile, { force: true });
     });
   }
@@ -762,7 +771,9 @@ function createAgentRunService({
       ? {
           ...meta,
           status: "paused",
+          pid: null,
           pause_reason: "quota",
+          pause_mode: "cold",
           pause_message: quota.message,
           paused_at: meta.paused_at || now,
           active_elapsed_ms: activeElapsedMs(meta, Date.parse(meta.paused_at || now)),
@@ -797,7 +808,9 @@ function createAgentRunService({
       const meta = entry.meta.status === "running" ? finalizeStatus(entry.id, entry.meta) : entry.meta;
       return (
         ["running", "pausing", "stopping"].includes(meta.status) ||
-        (meta.status === "paused" && meta.pause_mode !== "cold")
+        (meta.status === "paused" &&
+          !["quota", "provider_backoff"].includes(meta.pause_reason) &&
+          meta.pause_mode !== "cold")
       );
     });
   }
@@ -1119,7 +1132,9 @@ function createAgentRunService({
     return {
       ...meta,
       status: "paused",
+      pid: null,
       pause_reason: "provider_backoff",
+      pause_mode: "cold",
       pause_message: failure.message,
       provider_failure_status: failure.status,
       provider_failure_turns: turns,
@@ -2186,14 +2201,9 @@ function createAgentRunService({
     entry.waiters.splice(0).forEach((waiter) => waiter.reject(new Error("The frame renderer stopped.")));
 
     const child = entry.child;
-    if (force) {
-      try {
-        child.kill("SIGKILL");
-      } catch (_error) {
-        /* already exited */
-      }
-      return;
-    }
+    findPlaywrightBrowserChildren(child.pid).forEach((info) => {
+      entry.browserProcesses.set(info.pid, info);
+    });
 
     try {
       entry.child.stdin.write(`${JSON.stringify({ command: "close" })}\n`);
@@ -2201,13 +2211,22 @@ function createAgentRunService({
       /* stdin already gone */
     }
 
-    setTimeout(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch (error) {
-        /* already exited */
+    if (force) {
+      // SIGTERM lets the renderer's Playwright cleanup run. SIGKILLing only
+      // Node is what previously orphaned Chrome's separate process group.
+      signalProcessGroup(child.pid, "SIGTERM");
+    }
+
+    entry.stopTimer = setTimeout(() => {
+      findPlaywrightBrowserChildren(child.pid).forEach((info) => {
+        entry.browserProcesses.set(info.pid, info);
+      });
+      for (const info of entry.browserProcesses.values()) {
+        killPlaywrightBrowserProcess(playwrightBrowserProcess(info.pid) || info);
       }
-    }, 5000).unref();
+      signalProcessGroup(child.pid, "SIGKILL");
+    }, 20_000);
+    entry.stopTimer.unref();
   }
 
   function liveRendererFor(runId) {
@@ -2223,10 +2242,18 @@ function createAgentRunService({
 
     const child = spawn(process.execPath, [renderFrameScript, "--serve"], {
       cwd: rootDir,
+      detached: process.platform !== "win32",
       env: enrichedPathEnv(),
       stdio: ["pipe", "pipe", "ignore"]
     });
-    const entry = { child, waiters: [], buffer: "", idleTimer: null };
+    const entry = {
+      child,
+      waiters: [],
+      browserProcesses: new Map(),
+      buffer: "",
+      idleTimer: null,
+      stopTimer: null
+    };
 
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
@@ -2250,7 +2277,11 @@ function createAgentRunService({
       }
 
       clearTimeout(entry.idleTimer);
+      clearTimeout(entry.stopTimer);
       entry.waiters.splice(0).forEach((waiter) => waiter.reject(new Error("The frame renderer exited.")));
+      for (const info of entry.browserProcesses.values()) {
+        killPlaywrightBrowserProcess(playwrightBrowserProcess(info.pid) || info);
+      }
     };
     child.on("error", fail);
     child.on("close", fail);
@@ -2283,7 +2314,12 @@ function createAgentRunService({
           clearTimeout(timer);
 
           try {
-            resolve(JSON.parse(line));
+            const response = JSON.parse(line);
+            const browserProcess = playwrightBrowserProcess(response.browser_pid);
+            if (browserProcess) {
+              entry.browserProcesses.set(browserProcess.pid, browserProcess);
+            }
+            resolve(response);
           } catch (error) {
             reject(new Error("The renderer returned an unreadable response."));
           }
@@ -3654,7 +3690,9 @@ function createAgentRunService({
           ? {
               ...current,
               status: "paused",
+              pid: null,
               pause_reason: "quota",
+              pause_mode: "cold",
               pause_message: quota.message,
               exit_code: code,
               paused_at: now,

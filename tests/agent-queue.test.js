@@ -778,15 +778,15 @@ const args = Object.fromEntries(process.argv.slice(2).map((part) => {
 }));
 fs.mkdirSync(args.out, { recursive: true });
 fs.writeFileSync(path.join(args.out, "agent-events.jsonl"), JSON.stringify({ type: "thread.started", thread_id: "retry-thread" }) + "\\n");
-fs.writeFileSync(path.join(args.out, "provider-failure.json"), JSON.stringify({ provider: "codex", status: 502, message: "Bad Gateway", detected_at: new Date().toISOString() }));
+fs.writeFileSync(path.join(args.out, "provider-failure.json"), JSON.stringify({ provider: "claude", status: 502, message: "Bad Gateway", detected_at: new Date().toISOString() }));
 process.exit(75);
 `,
     "utf8"
   );
   const [providerFailureRun] = service.launchRuns({
     kind: "local",
-    model: "codex",
-    model_name: "gpt-test",
+    model: "claude",
+    model_name: "claude-test",
     game_id: "maze",
     level_id: "level_HxI",
     moves: 5,
@@ -806,9 +806,50 @@ process.exit(75);
   }
   assert.equal(providerFailureSummary.status, "paused");
   assert.equal(providerFailureSummary.pause_reason, "provider_backoff");
+  assert.equal(providerFailureSummary.pause_mode, "cold");
+  assert.equal(providerFailureSummary.pid, null);
   assert.equal(providerFailureSummary.provider_failure_status, 502);
   assert.equal(providerFailureSummary.provider_retry_attempt, 1);
   assert(Date.parse(providerFailureSummary.retry_at) > Date.now());
+
+  // Backoff pauses created before pause_mode was recorded are also resource-free
+  // and must not keep a newer Claude run waiting.
+  const providerFailureMetaPath = path.join(
+    rootDir,
+    "outputs",
+    "maze-local",
+    "site",
+    providerFailureRun.id,
+    "run.json"
+  );
+  const legacyProviderFailureMeta = loadJson(providerFailureMetaPath, {});
+  delete legacyProviderFailureMeta.pause_mode;
+  legacyProviderFailureMeta.pid = 999999;
+  fs.writeFileSync(providerFailureMetaPath, `${JSON.stringify(legacyProviderFailureMeta, null, 2)}\n`);
+  fs.writeFileSync(
+    path.join(scriptsDir, "maze-agent-local.js"),
+    "setInterval(() => {}, 1000); process.on('SIGTERM', () => process.exit(0));\n",
+    "utf8"
+  );
+  const [runAfterProviderBackoff] = service.launchRuns({
+    kind: "local",
+    model: "claude",
+    model_name: "claude-test",
+    game_id: "maze",
+    level_id: "level_HxI",
+    moves: 5,
+    mode: "text",
+    container: false,
+    tools: false,
+    tool_use: "read-only",
+    swarm: false,
+    video: false
+  });
+  launchedIds.push(runAfterProviderBackoff.id);
+  assert.equal(runAfterProviderBackoff.status, "running");
+  assert.ok(runAfterProviderBackoff.pid, "a provider-backoff pause must release the Claude slot");
+  service.stopRun(runAfterProviderBackoff.id);
+  service.deleteRun(runAfterProviderBackoff.id);
   service.deleteRun(providerFailureRun.id);
 
   const originalHome = process.env.HOME;
