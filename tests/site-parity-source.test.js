@@ -169,6 +169,17 @@ assert.equal(nativeFrameCountIsAcceptable(2696, 2698), false);
 assert.equal(nativeFrameCountIsAcceptable(2699, 2698), false);
 assert.match(replayExporter, /Accelerated replay produced a blank gameplay frame/);
 assert.match(replayExporter, /Accelerated replay diverged after action/);
+assert.match(replayExporter, /await captureFixedFrames\(edgeFrames\)/);
+assert.match(replayExporter, /const startedAt = Number\(window\.__MAZE_REPLAY_NOW__\) \|\| performance\.now\(\)/);
+assert.match(replayExporter, /app\.vectorGlowAmount = 1 - eased/);
+assert.match(replayExporter, /await captureFixedFrames\(diveFrames\)/);
+assert.ok(
+  replayExporter.indexOf("await captureFixedFrames(edgeFrames)") <
+    replayExporter.indexOf("app.vectorGlowAmount = 1 - eased") &&
+    replayExporter.indexOf("app.vectorGlowAmount = 1 - eased") <
+      replayExporter.indexOf("await captureFixedFrames(diveFrames)"),
+  "replay intro must finish the blue edge sweep before the color-fade camera dive"
+);
 assert.doesNotMatch(replayExporter, /ASCII OBSERVATION/);
 assert.match(pages, /id="regenerate-video"/);
 assert.match(pages, /id="cancel-video"/);
