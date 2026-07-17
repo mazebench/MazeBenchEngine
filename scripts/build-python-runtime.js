@@ -6,7 +6,7 @@
 // .github/workflows/publish.yml does it automatically.
 //
 // The staged tree mirrors a minimal checkout:
-//   server.js, package.json, server/, public/, scripts/, games/maze/,
+//   server.js, package.json, shared/, server/, public/, scripts/, games/maze/,
 //   vendor/ (the three.js files normally served from node_modules)
 //
 // Node.js remains a runtime prerequisite on the user's machine (plus ffmpeg +
@@ -20,6 +20,7 @@ const ROOT_DIR = path.resolve(__dirname, "..");
 const RUNTIME_DIR = path.join(ROOT_DIR, "mazebench_cli", "_runtime");
 
 const COPY_DIRECTORIES = [
+  "shared",
   "server",
   "public",
   "scripts",
@@ -34,6 +35,7 @@ const COPY_FILES = [
   "package.json",
   "games/maze/config.json",
   "games/maze/level_parsing.json",
+  "games/maze/toolbox.json",
   "games/maze/world_map.json",
   "games/maze/world_parsing.json"
 ];

@@ -74,12 +74,28 @@ jobs:
           /tmp/mzvenv/bin/pip install --quiet "$(ls dist/mazebench-*.whl)[prime]"
           cd /
           MAZEBENCH_HOME=/tmp/mzhome nohup /tmp/mzvenv/bin/mazebench launch port=3311 open=false > /tmp/launch.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          ready=false
           for i in $(seq 1 60); do
-            curl -sf -o /dev/null http://127.0.0.1:3311/ && break
+            if curl -sf -o /dev/null http://127.0.0.1:3311/; then
+              ready=true
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo "MazeBench exited before becoming ready"
+              cat /tmp/launch.log
+              exit 1
+            fi
             sleep 1
           done
+          if [ "$ready" != "true" ]; then
+            echo "MazeBench did not become ready within 60 seconds"
+            cat /tmp/launch.log
+            exit 1
+          fi
           for path in / /play /build /agent /play/maze/level_HxI /api/play/maze/level_HxI /vendor/three.module.js; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:3311$path")
+            code=$(curl -sL -o /dev/null -w '%{http_code}' "http://127.0.0.1:3311$path" || true)
             echo "$path -> $code"
             [ "$code" = "200" ] || { cat /tmp/launch.log; exit 1; }
           done
