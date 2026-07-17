@@ -161,6 +161,7 @@ function createMazeLevelService({
           direction: typeof config.direction === "string" ? config.direction : null,
           label: typeof config.label === "string" ? config.label : null,
           selectable: typeof config.selectable === "boolean" ? config.selectable : null,
+          styleKey: typeof config.style_key === "string" ? config.style_key : null,
           token: config.token
         }
       ];
@@ -187,6 +188,7 @@ function createMazeLevelService({
           direction: typeof entry?.direction === "string" ? entry.direction : null,
           label: typeof entry?.label === "string" ? entry.label : null,
           selectable: typeof entry?.selectable === "boolean" ? entry.selectable : null,
+          styleKey: typeof entry?.style_key === "string" ? entry.style_key : null,
           token: entry?.token
         };
       })
@@ -212,7 +214,56 @@ function createMazeLevelService({
       };
     });
 
+    const tokenPatterns = require("../public/maze-token-patterns");
+
+    function resolveDefinitionForToken(byName, byToken, token) {
+      const existing = byToken.get(token);
+
+      if (existing) {
+        return existing;
+      }
+
+      const pattern = tokenPatterns.resolvePatternToken(token);
+
+      if (!pattern) {
+        return undefined;
+      }
+
+      // Keep server-side save/play parsing in lockstep with the browser
+      // adapter. Older draft parsers have plain ice_slope but predate the
+      // orange_ice_slope definition; the pattern still carries the correct
+      // orange terrain type/style and can safely inherit the plain slope's
+      // common geometry metadata.
+      const base =
+        byName.get(pattern.family) ||
+        byName.get(pattern.type) ||
+        (pattern.family === "orange_ice_slope" ? byName.get("ice_slope") : null);
+
+      if (!base) {
+        return undefined;
+      }
+
+      const synthesized = {
+        ...base,
+        direction: pattern.direction,
+        groupId: pattern.groupId || null,
+        initialRaised: false,
+        label: pattern.label,
+        selectable: null,
+        shape: pattern.shape || null,
+        styleKey: pattern.styleKey,
+        token: pattern.token,
+        type: pattern.type
+      };
+
+      byToken.set(token, synthesized);
+      return synthesized;
+    }
+
     return {
+      resolveToken(token) {
+        return resolveDefinitionForToken(this.byName, this.byToken, token);
+      },
       byName: new Map(definitions.map((definition) => [definition.name, definition])),
       byToken: new Map(
         definitions
@@ -225,6 +276,7 @@ function createMazeLevelService({
                 initialRaised: definition.initialRaised || entry.initialRaised,
                 label: entry.label || definition.label,
                 selectable: entry.selectable,
+                styleKey: entry.styleKey || null,
                 token: entry.token
               }
             ])
@@ -331,6 +383,7 @@ function createMazeLevelService({
       imageUrl: definition?.imageUrl || null,
       modelUrl: definition?.modelUrl || null,
       direction: definition?.direction || null,
+      styleKey: definition?.styleKey || null,
       elevation,
       raised: type === "player_lift" ? definition?.initialRaised === true : false
     };
@@ -344,9 +397,12 @@ function createMazeLevelService({
     let hasAirEntry = false;
     let consumedBaseVoid = false;
 
+    let previousCarrier = false;
+
     cellDefinitions.forEach((definition) => {
       if (definition?.isAir) {
         hasAirEntry = true;
+        previousCarrier = false;
 
         if (surfaceHeight === null && !consumedBaseVoid) {
           consumedBaseVoid = true;
@@ -370,11 +426,41 @@ function createMazeLevelService({
 
         surfaceHeight = elevation + actorDefinitionLayerSlotHeight(definition);
         previousSurfaceTerrain = false;
+        previousCarrier =
+          definitionType(definition) === "weightless_box" ||
+          definitionType(definition) === "clone";
 
         return;
       }
 
       if (!isTerrainDefinition(definition)) {
+        return;
+      }
+
+      // Owner rule (2026-07): a lift or gate stacked directly on top of a
+      // movable carrier (weightless box, clone, orange wall) is STUCK to it —
+      // it becomes a rider ACTOR that travels with the carrier and does not
+      // interact with it (no toggling, no gating, no blocking).
+      const stackedDeviceType = definitionType(definition);
+
+      if (
+        (stackedDeviceType === "player_lift" || stackedDeviceType === "player_gate") &&
+        previousCarrier
+      ) {
+        const elevation = Math.max(0, surfaceHeight ?? 0);
+
+        actors.push({
+          definition: {
+            ...definition,
+            name: stackedDeviceType === "player_lift" ? "attached_lift" : "attached_gate",
+            type: stackedDeviceType === "player_lift" ? "attached_lift" : "attached_gate"
+          },
+          elevation
+        });
+
+        surfaceHeight = elevation + 1;
+        previousSurfaceTerrain = false;
+        previousCarrier = false;
         return;
       }
 
@@ -390,6 +476,7 @@ function createMazeLevelService({
       terrainLayers.push(buildTerrainLayer(definition, elevation));
       surfaceHeight = elevation + stackHeight;
       previousSurfaceTerrain = isBaseSurface;
+      previousCarrier = definitionType(definition) === "orange_wall";
     });
 
     const wallLayer = terrainLayers.find((layer) => layer.type === "wall") || null;
@@ -501,7 +588,7 @@ function createMazeLevelService({
         const cellDefinitions = parseCellStack(game.parser, cell)
           .map((token) => {
             const normalizedToken = String(token).trim();
-            return normalizedToken.length === 0 ? { isAir: true } : definitions.byToken.get(normalizedToken);
+            return normalizedToken.length === 0 ? { isAir: true } : definitions.resolveToken(normalizedToken);
           })
           .filter(Boolean);
         const cellStack = hasSourceCell
@@ -519,12 +606,16 @@ function createMazeLevelService({
             groupId:
               definitionType(definition) === "weightless_box" ||
               definitionType(definition) === "clone"
-                ? definition.token
+                ? definition.groupId || definition.token
                 : null,
             label: definition.label,
             imageUrl: definition.imageUrl,
             modelUrl: definition.modelUrl,
             direction: definition.direction || null,
+            shape: definition.shape || null,
+            styleKey: definition.styleKey || null,
+            // Attached lifts converted from 'L' keep their raised look.
+            raised: definition.initialRaised === true,
             elevation,
             x: index,
             y
@@ -590,7 +681,9 @@ function createMazeLevelService({
       return emptyCellToken;
     }
 
-    const invalidToken = tokens.find((token) => token.length > 0 && !definitions.byToken.has(token));
+    const invalidToken = tokens.find(
+      (token) => token.length > 0 && !definitions.resolveToken(token)
+    );
 
     if (invalidToken) {
       throw new Error(`Unknown token "${invalidToken}".`);

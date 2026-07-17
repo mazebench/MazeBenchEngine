@@ -54,6 +54,12 @@
     solverModePlace: document.getElementById("solver-mode-place"),
     solverModeReach: document.getElementById("solver-mode-reach"),
     status: document.getElementById("author-status"),
+    tokenIdCancel: document.getElementById("token-id-cancel"),
+    tokenIdConfirm: document.getElementById("token-id-confirm"),
+    tokenIdInput: document.getElementById("token-id-input"),
+    tokenIdMessage: document.getElementById("token-id-message"),
+    tokenIdModal: document.getElementById("token-id-modal"),
+    tokenIdTitle: document.getElementById("token-id-title"),
     unsavedCancel: document.getElementById("unsaved-changes-cancel"),
     unsavedMessage: document.getElementById("unsaved-changes-message"),
     unsavedModal: document.getElementById("unsaved-changes-modal"),
@@ -77,7 +83,13 @@
     "placeGem",
     "playSolution",
     "solverAlgorithm",
-    "solverCancel"
+    "solverCancel",
+    "tokenIdCancel",
+    "tokenIdConfirm",
+    "tokenIdInput",
+    "tokenIdMessage",
+    "tokenIdModal",
+    "tokenIdTitle"
   ]);
 
   if (
@@ -126,6 +138,8 @@
   // pending -> armed (theme applied before first mesh) -> running -> done.
   const editorBootReveal = { state: "pending" };
   const palettePreviewRenderer = {
+    captureQueue: Promise.resolve(),
+    pendingTokens: new Set(),
     previewsByToken: new Map(),
     promise: null
   };
@@ -202,24 +216,216 @@
     '<path d="M22 21H7"></path>' +
     '<path d="m5 11 9 9"></path>' +
     "</svg>";
-  const iceSlopeTools = authorData.palette.filter((tool) => isIceSlopeTool(tool));
-  const canonicalIceSlopeToken = iceSlopeTools[0]?.token || null;
-  const iceSlopeTokenByDirection = new Map(
-    iceSlopeTools
-      .filter((tool) => typeof tool.direction === "string" && tool.direction)
-      .map((tool) => [tool.direction, tool.token])
-  );
-  const iceSlopePaletteTool = canonicalIceSlopeToken
-    ? {
-        ...iceSlopeTools[0],
+  // Prompt-style toolbox entries (owner feature 2026-07): "Box N" and friends
+  // ask for a numeric id, then select the concrete pattern token (M<N>, c<N>,
+  // SrM<N>, Src<N>). They follow the noop/eraser meta-tool precedent; the id
+  // families are open-ended, so these four buttons stand in for whole families
+  // while Box 0-4 and Clone 0-2 keep their dedicated buttons.
+  const boxPromptToken = "__box_prompt__";
+  const clonePromptToken = "__clone_prompt__";
+  const blueSlopePromptToken = "__blue_slope_prompt__";
+  const yellowSlopePromptToken = "__yellow_slope_prompt__";
+  const tokenPatternHelpers = window.MazeTokenPatterns || null;
+
+  function buildPromptPaletteTool(token, groupName, fallbackLabel, prompt) {
+    const config = toolboxToolConfigs[token] || {};
+
+    return {
+      description: typeof config.description === "string" ? config.description : "",
+      imageUrl: null,
+      label: typeof config.name === "string" && config.name ? config.name : fallbackLabel,
+      name: groupName,
+      prompt,
+      selectable: true,
+      token,
+      type: "token_prompt"
+    };
+  }
+
+  const promptPaletteTools = [
+    buildPromptPaletteTool(boxPromptToken, "weightless_box", "Box N", {
+      // Box 0-4 keep their own buttons, so the next free id is the default.
+      defaultId: 5,
+      makeToken: (id) => (tokenPatternHelpers ? tokenPatternHelpers.boxToken(id) : "M" + id),
+      message:
+        "Choose the box id. Boxes sharing an id are connected and move together; the id shows on every piece."
+    }),
+    buildPromptPaletteTool(clonePromptToken, "clone", "Clone N", {
+      defaultId: 3,
+      makeToken: (id) => (tokenPatternHelpers ? tokenPatternHelpers.cloneToken(id) : "c" + id),
+      message:
+        "Choose the clone id. Clones copy the player's moves, and clones sharing an id are connected."
+    }),
+    buildPromptPaletteTool(blueSlopePromptToken, "ice_slope", "Box Ice Slope N", {
+      defaultId: 0,
+      makeToken: (id) =>
+        tokenPatternHelpers ? tokenPatternHelpers.blueSlopeToken("right", id) : "SrM" + id,
+      message:
+        "Choose the box id this slope belongs to. It moves with box group N and faces the camera when placed."
+    }),
+    buildPromptPaletteTool(yellowSlopePromptToken, "ice_slope", "Clone Ice Slope N", {
+      defaultId: 0,
+      makeToken: (id) =>
+        tokenPatternHelpers ? tokenPatternHelpers.yellowSlopeToken("right", id) : "Src" + id,
+      message:
+        "Choose the clone id this slope belongs to. It moves with clone group N and faces the camera when placed."
+    })
+  ];
+  const promptToolsByToken = new Map(promptPaletteTools.map((tool) => [tool.token, tool]));
+
+  function isPromptToolToken(token) {
+    return promptToolsByToken.has(token);
+  }
+
+  function promptToolPreviewSpec(token) {
+    if (token === boxPromptToken) {
+      return { groupId: "MN", token: "M0" };
+    }
+    if (token === clonePromptToken) {
+      return { groupId: "cN", token: "c0" };
+    }
+    if (token === blueSlopePromptToken) {
+      return { groupId: "MN", token: "SrM0" };
+    }
+    if (token === yellowSlopePromptToken) {
+      return { groupId: "cN", token: "Src0" };
+    }
+    return null;
+  }
+
+  // ---- Slope families ----
+  // Every slope styling family — plain, black "#", orange "O", and the
+  // open-ended blue "M<N>" / yellow "c<N>" tints — collapses to ONE toolbox
+  // entry whose painted token follows the camera, exactly like the original
+  // single Ice Slope entry. Families are keyed by the token's style suffix
+  // ("Sr" -> "", "Sr#" -> "#", "SrM7" -> "M7", ...).
+  const slopeFamiliesBySuffix = new Map();
+  // These are core building tools, not optional discoveries from whichever
+  // directional entries happen to be present in the page palette payload.
+  const permanentToolboxSlopeTokens = ["Sr", "Sr#", "SrO"];
+
+  function slopeTokenStyleSuffix(token) {
+    const match = /^S[rlud](.*)$/.exec(String(token || ""));
+    return match ? match[1] : null;
+  }
+
+  function slopeFamilyLabelForSuffix(suffix, fallbackLabel) {
+    if (suffix === "") {
+      return "Ice Slope";
+    }
+    if (suffix === "#") {
+      return "Black Ice Slope";
+    }
+    if (suffix === "O") {
+      return "Orange Ice Slope";
+    }
+    const boxMatch = /^M(\d+)$/.exec(suffix);
+    if (boxMatch) {
+      return "Box Ice Slope " + boxMatch[1];
+    }
+    const cloneMatch = /^c(\d+)$/.exec(suffix);
+    if (cloneMatch) {
+      return "Clone Ice Slope " + cloneMatch[1];
+    }
+    return fallbackLabel || "Ice Slope";
+  }
+
+  function materializePatternTool(token) {
+    if (!token || token === noopToken || token === eraserToken || isPromptToolToken(token)) {
+      return null;
+    }
+    if (toolByToken.has(token)) {
+      return toolByToken.get(token);
+    }
+    // getCellTools() delegates to the adapter's pattern resolver, which
+    // synthesizes Box N / Clone N / colored-slope tools and caches them in
+    // toolByToken so painting and normalizing accept them everywhere.
+    const [tool] = getCellTools(token);
+    return tool && tool.token === token ? tool : null;
+  }
+
+  function registerSlopeFamilyTool(tool) {
+    const suffix = slopeTokenStyleSuffix(tool?.token);
+
+    if (suffix === null || !isSlopeFamilyTool(tool)) {
+      return null;
+    }
+
+    let family = slopeFamiliesBySuffix.get(suffix);
+
+    if (!family) {
+      family = {
+        canonicalToken: null,
+        paletteTool: null,
+        suffix,
+        tokenByDirection: new Map()
+      };
+      slopeFamiliesBySuffix.set(suffix, family);
+    }
+
+    if (
+      typeof tool.direction === "string" &&
+      tool.direction &&
+      !family.tokenByDirection.has(tool.direction)
+    ) {
+      family.tokenByDirection.set(tool.direction, tool.token);
+    }
+
+    const canonicalToken =
+      family.tokenByDirection.get("right") || family.canonicalToken || tool.token;
+
+    if (family.canonicalToken !== canonicalToken || !family.paletteTool) {
+      const canonicalTool = toolByToken.get(canonicalToken) || tool;
+      const toolboxConfig = toolboxToolConfigs[canonicalToken] || {};
+      family.canonicalToken = canonicalToken;
+      family.paletteTool = {
+        ...canonicalTool,
         description:
-          iceSlopeTools[0].description ||
+          toolboxConfig.description ||
+          canonicalTool.description ||
           "An icy ramp that carries a slide between heights. It aims to match the camera — turn the camera to change which way it climbs.",
         displayToken: "S",
-        label: iceSlopeTools[0].label || "Ice Slope",
-        token: canonicalIceSlopeToken
-      }
-    : null;
+        label:
+          toolboxConfig.name ||
+          slopeFamilyLabelForSuffix(suffix, canonicalTool.label),
+        token: canonicalToken
+      };
+    }
+
+    return family;
+  }
+
+  function slopeFamilyForToken(token) {
+    const suffix = slopeTokenStyleSuffix(token);
+
+    if (suffix === null) {
+      return null;
+    }
+
+    // Pattern-backed slope families must always own all four directional
+    // tokens. This is especially important for older projects whose parser
+    // predates Black/Orange Ice Slopes: a canonical Sr#/SrO fallback alone
+    // would make every camera angle place the right-facing token.
+    if (/^(?:#|O|M\d+|c\d+)$/.test(suffix)) {
+      ["r", "l", "u", "d"].forEach((directionChar) => {
+        const directionToken = "S" + directionChar + suffix;
+        const directionTool =
+          toolByToken.get(directionToken) || materializePatternTool(directionToken);
+        if (directionTool) {
+          registerSlopeFamilyTool(directionTool);
+        }
+      });
+    }
+
+    return slopeFamiliesBySuffix.get(suffix) || null;
+  }
+
+  authorData.palette.forEach((tool) => {
+    if (isSlopeFamilyTool(tool)) {
+      registerSlopeFamilyTool(tool);
+    }
+  });
+  permanentToolboxSlopeTokens.forEach((token) => slopeFamilyForToken(token));
 
   function toolDescription(tool) {
     if (!tool) return "";
@@ -732,7 +938,11 @@
       return elevation + (layer.raised === true ? 1 : 0);
     }
 
-    if (["wall", "ice_block", "ice_slope", "shrub", "block_asset", "orange_wall"].includes(type)) {
+    if (
+      ["wall", "ice_block", "ice_slope", "orange_ice_slope", "shrub", "block_asset", "orange_wall"].includes(
+        type
+      )
+    ) {
       return elevation + 1;
     }
 
@@ -1977,7 +2187,7 @@
 
   function selectablePaletteTools() {
     const tools = [noopTool, eraserTool];
-    let hasAddedIceSlope = false;
+    const addedSlopeFamilySuffixes = new Set();
 
     authorData.palette.forEach((tool) => {
       if (
@@ -1989,19 +2199,35 @@
         return;
       }
 
-      if (isIceSlopeTool(tool)) {
-        if (hasAddedIceSlope || !iceSlopePaletteTool) {
+      if (isSlopeFamilyTool(tool)) {
+        // Each slope family (plain, black, orange, ...) collapses to one
+        // camera-facing entry instead of four directional buttons.
+        const family = slopeFamilyForToken(tool.token);
+
+        if (!family || !family.paletteTool || addedSlopeFamilySuffixes.has(family.suffix)) {
           return;
         }
 
-        hasAddedIceSlope = true;
-        tools.push(iceSlopePaletteTool);
+        addedSlopeFamilySuffixes.add(family.suffix);
+        tools.push(family.paletteTool);
         return;
       }
 
       tools.push(tool);
     });
 
+    // Guarantee the three static slope families even if a server payload,
+    // custom level parser, or stale catalog omitted their directional rows.
+    permanentToolboxSlopeTokens.forEach((token) => {
+      const family = slopeFamilyForToken(token);
+
+      if (family?.paletteTool && !addedSlopeFamilySuffixes.has(family.suffix)) {
+        addedSlopeFamilySuffixes.add(family.suffix);
+        tools.push(family.paletteTool);
+      }
+    });
+
+    tools.push(...promptPaletteTools);
     return tools;
   }
 
@@ -2010,12 +2236,23 @@
     { match: (tool) => ["select_only", "eraser", "floor", "ice", "wall", "ice_block"].includes(tool.name), name: "Basics" },
     {
       match: (tool) =>
-        ["ice_slope", "player_gate", "player_lift", "orange_wall", "orange_button", "puncher", "floating_floor", "weightless_box"].includes(tool.name),
+        ["ice_slope", "orange_ice_slope", "player_gate", "player_lift", "orange_wall", "orange_button", "puncher", "floating_floor", "weightless_box"].includes(tool.name),
       name: "Mechanisms"
     },
     { match: (tool) => ["player", "clone", "gem"].includes(tool.name), name: "Players & Goals" },
     { match: () => true, name: "Scenery" }
   ];
+
+  function inventoryToolPriority(tool) {
+    const slopeSuffix = slopeTokenStyleSuffix(tool?.token);
+
+    if (slopeSuffix === "") return 0;
+    if (slopeSuffix === "#") return 1;
+    if (slopeSuffix === "O") return 2;
+    if (tool?.token === blueSlopePromptToken) return 3;
+    if (tool?.token === yellowSlopePromptToken) return 4;
+    return 100;
+  }
   const INVENTORY_DEMO_CLASSES = [
     "demo-gem",
     "demo-shimmer",
@@ -2059,7 +2296,7 @@
     const seen = new Set();
     for (const rawToken of Array.isArray(tokens) ? tokens : []) {
       const token = String(rawToken || "");
-      if (!toolForToken(token) || seen.has(token)) {
+      if (isPromptToolToken(token) || !toolForToken(token) || seen.has(token)) {
         continue;
       }
       seen.add(token);
@@ -2135,14 +2372,57 @@
     if (token === eraserToken) {
       return eraserTool;
     }
-    if (iceSlopePaletteTool && token === iceSlopePaletteTool.token) {
-      return iceSlopePaletteTool;
+    const promptTool = promptToolsByToken.get(token);
+    if (promptTool) {
+      return promptTool;
     }
-    return toolByToken.get(token) || null;
+    const suffix = slopeTokenStyleSuffix(token);
+    if (suffix !== null) {
+      const family = slopeFamiliesBySuffix.get(suffix);
+      if (family && family.canonicalToken === token && family.paletteTool) {
+        return family.paletteTool;
+      }
+    }
+    return toolByToken.get(token) || materializePatternTool(token) || null;
   }
 
   function hotbarTokens() {
     return hotbarSlots.slice();
+  }
+
+  // Directional slope variants picked up by the eyedropper (Su, Sl, ...)
+  // share their family's canonical captured icon instead of sitting blank
+  // while no capture of their own exists.
+  function slopeFamilyPreviewUrl(token) {
+    const suffix = slopeTokenStyleSuffix(token);
+
+    if (suffix === null) {
+      return null;
+    }
+
+    const canonicalToken = slopeFamiliesBySuffix.get(suffix)?.canonicalToken;
+
+    return canonicalToken && canonicalToken !== token
+      ? palettePreviewRenderer.previewsByToken.get(canonicalToken) || null
+      : null;
+  }
+
+  // A concrete id chosen from an N-family prompt gets its own 3D portrait on
+  // demand. Until that capture finishes, show the matching generic N portrait
+  // so resolved tools never flash back to the old flat canvas illustration.
+  function promptPreviewTokenForPatternToken(token) {
+    if (/^M\d+$/.test(token)) return boxPromptToken;
+    if (/^c\d+$/.test(token)) return clonePromptToken;
+    if (/^S[rlud]M\d+$/.test(token)) return blueSlopePromptToken;
+    if (/^S[rlud]c\d+$/.test(token)) return yellowSlopePromptToken;
+    return null;
+  }
+
+  function promptFamilyPreviewUrl(token) {
+    const promptToken = promptPreviewTokenForPatternToken(String(token || ""));
+    return promptToken
+      ? palettePreviewRenderer.previewsByToken.get(promptToken) || null
+      : null;
   }
 
   function toolSwatchMarkup(tool) {
@@ -2152,7 +2432,10 @@
     if (tool.token === eraserToken) {
       return eraserToolIconSvg;
     }
-    const previewUrl = palettePreviewRenderer.previewsByToken.get(tool.token);
+    const previewUrl =
+      palettePreviewRenderer.previewsByToken.get(tool.token) ||
+      slopeFamilyPreviewUrl(tool.token) ||
+      promptFamilyPreviewUrl(tool.token);
     return previewUrl
       ? '<img src="' + escapeHtml(previewUrl) + '" alt="">'
       : '<span class="palette__swatch-placeholder" aria-hidden="true"></span>';
@@ -2165,7 +2448,9 @@
     const tools = selectablePaletteTools();
     const used = new Set();
     elements.palette.innerHTML = INVENTORY_GROUPS.map((group) => {
-      const groupTools = tools.filter((tool) => !used.has(tool.token) && group.match(tool));
+      const groupTools = tools
+        .filter((tool) => !used.has(tool.token) && group.match(tool))
+        .sort((left, right) => inventoryToolPriority(left) - inventoryToolPriority(right));
       groupTools.forEach((tool) => used.add(tool.token));
       if (!groupTools.length) {
         return "";
@@ -2250,7 +2535,13 @@
     if (kind === "puncher") {
       return "demo-jab";
     }
-    if (kind === "player_lift" || kind === "player_gate" || kind === "orange_wall" || kind === "orange_button") {
+    if (
+      kind === "player_lift" ||
+      kind === "player_gate" ||
+      kind === "orange_wall" ||
+      kind === "orange_button" ||
+      kind === "orange_ice_slope"
+    ) {
       return "demo-rise";
     }
     if (kind === "weightless_box" || kind === "floating_floor") {
@@ -2655,8 +2946,24 @@
         return { cells: [[".", ".", "."], ["p", ".", "#"], [".", ".", "."]], moves: "RR" };
       case "ice_block":
         return { cells: [[".", ".", "."], ["p", ".", "I"], [".", ".", "."]], moves: "RR" };
-      case "ice_slope":
-        return { cells: [["p", "i", "Sr", "I", "I"]], moves: "R" };
+      case "ice_slope": {
+        // Colored families (black, blue, yellow) reuse the plain scene with
+        // their own right-facing token so the tint is visible.
+        const slopeRight = slopeFamilyForToken(t)?.tokenByDirection.get("right") || "Sr";
+        return { cells: [["p", "i", slopeRight, "I", "I"]], moves: "R" };
+      }
+      case "orange_ice_slope": {
+        // A box parks on the button so the slope stays lowered while the
+        // player walks around and climbs it.
+        const slopeRight = slopeFamilyForToken(t)?.tokenByDirection.get("right") || t;
+        return {
+          cells: [
+            [".", "M0", appendCellToken(authorData.defaultFloorToken, "o"), "."],
+            ["p", ".", slopeRight, appendCellToken(authorData.defaultFloorToken, "I")]
+          ],
+          moves: "URDRR"
+        };
+      }
       case "player":
         return { cells: [[".", ".", "."], [".", "p", "."], [".", ".", "."]], moves: "RL" };
       case "clone":
@@ -3317,20 +3624,29 @@
     const height = 1;
     const cells = createBlankCells(width, height, authorData.defaultFloorToken);
     const kind = tool.type || tool.name;
+    const puncherPortrait = kind === "puncher";
     const tall = kind === "tree" || kind === "shrub";
 
     // The puncher preview faces the camera (south) so its punching face is
-    // visible; orientation is picked at placement time anyway.
-    const previewToken =
-      kind === "puncher" ? puncherTokenForDirection("down") || tool.token : tool.token;
+    // visible; slope portraits likewise use one canonical right-facing pose
+    // so an eyedropped up/down/left token cannot turn edge-on in the hotbar.
+    // Placement direction still follows the editor camera.
+    const promptPreview = promptToolPreviewSpec(tool.token);
+    const directionalPreviewToken = promptPreview
+      ? promptPreview.token
+      : puncherPortrait
+        ? puncherTokenForDirection("down") || tool.token
+        : tool.token;
+    const slopeSuffix = slopeTokenStyleSuffix(directionalPreviewToken);
+    const previewToken = slopeSuffix === null ? directionalPreviewToken : "Sr" + slopeSuffix;
+    const slopePortrait = slopeSuffix !== null;
 
     cells[0][0] =
       kind === "orange_button"
         ? appendCellToken(authorData.defaultFloorToken, previewToken)
         : previewToken;
 
-    return {
-      playData: buildPlayData({
+    const playData = buildPlayData({
         cameraView: { width, height },
         cells,
         editorRender: true,
@@ -3345,7 +3661,26 @@
           encodeURIComponent(tool.token),
         levelLabel: tool.label || tool.token,
         width
-      }),
+      });
+
+    if (promptPreview) {
+      playData.actors.forEach((actor) => {
+        if (actor.type === "weightless_box" || actor.type === "clone") {
+          actor.groupId = promptPreview.groupId;
+          if (actor.shape === "slope") {
+            // Keep the generic N portrait in its numbered family all the way
+            // through rendering. Otherwise a stale/legacy actor definition
+            // can fall through to the tan floating-floor material.
+            actor.styleKey = promptPreview.groupId;
+          }
+        }
+      });
+    }
+
+    return {
+      playData,
+      puncherPortrait,
+      slopePortrait,
       tall
     };
   }
@@ -3411,21 +3746,133 @@
     return new Promise((resolve) => window.requestAnimationFrame(resolve));
   }
 
+  async function capturePalettePreviewTools(orderedTools) {
+    if (!orderedTools.length) {
+      return;
+    }
+
+    const modules = window.PlayModules || {};
+
+    if (
+      typeof modules.createPlayCore !== "function" ||
+      typeof modules.registerRenderFunctions !== "function"
+    ) {
+      throw new Error("Palette preview modules are not ready.");
+    }
+
+    const previewEntriesByToken = new Map(
+      orderedTools.map((tool) => [tool.token, createPalettePreviewPlayData(tool)])
+    );
+    const firstEntry = previewEntriesByToken.get(orderedTools[0].token);
+    const canvas = document.createElement("canvas");
+    let app = modules.createPlayCore({
+      playData: firstEntry.playData,
+      canvas,
+      playShell: null,
+      playHeader: null,
+      playStage: null,
+      mazeFrame: null,
+      fuzzyToggle: null,
+      enableCameraControls: false
+    });
+
+    if (!app) {
+      throw new Error("Palette preview renderer is unavailable.");
+    }
+
+    // These captures become the hotbar and toolbox icons, so never bake the
+    // gameplay grain into them.
+    app.state.effects.fuzzyEnabled = false;
+    app.state.effects.noisePhase = 0;
+    modules.registerRenderFunctions(app);
+    app.setupCanvas();
+    app.syncCameraTarget?.(true);
+    const preloadPromises = new Map();
+    const preloadTool = (tool) => {
+      if (!preloadPromises.has(tool.token)) {
+        const entry = previewEntriesByToken.get(tool.token);
+        preloadPromises.set(
+          tool.token,
+          (async () => {
+            try {
+              await app.preloadImagesForLevelState(entry.playData);
+              await app.threeRenderer?.whenLevelStateModelsReady?.(entry.playData);
+            } catch {
+              // Failed loads keep their generic 3D family portrait and do not
+              // block the rest of the hotbar icons.
+            }
+          })()
+        );
+      }
+      return preloadPromises.get(tool.token);
+    };
+    try {
+      if (app.threeRendererReady && typeof app.threeRendererReady.then === "function") {
+        await app.threeRendererReady;
+      }
+
+      const preloadWindowSize = 4;
+      for (let index = 0; index < orderedTools.length; index += 1) {
+        const tool = orderedTools[index];
+        const entry = previewEntriesByToken.get(tool.token);
+        // Keep a small hotbar-first load window ahead of the sequential
+        // capture loop. This avoids both a 34-request burst and a full GLB
+        // waterfall while preserving deterministic progressive publishing.
+        for (
+          let nextIndex = index;
+          nextIndex < Math.min(orderedTools.length, index + preloadWindowSize);
+          nextIndex += 1
+        ) {
+          preloadTool(orderedTools[nextIndex]);
+        }
+        await preloadTool(tool);
+        app.applyLevelState(entry.playData, {
+          deferRender: true,
+          immediateCamera: true,
+          resetHistory: true,
+          resetLevelEntry: true
+        });
+        app.liveRaisedPlayerGates = app.computeRaisedPlayerGateSet();
+        app.liveRaisedOrangeWalls = app.computeRaisedOrangeWallSet();
+        app.syncGateAnimationTargets(0);
+        app.syncOrangeWallAnimationTargets(0);
+        app.syncPlayerLiftAnimationTargets(0);
+        app.palettePreviewCameraTilt = entry.slopePortrait
+          ? Math.PI * 0.18
+          : entry.puncherPortrait
+            ? Math.PI * 0.43
+            : undefined;
+        app.palettePreviewCameraZoom = entry.puncherPortrait ? 1.65 : undefined;
+        app.threeRenderer?.setDebugCameraView?.({
+          yaw: 0,
+          tilt: 0.62,
+          zoom: entry.tall ? 0.55 : 1.2,
+          mode: entry.slopePortrait ? "isometric" : "perspective",
+          skipRender: true
+        });
+        app.render();
+
+        const previewUrl = captureSquarePreview(canvas, 96, tool);
+        if (previewUrl) {
+          publishPalettePreview(tool, previewUrl);
+          // Give the browser a paint between captures so the first hotbar
+          // symbols become visible without waiting for the slowest GLB.
+          await yieldPalettePreviewPaint();
+        }
+      }
+    } finally {
+      await Promise.allSettled(Array.from(preloadPromises.values()));
+      disposeAuxiliaryRenderApp(app, canvas);
+      app = null;
+    }
+  }
+
   async function renderPalettePreviews() {
     if (palettePreviewRenderer.promise) {
       return palettePreviewRenderer.promise;
     }
 
     const renderPromise = (async function () {
-      const modules = window.PlayModules || {};
-
-      if (
-        typeof modules.createPlayCore !== "function" ||
-        typeof modules.registerRenderFunctions !== "function"
-      ) {
-        throw new Error("Palette preview modules are not ready.");
-      }
-
       const paletteTools = selectablePaletteTools().filter(
         (tool) => tool.token !== eraserToken && tool.token !== noopToken
       );
@@ -3435,107 +3882,17 @@
       }
 
       const toolsByToken = new Map(paletteTools.map((tool) => [tool.token, tool]));
-      const orderedTools = [...new Set([...hotbarTokens(), ...paletteTools.map((tool) => tool.token)])]
-        .map((token) => toolsByToken.get(token))
-        .filter(Boolean);
-      const previewEntriesByToken = new Map(
-        orderedTools.map((tool) => [tool.token, createPalettePreviewPlayData(tool)])
-      );
-      const firstEntry = previewEntriesByToken.get(orderedTools[0].token);
-      const canvas = document.createElement("canvas");
-      let app = modules.createPlayCore({
-        playData: firstEntry.playData,
-        canvas,
-        playShell: null,
-        playHeader: null,
-        playStage: null,
-        mazeFrame: null,
-        fuzzyToggle: null,
-        enableCameraControls: false
-      });
+      const orderedTools = [...new Set([
+        ...hotbarTokens(),
+        ...promptPaletteTools.map((tool) => tool.token),
+        ...paletteTools.map((tool) => tool.token)
+      ])]
+        .map((token) => toolsByToken.get(token) || toolForToken(token))
+        .filter(
+          (tool) => tool && tool.token !== eraserToken && tool.token !== noopToken
+        );
 
-      if (!app) {
-        throw new Error("Palette preview renderer is unavailable.");
-      }
-
-      // These captures become the hotbar and toolbox icons, so never bake the
-      // gameplay grain into them.
-      app.state.effects.fuzzyEnabled = false;
-      app.state.effects.noisePhase = 0;
-      modules.registerRenderFunctions(app);
-      app.setupCanvas();
-      app.syncCameraTarget?.(true);
-      const preloadPromises = new Map();
-      const preloadTool = (tool) => {
-        if (!preloadPromises.has(tool.token)) {
-          const entry = previewEntriesByToken.get(tool.token);
-          preloadPromises.set(
-            tool.token,
-            (async () => {
-              try {
-                await app.preloadImagesForLevelState(entry.playData);
-                await app.threeRenderer?.whenLevelStateModelsReady?.(entry.playData);
-              } catch {
-                // Failed loads keep their fallback and do not block icons.
-              }
-            })()
-          );
-        }
-        return preloadPromises.get(tool.token);
-      };
-      try {
-        if (app.threeRendererReady && typeof app.threeRendererReady.then === "function") {
-          await app.threeRendererReady;
-        }
-
-        const preloadWindowSize = 4;
-        for (let index = 0; index < orderedTools.length; index += 1) {
-          const tool = orderedTools[index];
-          const entry = previewEntriesByToken.get(tool.token);
-          // Keep a small hotbar-first load window ahead of the sequential
-          // capture loop. This avoids both a 34-request burst and a full GLB
-          // waterfall while preserving deterministic progressive publishing.
-          for (
-            let nextIndex = index;
-            nextIndex < Math.min(orderedTools.length, index + preloadWindowSize);
-            nextIndex += 1
-          ) {
-            preloadTool(orderedTools[nextIndex]);
-          }
-          await preloadTool(tool);
-          app.applyLevelState(entry.playData, {
-            deferRender: true,
-            immediateCamera: true,
-            resetHistory: true,
-            resetLevelEntry: true
-          });
-          app.liveRaisedPlayerGates = app.computeRaisedPlayerGateSet();
-          app.liveRaisedOrangeWalls = app.computeRaisedOrangeWallSet();
-          app.syncGateAnimationTargets(0);
-          app.syncOrangeWallAnimationTargets(0);
-          app.syncPlayerLiftAnimationTargets(0);
-          app.threeRenderer?.setDebugCameraView?.({
-            yaw: 0,
-            tilt: 0.62,
-            zoom: entry.tall ? 0.55 : 1.2,
-            mode: "perspective",
-            skipRender: true
-          });
-          app.render();
-
-          const previewUrl = captureSquarePreview(canvas, 96, tool);
-          if (previewUrl) {
-            publishPalettePreview(tool, previewUrl);
-            // Give the browser a paint between captures so the first hotbar
-            // symbols become visible without waiting for the slowest GLB.
-            await yieldPalettePreviewPaint();
-          }
-        }
-      } finally {
-        await Promise.allSettled(Array.from(preloadPromises.values()));
-        disposeAuxiliaryRenderApp(app, canvas);
-        app = null;
-      }
+      await capturePalettePreviewTools(orderedTools);
     })();
 
     palettePreviewRenderer.promise = renderPromise.catch(() => {
@@ -3547,6 +3904,36 @@
     return palettePreviewRenderer.promise;
   }
 
+  function requestPatternPalettePreview(tool) {
+    if (
+      !tool ||
+      !promptPreviewTokenForPatternToken(String(tool.token || "")) ||
+      palettePreviewRenderer.previewsByToken.has(tool.token) ||
+      palettePreviewRenderer.pendingTokens.has(tool.token)
+    ) {
+      return;
+    }
+
+    palettePreviewRenderer.pendingTokens.add(tool.token);
+    const capturePromise = palettePreviewRenderer.captureQueue
+      .catch(() => {})
+      .then(async () => {
+        // The initial sweep publishes the generic N portraits first and may
+        // already include a restored dynamic hotbar token.
+        await renderPalettePreviews();
+        if (!palettePreviewRenderer.previewsByToken.has(tool.token)) {
+          await capturePalettePreviewTools([tool]);
+        }
+      })
+      .finally(() => {
+        palettePreviewRenderer.pendingTokens.delete(tool.token);
+      });
+
+    // Serialize one-cell WebGL captures so quick successive N selections do
+    // not compete for contexts or dispose a renderer another capture is using.
+    palettePreviewRenderer.captureQueue = capturePromise.catch(() => {});
+  }
+
   function renderSelectedTool() {
     if (!elements.selectedToolLabel) {
       return;
@@ -3554,15 +3941,18 @@
     const tool = toolByToken.get(state.selectedToken);
     const isNoop = state.selectedToken === noopToken;
     const isEraser = state.selectedToken === eraserToken;
-    const isIceSlope = isIceSlopeToken(state.selectedToken);
+    // Slope selections read as their family ("Ice Slope", "Black Ice Slope",
+    // "Box Ice Slope 7", ...) because the painted direction tracks the camera.
+    const slopeFamilyLabel =
+      slopeFamilyForToken(state.selectedToken)?.paletteTool?.label || null;
 
     elements.selectedToolLabel.textContent =
       isNoop
         ? "Select"
         : isEraser
           ? "Erase"
-          : isIceSlope
-            ? "Ice Slope"
+          : slopeFamilyLabel
+            ? slopeFamilyLabel
             : tool
               ? tool.label
               : state.selectedToken;
@@ -3571,8 +3961,8 @@
         ? noopTool.label
         : isEraser
           ? eraserTool.label
-          : isIceSlope
-            ? "Ice Slope"
+          : slopeFamilyLabel
+            ? slopeFamilyLabel
         : tool
           ? tool.label
           : state.selectedToken;
@@ -3894,7 +4284,21 @@
       return;
     }
 
-    if (token !== eraserToken && token !== noopToken && !toolByToken.has(token)) {
+    // Prompt pseudo-tools never become the paint token; the palette click
+    // handler intercepts them and asks for an id first.
+    if (isPromptToolToken(token)) {
+      return;
+    }
+
+    // Pattern tokens (Box N, Clone N, colored slopes) are materialized into
+    // toolByToken on first use, so anything resolvePatternToken accepts is
+    // selectable even without an explicit palette entry.
+    if (
+      token !== eraserToken &&
+      token !== noopToken &&
+      !toolByToken.has(token) &&
+      !materializePatternTool(token)
+    ) {
       return;
     }
 
@@ -3926,7 +4330,9 @@
     renderPalette();
     renderSelectedTool();
     renderStatus();
-    flashHotbarToolname(toolForToken(token)?.label || "");
+    const selectedTool = toolForToken(token);
+    requestPatternPalettePreview(selectedTool);
+    flashHotbarToolname(selectedTool?.label || "");
   }
 
   function selectCell(x, y) {
@@ -4354,6 +4760,19 @@
     return (tool?.type || tool?.name) === "ice_slope";
   }
 
+  // Orange slopes are their own terrain type (they raise and lower with the
+  // orange walls), and Box/Clone Ice Slopes are slope-SHAPED ACTORS of type
+  // weightless_box/clone (they move with their group). The toolbox treats
+  // every slope family the same way, so detection keys off the slope shape
+  // and the S<direction><style> token pattern rather than tool type alone.
+  function isSlopeFamilyTool(tool) {
+    const type = tool?.type || tool?.name;
+    if (type === "ice_slope" || type === "orange_ice_slope") {
+      return true;
+    }
+    return tool?.shape === "slope" && slopeTokenStyleSuffix(tool?.token) !== null;
+  }
+
   function isIceSlopeToken(token) {
     return isIceSlopeTool(toolByToken.get(token));
   }
@@ -4446,13 +4865,19 @@
   }
 
   function cameraFacingIceSlopeToken() {
+    const family = slopeFamilyForToken(state.selectedToken);
+
+    if (!family) {
+      return state.selectedToken;
+    }
+
     const direction = cameraFarDirection();
 
-    return iceSlopeTokenByDirection.get(direction) || canonicalIceSlopeToken || state.selectedToken;
+    return family.tokenByDirection.get(direction) || family.canonicalToken || state.selectedToken;
   }
 
   function effectivePaintToken() {
-    return isIceSlopeToken(state.selectedToken) ? cameraFacingIceSlopeToken() : state.selectedToken;
+    return slopeFamilyForToken(state.selectedToken) ? cameraFacingIceSlopeToken() : state.selectedToken;
   }
 
   function puncherTokenForDirection(direction) {
@@ -5022,6 +5447,117 @@
     return new Promise((resolve) => {
       unsavedPromptResolve = resolve;
     });
+  }
+
+  // ---- Numeric-id prompt for Box N / Clone N / colored slope entries ----
+  // Same promise-based modal shape as the unsaved-changes prompt above.
+  let tokenIdPromptResolve = null;
+
+  function hasTokenIdPromptElements() {
+    return Boolean(
+      elements.tokenIdModal &&
+        elements.tokenIdTitle &&
+        elements.tokenIdMessage &&
+        elements.tokenIdInput &&
+        elements.tokenIdCancel &&
+        elements.tokenIdConfirm
+    );
+  }
+
+  function closeTokenIdPrompt(value = null) {
+    elements.tokenIdModal.classList.remove("open");
+    const resolve = tokenIdPromptResolve;
+    tokenIdPromptResolve = null;
+    if (resolve) resolve(value);
+  }
+
+  function submitTokenIdPrompt() {
+    const id = Number(elements.tokenIdInput.value);
+
+    if (!Number.isInteger(id) || id < 0) {
+      elements.tokenIdInput.setCustomValidity("Enter a whole number of 0 or more.");
+      elements.tokenIdInput.reportValidity();
+      return;
+    }
+
+    elements.tokenIdInput.setCustomValidity("");
+    closeTokenIdPrompt(id);
+  }
+
+  function ensureTokenIdPromptListeners() {
+    if (elements.tokenIdModal.dataset.bound === "true") return;
+    elements.tokenIdModal.dataset.bound = "true";
+    elements.tokenIdCancel.addEventListener("click", () => closeTokenIdPrompt(null));
+    elements.tokenIdConfirm.addEventListener("click", submitTokenIdPrompt);
+    elements.tokenIdInput.addEventListener("input", () =>
+      elements.tokenIdInput.setCustomValidity("")
+    );
+    elements.tokenIdInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitTokenIdPrompt();
+      }
+    });
+    elements.tokenIdModal.addEventListener("click", (event) => {
+      if (event.target === elements.tokenIdModal) closeTokenIdPrompt(null);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && elements.tokenIdModal.classList.contains("open")) {
+        event.preventDefault();
+        closeTokenIdPrompt(null);
+      }
+    });
+  }
+
+  function promptForTokenId(promptTool) {
+    if (!hasTokenIdPromptElements()) {
+      // Same native-dialog precedent as shouldDiscardUnsavedChanges().
+      const raw = window.prompt(promptTool.prompt.message, String(promptTool.prompt.defaultId));
+      if (raw === null) return Promise.resolve(null);
+      const id = Number(String(raw).trim());
+      return Promise.resolve(Number.isInteger(id) && id >= 0 ? id : null);
+    }
+    ensureTokenIdPromptListeners();
+    if (tokenIdPromptResolve) closeTokenIdPrompt(null);
+    elements.tokenIdTitle.textContent = promptTool.label;
+    elements.tokenIdMessage.textContent = promptTool.prompt.message;
+    elements.tokenIdInput.value = String(promptTool.prompt.defaultId);
+    elements.tokenIdInput.setCustomValidity("");
+    elements.tokenIdModal.classList.add("open");
+    window.setTimeout(() => {
+      elements.tokenIdInput.focus();
+      elements.tokenIdInput.select();
+    }, 0);
+    return new Promise((resolve) => {
+      tokenIdPromptResolve = resolve;
+    });
+  }
+
+  async function promptAndSelectPatternToken(promptToken) {
+    const promptTool = promptToolsByToken.get(promptToken);
+
+    if (!promptTool || isEditorInteractionLocked()) {
+      return;
+    }
+
+    const id = await promptForTokenId(promptTool);
+
+    if (id === null) {
+      return;
+    }
+
+    const token = promptTool.prompt.makeToken(id);
+    const tool = materializePatternTool(token);
+
+    if (!tool) {
+      setStatus('Unknown token "' + token + '".', "error");
+      return;
+    }
+
+    // Colored slopes register their whole family so the painted token can
+    // follow the camera like the plain ice slope does.
+    slopeFamilyForToken(token);
+    selectToken(token, { assignToActiveSlot: true });
   }
 
   async function navigateFromEditor(link) {
@@ -7484,6 +8020,13 @@
     const button = event.target.closest("[data-token]");
 
     if (!button) {
+      return;
+    }
+
+    if (isPromptToolToken(button.dataset.token)) {
+      // Box N / Clone N / colored-slope entries ask for the id first, then
+      // select the concrete pattern token themselves.
+      promptAndSelectPatternToken(button.dataset.token).catch(() => {});
       return;
     }
 

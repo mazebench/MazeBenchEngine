@@ -20,6 +20,8 @@ for (const token of [
   "#",
   "I",
   "Sr",
+  "Sr#",
+  "SrO",
   "p",
   "G",
   "g",

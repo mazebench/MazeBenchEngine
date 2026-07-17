@@ -352,7 +352,7 @@ function createPageRenderer({
         </div>
       </main>
       <script>window.__PLAY_DATA__ = ${serializeForScript(levelState)};</script>
-      ${playWorldData ? `<script>window.__PLAY_WORLD_DATA__ = ${serializeForScript(playWorldData)};</script><script src="/author-play-data.js" defer></script>` : ""}
+      ${playWorldData ? `<script>window.__PLAY_WORLD_DATA__ = ${serializeForScript(playWorldData)};</script><script src="/maze-token-patterns.js" defer></script><script src="/author-play-data.js" defer></script>` : ""}
       ${RUNTIME_SCRIPTS}
       <script src="/play-movement.js" defer></script>
       <script src="/play-world-transitions.js" defer></script>
@@ -532,7 +532,7 @@ function createPageRenderer({
     <script src="/play-world-transitions.js" defer></script>
     <script src="/play-gameplay.js" defer></script>
     <script src="/level-preview.js" defer></script>
-    <script src="/author-play-data.js" defer></script>
+    <script src="/maze-token-patterns.js" defer></script><script src="/author-play-data.js" defer></script>
     <script src="/maze-solver.js" defer></script>
     <script src="/author.js" defer></script>
   </body>
@@ -714,6 +714,7 @@ function createPageRenderer({
     return renderSitePage({
       title: "Train — Maze Bench",
       bodyClass: "train-page",
+      extraHeadHtml: `<link rel="preload" as="image" href="/logos/prime.png" type="image/png" fetchpriority="high">`,
       main: `<div class="page-head train-page-head">
           <h1>Train</h1>
           <p id="train-status" class="author-status" role="status" aria-live="polite"></p>
@@ -791,8 +792,24 @@ function createPageRenderer({
           <div class="runs-head"><div><h2>Training runs</h2></div><button id="refresh-training-runs" class="catalog-refresh" type="button">↻ Refresh</button></div>
           <div id="training-runs" class="training-runs"></div>
         </section>
+        <div id="train-prime-setup-modal" class="build-modal provider-setup-modal" role="dialog" aria-modal="true" aria-labelledby="train-prime-setup-title" hidden>
+          <div class="build-modal__dialog provider-setup-modal__dialog">
+            <div class="provider-setup-modal__head">
+              <span class="provider-setup-modal__logo" aria-hidden="true"><img src="/logos/prime.png" alt="" width="128" height="128"></span>
+              <div><span class="provider-setup-modal__eyebrow">Prime setup needed</span><h2 id="train-prime-setup-title">Reconnect Prime</h2></div>
+            </div>
+            <p id="train-prime-setup-message" class="provider-setup-modal__message"></p>
+            <pre class="provider-setup-modal__command"><code id="train-prime-setup-command"></code></pre>
+            <p id="train-prime-setup-note" class="provider-setup-modal__note"></p>
+            <div class="build-modal__actions">
+              <a class="button" href="https://docs.primeintellect.ai/cli-reference/introduction" target="_blank" rel="noreferrer">Setup guide</a>
+              <button id="train-prime-setup-dismiss" class="button" type="button">Not now</button>
+              <button id="train-prime-setup-retry" class="button--primary" type="button">Check again</button>
+            </div>
+          </div>
+        </div>
         <script>window.__TRAIN_DATA__ = ${serializeForScript(trainData)};</script>
-        <script src="/train.js?v=20260712-fast-load-3" defer></script>`
+        <script src="/train.js?v=20260716-prime-setup-1" defer></script>`
     });
   }
 
@@ -1046,6 +1063,7 @@ function createPageRenderer({
             </div>
             <p id="provider-setup-message" class="provider-setup-modal__message"></p>
             <pre class="provider-setup-modal__command"><code id="provider-setup-command"></code></pre>
+            <p id="provider-setup-note" class="provider-setup-modal__note" hidden></p>
             <div class="build-modal__actions">
               <a id="provider-setup-docs" class="button" href="#" target="_blank" rel="noreferrer">Setup guide</a>
               <button id="provider-setup-close" class="button--primary" type="button">Got it</button>
@@ -1053,7 +1071,7 @@ function createPageRenderer({
           </div>
         </div>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
-        <script src="/agent.js?v=20260716-prime-intellect-1" defer></script>`
+        <script src="/agent.js?v=20260716-prime-setup-2" defer></script>`
     });
   }
 

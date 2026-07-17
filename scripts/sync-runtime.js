@@ -28,9 +28,11 @@ const MIRRORED_DIRECTORIES = [
 
 const MIRRORED_FILES = [
   "games/maze/level_parsing.json",
+  "games/maze/toolbox.json",
   "games/maze/world_map.json",
   "games/maze/world_parsing.json",
   "public/author-play-data.js",
+  "public/maze-token-patterns.js",
   "public/author-shell.js",
   "public/author-solver-worker.js",
   "public/author-theme.css",

@@ -68,6 +68,7 @@
         y: actor.y,
         removed: Boolean(actor.removed),
         elevation: actor.elevation ?? 0,
+        raised: actor.raised === true,
         collectionId: actor.collectionId || null,
         collected: actor.collected === true,
         showCollectedGhost: actor.showCollectedGhost === true
@@ -245,7 +246,7 @@
       return { dx: 1, dy: 0 };
     }
 
-    function transitionTerrainSlopeEntryAt(levelState, x, y, dx, dy, elevation) {
+    function transitionTerrainSlopeEntryAt(levelState, x, y, dx, dy, elevation, options = {}) {
       const cell = terrainCellInLevelState(levelState, x, y);
 
       if (!cell) {
@@ -254,11 +255,25 @@
 
       return (
         terrainLayersForTransitionCell(cell).find((layer) => {
-          if (layer?.type !== "ice_slope") {
+          if (layer?.type !== "ice_slope" && layer?.type !== "orange_ice_slope") {
             return false;
           }
 
-          const layerElevation = layer.elevation ?? 0;
+          let layerElevation = layer.elevation ?? 0;
+
+          if (layer.type === "orange_ice_slope") {
+            const isRaised = options.raisedOrangeWalls
+              ? options.raisedOrangeWalls.has(`${x},${y}`)
+              : true;
+
+            if (!isRaised) {
+              if (!transitionShouldLowerPressedOrangeWallAsBlock(levelState, x, y, layer, options)) {
+                return false;
+              }
+
+              layerElevation -= 1;
+            }
+          }
           const uphill = directionVector(layer.direction);
           const downhill = { dx: -uphill.dx, dy: -uphill.dy };
 
@@ -273,7 +288,7 @@
     function transitionCellHasOrangeWallLayerAtElevation(cell, elevation) {
       return terrainLayersForTransitionCell(cell).some(
         (candidate) =>
-          candidate?.type === "orange_wall" &&
+          (candidate?.type === "orange_wall" || candidate?.type === "orange_ice_slope") &&
           (candidate.elevation ?? 0) === elevation
       );
     }
@@ -296,7 +311,11 @@
 
       return terrainLayersForTransitionCell(terrainCellInLevelState(levelState, x, y)).some(
         (candidate) => {
-          if (candidate === layer || candidate?.type === "orange_wall") {
+          if (
+            candidate === layer ||
+            candidate?.type === "orange_wall" ||
+            candidate?.type === "orange_ice_slope"
+          ) {
             return false;
           }
 
@@ -343,7 +362,7 @@
         return layer.raised === true ? elevation + 1 : elevation;
       }
 
-      if (layer?.type === "orange_wall") {
+      if (layer?.type === "orange_wall" || layer?.type === "orange_ice_slope") {
         if (options.raisedOrangeWalls) {
           return options.raisedOrangeWalls.has(`${x},${y}`) ? elevation + 1 : elevation;
         }
@@ -363,6 +382,30 @@
 
       if (layer?.type === "ice_slope") {
         return elevation === layerElevation || elevation === layerElevation + 1;
+      }
+
+      if (layer?.type === "orange_ice_slope") {
+        const isRaised = options.raisedOrangeWalls
+          ? options.raisedOrangeWalls.has(`${x},${y}`)
+          : true;
+
+        if (isRaised) {
+          return elevation === layerElevation || elevation === layerElevation + 1;
+        }
+
+        if (
+          !transitionShouldLowerPressedOrangeWallAsBlock(
+            options.levelState,
+            x,
+            y,
+            layer,
+            options
+          )
+        ) {
+          return false;
+        }
+
+        return elevation === layerElevation - 1 || elevation === layerElevation;
       }
 
       if (layer?.type === "tree") {
@@ -1007,7 +1050,15 @@
         transition.targetY,
         transition.dx,
         transition.dy,
-        targetElevation
+        targetElevation,
+        {
+          raisedPlayerGates: nextLevelState.raisedPlayerGates
+            ? new Set(nextLevelState.raisedPlayerGates)
+            : null,
+          raisedOrangeWalls: nextLevelState.raisedOrangeWalls
+            ? new Set(nextLevelState.raisedOrangeWalls)
+            : null
+        }
       );
       const targetType = targetSurface?.type || targetHole?.type || targetSlopeEntry?.type || "empty";
 

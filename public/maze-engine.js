@@ -14,7 +14,8 @@
     ice_block: 11,
     shrub: 12,
     block_asset: 13,
-    ice_slope: 14
+    ice_slope: 14,
+    orange_ice_slope: 15
   };
   const fallbackTerrainCell = {
     type: "empty",
@@ -59,7 +60,19 @@
   }
 
   function isNonBlockingType(type) {
-    return isCollectibleType(type) || type === "orange_button" || type === "puncher";
+    return (
+      isCollectibleType(type) ||
+      type === "orange_button" ||
+      type === "puncher" ||
+      isAttachedDeviceType(type)
+    );
+  }
+
+  // Attached devices use non-blocking actor records so their carrier can
+  // share the cell; their raised bodies and standing surfaces are resolved
+  // separately by the device-aware terrain/support helpers below.
+  function isAttachedDeviceType(type) {
+    return type === "attached_lift" || type === "attached_gate";
   }
 
   function isPushableType(type) {
@@ -171,6 +184,65 @@
     const actorSource = Array.isArray(playData?.actors) ? playData.actors : [];
     const actorTypes = actorSource.map((actor) => actorType(actor));
     const actorGroupIds = actorSource.map((actor) => actor?.groupId ?? "");
+    // Owner feature (2026-07): slope-SHAPED group members. A weightless box
+    // or clone actor with shape "slope" moves with its group like any other
+    // member, but other actors traverse it exactly like an ice-slope cell
+    // (and it blocks its elevation band like one).
+    const actorShapes = actorSource.map((actor) =>
+      actor?.shape === "slope" ? "slope" : "cube"
+    );
+    const slopeActorIndexes = [];
+
+    actorShapes.forEach((shape, index) => {
+      if (shape === "slope") {
+        slopeActorIndexes.push(index);
+      }
+    });
+
+    const levelHasSlopeActors = slopeActorIndexes.length > 0;
+
+    function isSlopeShapedActor(index) {
+      return actorShapes[index] === "slope";
+    }
+
+    // A movable slope is still a support-category actor for settling and
+    // group motion, but its inclined face is never a flat standing surface.
+    // Traversal comes exclusively from the shared ice-slope helpers below,
+    // matching terrain, black, and orange ice slopes exactly.
+    function actorProvidesFlatSupport(index) {
+      return isSupportActorType(actorTypes[index]) && !isSlopeShapedActor(index);
+    }
+
+    // Owner rule (2026-07, functional round): attached lifts/gates are REAL
+    // devices that happen to ride a carrier. The lift's raised bit lives in
+    // the journaled per-cell liftRaised buffer (the actor's elevation always
+    // tracks the carrier top, so the ride syncs stay untouched); the gate's
+    // raised state is derived per move from the same proximity rule as
+    // terrain gates and shares the raised-gate cell set.
+    const attachedLiftIndexes = [];
+    const attachedGateIndexes = [];
+
+    actorTypes.forEach((type, index) => {
+      if (type === "attached_lift") {
+        attachedLiftIndexes.push(index);
+      } else if (type === "attached_gate") {
+        attachedGateIndexes.push(index);
+      }
+    });
+
+    const levelHasAttachedDevices =
+      attachedLiftIndexes.length > 0 || attachedGateIndexes.length > 0;
+
+    // An authored raised lift ('L') on a carrier starts with its bit set.
+    attachedLiftIndexes.forEach((index) => {
+      const actor = actorSource[index];
+      const x = Number(actor?.x) || 0;
+      const y = Number(actor?.y) || 0;
+
+      if (actor?.raised === true && x >= 0 && x < width && y >= 0 && y < height) {
+        baseLiftRaised[y * width + x] = 1;
+      }
+    });
     const actorDirections = actorSource.map((actor) =>
       normalizePuncherDirection(actor?.direction || actor?.facing)
     );
@@ -288,7 +360,13 @@
     let levelHasSlopes = false;
 
     for (let cell = 0; cell < cellCount; cell += 1) {
-      if (terrainLayers[cell].some((layer) => layer.type === terrainTypes.ice_slope)) {
+      if (
+        terrainLayers[cell].some(
+          (layer) =>
+            layer.type === terrainTypes.ice_slope ||
+            layer.type === terrainTypes.orange_ice_slope
+        )
+      ) {
         slopeCellMask[cell] = 1;
         levelHasSlopes = true;
       }
@@ -415,7 +493,7 @@
       }
 
       for (let index = 0; index < actorCount; index += 1) {
-        if (state.actorRemoved[index] || !isSupportActorType(actorTypes[index])) {
+        if (state.actorRemoved[index] || !actorProvidesFlatSupport(index)) {
           continue;
         }
 
@@ -532,7 +610,8 @@
             (layer) =>
               layer.type === terrainTypes.ice ||
               layer.type === terrainTypes.ice_block ||
-              layer.type === terrainTypes.ice_slope
+              layer.type === terrainTypes.ice_slope ||
+              layer.type === terrainTypes.orange_ice_slope
           )
         ) {
           levelHasLongPlayerMoves = true;
@@ -761,7 +840,7 @@
         const otherActor = actorSource[other];
 
         if (
-          isSupportActorType(actorTypes[other]) &&
+          actorProvidesFlatSupport(other) &&
           !otherActor?.removed &&
           (Number.isInteger(otherActor?.x) ? otherActor.x : 0) === x &&
           (Number.isInteger(otherActor?.y) ? otherActor.y : 0) === y
@@ -1326,18 +1405,22 @@
       return terrainLayers[cell] || [];
     }
 
-    function hasOrangeWallLayerAtElevation(state, cell, elevation) {
+    function isOrangeTerrainLayerType(type) {
+      return type === terrainTypes.orange_wall || type === terrainTypes.orange_ice_slope;
+    }
+
+    function hasOrangeTerrainLayerAtElevation(state, cell, elevation) {
       return terrainLayersForCell(state, cell).some(
         (candidate) =>
-          candidate.type === terrainTypes.orange_wall &&
+          isOrangeTerrainLayerType(candidate.type) &&
           (candidate.elevation ?? 0) === elevation
       );
     }
 
-    function hasOrangeWallLayerBelow(state, cell, layer) {
+    function hasOrangeTerrainLayerBelow(state, cell, layer) {
       const elevation = layer.elevation ?? 0;
 
-      return elevation > 0 && hasOrangeWallLayerAtElevation(state, cell, elevation - 1);
+      return elevation > 0 && hasOrangeTerrainLayerAtElevation(state, cell, elevation - 1);
     }
 
     function hasNonOrangeTerrainSupportAtElevation(
@@ -1349,7 +1432,7 @@
       ignoredLayer = null
     ) {
       return terrainLayersForCell(state, cell).some((candidate) => {
-        if (candidate === ignoredLayer || candidate.type === terrainTypes.orange_wall) {
+        if (candidate === ignoredLayer || isOrangeTerrainLayerType(candidate.type)) {
           return false;
         }
 
@@ -1365,7 +1448,7 @@
       });
     }
 
-    function shouldLowerPressedOrangeWallAsBlock(
+    function shouldLowerPressedOrangeTerrainAsBlock(
       state,
       cell,
       layer,
@@ -1376,7 +1459,7 @@
 
       return (
         elevation > 0 &&
-        (hasOrangeWallLayerBelow(state, cell, layer) ||
+        (hasOrangeTerrainLayerBelow(state, cell, layer) ||
           !hasNonOrangeTerrainSupportAtElevation(
             state,
             cell,
@@ -1385,6 +1468,38 @@
             orangeButtonsPressed,
             layer
           ))
+      );
+    }
+
+    function shouldLowerPressedOrangeWallAsBlock(
+      state,
+      cell,
+      layer,
+      gateState,
+      orangeButtonsPressed
+    ) {
+      return shouldLowerPressedOrangeTerrainAsBlock(
+        state,
+        cell,
+        layer,
+        gateState,
+        orangeButtonsPressed
+      );
+    }
+
+    function shouldLowerPressedOrangeIceSlopeAsSlope(
+      state,
+      cell,
+      layer,
+      gateState,
+      orangeButtonsPressed
+    ) {
+      return shouldLowerPressedOrangeTerrainAsBlock(
+        state,
+        cell,
+        layer,
+        gateState,
+        orangeButtonsPressed
       );
     }
 
@@ -1430,6 +1545,10 @@
         layer.type === terrainTypes.block_asset
       ) {
         return layer.elevation + 1;
+      }
+
+      if (layer.type === terrainTypes.orange_ice_slope) {
+        return orangeButtonsPressed ? layer.elevation : layer.elevation + 1;
       }
 
       if (layer.type === terrainTypes.tree) {
@@ -1636,24 +1755,86 @@
       );
     }
 
-    function iceSlopeLayersAt(state, x, y) {
+    function iceSlopeLayersAt(state, x, y, orangeButtonsPressed = false) {
       if (!isInsideBoard(x, y)) {
         return EMPTY_LAYER_LIST;
       }
 
       const cell = cellIndex(x, y);
+      const slopeActor = slopeActorAtCell(state, x, y);
 
       // Perf: one byte probe short-circuits every slope helper on non-slope
       // cells — the cluster machinery probes five slope traversals per
       // member per step, which on slope-free many-box levels was pure
       // allocation churn.
-      if (!levelHasSlopes || slopeCellMask[cell] === 0) {
+      if ((!levelHasSlopes || slopeCellMask[cell] === 0) && slopeActor === -1) {
         return EMPTY_LAYER_LIST;
       }
 
-      return terrainLayersForCell(state, cell).filter(
-        (layer) => layer.type === terrainTypes.ice_slope
-      );
+      // Orange ice slopes are ramps while the orange terrain is raised. When
+      // the buttons are pressed they lower with the walls: ground-level (or
+      // non-orange-supported) wedges flatten, while unsupported elevated
+      // wedges remain ramps one elevation lower.
+      const layers = [];
+
+      if (levelHasSlopes && slopeCellMask[cell] === 1) {
+        let gateState = null;
+
+        terrainLayersForCell(state, cell).forEach((layer) => {
+          if (layer.type === terrainTypes.ice_slope) {
+            layers.push(layer);
+            return;
+          }
+
+          if (layer.type !== terrainTypes.orange_ice_slope) {
+            return;
+          }
+
+          if (!orangeButtonsPressed) {
+            layers.push(layer);
+            return;
+          }
+
+          if ((layer.elevation ?? 0) <= 0) {
+            return;
+          }
+
+          gateState ||= computeRaisedPlayerGateSet(state);
+
+          if (
+            shouldLowerPressedOrangeIceSlopeAsSlope(
+              state,
+              cell,
+              layer,
+              gateState,
+              orangeButtonsPressed
+            )
+          ) {
+            layers.push({
+              ...layer,
+              elevation: (layer.elevation ?? 0) - 1
+            });
+          }
+        });
+      }
+
+      // Owner rule (2026-07): slope-SHAPED group members (Box/Clone Ice
+      // Slopes) act as traversable ice slopes at their current position.
+      // Approached along the slope axis they are climbed; approached
+      // perpendicular they are ordinary pushable members of their group.
+      if (slopeActor !== -1) {
+        return layers.concat([
+          {
+            type: terrainTypes.ice_slope,
+            elevation: actorElevation(state, slopeActor),
+            direction: actorDirections[slopeActor],
+            raised: false,
+            slopeActorIndex: slopeActor
+          }
+        ]);
+      }
+
+      return layers;
     }
 
     function vectorMatches(left, right) {
@@ -1666,11 +1847,12 @@
       slopeY,
       dx,
       dy,
-      elevation
+      elevation,
+      orangeButtonsPressed = false
     ) {
       const moveVector = { dx, dy };
 
-      for (const layer of iceSlopeLayersAt(state, slopeX, slopeY)) {
+      for (const layer of iceSlopeLayersAt(state, slopeX, slopeY, orangeButtonsPressed)) {
         const layerElevation = layer.elevation ?? 0;
         const uphill = puncherDirectionVector(layer.direction);
         const downhill = { dx: -uphill.dx, dy: -uphill.dy };
@@ -1731,8 +1913,8 @@
       };
     }
 
-    function iceSlopeTopSlideLayersAt(state, x, y, elevation) {
-      return iceSlopeLayersAt(state, x, y)
+    function iceSlopeTopSlideLayersAt(state, x, y, elevation, orangeButtonsPressed = false) {
+      return iceSlopeLayersAt(state, x, y, orangeButtonsPressed)
         .filter((layer) => (layer.elevation ?? 0) + 1 === elevation)
         .sort((left, right) => right.elevation - left.elevation);
     }
@@ -1747,7 +1929,7 @@
       orangeButtonsPressed,
       options = {}
     ) {
-      for (const layer of iceSlopeTopSlideLayersAt(state, slopeX, slopeY, elevation)) {
+      for (const layer of iceSlopeTopSlideLayersAt(state, slopeX, slopeY, elevation, orangeButtonsPressed)) {
         const uphill = puncherDirectionVector(layer.direction);
         const downhill = { dx: -uphill.dx, dy: -uphill.dy };
         let traversal = resolveIceSlopeTraversal(
@@ -1973,7 +2155,57 @@
       }));
     }
 
-    function cloneRidersForMove(state, members, dx, dy, gateState, orangeButtonsPressed) {
+    function riderStandsOnAttachedDeviceCarriedByMember(
+      state,
+      rider,
+      member,
+      gateState
+    ) {
+      const x = state.actorX[member];
+      const y = state.actorY[member];
+      const deviceElevation = actorElevation(state, member) + 1;
+      const riderElevation = actorElevation(state, rider);
+
+      for (let i = 0; i < attachedLiftIndexes.length; i += 1) {
+        const lift = attachedLiftIndexes[i];
+
+        if (
+          !state.actorRemoved[lift] &&
+          state.actorX[lift] === x &&
+          state.actorY[lift] === y &&
+          actorElevation(state, lift) === deviceElevation &&
+          attachedLiftSurfaceElevation(state, lift) === riderElevation
+        ) {
+          return true;
+        }
+      }
+
+      for (let i = 0; i < attachedGateIndexes.length; i += 1) {
+        const gate = attachedGateIndexes[i];
+
+        if (
+          !state.actorRemoved[gate] &&
+          state.actorX[gate] === x &&
+          state.actorY[gate] === y &&
+          actorElevation(state, gate) === deviceElevation &&
+          deviceElevation + (gateState.has(cellIndex(x, y)) ? 1 : 0) === riderElevation
+        ) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    function cloneRidersForMove(
+      state,
+      members,
+      dx,
+      dy,
+      gateState,
+      orangeButtonsPressed,
+      excludedActors = new Set()
+    ) {
       const riders = [];
       const memberSet = new Set(members);
       const riderIndexes = new Set();
@@ -1987,12 +2219,19 @@
         for (let actor = 0; actor < actorCount; actor += 1) {
           if (
             riderIndexes.has(actor) ||
+            excludedActors.has(actor) ||
             state.actorRemoved[actor] ||
             (!isMainPlayerActor(actor) && !isCloneActor(actor)) ||
             memberSet.has(actor) ||
             state.actorX[actor] !== supportX ||
             state.actorY[actor] !== supportY ||
-            actorElevation(state, actor) !== supportElevation + 1
+            (actorElevation(state, actor) !== supportElevation + 1 &&
+              !riderStandsOnAttachedDeviceCarriedByMember(
+                state,
+                actor,
+                member,
+                gateState
+              ))
           ) {
             continue;
           }
@@ -2002,7 +2241,10 @@
             : [actor];
           const riderGroupKey = isCloneActor(actor) ? actorGroupIds[actor] || "" : null;
 
-          if (riderGroupKey !== null && riderCloneGroups.has(riderGroupKey)) {
+          if (
+            riderMembers.some((riderMember) => excludedActors.has(riderMember)) ||
+            (riderGroupKey !== null && riderCloneGroups.has(riderGroupKey))
+          ) {
             continue;
           }
 
@@ -2069,6 +2311,100 @@
       }
 
       return riders;
+    }
+
+    function moveCarriedRidersForSupportMoves(
+      state,
+      carriedRiders,
+      moves,
+      moveStartIndex,
+      occupied,
+      gateState,
+      orangeButtonsPressed,
+      searchMode,
+      carriedPlayers
+    ) {
+      carriedRiders.forEach((rider) => {
+        const supportMove = moves
+          .slice(moveStartIndex)
+          .find((move) => move.actorIndex === rider.supportMember && !move.visualOnly);
+
+        if (!supportMove) {
+          addOccupiedAtElevation(occupied, rider.fromX, rider.fromY, rider.fromElevation);
+          return;
+        }
+
+        const path = riderPathForSupportMove(supportMove, rider);
+        let riderValidLength = 1;
+
+        for (let pointIndex = 1; pointIndex < path.length; pointIndex += 1) {
+          const point = path[pointIndex];
+
+          if (
+            !isInsideBoard(point.x, point.y) ||
+            terrainBlocksElevation(
+              state,
+              point.x,
+              point.y,
+              point.elevation,
+              gateState,
+              orangeButtonsPressed
+            ) ||
+            blockingActorAtElevation(
+              state,
+              point.x,
+              point.y,
+              point.elevation,
+              rider.actorIndex
+            ) !== -1
+          ) {
+            break;
+          }
+
+          riderValidLength = pointIndex + 1;
+        }
+
+        if (riderValidLength < path.length) {
+          path.length = riderValidLength;
+        }
+
+        const finalPoint = path[path.length - 1];
+        const toX = finalPoint?.x ?? rider.fromX;
+        const toY = finalPoint?.y ?? rider.fromY;
+        const toElevation = finalPoint?.elevation ?? rider.fromElevation;
+        const moveRecord = {
+          actorIndex: rider.actorIndex,
+          actorType: actorTypes[rider.actorIndex],
+          fromElevation: rider.fromElevation,
+          fromX: rider.fromX,
+          fromY: rider.fromY,
+          toElevation,
+          toX,
+          toY
+        };
+
+        if (path.length > 2 || path.some((point) => point.elevation !== rider.fromElevation)) {
+          moveRecord.path = path;
+          moveRecord.pathControlsElevation = path.some(
+            (point) => point.elevation !== rider.fromElevation
+          );
+          moveRecord.pathEndElevation = path[path.length - 1]?.elevation ?? toElevation;
+        }
+
+        if (!searchMode && supportMove.iceSlide === true) {
+          moveRecord.iceSlide = true;
+        }
+
+        jSetActorX(state, rider.actorIndex, toX);
+        jSetActorY(state, rider.actorIndex, toY);
+        jSetActorElevation(state, rider.actorIndex, toElevation);
+        moves.push(moveRecord);
+        addOccupiedAtElevation(occupied, toX, toY, toElevation);
+
+        if (carriedPlayers instanceof Set) {
+          carriedPlayers.add(rider.actorIndex);
+        }
+      });
     }
 
     function pathOffsetsForTraversal(traversal, fromX, fromY, fromElevation) {
@@ -2192,7 +2528,8 @@
     }
 
     function setPlayerLiftRaised(state, x, y, raised) {
-      if (!isPlayerLift(x, y)) {
+      // Attached lifts share the per-cell raised bit with terrain lifts.
+      if (!isPlayerLift(x, y) && attachedLiftIndexAt(state, x, y) === -1) {
         return false;
       }
 
@@ -2285,6 +2622,118 @@
       return isOrangeWall(x, y) && !orangeButtonsPressed;
     }
 
+    function attachedLiftIndexAt(state, x, y) {
+      for (let i = 0; i < attachedLiftIndexes.length; i += 1) {
+        const index = attachedLiftIndexes[i];
+
+        if (
+          !state.actorRemoved[index] &&
+          state.actorX[index] === x &&
+          state.actorY[index] === y
+        ) {
+          return index;
+        }
+      }
+
+      return -1;
+    }
+
+    // Flush-surface rule: an attached lift's standing surface is AT its
+    // elevation (carrier top) when lowered and one above when raised.
+    function attachedLiftSurfaceElevation(state, index) {
+      const cell = cellIndex(state.actorX[index], state.actorY[index]);
+
+      return (
+        (state.actorElevation[index] || 0) + (state.liftRaised[cell] === 1 ? 1 : 0)
+      );
+    }
+
+    // Raised attached devices block like their terrain twins: the lift's
+    // body fills the band it rose out of; a proximity-raised gate fills the
+    // band above the carrier top. Lowered they are flush plates and block
+    // nothing.
+    function attachedDeviceBlocksElevation(state, x, y, elevation, gateState) {
+      for (let i = 0; i < attachedLiftIndexes.length; i += 1) {
+        const index = attachedLiftIndexes[i];
+
+        if (
+          !state.actorRemoved[index] &&
+          state.actorX[index] === x &&
+          state.actorY[index] === y &&
+          (state.actorElevation[index] || 0) === elevation &&
+          state.liftRaised[cellIndex(x, y)] === 1
+        ) {
+          return true;
+        }
+      }
+
+      for (let i = 0; i < attachedGateIndexes.length; i += 1) {
+        const index = attachedGateIndexes[i];
+
+        if (
+          !state.actorRemoved[index] &&
+          state.actorX[index] === x &&
+          state.actorY[index] === y &&
+          (state.actorElevation[index] || 0) === elevation &&
+          gateState.has(cellIndex(x, y))
+        ) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    function raisedAttachedDeviceCarrierAt(state, x, y, elevation, gateState) {
+      let hasRaisedDevice = false;
+
+      for (let i = 0; i < attachedLiftIndexes.length; i += 1) {
+        const lift = attachedLiftIndexes[i];
+
+        if (
+          !state.actorRemoved[lift] &&
+          state.actorX[lift] === x &&
+          state.actorY[lift] === y &&
+          actorElevation(state, lift) === elevation &&
+          state.liftRaised[cellIndex(x, y)] === 1
+        ) {
+          hasRaisedDevice = true;
+          break;
+        }
+      }
+
+      if (!hasRaisedDevice) {
+        for (let i = 0; i < attachedGateIndexes.length; i += 1) {
+          const gate = attachedGateIndexes[i];
+
+          if (
+            !state.actorRemoved[gate] &&
+            state.actorX[gate] === x &&
+            state.actorY[gate] === y &&
+            actorElevation(state, gate) === elevation &&
+            gateState.has(cellIndex(x, y))
+          ) {
+            hasRaisedDevice = true;
+            break;
+          }
+        }
+      }
+
+      if (!hasRaisedDevice) {
+        return -1;
+      }
+
+      return actorAt(
+        state,
+        x,
+        y,
+        (actor) =>
+          isPushableActor(actor) &&
+          canActorCarrySurfaceAttachment(actorTypes[actor]) &&
+          actorElevation(state, actor) + 1 === elevation
+      );
+    }
+
     function isPlayerGate(x, y) {
       return terrainLayersOfType(x, y, terrainTypes.player_gate).length > 0;
     }
@@ -2303,6 +2752,7 @@
           layer.type === terrainTypes.wall ||
           layer.type === terrainTypes.ice_block ||
           layer.type === terrainTypes.ice_slope ||
+          layer.type === terrainTypes.orange_ice_slope ||
           layer.type === terrainTypes.tree ||
           layer.type === terrainTypes.shrub ||
           layer.type === terrainTypes.block_asset
@@ -2335,6 +2785,27 @@
 
       if (layer.type === terrainTypes.ice_slope) {
         return elevation === layerElevation || elevation === layerElevation + 1;
+      }
+
+      if (layer.type === terrainTypes.orange_ice_slope) {
+        if (!orangeButtonsPressed) {
+          return elevation === layerElevation || elevation === layerElevation + 1;
+        }
+
+        if (
+          !shouldLowerPressedOrangeIceSlopeAsSlope(
+            state,
+            cell,
+            layer,
+            gateState,
+            orangeButtonsPressed
+          )
+        ) {
+          return false;
+        }
+
+        const loweredElevation = layerElevation - 1;
+        return elevation === loweredElevation || elevation === loweredElevation + 1;
       }
 
       if (layer.type === terrainTypes.shrub) {
@@ -2384,15 +2855,24 @@
 
       const cell = cellIndex(x, y);
 
-      return terrainLayersForCell(state, cell).some((layer) =>
-        terrainLayerBlocksElevation(
-          state,
-          cell,
-          layer,
-          gateState,
-          orangeButtonsPressed,
-          elevation
+      if (
+        terrainLayersForCell(state, cell).some((layer) =>
+          terrainLayerBlocksElevation(
+            state,
+            cell,
+            layer,
+            gateState,
+            orangeButtonsPressed,
+            elevation
+          )
         )
+      ) {
+        return true;
+      }
+
+      return (
+        levelHasAttachedDevices &&
+        attachedDeviceBlocksElevation(state, x, y, elevation, gateState)
       );
     }
 
@@ -2439,11 +2919,26 @@
         orangeButtonsPressed
       );
 
-      return blockers.length > 0 && blockers.every((layer) => layer.type === terrainTypes.ice_slope);
+      return (
+        blockers.length > 0 &&
+        blockers.every(
+          (layer) =>
+            layer.type === terrainTypes.ice_slope ||
+            layer.type === terrainTypes.orange_ice_slope
+        )
+      );
     }
 
-    function actorSupportSurfaceHeightsAt(state, x, y, ignoredActors = null, includePlayers = false) {
+    function actorSupportSurfaceHeightsAt(
+      state,
+      x,
+      y,
+      ignoredActors = null,
+      includePlayers = false,
+      gateState = null
+    ) {
       const heights = [];
+      let resolvedGateState = gateState;
 
       for (let index = 0; index < actorCount; index += 1) {
         if (state.actorRemoved[index]) {
@@ -2458,7 +2953,21 @@
           continue;
         }
 
-        if (!isSupportActorType(actorTypes[index])) {
+        if (actorTypes[index] === "attached_lift") {
+          heights.push(attachedLiftSurfaceElevation(state, index));
+          continue;
+        }
+
+        if (actorTypes[index] === "attached_gate") {
+          resolvedGateState ||= computeRaisedPlayerGateSet(state);
+          heights.push(
+            actorElevation(state, index) +
+              (resolvedGateState.has(cellIndex(x, y)) ? 1 : 0)
+          );
+          continue;
+        }
+
+        if (!actorProvidesFlatSupport(index)) {
           continue;
         }
 
@@ -2472,19 +2981,71 @@
       return heights;
     }
 
-    function actorSupportsElevation(state, x, y, elevation, ignoredActors = null, includePlayers = false) {
-      return actorSupportSurfaceHeightsAt(state, x, y, ignoredActors, includePlayers).includes(elevation);
+    function actorSupportsElevation(
+      state,
+      x,
+      y,
+      elevation,
+      ignoredActors = null,
+      includePlayers = false,
+      gateState = null
+    ) {
+      return actorSupportSurfaceHeightsAt(
+        state,
+        x,
+        y,
+        ignoredActors,
+        includePlayers,
+        gateState
+      ).includes(elevation);
     }
 
     // Allocation-free single-exclusion variant for hot pass loops.
-    function actorSupportsElevationExcluding(state, x, y, elevation, excludedIndex, includePlayers) {
+    function actorSupportsElevationExcluding(
+      state,
+      x,
+      y,
+      elevation,
+      excludedIndex,
+      includePlayers,
+      gateState = null
+    ) {
+      let resolvedGateState = gateState;
+
       for (let index = 0; index < actorCount; index += 1) {
         if (
           index === excludedIndex ||
           state.actorRemoved[index] ||
           state.actorX[index] !== x ||
-          state.actorY[index] !== y ||
-          !isSupportActorType(actorTypes[index]) ||
+          state.actorY[index] !== y
+        ) {
+          continue;
+        }
+
+        if (actorTypes[index] === "attached_lift") {
+          if (attachedLiftSurfaceElevation(state, index) === elevation) {
+            return true;
+          }
+
+          continue;
+        }
+
+        if (actorTypes[index] === "attached_gate") {
+          resolvedGateState ||= computeRaisedPlayerGateSet(state);
+
+          if (
+            actorElevation(state, index) +
+              (resolvedGateState.has(cellIndex(x, y)) ? 1 : 0) ===
+            elevation
+          ) {
+            return true;
+          }
+
+          continue;
+        }
+
+        if (
+          !actorProvidesFlatSupport(index) ||
           (!includePlayers && isMainPlayerActor(index))
         ) {
           continue;
@@ -2510,7 +3071,15 @@
     ) {
       return (
         terrainSupportsElevation(state, x, y, elevation, gateState, orangeButtonsPressed) ||
-        actorSupportsElevation(state, x, y, elevation, ignoredActors, includePlayers)
+        actorSupportsElevation(
+          state,
+          x,
+          y,
+          elevation,
+          ignoredActors,
+          includePlayers,
+          gateState
+        )
       );
     }
 
@@ -2692,7 +3261,7 @@
         const member = members[i];
         const currentElevation = actorElevation(state, member);
         const relativeElevation = weightlessRelativeElevations[member] || 0;
-        const best = maxSupportHeightAtOrBelow(
+        let best = maxSupportHeightAtOrBelow(
           state,
           state.actorX[member],
           state.actorY[member],
@@ -2702,6 +3271,26 @@
           gateState,
           orangeButtonsPressed
         );
+
+        for (let gateOffset = 0; gateOffset < attachedGateIndexes.length; gateOffset += 1) {
+          const gateIndex = attachedGateIndexes[gateOffset];
+
+          if (
+            state.actorRemoved[gateIndex] ||
+            state.actorX[gateIndex] !== state.actorX[member] ||
+            state.actorY[gateIndex] !== state.actorY[member]
+          ) {
+            continue;
+          }
+
+          const gateSurface =
+            actorElevation(state, gateIndex) +
+            (gateState.has(cellIndex(state.actorX[member], state.actorY[member])) ? 1 : 0);
+
+          if (gateSurface <= currentElevation + 1) {
+            best = Math.max(best, gateSurface);
+          }
+        }
 
         if (best !== -Infinity && best - relativeElevation > baseElevation) {
           baseElevation = best - relativeElevation;
@@ -2803,7 +3392,7 @@
         const member = members[i];
         const currentElevation = actorElevation(state, member);
         const relativeElevation = currentElevation - currentBaseElevation;
-        const best = maxSupportHeightAtOrBelow(
+        let best = maxSupportHeightAtOrBelow(
           state,
           state.actorX[member],
           state.actorY[member],
@@ -2813,6 +3402,50 @@
           gateState,
           orangeButtonsPressed
         );
+
+        for (let liftOffset = 0; liftOffset < attachedLiftIndexes.length; liftOffset += 1) {
+          const liftIndex = attachedLiftIndexes[liftOffset];
+
+          if (
+            state.actorRemoved[liftIndex] ||
+            state.actorX[liftIndex] !== state.actorX[member] ||
+            state.actorY[liftIndex] !== state.actorY[member] ||
+            members.some(
+              (candidate) =>
+                state.actorX[candidate] === state.actorX[liftIndex] &&
+                state.actorY[candidate] === state.actorY[liftIndex] &&
+                actorElevation(state, candidate) + 1 === actorElevation(state, liftIndex)
+            )
+          ) {
+            continue;
+          }
+
+          const liftSurface = attachedLiftSurfaceElevation(state, liftIndex);
+
+          if (liftSurface <= currentElevation + 1) {
+            best = Math.max(best, liftSurface);
+          }
+        }
+
+        for (let gateOffset = 0; gateOffset < attachedGateIndexes.length; gateOffset += 1) {
+          const gateIndex = attachedGateIndexes[gateOffset];
+
+          if (
+            state.actorRemoved[gateIndex] ||
+            state.actorX[gateIndex] !== state.actorX[member] ||
+            state.actorY[gateIndex] !== state.actorY[member]
+          ) {
+            continue;
+          }
+
+          const gateSurface =
+            actorElevation(state, gateIndex) +
+            (gateState.has(cellIndex(state.actorX[member], state.actorY[member])) ? 1 : 0);
+
+          if (gateSurface <= currentElevation + 1) {
+            best = Math.max(best, gateSurface);
+          }
+        }
 
         if (best !== -Infinity && best - relativeElevation > baseElevation) {
           baseElevation = best - relativeElevation;
@@ -2851,7 +3484,7 @@
       }
 
       const heights = terrainSurfaceHeightsAt(state, x, y, gateState, orangeButtonsPressed).concat(
-        actorSupportSurfaceHeightsAt(state, x, y, ignoredActors, false)
+        actorSupportSurfaceHeightsAt(state, x, y, ignoredActors, false, gateState)
       );
 
       // FIX(SEMANTICS R2): with a known travel elevation, the endpoint snap
@@ -2870,7 +3503,7 @@
     const EMPTY_GATE_SET = new Set();
 
     function computeRaisedPlayerGateSet(state) {
-      if (playerGateCells.length === 0) {
+      if (playerGateCells.length === 0 && attachedGateIndexes.length === 0) {
         return EMPTY_GATE_SET;
       }
 
@@ -2927,6 +3560,47 @@
           }
         }
       });
+
+      // Attached gates share the raised-cell set, keyed by their current
+      // cell, using the same proximity rule at the carrier-top elevation.
+      for (let i = 0; i < attachedGateIndexes.length; i += 1) {
+        const gateIndex = attachedGateIndexes[i];
+
+        if (state.actorRemoved[gateIndex]) {
+          continue;
+        }
+
+        const x = state.actorX[gateIndex];
+        const y = state.actorY[gateIndex];
+        const gateElevation = actorElevation(state, gateIndex);
+        const sameLevelBlockOnGate =
+          actorAt(
+            state,
+            x,
+            y,
+            (actor) =>
+              !isPlayerActor(actor) &&
+              !isNonBlockingActor(actor) &&
+              actorElevation(state, actor) === gateElevation
+          ) !== -1;
+
+        if (
+          players.some((player) => {
+            const playerElevation = actorElevation(state, player);
+            const xyDistance =
+              Math.abs(state.actorX[player] - x) + Math.abs(state.actorY[player] - y);
+            const standingOnGate = xyDistance === 0 && playerElevation === gateElevation;
+
+            return (
+              standingOnGate ||
+              (xyDistance <= 1 &&
+                (playerElevation !== gateElevation || !sameLevelBlockOnGate))
+            );
+          })
+        ) {
+          raised.add(cellIndex(x, y));
+        }
+      }
 
       return raised;
     }
@@ -3197,6 +3871,70 @@
       return false;
     }
 
+    // Stamped slope-actor cell grid: which live slope-SHAPED actor sits in a
+    // cell. Slope actors grant ice-slope traversal at their position (they
+    // are otherwise ordinary group members: pushable, sliding, journaled).
+    let slopeActorGridEpoch = -1;
+    let slopeActorGridLength = -1;
+    const slopeActorCellStamp = new Int32Array(cellCount);
+    const slopeActorCellActor = new Int16Array(cellCount);
+    let slopeActorStamp = 0;
+
+    function buildSlopeActorGrid(state) {
+      if (slopeActorGridEpoch === journalEpoch && slopeActorGridLength === journalLength) {
+        return;
+      }
+
+      slopeActorGridEpoch = journalEpoch;
+      slopeActorGridLength = journalLength;
+      slopeActorStamp += 1;
+
+      if (slopeActorStamp >= 0x7ffffff0) {
+        slopeActorCellStamp.fill(0);
+        slopeActorStamp = 1;
+      }
+
+      for (let i = 0; i < slopeActorIndexes.length; i += 1) {
+        const index = slopeActorIndexes[i];
+
+        if (state.actorRemoved[index]) {
+          continue;
+        }
+
+        const cell = cellIndex(state.actorX[index], state.actorY[index]);
+        slopeActorCellStamp[cell] = slopeActorStamp;
+        slopeActorCellActor[cell] = index;
+      }
+    }
+
+    function slopeActorAtCell(state, x, y) {
+      if (!levelHasSlopeActors || !isInsideBoard(x, y)) {
+        return -1;
+      }
+
+      buildSlopeActorGrid(state);
+      const cell = cellIndex(x, y);
+
+      return slopeActorCellStamp[cell] === slopeActorStamp
+        ? slopeActorCellActor[cell]
+        : -1;
+    }
+
+    // Owner rule (2026-07): clone groups (and pushed weightless groups)
+    // climb slope-shaped actors exactly like terrain ice slopes. A wedge at
+    // the target cell counts as a slope for cluster stepping ONLY when it is
+    // not part of the moving cluster itself — own wedges ride along and are
+    // never ramps or obstacles for their own group.
+    function foreignSlopeActorAtCell(state, x, y, isOwnClusterMember) {
+      const index = slopeActorAtCell(state, x, y);
+
+      if (index === -1 || (isOwnClusterMember && isOwnClusterMember(index))) {
+        return -1;
+      }
+
+      return index;
+    }
+
     // Stamped weightless-actor position grid backing the component BFS.
     const weightlessPosStampGrid = new Int32Array(cellCount * 20);
     const weightlessPosActorGrid = new Int16Array(cellCount * 20);
@@ -3346,7 +4084,7 @@
       orangeButtonsPressed,
       options = {}
     ) {
-      let traversal = iceSlopeTraversalForEntry(state, slopeX, slopeY, dx, dy, elevation);
+      let traversal = iceSlopeTraversalForEntry(state, slopeX, slopeY, dx, dy, elevation, orangeButtonsPressed);
       const path = traversal ? iceSlopeTraversalPathPoints(traversal) : [];
       let guard = width * height + 1;
 
@@ -3422,7 +4160,8 @@
           traversal.exitY,
           dx,
           dy,
-          traversal.exitElevation
+          traversal.exitElevation,
+          orangeButtonsPressed
         );
 
         if (
@@ -3456,7 +4195,7 @@
       gateState,
       orangeButtonsPressed
     ) {
-      let traversal = iceSlopeTraversalForEntry(state, slopeX, slopeY, dx, dy, elevation);
+      let traversal = iceSlopeTraversalForEntry(state, slopeX, slopeY, dx, dy, elevation, orangeButtonsPressed);
       const path = traversal ? iceSlopeTraversalPathPoints(traversal) : [];
       let guard = width * height + 1;
 
@@ -3483,7 +4222,8 @@
           traversal.exitY,
           dx,
           dy,
-          traversal.exitElevation
+          traversal.exitElevation,
+          orangeButtonsPressed
         );
 
         if (
@@ -3525,7 +4265,7 @@
       orangeButtonsPressed,
       ignoredActors = new Set()
     ) {
-      let traversal = iceSlopeTraversalForEntry(state, slopeX, slopeY, dx, dy, elevation);
+      let traversal = iceSlopeTraversalForEntry(state, slopeX, slopeY, dx, dy, elevation, orangeButtonsPressed);
       const path = traversal ? iceSlopeTraversalPathPoints(traversal) : [];
       let guard = width * height + 1;
 
@@ -3552,7 +4292,8 @@
           traversal.exitY,
           dx,
           dy,
-          traversal.exitElevation
+          traversal.exitElevation,
+          orangeButtonsPressed
         );
 
         if (!nextTraversal) {
@@ -3605,7 +4346,7 @@
       orangeButtonsPressed,
       options = {}
     ) {
-      const layers = iceSlopeLayersAt(state, slopeX, slopeY)
+      const layers = iceSlopeLayersAt(state, slopeX, slopeY, orangeButtonsPressed)
         .filter((layer) => layer.elevation + 1 < fromElevation)
         .sort((left, right) => right.elevation - left.elevation);
 
@@ -3903,9 +4644,17 @@
       const fromX = state.actorX[actorIndex];
       const fromY = state.actorY[actorIndex];
       const elevation = actorElevation(state, actorIndex);
+      const carriedRiders = Array.isArray(pushContext?.carriedRiders)
+        ? pushContext.carriedRiders
+        : [];
+      const moveStartIndex = pushContext?.moveStartIndex ?? moves.length;
       removeOccupiedAtElevation(occupied, fromX, fromY, elevation);
+      carriedRiders.forEach((rider) => {
+        removeOccupiedAtElevation(occupied, rider.fromX, rider.fromY, rider.fromElevation);
+      });
       const ignoredActors = new Set(pushContext?.ignoredActors || []);
       ignoredActors.add(actorIndex);
+      carriedRiders.forEach((rider) => ignoredActors.add(rider.actorIndex));
 
       const target = findSlideDestination(
         state,
@@ -3946,7 +4695,8 @@
                   gateState,
                   orangeButtonsPressed,
                   ignoredActors,
-                  searchMode
+                  searchMode,
+                  pushContext
                 );
 
                 return result !== null;
@@ -3957,6 +4707,9 @@
 
       if (target.x === fromX && target.y === fromY && target.elevation === elevation) {
         addOccupiedAtElevation(occupied, fromX, fromY, elevation);
+        carriedRiders.forEach((rider) => {
+          addOccupiedAtElevation(occupied, rider.fromX, rider.fromY, rider.fromElevation);
+        });
         return false;
       }
 
@@ -3999,6 +4752,17 @@
 
       moves.push(moveRecord);
       addOccupiedAtElevation(occupied, target.x, target.y, target.elevation);
+      moveCarriedRidersForSupportMoves(
+        state,
+        carriedRiders,
+        moves,
+        moveStartIndex,
+        occupied,
+        gateState,
+        orangeButtonsPressed,
+        searchMode,
+        pushContext?.carriedPlayers
+      );
       return true;
     }
 
@@ -4100,6 +4864,7 @@
         state.actorY[player],
         (actor) =>
           isPushableActor(actor) &&
+          actorProvidesFlatSupport(actor) &&
           actorElevation(state, actor) + 1 === playerElevation
       );
     }
@@ -4262,16 +5027,43 @@
       gateState,
       orangeButtonsPressed
     ) {
-      return members.some((member) =>
-        terrainBlocksOnlyByIceSlope(
-          state,
-          state.actorX[member],
-          state.actorY[member],
-          actorElevation(state, member),
-          gateState,
-          orangeButtonsPressed
-        )
-      );
+      const memberSet = new Set(members);
+
+      return members.some((member) => {
+        const x = state.actorX[member];
+        const y = state.actorY[member];
+        const elevation = actorElevation(state, member);
+
+        if (
+          terrainBlocksOnlyByIceSlope(
+            state,
+            x,
+            y,
+            elevation,
+            gateState,
+            orangeButtonsPressed
+          )
+        ) {
+          return true;
+        }
+
+        // Slope-shaped actors do not appear in the terrain blocker list,
+        // and a trailing rigid member can occupy either the lower or upper
+        // band while the group's shared traversal finishes. Ignore the
+        // cluster's own authored wedge: it moves with the rigid body and is
+        // never a ramp beneath that same body.
+        return iceSlopeLayersAt(state, x, y, orangeButtonsPressed).some((layer) => {
+          if (
+            Number.isInteger(layer.slopeActorIndex) &&
+            memberSet.has(layer.slopeActorIndex)
+          ) {
+            return false;
+          }
+
+          const slopeElevation = layer.elevation ?? 0;
+          return elevation === slopeElevation || elevation === slopeElevation + 1;
+        });
+      });
     }
 
     function weightlessClusterHasTrailingMember(state, members, dx, dy) {
@@ -4324,6 +5116,7 @@
     ) {
       const memberSet = new Set(members);
       let hasIceSlideContact = false;
+      let hasRestingSupport = false;
 
       for (const member of members) {
         const x = state.actorX[member];
@@ -4345,13 +5138,17 @@
           actorSupportSurfaceHeightsAt(state, x, y, memberSet, true).includes(elevation) ||
           predictedSupportsElevation(predictedSupports, x, y, elevation, memberSet)
         ) {
-          return false;
+          hasRestingSupport = true;
         }
       }
 
+      // Ordinary ice motion can be anchored by another member's real flat
+      // support. Mid-slope transit cannot: stopping the rigid body there
+      // leaves one member inside the wedge and lets the later support pass
+      // hoist the entire group to the wedge's highest surface.
       return (
-        hasIceSlideContact ||
-        weightlessClusterHasIceSlopeTransit(state, members, gateState, orangeButtonsPressed)
+        weightlessClusterHasIceSlopeTransit(state, members, gateState, orangeButtonsPressed) ||
+        (hasIceSlideContact && !hasRestingSupport)
       );
     }
 
@@ -4601,6 +5398,7 @@
     ) {
       let slopeDelta = null;
       let slopePathOffsets = null;
+      let encounteredBlockedSlope = false;
       const traversingSlopeMembers = new Set();
       const allowClusterIceSlopeTransit =
         options.allowIceSlopeTransit === true ||
@@ -4614,16 +5412,20 @@
           orangeButtonsPressed
         );
 
+      const isOwnClusterMember = (index) => members.includes(index);
+
       for (const member of members) {
         const elevation = actorElevation(state, member);
         const targetX = state.actorX[member] + dx;
         const targetY = state.actorY[member] + dy;
 
-        // Perf: all slope probes key off the target cell's slope layers.
+        // Perf: all slope probes key off the target cell's slope layers
+        // (terrain mask, or a slope-shaped actor outside this cluster).
         if (
-          !levelHasSlopes ||
-          !isInsideBoard(targetX, targetY) ||
-          slopeCellMask[cellIndex(targetX, targetY)] === 0
+          (!levelHasSlopes ||
+            !isInsideBoard(targetX, targetY) ||
+            slopeCellMask[cellIndex(targetX, targetY)] === 0) &&
+          foreignSlopeActorAtCell(state, targetX, targetY, isOwnClusterMember) === -1
         ) {
           continue;
         }
@@ -4671,7 +5473,11 @@
           }
         }
 
-        if (!traversal && !allowClusterIceSlopeTransit) {
+        if (
+          !traversal &&
+          !allowClusterIceSlopeTransit &&
+          options.allowLowerSlopeFallTraversal !== false
+        ) {
           traversal = resolveIceSlopeFallTraversalForLanding(
             state,
             targetX,
@@ -4698,6 +5504,23 @@
         }
 
         if (!traversal) {
+          // While a rigid body is already crossing a slope, a valid slope
+          // entry whose exit is blocked is not a plain one-cell move through
+          // the wedge. Reject the shared step so moveWeightlessCluster can
+          // apply the canonical forward-and-back bounce to every member.
+          encounteredBlockedSlope ||= Boolean(
+            blockedIceSlopeBouncePathForEntry(
+              state,
+              targetX,
+              targetY,
+              dx,
+              dy,
+              elevation,
+              occupied,
+              gateState,
+              orangeButtonsPressed
+            )
+          );
           continue;
         }
 
@@ -4729,6 +5552,10 @@
 
         slopeDelta = delta;
         slopePathOffsets = pathOffsets;
+      }
+
+      if (encounteredBlockedSlope && allowClusterIceSlopeTransit) {
+        return null;
       }
 
       if (slopeDelta?.elevation < 0) {
@@ -4846,7 +5673,37 @@
       gateState,
       orangeButtonsPressed
     ) {
-      if (!levelHasSlopes) {
+      if (!levelHasSlopes && !levelHasSlopeActors) {
+        return null;
+      }
+
+      // A rigid cluster can have a different member meet the blocked slope
+      // than the member still crossing the previous one. Requiring the
+      // blocked member itself to be on ice strands the whole group halfway
+      // through a slope chain; the later support sync then lifts every
+      // member to the highest wedge top and makes the cluster float. Match
+      // the player transaction: any shared ice/slope contact keeps the
+      // cluster in forced motion, so the blocked face bounces the WHOLE
+      // rigid body back.
+      const hasSharedSlideContact =
+        weightlessClusterHasIceSlopeTransit(
+          state,
+          members,
+          gateState,
+          orangeButtonsPressed
+        ) ||
+        members.some((member) =>
+          isIce(
+            state,
+            state.actorX[member],
+            state.actorY[member],
+            actorElevation(state, member),
+            gateState,
+            orangeButtonsPressed
+          )
+        );
+
+      if (!hasSharedSlideContact) {
         return null;
       }
 
@@ -4868,19 +5725,6 @@
 
         if (!bouncePath || bouncePath.length === 0) {
           continue;
-        }
-
-        if (
-          !isIce(
-            state,
-            state.actorX[member],
-            state.actorY[member],
-            elevation,
-            gateState,
-            orangeButtonsPressed
-          )
-        ) {
-          return null;
         }
 
         const memberBounceOffsets = pathOffsetsForPoints(
@@ -4927,9 +5771,12 @@
         expanded = false;
         buildBlockingPositionGrid(state);
 
+        const isOwnClusterActor = (index) =>
+          actorTypes[index] === actorType && clusterGroupIds.has(actorGroupIds[index]);
+
         Array.from(clusterGroupIds).forEach((currentGroupId) => {
           const members = weightlessGroupMembers(state, currentGroupId, actorType);
-          const canStartIceSlopeTransit = levelHasSlopes
+          const canStartIceSlopeTransit = (levelHasSlopes || levelHasSlopeActors)
             ? weightlessClusterCanStartIceSlopeTransit(
                 state,
                 members,
@@ -4962,16 +5809,19 @@
               (weightlessInteriorFlags[member] & dirBit) !== 0 &&
               isInsideBoard(targetX, targetY) &&
               sideBlockCellMask[cellIndex(targetX, targetY)] === 0 &&
-              (!levelHasSlopes || slopeCellMask[cellIndex(targetX, targetY)] === 0)
+              (!levelHasSlopes || slopeCellMask[cellIndex(targetX, targetY)] === 0) &&
+              foreignSlopeActorAtCell(state, targetX, targetY, isOwnClusterActor) === -1
             ) {
               continue;
             }
             // Perf: all five slope probes key off the target cell's slope
-            // layers — one mask byte decides them all.
+            // layers — one mask byte (or a foreign slope-shaped actor)
+            // decides them all.
             const targetHasSlope =
-              levelHasSlopes &&
-              isInsideBoard(targetX, targetY) &&
-              slopeCellMask[cellIndex(targetX, targetY)] === 1;
+              (levelHasSlopes &&
+                isInsideBoard(targetX, targetY) &&
+                slopeCellMask[cellIndex(targetX, targetY)] === 1) ||
+              foreignSlopeActorAtCell(state, targetX, targetY, isOwnClusterActor) !== -1;
             const slopeTraversal = targetHasSlope
               ? resolveIceSlopeTraversal(
                   state,
@@ -5517,9 +6367,10 @@
           orangeButtonsPressed,
           pushContext
             ? {
-                ignoredActors,
-                allowIceSlopeTransit,
-                pushSlopeBlocker: (blocker, pushDx = stepDx, pushDy = stepDy) => {
+              ignoredActors,
+              allowIceSlopeTransit,
+              allowLowerSlopeFallTraversal: actorType !== "clone",
+              pushSlopeBlocker: (blocker, pushDx = stepDx, pushDy = stepDy) => {
                   if (ignoredActors.has(blocker)) {
                     return false;
                   }
@@ -5536,13 +6387,17 @@
                     gateState,
                     orangeButtonsPressed,
                     ignoredActors,
-                    searchMode
+                    searchMode,
+                    pushContext
                   );
 
                   return result !== null;
                 }
               }
-            : { allowIceSlopeTransit }
+            : {
+                allowIceSlopeTransit,
+                allowLowerSlopeFallTraversal: actorType !== "clone"
+              }
         );
 
         if (!step) {
@@ -5917,6 +6772,7 @@
 
       let remainingBudget = budget - cost;
       const blockers = [];
+      let movingMembers = [];
       const weightlessCluster =
         actorTypes[actorIndex] === "weightless_box"
           ? collectWeightlessPushCluster(
@@ -5937,8 +6793,10 @@
         }
 
         blockers.push(...weightlessCluster.blockers);
+        movingMembers = weightlessClusterMembers(state, weightlessCluster.groupIds);
       } else {
         const members = pushActorMembers(state, actorIndex);
+        movingMembers = members;
         const memberSet = new Set(members);
         const blockerKeys = new Set();
 
@@ -6081,6 +6939,17 @@
         }
       }
 
+      const moveStartIndex = moves.length;
+      const carriedRiders = cloneRidersForMove(
+        state,
+        movingMembers,
+        dx,
+        dy,
+        gateState,
+        orangeButtonsPressed,
+        ignoredActors
+      );
+
       for (const blocker of blockers) {
         const result = attemptPushActor(
           state,
@@ -6121,6 +6990,12 @@
                 handled,
                 ignoredActors,
                 predictedSupports: pushContext?.predictedSupports || null
+              },
+              "weightless_box",
+              {
+                carriedPlayers: pushContext?.carriedPlayers,
+                carriedRiders,
+                moveStartIndex
               }
             )
           : moveBox(
@@ -6142,7 +7017,10 @@
                 remainingBudget,
                 pusherX: pushContext?.pusherX,
                 pusherY: pushContext?.pusherY,
-                pusherElevation: pushContext?.pusherElevation
+                pusherElevation: pushContext?.pusherElevation,
+                carriedPlayers: pushContext?.carriedPlayers,
+                carriedRiders,
+                moveStartIndex
               }
             );
 
@@ -6181,8 +7059,15 @@
       );
     }
 
+    // Owner rule (2026-07): clones carry side-mounted punchers exactly like
+    // the box family does — a puncher attached to a moving thing moves with it.
     function canPunchActorCarryPuncher(type) {
-      return type === "box" || type === "floating_floor" || type === "weightless_box";
+      return (
+        type === "box" ||
+        type === "floating_floor" ||
+        type === "weightless_box" ||
+        type === "clone"
+      );
     }
 
     // FIX(SEMANTICS §clones): clones carry surface attachments too — the
@@ -7339,6 +8224,22 @@
       return punchCandidates;
     }
 
+    // Surface attachments that ride on top of moving carriers: orange
+    // buttons (legacy) and — owner rule 2026-07 — punchers standing on a
+    // carrier's top surface. (Side-mounted punchers are handled by the
+    // sticky-carrier sync; the two positions are mutually exclusive.)
+    const surfaceAttachmentActors = (() => {
+      const list = orangeButtonActors.slice();
+
+      for (let index = 0; index < actorCount; index += 1) {
+        if (isPuncherActor(index) || isAttachedDeviceType(actorTypes[index])) {
+          list.push(index);
+        }
+      }
+
+      return list;
+    })();
+
     function syncAttachedSurfaceAttachmentsForMoves(
       state,
       moves,
@@ -7347,7 +8248,7 @@
       originalActorElevation,
       searchMode
     ) {
-      if (orangeButtonActors.length === 0) {
+      if (surfaceAttachmentActors.length === 0) {
         return;
       }
 
@@ -7362,8 +8263,8 @@
               move.toRemoved === true)
         )
         .forEach((move) => {
-          for (let index = 0; index < orangeButtonActors.length; index += 1) {
-            const button = orangeButtonActors[index];
+          for (let index = 0; index < surfaceAttachmentActors.length; index += 1) {
+            const button = surfaceAttachmentActors[index];
             const carrierFromElevation = move.fromElevation ?? originalActorElevation[move.actorIndex] ?? 0;
 
             if (
@@ -7373,6 +8274,30 @@
               (originalActorElevation[button] || 0) !== carrierFromElevation + 1
             ) {
               continue;
+            }
+
+            // A raised attached lift keeps its raised bit as it rides — the
+            // bit lives per cell, so it relocates with the device (unless the
+            // source cell's bit belongs to a terrain lift there).
+            if (
+              actorTypes[button] === "attached_lift" &&
+              (move.fromX !== move.toX || move.fromY !== move.toY)
+            ) {
+              const fromCell = cellIndex(move.fromX, move.fromY);
+              const toCell = cellIndex(move.toX, move.toY);
+
+              if (
+                state.liftRaised[fromCell] === 1 &&
+                !terrainLayersForCell(state, fromCell).some(
+                  (layer) => layer.type === terrainTypes.player_lift
+                )
+              ) {
+                jSetLiftRaised(state, fromCell, 0);
+
+                if (move.toRemoved !== true) {
+                  jSetLiftRaised(state, toCell, 1);
+                }
+              }
             }
 
             jSetActorX(state, button, move.toX);
@@ -7586,7 +8511,8 @@
       playerGateCells.length > 0 ||
       playerLiftCells.length > 0 ||
       orangeWallCells.length > 0 ||
-      orangeButtonCells.length > 0;
+      orangeButtonCells.length > 0 ||
+      levelHasAttachedDevices;
     const syncOriginalElevations = new Int16Array(actorCount);
     const syncIterationElevations = new Int16Array(actorCount);
 
@@ -7623,9 +8549,73 @@
       let gateState = computeRaisedPlayerGateSet(state);
       let orangeButtonsPressed = areOrangeButtonsPressed(state);
 
+      function dynamicAttachedGateRideElevation(index, nextGateState, nextOrangeButtonsPressed) {
+        const elevation = actorElevation(state, index);
+        const x = state.actorX[index];
+        const y = state.actorY[index];
+        const cell = isInsideBoard(x, y) ? cellIndex(x, y) : -1;
+
+        if (cell === -1) {
+          return elevation;
+        }
+
+        for (let i = 0; i < attachedGateIndexes.length; i += 1) {
+          const gateIndex = attachedGateIndexes[i];
+
+          if (
+            gateIndex === index ||
+            state.actorRemoved[gateIndex] ||
+            state.actorX[gateIndex] !== x ||
+            state.actorY[gateIndex] !== y
+          ) {
+            continue;
+          }
+
+          const gateElevation = actorElevation(state, gateIndex);
+          const from = gateElevation + (previousGateState.has(cell) ? 1 : 0);
+
+          if (from !== elevation) {
+            continue;
+          }
+
+          const to = gateElevation + (nextGateState.has(cell) ? 1 : 0);
+
+          if (to <= from) {
+            return to;
+          }
+
+          for (let target = to; target > elevation; target -= 1) {
+            if (
+              !terrainBlocksElevation(
+                state,
+                x,
+                y,
+                target,
+                nextGateState,
+                nextOrangeButtonsPressed
+              )
+            ) {
+              return target;
+            }
+          }
+
+          return elevation;
+        }
+
+        return elevation;
+      }
 
       function dynamicTerrainRideElevation(index, nextGateState, nextOrangeButtonsPressed) {
         const elevation = actorElevation(state, index);
+        const attachedGateRideElevation = dynamicAttachedGateRideElevation(
+          index,
+          nextGateState,
+          nextOrangeButtonsPressed
+        );
+
+        if (attachedGateRideElevation !== elevation) {
+          return attachedGateRideElevation;
+        }
 
         // Surface transitions only exist on device terrain; without any,
         // there is nothing to ride (perf fast path — this loop used to build
@@ -7638,7 +8628,15 @@
         const y = state.actorY[index];
 
         if (
-          actorSupportsElevationExcluding(state, x, y, elevation, index, true)
+          actorSupportsElevationExcluding(
+            state,
+            x,
+            y,
+            elevation,
+            index,
+            isSupportActorType(actorTypes[index]),
+            nextGateState
+          )
         ) {
           return elevation;
         }
@@ -7847,7 +8845,7 @@
           jSetActorElevation(state, index, toElevation);
           changed = true;
 
-          if (isSupportActorType(actorTypes[index])) {
+          if (actorProvidesFlatSupport(index)) {
             changedSupportActors.add(index);
           }
         }
@@ -7867,7 +8865,11 @@
             // used to be entombed at its stale elevation after one toggle and
             // never trigger again. They are fixtures: ride only, never fall.
             // Gems deliberately stay put (they float; owner decision).
-            if (isPuncherActor(index) || isOrangeButtonActor(index)) {
+            if (
+              isPuncherActor(index) ||
+              isOrangeButtonActor(index) ||
+              isAttachedDeviceType(actorTypes[index])
+            ) {
               setDynamicElevation(
                 index,
                 dynamicTerrainRideElevation(index, gateState, orangeButtonsPressed)
@@ -7957,10 +8959,27 @@
           handledCloneGroups.add(groupId);
 
           const group = cloneGroupSupportedElevation(state, groupId, gateState, orangeButtonsPressed);
+          let targetBaseElevation = group.baseElevation;
+
+          group.members.forEach((member) => {
+            const currentElevation = actorElevation(state, member);
+            const rideElevation = dynamicAttachedGateRideElevation(
+              member,
+              gateState,
+              orangeButtonsPressed
+            );
+
+            if (rideElevation > currentElevation) {
+              targetBaseElevation = Math.max(
+                targetBaseElevation,
+                rideElevation - (currentElevation - group.currentBaseElevation)
+              );
+            }
+          });
 
           group.members.forEach((member) => {
             const toElevation =
-              group.baseElevation + (actorElevation(state, member) - group.currentBaseElevation);
+              targetBaseElevation + (actorElevation(state, member) - group.currentBaseElevation);
 
             setDynamicElevation(member, toElevation);
           });
@@ -7980,6 +8999,7 @@
             if (
               upper === lower ||
               state.actorRemoved[upper] ||
+              !actorProvidesFlatSupport(lower) ||
               !isSupportActorType(actorTypes[upper]) ||
               actorTypes[upper] === "weightless_box" ||
               isCloneActor(upper) ||
@@ -8531,6 +9551,28 @@
           break;
         }
       }
+
+      // Every NET elevation change made by this sync must surface as a move
+      // record: play mode replays records onto its own runtime actors, so a
+      // journal-only ride leaves the visible board desynced from the engine
+      // (owner bug 2026-07: orange button hovering above its lowered wall).
+      // The device-ride branch above writes through setDynamicElevation
+      // without records; this diff pass settles the difference exactly once,
+      // and only for real net changes, so `moved` semantics and search
+      // parity are untouched.
+      for (let index = 0; index < actorCount; index += 1) {
+        const finalElevation = actorElevation(state, index);
+
+        if ((originalElevations[index] || 0) === finalElevation) {
+          continue;
+        }
+
+        if (state.actorRemoved[index] && !moveByActor.has(index)) {
+          continue;
+        }
+
+        ensureDynamicMove(index, finalElevation);
+      }
     }
 
     function sortPlayersForMove(state, dx, dy) {
@@ -8680,12 +9722,10 @@
       return false;
     }
 
-    // FIX(SEMANTICS R5): unified endpoint sweep. Any live MAIN player that
-    // actually moved this turn runs the same endpoint interactions the
-    // walking branch runs — lift toggle on arrival and gem collection at the
-    // exact final cell+elevation. Legacy skipped these entirely for punched
-    // and clone-carried players (landing exactly on a gem collected nothing;
-    // landing on a lift left it dead).
+    // FIX(SEMANTICS R5): unified endpoint sweep. Moved main players and
+    // clones run endpoint interactions that are not already handled by the
+    // walking branch. A clone entering a lift toggles it like a player;
+    // riders merely carried with their support do not retrigger that lift.
     function applyEndpointDeviceInteractions(
       state,
       moves,
@@ -8693,7 +9733,8 @@
       gateState,
       orangeButtonsPressed,
       collectedGems,
-      searchMode
+      searchMode,
+      carriedPlayers
     ) {
       const processed = new Set();
 
@@ -8712,14 +9753,20 @@
 
         processed.add(actor);
 
-        if (!isMainPlayerActor(actor) || state.actorRemoved[actor]) {
+        if (
+          (!isMainPlayerActor(actor) && !isCloneActor(actor)) ||
+          state.actorRemoved[actor]
+        ) {
           continue;
         }
 
         const x = state.actorX[actor];
         const y = state.actorY[actor];
 
-        if (record.punchSlide === true) {
+        if (
+          record.punchSlide === true ||
+          (isCloneActor(actor) && !carriedPlayers.has(actor))
+        ) {
           const elevation = actorElevation(state, actor);
           const liftLayer = playerLiftLayerAtElevation(
             state,
@@ -8746,14 +9793,149 @@
               record.toElevation = toElevation;
             }
           }
+
+          // Attached-lift twin of the terrain branch above (R5: punched
+          // players toggle the lift they land on).
+          if (!liftLayer && !alreadyToggled && levelHasAttachedDevices) {
+            const attachedLift = attachedLiftIndexAt(state, x, y);
+
+            if (
+              attachedLift !== -1 &&
+              attachedLiftSurfaceElevation(state, attachedLift) === elevation
+            ) {
+              const toRaised = state.liftRaised[cellIndex(x, y)] !== 1;
+              const toElevation =
+                (state.actorElevation[attachedLift] || 0) + (toRaised ? 1 : 0);
+
+              if (
+                !liftToggleDestinationBlocked(state, x, y, toElevation, gateState, orangeButtonsPressed)
+              ) {
+                setPlayerLiftRaised(state, x, y, toRaised);
+                pendingLiftToggles.push({ x, y, raised: toRaised, attachedLift });
+                jSetActorElevation(state, actor, toElevation);
+                record.toElevation = toElevation;
+              }
+            }
+          }
         }
 
         const finalElevation = actorElevation(state, actor);
 
-        if (!isHole(state, x, y, finalElevation)) {
+        if (isMainPlayerActor(actor) && !isHole(state, x, y, finalElevation)) {
           collectGemsAt(state, x, y, finalElevation, moves, collectedGems, 0, 1, searchMode);
         }
       }
+    }
+
+    function applyMovedAttachedLiftInteractions(
+      state,
+      moves,
+      pendingLiftToggles,
+      gateState,
+      orangeButtonsPressed,
+      carriedPlayers
+    ) {
+      let changed = false;
+
+      for (let liftOffset = 0; liftOffset < attachedLiftIndexes.length; liftOffset += 1) {
+        const attachedLift = attachedLiftIndexes[liftOffset];
+        const liftMove = moves.find(
+          (move) =>
+            !move.visualOnly &&
+            move.actorIndex === attachedLift &&
+            (move.fromX !== move.toX ||
+              move.fromY !== move.toY ||
+              (move.fromElevation ?? 0) !== (move.toElevation ?? move.fromElevation ?? 0))
+        );
+
+        if (!liftMove || state.actorRemoved[attachedLift]) {
+          continue;
+        }
+
+        const x = state.actorX[attachedLift];
+        const y = state.actorY[attachedLift];
+        const liftCell = cellIndex(x, y);
+
+        if (pendingLiftToggles.some((toggle) => toggle.x === x && toggle.y === y)) {
+          continue;
+        }
+
+        const oldSurface = attachedLiftSurfaceElevation(state, attachedLift);
+        const occupants = actorsAt(
+          state,
+          x,
+          y,
+          (actor) => isPlayerActor(actor) && actorElevation(state, actor) === oldSurface
+        );
+
+        if (occupants.length === 0) {
+          continue;
+        }
+
+        const liftDx = liftMove.toX - liftMove.fromX;
+        const liftDy = liftMove.toY - liftMove.fromY;
+        const liftDe =
+          (liftMove.toElevation ?? liftMove.fromElevation ?? 0) -
+          (liftMove.fromElevation ?? 0);
+        const liftMovedUnderOccupant = occupants.some((actor) => {
+          if (carriedPlayers.has(actor)) {
+            return false;
+          }
+
+          const actorMove = moves.find(
+            (move) => !move.visualOnly && move.actorIndex === actor
+          );
+
+          return !(
+            actorMove &&
+            actorMove.fromX === liftMove.fromX &&
+            actorMove.fromY === liftMove.fromY &&
+            actorMove.toX - actorMove.fromX === liftDx &&
+            actorMove.toY - actorMove.fromY === liftDy &&
+            (actorMove.toElevation ?? actorMove.fromElevation ?? 0) -
+                (actorMove.fromElevation ?? 0) ===
+              liftDe
+          );
+        });
+
+        if (!liftMovedUnderOccupant) {
+          continue;
+        }
+
+        const toRaised = state.liftRaised[liftCell] !== 1;
+        const newSurface = actorElevation(state, attachedLift) + (toRaised ? 1 : 0);
+
+        if (
+          liftToggleDestinationBlocked(
+            state,
+            x,
+            y,
+            newSurface,
+            gateState,
+            orangeButtonsPressed
+          )
+        ) {
+          continue;
+        }
+
+        setPlayerLiftRaised(state, x, y, toRaised);
+        pendingLiftToggles.push({ x, y, raised: toRaised, attachedLift });
+
+        occupants.forEach((actor) => {
+          jSetActorElevation(state, actor, newSurface);
+          mergeMoveRecord(
+            state,
+            moves,
+            actor,
+            originalActorX,
+            originalActorY,
+            originalActorElevation
+          );
+        });
+        changed = true;
+      }
+
+      return changed;
     }
 
     function move(state, dx, dy, options = {}) {
@@ -8874,7 +10056,8 @@
                 raisedPlayerGates,
                 orangeButtonsPressed,
                 ignoredActors,
-                searchMode
+                searchMode,
+                { carriedPlayers }
               );
 
               if (result === null) {
@@ -9073,7 +10256,8 @@
               raisedPlayerGates,
               orangeButtonsPressed,
               ignoredPlayerSet,
-              searchMode
+              searchMode,
+              { carriedPlayers }
             );
 
             if (result !== null) {
@@ -9187,7 +10371,18 @@
                 orangeButtonsPressed
               )
             : -1;
-          const actorToPush = blockingActor;
+          const attachedDeviceCarrier =
+            blockingActor === -1 && isInitialStep && isInsideBoard(moveTargetX, moveTargetY)
+              ? raisedAttachedDeviceCarrierAt(
+                  state,
+                  moveTargetX,
+                  moveTargetY,
+                  moveTargetElevation,
+                  raisedPlayerGates
+                )
+              : -1;
+          const pushingRaisedAttachedDevice = attachedDeviceCarrier !== -1;
+          const actorToPush = blockingActor !== -1 ? blockingActor : attachedDeviceCarrier;
           const canAttemptInitialPush =
             actorToPush !== -1 && isInitialStep && isPushableActor(actorToPush);
           let pushedFollowPath = null;
@@ -9297,7 +10492,7 @@
             break;
           }
 
-          if (blockingActor !== -1) {
+          if (actorToPush !== -1) {
             let didMoveBlockingActor = false;
 
             if (canAttemptInitialPush) {
@@ -9334,7 +10529,8 @@
                   ],
                   pusherX: fromX,
                   pusherY: fromY,
-                  pusherElevation: fromElevation
+                  pusherElevation: fromElevation,
+                  carriedPlayers
                 }
               );
 
@@ -9443,7 +10639,15 @@
                     : null;
                 const canOccupyTargetAfterPush =
                   !targetBlockedAfterPush &&
-                  (postPushCanEnterHole || canStandAtTargetAfterPush || postPushSlipLanding !== null);
+                  (postPushCanEnterHole ||
+                    canStandAtTargetAfterPush ||
+                    postPushSlipLanding !== null ||
+                    // The raised fixture is still at its old actor position
+                    // until the attachment sync later in the turn. Treat
+                    // that vacated band like a normal pushed-block cell so
+                    // the pusher advances in lockstep; endpoint support
+                    // resolution then settles it to any lower surface.
+                    pushingRaisedAttachedDevice);
 
                 if (canOccupyTargetAfterPush) {
                   if (postPushSlipLanding) {
@@ -9585,6 +10789,41 @@
             } else {
               toElevation =
                 playerLiftLayer.elevation + (isRaisedPlayerLift(state, nextX, nextY) ? 1 : 0);
+            }
+          } else if (
+            levelHasAttachedDevices &&
+            attachedLiftIndexAt(state, nextX, nextY) !== -1 &&
+            attachedLiftSurfaceElevation(state, attachedLiftIndexAt(state, nextX, nextY)) ===
+              travelElevation
+          ) {
+            // Owner rule (2026-07): an attached lift is a working lift. A
+            // player ending its move on the platform toggles it and rides,
+            // exactly like the terrain branch above — relative to the
+            // carrier top instead of a terrain layer.
+            const attachedLift = attachedLiftIndexAt(state, nextX, nextY);
+            const liftCell = cellIndex(nextX, nextY);
+            const toRaised = state.liftRaised[liftCell] !== 1;
+            const liftedElevation = (state.actorElevation[attachedLift] || 0) + (toRaised ? 1 : 0);
+
+            if (
+              !liftToggleDestinationBlocked(
+                state,
+                nextX,
+                nextY,
+                liftedElevation,
+                raisedPlayerGates,
+                orangeButtonsPressed
+              )
+            ) {
+              pendingLiftToggles.push({
+                x: nextX,
+                y: nextY,
+                raised: toRaised,
+                attachedLift
+              });
+              toElevation = liftedElevation;
+            } else {
+              toElevation = travelElevation;
             }
           } else if (iceSlipLanding) {
             toElevation = iceSlipLanding.toElevation;
@@ -9781,23 +11020,31 @@
         // were stranded the same way. Players own their elevation via their
         // endpoint logic; gems float (owner decision). Rides never enter a
         // terrain-blocked voxel.
-        pendingLiftToggles.forEach(({ x, y, raised }) => {
+        pendingLiftToggles.forEach(({ x, y, raised, attachedLift }) => {
           const liftCell = cellIndex(x, y);
-          const liftLayer =
-            terrainLayersForCell(state, liftCell).find(
-              (layer) => layer.type === terrainTypes.player_lift
-            ) || null;
-          const oldSurface = liftLayer
-            ? liftLayer.elevation + (state.liftRaised[liftCell] === 1 ? 1 : 0)
-            : null;
+          const isAttachedToggle = typeof attachedLift === "number";
+          const liftLayer = isAttachedToggle
+            ? null
+            : terrainLayersForCell(state, liftCell).find(
+                (layer) => layer.type === terrainTypes.player_lift
+              ) || null;
+          const liftBaseElevation = isAttachedToggle
+            ? state.actorElevation[attachedLift] || 0
+            : liftLayer
+              ? liftLayer.elevation
+              : null;
+          const oldSurface =
+            liftBaseElevation === null
+              ? null
+              : liftBaseElevation + (state.liftRaised[liftCell] === 1 ? 1 : 0);
 
           setPlayerLiftRaised(state, x, y, raised);
 
-          if (!liftLayer) {
+          if (liftBaseElevation === null) {
             return;
           }
 
-          const newSurface = liftLayer.elevation + (raised ? 1 : 0);
+          const newSurface = liftBaseElevation + (raised ? 1 : 0);
 
           if (newSurface === oldSurface) {
             return;
@@ -9808,6 +11055,11 @@
               state.actorRemoved[index] ||
               isPlayerActor(index) ||
               isCollectibleActor(index) ||
+              // Attached devices never ride lift toggles: the toggling
+              // attached lift owns its elevation (always the carrier top),
+              // and sibling devices follow their carrier via the
+              // surface-attachment sync instead.
+              isAttachedDeviceType(actorTypes[index]) ||
               state.actorX[index] !== x ||
               state.actorY[index] !== y ||
               (state.actorElevation[index] || 0) !== oldSurface
@@ -9915,10 +11167,30 @@
           raisedPlayerGates,
           orangeButtonsPressed,
           collectedGems,
-          searchMode
+          searchMode,
+          carriedPlayers
         );
         applyHoleFalls(state, moves);
         applyMoveFinalState(state, moves);
+        // Move surface fixtures before support reconciliation so a player or
+        // clone carried on a raised attached lift sees that lift at the
+        // carrier's destination instead of falling into its stale position.
+        syncAttachedSurfaceAttachmentsForMoves(
+          state,
+          moves,
+          originalActorX,
+          originalActorY,
+          originalActorElevation,
+          searchMode
+        );
+        applyMovedAttachedLiftInteractions(
+          state,
+          moves,
+          pendingLiftToggles,
+          raisedPlayerGates,
+          orangeButtonsPressed,
+          carriedPlayers
+        );
         syncDynamicActorElevationsAndFalls(state, moves, raisedPlayerGates, orangeButtonsPressed);
         syncAttachedPunchersForMoves(
           state,
@@ -9936,6 +11208,23 @@
           originalActorElevation,
           searchMode
         );
+        if (
+          applyMovedAttachedLiftInteractions(
+            state,
+            moves,
+            pendingLiftToggles,
+            raisedPlayerGates,
+            orangeButtonsPressed,
+            carriedPlayers
+          )
+        ) {
+          syncDynamicActorElevationsAndFalls(
+            state,
+            moves,
+            raisedPlayerGates,
+            orangeButtonsPressed
+          );
+        }
         applyHoleFalls(state, moves);
         applyMoveFinalState(state, moves);
       }
@@ -9978,6 +11267,7 @@
           moveRecord.visualOnly ||
           moveRecord.actorType === "puncher" ||
           moveRecord.actorType === "orange_button" ||
+          isAttachedDeviceType(moveRecord.actorType) ||
           isPlayerType(moveRecord.actorType) ||
           isCollectibleType(moveRecord.actorType) ||
           (moveRecord.fromX === moveRecord.toX && moveRecord.fromY === moveRecord.toY)

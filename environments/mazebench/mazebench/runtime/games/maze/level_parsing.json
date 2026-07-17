@@ -1,209 +1,268 @@
 {
-  "rules": {
-    "separator": " ",
-    "block_adder": "+"
+ "rules": {
+  "separator": " ",
+  "block_adder": "+"
+ },
+ "objects": {
+  "floor": {
+   "token": "."
   },
-  "objects": {
-    "floor": {
-      "token": "."
+  "ice": {
+   "token": "i"
+  },
+  "wall": {
+   "token": "#"
+  },
+  "ice_block": {
+   "token": "I",
+   "label": "Ice Block"
+  },
+  "ice_slope": {
+   "tokens": [
+    {
+     "token": "Sr",
+     "label": "Ice Slope Right",
+     "direction": "right"
     },
-    "ice": {
-      "token": "i"
+    {
+     "token": "Sl",
+     "label": "Ice Slope Left",
+     "direction": "left"
     },
-    "wall": {
-      "token": "#"
+    {
+     "token": "Su",
+     "label": "Ice Slope Up",
+     "direction": "up"
     },
-    "ice_block": {
-      "token": "I",
-      "label": "Ice Block"
+    {
+     "token": "Sd",
+     "label": "Ice Slope Down",
+     "direction": "down"
     },
-    "ice_slope": {
-      "tokens": [
-        {
-          "token": "Sr",
-          "label": "Ice Slope Right",
-          "direction": "right"
-        },
-        {
-          "token": "Sl",
-          "label": "Ice Slope Left",
-          "direction": "left"
-        },
-        {
-          "token": "Su",
-          "label": "Ice Slope Up",
-          "direction": "up"
-        },
-        {
-          "token": "Sd",
-          "label": "Ice Slope Down",
-          "direction": "down"
-        }
-      ],
-      "label": "Ice Slope"
+    {
+     "token": "Sr#",
+     "label": "Black Ice Slope Right",
+     "direction": "right",
+     "style_key": "wall"
     },
-    "player": {
-      "token": "p"
+    {
+     "token": "Sl#",
+     "label": "Black Ice Slope Left",
+     "direction": "left",
+     "style_key": "wall"
     },
-    "clone": {
-      "tokens": [
-        {
-          "token": "c0",
-          "label": "Clone 0"
-        },
-        {
-          "token": "c1",
-          "label": "Clone 1"
-        },
-        {
-          "token": "c2",
-          "label": "Clone 2"
-        }
-      ],
-      "label": "Clone"
+    {
+     "token": "Su#",
+     "label": "Black Ice Slope Up",
+     "direction": "up",
+     "style_key": "wall"
     },
-    "gem": {
-      "token": "G",
-      "image": "images/gem.png",
-      "model": "assets_3d/gem.glb"
-    },
-    "circle_player": {
-      "token": "cp"
-    },
-    "player_gate": {
-      "token": "g"
-    },
-    "player_lift": {
-      "tokens": [
-        "l",
-        {
-          "token": "L",
-          "label": "Raised Player Lift",
-          "initial_raised": true
-        }
-      ]
-    },
-    "orange_wall": {
-      "token": "O",
-      "label": "Orange Wall"
-    },
-    "orange_button": {
-      "token": "o",
-      "label": "Orange Button"
-    },
-    "puncher": {
-      "tokens": [
-        {
-          "token": "pr",
-          "label": "Puncher",
-          "direction": "right"
-        },
-        {
-          "token": "pl",
-          "label": "Puncher Left",
-          "direction": "left",
-          "selectable": false
-        },
-        {
-          "token": "pu",
-          "label": "Puncher Up",
-          "direction": "up",
-          "selectable": false
-        },
-        {
-          "token": "pd",
-          "label": "Puncher Down",
-          "direction": "down",
-          "selectable": false
-        }
-      ],
-      "label": "Puncher"
-    },
-    "box": {
-      "token": "b",
-      "image": "images/crate.png",
-      "selectable": false
-    },
-    "floating_floor": {
-      "token": "f"
-    },
-    "weightless_box": {
-      "tokens": ["M0", "M1", "M2", "M3", "M4"]
-    },
-    "tree_1": {
-      "token": "t1",
-      "label": "Tree 1",
-      "type": "tree",
-      "model": "assets_3d/t1.glb"
-    },
-    "tree_2": {
-      "token": "t2",
-      "label": "Tree 2",
-      "type": "tree",
-      "model": "assets_3d/t2.glb"
-    },
-    "tree_3": {
-      "token": "t3",
-      "label": "Tree 3",
-      "type": "tree",
-      "model": "assets_3d/t3.glb"
-    },
-    "tree_4": {
-      "token": "t4",
-      "label": "Tree 4",
-      "type": "tree",
-      "model": "assets_3d/t4.glb"
-    },
-    "small_tree_1": {
-      "token": "st1",
-      "label": "Small Tree 1",
-      "type": "tree",
-      "model": "assets_3d/st1.glb"
-    },
-    "small_tree_3": {
-      "token": "st3",
-      "label": "Small Tree 3",
-      "type": "tree",
-      "model": "assets_3d/st3.glb"
-    },
-    "small_tree_4": {
-      "token": "st4",
-      "label": "Small Tree 4",
-      "type": "tree",
-      "model": "assets_3d/st4.glb"
-    },
-    "shrub": {
-      "token": "sh",
-      "label": "Shrub",
-      "type": "shrub",
-      "model": "assets_3d/sh.glb"
-    },
-    "block_asset_1": {
-      "token": "b1",
-      "label": "Block 1",
-      "type": "block_asset",
-      "model": "assets_3d/b1.glb"
-    },
-    "block_asset_2": {
-      "token": "b2",
-      "label": "Block 2",
-      "type": "block_asset",
-      "model": "assets_3d/b2.glb"
-    },
-    "block_asset_3": {
-      "token": "b3",
-      "label": "Block 3",
-      "type": "block_asset",
-      "model": "assets_3d/b3.glb"
-    },
-    "block_asset_4": {
-      "token": "b4",
-      "label": "Block 4",
-      "type": "block_asset",
-      "model": "assets_3d/b4.glb"
-    },
-    "exit": {
-      "token": "e"
+    {
+     "token": "Sd#",
+     "label": "Black Ice Slope Down",
+     "direction": "down",
+     "style_key": "wall"
     }
+   ],
+   "label": "Ice Slope"
+  },
+  "player": {
+   "token": "p"
+  },
+  "clone": {
+   "tokens": [
+    {
+     "token": "c0",
+     "label": "Clone 0"
+    },
+    {
+     "token": "c1",
+     "label": "Clone 1"
+    },
+    {
+     "token": "c2",
+     "label": "Clone 2"
+    }
+   ],
+   "label": "Clone"
+  },
+  "gem": {
+   "token": "G",
+   "image": "images/gem.png",
+   "model": "assets_3d/gem.glb"
+  },
+  "circle_player": {
+   "token": "cp"
+  },
+  "player_gate": {
+   "token": "g"
+  },
+  "player_lift": {
+   "tokens": [
+    "l",
+    {
+     "token": "L",
+     "label": "Raised Player Lift",
+     "initial_raised": true
+    }
+   ]
+  },
+  "orange_wall": {
+   "token": "O",
+   "label": "Orange Wall"
+  },
+  "orange_button": {
+   "token": "o",
+   "label": "Orange Button"
+  },
+  "puncher": {
+   "tokens": [
+    {
+     "token": "pr",
+     "label": "Puncher",
+     "direction": "right"
+    },
+    {
+     "token": "pl",
+     "label": "Puncher Left",
+     "direction": "left",
+     "selectable": false
+    },
+    {
+     "token": "pu",
+     "label": "Puncher Up",
+     "direction": "up",
+     "selectable": false
+    },
+    {
+     "token": "pd",
+     "label": "Puncher Down",
+     "direction": "down",
+     "selectable": false
+    }
+   ],
+   "label": "Puncher"
+  },
+  "box": {
+   "token": "b",
+   "image": "images/crate.png",
+   "selectable": false
+  },
+  "floating_floor": {
+   "token": "f"
+  },
+  "weightless_box": {
+   "tokens": [
+    "M0",
+    "M1",
+    "M2",
+    "M3",
+    "M4"
+   ]
+  },
+  "tree_1": {
+   "token": "t1",
+   "label": "Tree 1",
+   "type": "tree",
+   "model": "assets_3d/t1.glb"
+  },
+  "tree_2": {
+   "token": "t2",
+   "label": "Tree 2",
+   "type": "tree",
+   "model": "assets_3d/t2.glb"
+  },
+  "tree_3": {
+   "token": "t3",
+   "label": "Tree 3",
+   "type": "tree",
+   "model": "assets_3d/t3.glb"
+  },
+  "tree_4": {
+   "token": "t4",
+   "label": "Tree 4",
+   "type": "tree",
+   "model": "assets_3d/t4.glb"
+  },
+  "small_tree_1": {
+   "token": "st1",
+   "label": "Small Tree 1",
+   "type": "tree",
+   "model": "assets_3d/st1.glb"
+  },
+  "small_tree_3": {
+   "token": "st3",
+   "label": "Small Tree 3",
+   "type": "tree",
+   "model": "assets_3d/st3.glb"
+  },
+  "small_tree_4": {
+   "token": "st4",
+   "label": "Small Tree 4",
+   "type": "tree",
+   "model": "assets_3d/st4.glb"
+  },
+  "shrub": {
+   "token": "sh",
+   "label": "Shrub",
+   "type": "shrub",
+   "model": "assets_3d/sh.glb"
+  },
+  "block_asset_1": {
+   "token": "b1",
+   "label": "Block 1",
+   "type": "block_asset",
+   "model": "assets_3d/b1.glb"
+  },
+  "block_asset_2": {
+   "token": "b2",
+   "label": "Block 2",
+   "type": "block_asset",
+   "model": "assets_3d/b2.glb"
+  },
+  "block_asset_3": {
+   "token": "b3",
+   "label": "Block 3",
+   "type": "block_asset",
+   "model": "assets_3d/b3.glb"
+  },
+  "block_asset_4": {
+   "token": "b4",
+   "label": "Block 4",
+   "type": "block_asset",
+   "model": "assets_3d/b4.glb"
+  },
+  "exit": {
+   "token": "e"
+  },
+  "orange_ice_slope": {
+   "label": "Orange Ice Slope",
+   "tokens": [
+    {
+     "token": "SrO",
+     "label": "Orange Ice Slope Right",
+     "direction": "right",
+     "style_key": "orange"
+    },
+    {
+     "token": "SlO",
+     "label": "Orange Ice Slope Left",
+     "direction": "left",
+     "style_key": "orange"
+    },
+    {
+     "token": "SuO",
+     "label": "Orange Ice Slope Up",
+     "direction": "up",
+     "style_key": "orange"
+    },
+    {
+     "token": "SdO",
+     "label": "Orange Ice Slope Down",
+     "direction": "down",
+     "style_key": "orange"
+    }
+   ]
   }
+ }
 }

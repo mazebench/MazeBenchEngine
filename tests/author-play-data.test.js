@@ -3,6 +3,7 @@ const { loadBrowserScript } = require("./helpers/browser-module-loader");
 
 global.window = {};
 
+loadBrowserScript("public/maze-token-patterns.js");
 loadBrowserScript("public/author-play-data.js");
 
 const authorData = {
@@ -526,3 +527,59 @@ assert.deepEqual(
 );
 
 console.log("author play data tests passed");
+
+// Owner feature (2026-07): open-ended token families resolve through
+// maze-token-patterns — arbitrary box/clone ids and colored ice slopes.
+{
+  const patternAdapter = window.AuthorPlayData.createAdapter(authorData);
+  const playData = patternAdapter.buildPlayData({
+    cameraView: { width: 6, height: 1 },
+    cells: [["P", "M7", ".+SrM7", ".+Sr#", ".+SdO", "c9"]],
+    height: 1,
+    levelId: "__pattern_tokens__",
+    levelLabel: "Pattern Tokens",
+    sourceFileName: "pattern.txt",
+    width: 6
+  });
+
+  const box = playData.actors.find((actor) => actor.type === "weightless_box" && actor.groupId === "M7");
+  assert.ok(box, "arbitrary-id weightless box resolves");
+  const clone = playData.actors.find((actor) => actor.type === "clone" && actor.groupId === "c9");
+  assert.ok(clone, "arbitrary-id clone resolves");
+
+  // Box/Clone Ice Slopes are slope-SHAPED GROUP MEMBERS (actors), not terrain.
+  const boxSlope = playData.actors.find(
+    (actor) => actor.type === "weightless_box" && actor.shape === "slope"
+  );
+  assert.equal(boxSlope?.groupId, "M7");
+  assert.equal(boxSlope?.direction, "right");
+  assert.equal(boxSlope?.styleKey, "M7");
+
+  const blackSlope = (playData.terrain[0][3].layers || []).find((layer) => layer.type === "ice_slope");
+  assert.equal(blackSlope?.styleKey, "wall");
+
+  const orangeSlope = (playData.terrain[0][4].layers || []).find((layer) => layer.type === "orange_ice_slope");
+  assert.equal(orangeSlope?.styleKey, "orange");
+  assert.equal(orangeSlope?.direction, "down");
+}
+
+// Owner rule (2026-07): lift/gate stacked directly on a movable carrier
+// converts to a stuck rider actor (attached_lift / attached_gate).
+{
+  const attachAdapter = window.AuthorPlayData.createAdapter(authorData);
+  const playData = attachAdapter.buildPlayData({
+    cameraView: { width: 4, height: 1 },
+    cells: [["P", ".+B+l", ".+c0+g", "."]],
+    height: 1,
+    levelId: "__attached_devices__",
+    levelLabel: "Attached Devices",
+    sourceFileName: "attached.txt",
+    width: 4
+  });
+
+  const lift = playData.actors.find((actor) => actor.type === "attached_lift");
+  assert.ok(lift, "lift on weightless box converts to attached_lift actor");
+  assert.equal(lift.elevation, 1);
+  const gate = playData.actors.find((actor) => actor.type === "attached_gate");
+  assert.ok(gate, "gate on clone converts to attached_gate actor");
+}

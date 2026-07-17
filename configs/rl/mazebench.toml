@@ -13,6 +13,7 @@ temperature = 1.0
 
 [[env]]
 id = "mazebench/mazebench"
+version = "0.1.5"
 
 [env.args]
 num_train_examples = 1

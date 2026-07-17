@@ -464,6 +464,47 @@ function syntheticFloor(width, height) {
 {
   const terrain = syntheticFloor(3, 1);
   terrain[0][2] = {
+    type: "player_gate",
+    layers: [{ type: "player_gate", elevation: 0 }]
+  };
+  const playData = {
+    actors: [{ type: "player", x: 1, y: 0, removed: false, elevation: 0 }],
+    gameId: "maze",
+    height: 1,
+    levelId: "dynamic_player_gate_observation",
+    terrain,
+    width: 3
+  };
+  const context = syntheticContext(playData, { pitch: 0 });
+  const raisedAscii = body(renderScreen(context));
+
+  assert.match(raisedAscii, /YYYY/);
+
+  context.options.pitch = 4;
+  const raisedSideAscii = body(renderScreen(context));
+  const awayFromGate = context.engine.move(context.state, -1, 0);
+  const loweredSideAscii = body(renderScreen(context));
+
+  assert.equal(awayFromGate.moved, true);
+  assert.equal(countMatches(raisedSideAscii, /y/g), 16);
+  assert.equal(countMatches(loweredSideAscii, /y/g), 0);
+
+  context.options.pitch = 0;
+  const loweredAscii = body(renderScreen(context));
+
+  assert.match(loweredAscii, /YYYY/);
+  assert.doesNotMatch(loweredAscii, /yyyy/);
+
+  const towardGate = context.engine.move(context.state, 1, 0);
+  const raisedAgainAscii = body(renderScreen(context));
+
+  assert.equal(towardGate.moved, true);
+  assert.match(raisedAgainAscii, /YYYY/);
+}
+
+{
+  const terrain = syntheticFloor(3, 1);
+  terrain[0][2] = {
     type: "orange_wall",
     layers: [{ type: "orange_wall", elevation: 0 }]
   };

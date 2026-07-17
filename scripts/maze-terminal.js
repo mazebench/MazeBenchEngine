@@ -718,6 +718,12 @@ function orangeButtonsPressedForState(engine, state) {
     : false;
 }
 
+function raisedPlayerGatesForState(engine, state) {
+  return typeof engine?.computeRaisedPlayerGateSet === "function"
+    ? engine.computeRaisedPlayerGateSet(state)
+    : new Set();
+}
+
 function pressedOrangeWallLowersAsBlock(engine, state, x, y, elevation) {
   return typeof engine?.pressedOrangeWallLowersAsBlock === "function"
     ? engine.pressedOrangeWallLowersAsBlock(state, x, y, elevation)
@@ -751,7 +757,14 @@ function terrainTypeAt(playData, state, typeNames, x, y) {
   return cell.type || "empty";
 }
 
-function terrainLayerHeight(layer, state, index, type, orangeButtonsPressed = false) {
+function terrainLayerHeight(
+  layer,
+  state,
+  index,
+  type,
+  orangeButtonsPressed = false,
+  raisedPlayerGates = null
+) {
   const layerElevation = layer.elevation ?? 0;
 
   if (
@@ -777,7 +790,7 @@ function terrainLayerHeight(layer, state, index, type, orangeButtonsPressed = fa
   }
 
   if (type === "player_gate") {
-    return layerElevation + 1;
+    return layerElevation + (raisedPlayerGates?.has(index) ? 1 : 0);
   }
 
   return layerElevation;
@@ -1279,7 +1292,8 @@ function terrainBoxForLayer(
   layer,
   x,
   y,
-  orangeButtonsPressed = false
+  orangeButtonsPressed = false,
+  raisedPlayerGates = null
 ) {
   const index = cellIndex(playData, x, y);
   const type = layer.type || "empty";
@@ -1288,17 +1302,28 @@ function terrainBoxForLayer(
     return null;
   }
 
-  const top = terrainLayerHeight(layer, state, index, type, orangeButtonsPressed);
+  const top = terrainLayerHeight(
+    layer,
+    state,
+    index,
+    type,
+    orangeButtonsPressed,
+    raisedPlayerGates
+  );
   const elevation = layer.elevation ?? 0;
   const orangeWallLowersAsBlock =
     type === "orange_wall" &&
     orangeButtonsPressed &&
     pressedOrangeWallLowersAsBlock(engine, state, x, y, elevation);
+  const isLoweredPlayerGate =
+    type === "player_gate" && !raisedPlayerGates?.has(index);
   const bottom =
     type === "orange_wall" && orangeButtonsPressed
       ? orangeWallLowersAsBlock
         ? elevation - 1
         : top
+      : isLoweredPlayerGate
+        ? top
       : top > elevation
         ? elevation
         : top - FLOOR_THICKNESS;
@@ -1319,7 +1344,8 @@ function terrainTopHeightAt(
   typeNames,
   x,
   y,
-  orangeButtonsPressed = false
+  orangeButtonsPressed = false,
+  raisedPlayerGates = null
 ) {
   if (x < 0 || y < 0 || x >= playData.width || y >= playData.height) {
     return -Infinity;
@@ -1338,7 +1364,14 @@ function terrainTopHeightAt(
     const index = cellIndex(playData, x, y);
     height = Math.max(
       height,
-      terrainLayerHeight(layer, state, index, type, orangeButtonsPressed)
+      terrainLayerHeight(
+        layer,
+        state,
+        index,
+        type,
+        orangeButtonsPressed,
+        raisedPlayerGates
+      )
     );
   });
 
@@ -1352,22 +1385,55 @@ function exposedTerrainSides(
   box,
   x,
   y,
-  orangeButtonsPressed = false
+  orangeButtonsPressed = false,
+  raisedPlayerGates = null
 ) {
   const sideFloor = (neighborHeight) => Math.max(box.z0, neighborHeight);
 
   return {
     east: sideFloor(
-      terrainTopHeightAt(playData, state, typeNames, x + 1, y, orangeButtonsPressed)
+      terrainTopHeightAt(
+        playData,
+        state,
+        typeNames,
+        x + 1,
+        y,
+        orangeButtonsPressed,
+        raisedPlayerGates
+      )
     ),
     north: sideFloor(
-      terrainTopHeightAt(playData, state, typeNames, x, y - 1, orangeButtonsPressed)
+      terrainTopHeightAt(
+        playData,
+        state,
+        typeNames,
+        x,
+        y - 1,
+        orangeButtonsPressed,
+        raisedPlayerGates
+      )
     ),
     south: sideFloor(
-      terrainTopHeightAt(playData, state, typeNames, x, y + 1, orangeButtonsPressed)
+      terrainTopHeightAt(
+        playData,
+        state,
+        typeNames,
+        x,
+        y + 1,
+        orangeButtonsPressed,
+        raisedPlayerGates
+      )
     ),
     west: sideFloor(
-      terrainTopHeightAt(playData, state, typeNames, x - 1, y, orangeButtonsPressed)
+      terrainTopHeightAt(
+        playData,
+        state,
+        typeNames,
+        x - 1,
+        y,
+        orangeButtonsPressed,
+        raisedPlayerGates
+      )
     )
   };
 }
@@ -1375,6 +1441,7 @@ function exposedTerrainSides(
 function buildSceneFaces(playData, engine, state) {
   const typeNames = terrainTypeNameByValue(engine.terrainTypes);
   const orangeButtonsPressed = orangeButtonsPressedForState(engine, state);
+  const raisedPlayerGates = raisedPlayerGatesForState(engine, state);
   const faces = [];
 
   for (let y = 0; y < playData.height; y += 1) {
@@ -1390,7 +1457,8 @@ function buildSceneFaces(playData, engine, state) {
           layer,
           x,
           y,
-          orangeButtonsPressed
+          orangeButtonsPressed,
+          raisedPlayerGates
         );
 
         if (box) {
@@ -1403,7 +1471,8 @@ function buildSceneFaces(playData, engine, state) {
               box,
               x,
               y,
-              orangeButtonsPressed
+              orangeButtonsPressed,
+              raisedPlayerGates
             )
           });
         }
@@ -1665,7 +1734,15 @@ function worldCoordinatesForDisplay(playData, yaw, x, y) {
   }
 }
 
-function terrainTopAt(playData, state, typeNames, x, y, orangeButtonsPressed = false) {
+function terrainTopAt(
+  playData,
+  state,
+  typeNames,
+  x,
+  y,
+  orangeButtonsPressed = false,
+  raisedPlayerGates = null
+) {
   if (x < 0 || y < 0 || x >= playData.width || y >= playData.height) {
     return null;
   }
@@ -1681,7 +1758,14 @@ function terrainTopAt(playData, state, typeNames, x, y, orangeButtonsPressed = f
     }
 
     const index = cellIndex(playData, x, y);
-    const height = terrainLayerHeight(layer, state, index, type, orangeButtonsPressed);
+    const height = terrainLayerHeight(
+      layer,
+      state,
+      index,
+      type,
+      orangeButtonsPressed,
+      raisedPlayerGates
+    );
 
     if (!top || height >= top.height) {
       top = {
@@ -1701,7 +1785,8 @@ function terrainBlocksAt(
   typeNames,
   x,
   y,
-  orangeButtonsPressed = false
+  orangeButtonsPressed = false,
+  raisedPlayerGates = null
 ) {
   return terrainLayersAt(playData, state, typeNames, x, y)
     .map((layer, layerIndex) => {
@@ -1714,6 +1799,8 @@ function terrainBlocksAt(
       const index = cellIndex(playData, x, y);
       const elevation = layer.elevation ?? 0;
       const isPressedOrangeWall = type === "orange_wall" && orangeButtonsPressed;
+      const isLoweredPlayerGate =
+        type === "player_gate" && !raisedPlayerGates?.has(index);
       const lowersAsBlock =
         isPressedOrangeWall &&
         pressedOrangeWallLowersAsBlock(engine, state, x, y, elevation);
@@ -1722,7 +1809,14 @@ function terrainBlocksAt(
           ? elevation - 1
           : elevation
         : elevation;
-      const top = terrainLayerHeight(layer, state, index, type, orangeButtonsPressed);
+      const top = terrainLayerHeight(
+        layer,
+        state,
+        index,
+        type,
+        orangeButtonsPressed,
+        raisedPlayerGates
+      );
       const glyph = terrainGlyph(layer, state, index, orangeButtonsPressed);
 
       return {
@@ -1730,7 +1824,8 @@ function terrainBlocksAt(
         letter: glyph.top,
         objectId: terrainObjectId(x, y, layerIndex),
         sideLetter: glyph.side,
-        surfaceOnly: isPressedOrangeWall && !lowersAsBlock,
+        surfaceOnly:
+          (isPressedOrangeWall && !lowersAsBlock) || isLoweredPlayerGate,
         top,
         type
       };
@@ -1744,7 +1839,8 @@ function maxTerrainStackHeight(
   engine,
   state,
   typeNames,
-  orangeButtonsPressed = false
+  orangeButtonsPressed = false,
+  raisedPlayerGates = null
 ) {
   let maxHeight = 0;
 
@@ -1757,7 +1853,8 @@ function maxTerrainStackHeight(
         typeNames,
         x,
         y,
-        orangeButtonsPressed
+        orangeButtonsPressed,
+        raisedPlayerGates
       ).forEach((block) => {
         maxHeight = Math.max(maxHeight, block.top);
       });
@@ -2018,13 +2115,15 @@ function renderAsciiSideScene(playData, engine, state, options, trackOwners = fa
   const yaw = normalizeYaw(options.yaw);
   const typeNames = terrainTypeNameByValue(engine.terrainTypes);
   const orangeButtonsPressed = orangeButtonsPressedForState(engine, state);
+  const raisedPlayerGates = raisedPlayerGatesForState(engine, state);
   const dimensions = displayDimensions(playData, yaw);
   const maxTerrainHeight = maxTerrainStackHeight(
     playData,
     engine,
     state,
     typeNames,
-    orangeButtonsPressed
+    orangeButtonsPressed,
+    raisedPlayerGates
   );
   const maxActorHeight = maxRenderedActorHeight(engine, state);
   const maxHeight = Math.max(1, maxTerrainHeight, maxActorHeight);
@@ -2049,7 +2148,8 @@ function renderAsciiSideScene(playData, engine, state, options, trackOwners = fa
         typeNames,
         x,
         y,
-        orangeButtonsPressed
+        orangeButtonsPressed,
+        raisedPlayerGates
       );
 
       semanticTerrainLayersAt(playData, state, typeNames, x, y)
@@ -2132,6 +2232,7 @@ function renderAsciiLayeredScene(playData, engine, state, options, trackOwners =
   const pitch = clampPitch(options.pitch);
   const typeNames = terrainTypeNameByValue(engine.terrainTypes);
   const orangeButtonsPressed = orangeButtonsPressedForState(engine, state);
+  const raisedPlayerGates = raisedPlayerGatesForState(engine, state);
   const dimensions = displayDimensions(playData, yaw);
   const topRows = TILE_GRANULARITY - pitch;
   const sideRows = pitch;
@@ -2141,7 +2242,8 @@ function renderAsciiLayeredScene(playData, engine, state, options, trackOwners =
     engine,
     state,
     typeNames,
-    orangeButtonsPressed
+    orangeButtonsPressed,
+    raisedPlayerGates
   );
   const maxActorHeight = maxRenderedActorHeight(engine, state);
   const topMargin = Math.max(maxTerrainHeight, maxActorHeight) * sideRows + 1;
@@ -2174,7 +2276,8 @@ function renderAsciiLayeredScene(playData, engine, state, options, trackOwners =
           typeNames,
           x,
           y,
-          orangeButtonsPressed
+          orangeButtonsPressed,
+          raisedPlayerGates
         );
         const screenX = displayX * TILE_GRANULARITY;
 
@@ -2211,7 +2314,8 @@ function renderAsciiLayeredScene(playData, engine, state, options, trackOwners =
           typeNames,
           front.x,
           front.y,
-          orangeButtonsPressed
+          orangeButtonsPressed,
+          raisedPlayerGates
         );
         const frontHeight = frontTop?.height ?? -1;
 

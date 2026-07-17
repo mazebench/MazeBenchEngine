@@ -4331,3 +4331,1170 @@ console.log("maze-engine tests passed");
   assert.equal(engine.stateKey(state), keyBefore);
   assert.equal(state.actorRemoved[0], 0);
 }
+
+// Owner rules (2026-07): punchers ride carriers — side-mounted on clones
+// (sticky carrier) and standing on any carrier's top surface — and the
+// orange ice slope raises/lowers with the orange buttons.
+{
+  // Puncher standing ON TOP of a weightless box rides its push.
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain: floorTerrain(4, 1),
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 0, removed: false },
+      { type: "puncher", direction: "right", x: 1, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[1], state.actorY[1]], [2, 0]);
+  assert.deepEqual(
+    [state.actorX[2], state.actorY[2], state.actorElevation[2]],
+    [2, 0, 1]
+  );
+}
+
+{
+  // Puncher side-mounted on a clone rides the clone's move.
+  const { engine, state } = createState({
+    width: 5,
+    height: 1,
+    terrain: floorTerrain(5, 1),
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "clone", groupId: "c0", x: 2, y: 0, removed: false },
+      { type: "puncher", direction: "right", x: 3, y: 0, elevation: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[1], state.actorY[1]], [3, 0]);
+  assert.deepEqual([state.actorX[2], state.actorY[2]], [4, 0]);
+}
+
+{
+  // Orange ice slopes are ramps while raised, in both directions.
+  const terrain = floorTerrain(4, 1);
+  terrain[0][1] = {
+    type: "orange_ice_slope",
+    layers: [{ type: "orange_ice_slope", elevation: 0, direction: "right" }]
+  };
+  terrain[0][2] = { type: "wall", layers: [{ type: "wall", elevation: 0 }] };
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain,
+    actors: [{ type: "player", x: 0, y: 0, removed: false }]
+  });
+
+  engine.move(state, 1, 0);
+  assert.deepEqual([state.actorX[0], state.actorElevation[0]], [2, 1]);
+
+  engine.move(state, -1, 0);
+  assert.deepEqual([state.actorX[0], state.actorElevation[0]], [0, 0]);
+}
+
+{
+  // Clones use the same raised orange-ramp traversal in both directions.
+  const terrain = floorTerrain(4, 2);
+  terrain[1][1] = {
+    type: "orange_ice_slope",
+    layers: [{ type: "orange_ice_slope", elevation: 0, direction: "right" }]
+  };
+  terrain[1][2] = wallStack(1);
+  const { engine, state } = createState({
+    width: 4,
+    height: 2,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "clone", groupId: "c0", x: 0, y: 1, removed: false }
+    ]
+  });
+
+  engine.move(state, 1, 0);
+  assert.deepEqual([state.actorX[1], state.actorElevation[1]], [2, 1]);
+
+  engine.move(state, -1, 0);
+  assert.deepEqual([state.actorX[1], state.actorElevation[1]], [0, 0]);
+}
+
+{
+  // A ground-level orange slope flattens when the orange terrain lowers.
+  const terrain = floorTerrain(4, 2);
+  terrain[0][1] = {
+    type: "orange_ice_slope",
+    layers: [{ type: "orange_ice_slope", elevation: 0, direction: "right" }]
+  };
+  terrain[0][2] = { type: "wall", layers: [{ type: "wall", elevation: 0 }] };
+  const { engine, state } = createState({
+    width: 4,
+    height: 2,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "box", x: 2, y: 1, removed: false },
+      { type: "orange_button", x: 2, y: 1, removed: false }
+    ]
+  });
+
+  assert.equal(engine.areOrangeButtonsPressed(state), true);
+  engine.move(state, 1, 0);
+  assert.deepEqual(
+    [state.actorX[0], state.actorElevation[0]],
+    [1, 0],
+    "the lowered wedge is a flat surface, not an active ramp"
+  );
+}
+
+{
+  // An unsupported elevated orange slope lowers by one full elevation and
+  // remains a ramp at its new height.
+  const terrain = floorTerrain(4, 2);
+  terrain[0][1] = {
+    type: "orange_ice_slope",
+    layers: [{ type: "orange_ice_slope", elevation: 1, direction: "right" }]
+  };
+  terrain[0][2] = wallStack(1);
+  const { engine, state } = createState({
+    width: 4,
+    height: 2,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "box", x: 2, y: 1, removed: false },
+      { type: "orange_button", x: 2, y: 1, removed: false }
+    ]
+  });
+
+  engine.move(state, 1, 0);
+  assert.deepEqual([state.actorX[0], state.actorElevation[0]], [2, 1]);
+}
+
+{
+  // Non-orange support below a lowered orange slope also flattens it in
+  // place instead of allowing the wedge to sink into the support.
+  const terrain = floorTerrain(4, 2);
+  terrain[0][0] = wallStack(1);
+  terrain[0][1] = {
+    type: "orange_ice_slope",
+    layers: [
+      { type: "wall", elevation: 0 },
+      { type: "orange_ice_slope", elevation: 1, direction: "right" }
+    ]
+  };
+  terrain[0][2] = wallStack(2);
+  const { engine, state } = createState({
+    width: 4,
+    height: 2,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 1, removed: false },
+      { type: "box", x: 2, y: 1, removed: false },
+      { type: "orange_button", x: 2, y: 1, removed: false }
+    ]
+  });
+
+  engine.move(state, 1, 0);
+  assert.deepEqual([state.actorX[0], state.actorElevation[0]], [1, 1]);
+}
+
+// Owner rule (2026-07 rework): Box/Clone Ice Slopes are slope-SHAPED members
+// of their groups — they push and mirror with the group, and other actors
+// traverse them like ice slopes when approaching along the slope axis.
+{
+  const { engine, state } = createState({
+    width: 6,
+    height: 1,
+    terrain: floorTerrain(6, 1),
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 2, y: 0, shape: "slope", direction: "right", removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[1], state.actorX[2]], [2, 3]);
+}
+
+{
+  const terrain = floorTerrain(4, 1);
+  terrain[0][3] = { type: "wall", layers: [{ type: "wall", elevation: 0 }] };
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 1, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M3", x: 2, y: 0, shape: "slope", direction: "right", removed: false }
+    ]
+  });
+
+  const keyBefore = engine.stateKey(engine.cloneState(state));
+  const result = engine.moveForSearch(state, 1, 0);
+  assert.equal(result.moved, true);
+  assert.deepEqual(
+    [state.actorX[0], state.actorElevation[0]],
+    [3, 1],
+    "player climbs the box ice slope onto the wall top"
+  );
+  assert.deepEqual([state.actorX[1], state.actorElevation[1]], [2, 0], "slope member did not move");
+  engine.undoMove(state, result);
+  assert.equal(engine.stateKey(state), keyBefore);
+}
+
+{
+  const { engine, state } = createState({
+    width: 5,
+    height: 1,
+    terrain: floorTerrain(5, 1),
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "clone", groupId: "c1", x: 2, y: 0, shape: "slope", direction: "right", removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[1], state.actorY[1]], [3, 0], "clone ice slope mirrors the player");
+}
+
+// Owner rule (2026-07): lifts/gates stacked on movable carriers are STUCK
+// rider fixtures — they travel with the carrier (horizontally on boxes and
+// clones, vertically on orange walls) and interact with nothing.
+{
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain: floorTerrain(4, 1),
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, removed: false },
+      { type: "attached_lift", x: 1, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[1], state.actorX[2], state.actorElevation[2]], [2, 2, 1]);
+  assert.equal(result.liftToggles.length, 0, "attached lift never toggles");
+}
+
+{
+  const terrain = floorTerrain(4, 1);
+  terrain[0][1] = {
+    type: "orange_wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "orange_wall", elevation: 0 }
+    ]
+  };
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 3, y: 0, removed: false },
+      { type: "attached_lift", x: 1, y: 0, elevation: 1, removed: false },
+      { type: "orange_button", x: 2, y: 0, removed: false }
+    ]
+  });
+
+  engine.move(state, -1, 0);
+  assert.equal(state.actorElevation[1], 0, "rides the lowering orange wall");
+  engine.move(state, 1, 0);
+  assert.equal(state.actorElevation[1], 1, "rides the wall back up");
+}
+
+{
+  // Owner rule (2026-07, functional round): an attached gate is a working
+  // player gate — proximity raises it and the raised panel blocks the
+  // player, exactly like the terrain twin.
+  const { engine, state } = createState({
+    width: 3,
+    height: 1,
+    terrain: floorTerrain(3, 1),
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "attached_gate", x: 1, y: 0, elevation: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  assert.equal(result.moved, false, "proximity-raised attached gate blocks the player");
+  assert.equal(state.actorX[0], 0);
+}
+
+for (const landingType of ["player", "clone"]) {
+  // Forced motion can land a player/clone directly on a lowered attached
+  // gate without first entering its one-cell proximity trigger. The landing
+  // must raise the gate and carry the rider to the new surface.
+  const terrain = landingType === "clone"
+    ? [[iceFloorLayer(1), iceFloorLayer(1), iceFloorLayer(1), { type: "floor" }, wallStack(2)]]
+    : [[wallStack(1), wallStack(1), wallStack(1), { type: "floor" }, wallStack(2)]];
+  const landingActor = {
+    type: landingType,
+    x: 0,
+    y: 0,
+    elevation: 1,
+    removed: false
+  };
+
+  if (landingType === "clone") {
+    landingActor.groupId = "c0";
+  }
+
+  const deviceActors = [
+    { type: "weightless_box", groupId: "M0", x: 3, y: 0, elevation: 0, removed: false },
+    { type: "attached_gate", x: 3, y: 0, elevation: 1, removed: false }
+  ];
+  const actors = landingType === "clone"
+    ? [landingActor, ...deviceActors]
+    : [
+        landingActor,
+        { type: "puncher", direction: "right", x: 1, y: 0, elevation: 1, removed: false },
+        ...deviceActors
+      ];
+  const { engine, state } = createState({
+    width: 5,
+    height: 1,
+    terrain,
+    actors
+  });
+
+  const result = engine.move(state, 1, 0);
+  const landingMove = result.moves.find((move) => move.actorIndex === 0);
+
+  assert.equal(result.moved, true);
+  assert.equal(
+    engine.computeRaisedPlayerGateSet(state).has(engine.cellIndex(3, 0)),
+    true,
+    `${landingType} standing on an attached gate raises it`
+  );
+  assert.deepEqual(
+    [state.actorX[0], state.actorElevation[0]],
+    [3, 2],
+    `${landingType} rides the attached gate up`
+  );
+  assert.deepEqual(
+    [landingMove.fromElevation, landingMove.toElevation],
+    [1, 2],
+    `${landingType} move record includes the gate ride`
+  );
+}
+
+// Owner bug (2026-07): play mode replays MOVE RECORDS onto its runtime
+// actors, so a vertical device ride that only touches the journal leaves the
+// visible board desynced (orange button hovering above its lowered wall).
+// Every net elevation change from the dynamic sync must emit a record.
+{
+  const terrain = floorTerrain(5, 1);
+  terrain[0][2] = {
+    type: "orange_wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "orange_wall", elevation: 0 }
+    ]
+  };
+  terrain[0][3] = {
+    type: "orange_wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "orange_wall", elevation: 0 }
+    ]
+  };
+  const { engine, state } = createState({
+    width: 5,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "orange_button", x: 1, y: 0, removed: false },
+      { type: "orange_button", x: 2, y: 0, elevation: 1, removed: false },
+      { type: "weightless_box", groupId: "M9", x: 2, y: 0, elevation: 1, removed: false },
+      { type: "attached_lift", x: 3, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  // Box parked on the wall-top button keeps it pressed; stepping onto the
+  // ground button completes the AND — walls lower, riders descend.
+  const lower = engine.move(state, 1, 0);
+  assert.equal(state.actorElevation[2], 0, "rider button descends with its wall");
+  assert.equal(state.actorElevation[4], 0, "attached lift descends with its wall");
+
+  const riderButtonMove = lower.moves.find((move) => move.actorIndex === 2);
+  const attachedLiftMove = lower.moves.find((move) => move.actorIndex === 4);
+  assert.ok(riderButtonMove, "rider button ride emits a move record");
+  assert.deepEqual(
+    [riderButtonMove.fromElevation, riderButtonMove.toElevation],
+    [1, 0],
+    "rider button record captures the descent"
+  );
+  assert.ok(attachedLiftMove, "attached lift ride emits a move record");
+  assert.deepEqual(
+    [attachedLiftMove.fromElevation, attachedLiftMove.toElevation],
+    [1, 0],
+    "attached lift record captures the descent"
+  );
+  assert.ok(
+    !lower.moves.some((move) => move.actorIndex === 1),
+    "unmoved ground button gets no record"
+  );
+
+  // Stepping back off releases the AND — walls raise, riders ride up, again
+  // with records.
+  const raise = engine.move(state, -1, 0);
+  assert.equal(state.actorElevation[2], 1, "rider button rides the wall back up");
+  assert.equal(state.actorElevation[4], 1, "attached lift rides the wall back up");
+  assert.ok(
+    raise.moves.some(
+      (move) => move.actorIndex === 2 && move.fromElevation === 0 && move.toElevation === 1
+    ),
+    "raise direction emits a record too"
+  );
+}
+
+{
+  // A wall-top button must ride down with the player pressing it. The player
+  // is not support for the fixture; otherwise the button hovers at elevation
+  // one, becomes unpressed, and immediately raises the orange terrain again.
+  const terrain = floorTerrain(3, 1);
+  terrain[0][1] = {
+    type: "orange_wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "orange_wall", elevation: 0 }
+    ]
+  };
+  terrain[0][2] = wallStack(1);
+  const { engine, state } = createState({
+    width: 3,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 2, y: 0, elevation: 1, removed: false },
+      { type: "orange_button", x: 1, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const lower = engine.move(state, -1, 0);
+
+  assert.equal(engine.areOrangeButtonsPressed(state), true);
+  assert.deepEqual(
+    [state.actorElevation[0], state.actorElevation[1]],
+    [0, 0],
+    "player and button remain together on the lowered orange wall"
+  );
+  assert.ok(
+    lower.moves.some(
+      (move) => move.actorIndex === 1 && move.fromElevation === 1 && move.toElevation === 0
+    ),
+    "the button descent is replayable by play mode"
+  );
+}
+
+// Owner rule (2026-07, functional round): attached lifts WORK. A player
+// ending its move on the platform toggles it and rides up; the raised
+// platform blocks the band it rose out of; the raised bit rides carrier
+// pushes; authored 'L' starts raised.
+{
+  const terrain = floorTerrain(4, 1);
+  terrain[0][0] = {
+    type: "wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "wall", elevation: 0 }
+    ]
+  };
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 1, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, removed: false },
+      { type: "attached_lift", x: 1, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const onto = engine.move(state, 1, 0);
+  assert.equal(state.actorElevation[0], 2, "player rides the toggling lift up");
+  assert.equal(state.liftRaised[1], 1, "attached lift raised bit set");
+  assert.equal(state.actorElevation[2], 1, "lift actor elevation stays at the carrier top");
+  assert.deepEqual(onto.liftToggles, [{ x: 1, y: 0, raised: true }]);
+}
+
+{
+  // A raised attached lift transfers a side push to its carrier.
+  const terrain = floorTerrain(3, 1);
+  terrain[0][0] = {
+    type: "wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "wall", elevation: 0 }
+    ]
+  };
+  const { engine, state } = createState({
+    width: 3,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 1, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, removed: false },
+      { type: "attached_lift", x: 1, y: 0, elevation: 1, raised: true, removed: false }
+    ]
+  });
+
+  assert.equal(state.liftRaised[1], 1, "authored 'L' starts raised");
+  const pushed = engine.move(state, 1, 0);
+  assert.equal(pushed.moved, true, "raised attached lift pushes its carrier");
+  assert.deepEqual([state.actorX[0], state.actorX[1], state.actorX[2]], [1, 2, 2]);
+}
+
+{
+  // The raised bit rides carrier pushes; a proximity-raised attached gate
+  // rides too and keeps not interacting with its carrier.
+  const { engine, state } = createState({
+    width: 5,
+    height: 1,
+    terrain: floorTerrain(5, 1),
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, removed: false },
+      { type: "attached_lift", x: 1, y: 0, elevation: 1, raised: true, removed: false },
+      { type: "weightless_box", groupId: "M1", x: 3, y: 0, removed: false },
+      { type: "attached_gate", x: 3, y: 0, elevation: 1, removed: false }
+    ]
+  });
+
+  const push = engine.move(state, 1, 0);
+  assert.equal(push.moved, true);
+  assert.deepEqual(
+    [state.actorX[1], state.actorX[2], state.liftRaised[1], state.liftRaised[2]],
+    [2, 2, 0, 1],
+    "raised bit relocates with the pushed lift"
+  );
+}
+
+for (const boxType of ["box", "weightless_box"]) {
+  for (const riderType of ["player", "clone"]) {
+    // A player/clone on a pushed box takes the carrier's step instead of
+    // being left unsupported in the box's old cell (or moving twice later
+    // in the same global input).
+    const rider = {
+      type: riderType,
+      x: 1,
+      y: 0,
+      elevation: 1,
+      removed: false
+    };
+
+    if (riderType === "clone") {
+      rider.groupId = "c0";
+    }
+
+    const box = {
+      type: boxType,
+      x: 1,
+      y: 0,
+      elevation: 0,
+      removed: false
+    };
+
+    if (boxType === "weightless_box") {
+      box.groupId = "M0";
+    }
+
+    const { engine, state } = createState({
+      width: 5,
+      height: 1,
+      terrain: floorTerrain(5, 1),
+      actors: [
+        { type: "player", x: 0, y: 0, removed: false },
+        box,
+        rider
+      ]
+    });
+
+    const result = engine.move(state, 1, 0);
+
+    assert.equal(result.moved, true);
+    assert.deepEqual(
+      [state.actorX[1], state.actorX[2], state.actorElevation[2]],
+      [2, 2, 1],
+      `${riderType} rides the pushed ${boxType}`
+    );
+    assert.equal(
+      result.moves.filter((move) => move.actorIndex === 2 && !move.visualOnly).length,
+      1,
+      "carried rider moves exactly once"
+    );
+  }
+}
+
+for (const riderType of ["player", "clone"]) {
+  // A raised attached lift is the rider's immediate surface, but its
+  // underlying pushblock remains the moving carrier.
+  const rider = {
+    type: riderType,
+    x: 1,
+    y: 0,
+    elevation: 2,
+    removed: false
+  };
+
+  if (riderType === "clone") {
+    rider.groupId = "c1";
+  }
+
+  const { engine, state } = createState({
+    width: 5,
+    height: 1,
+    terrain: floorTerrain(5, 1),
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "weightless_box", groupId: "M1", x: 1, y: 0, elevation: 0, removed: false },
+      { type: "attached_lift", x: 1, y: 0, elevation: 1, raised: true, removed: false },
+      rider
+    ]
+  });
+  const keyBefore = engine.stateKey(state);
+  const result = engine.moveForSearch(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual(
+    [state.actorX[1], state.actorX[2], state.actorX[3], state.actorElevation[3]],
+    [2, 2, 2, 2],
+    `${riderType} stays on the raised lift while its pushblock moves`
+  );
+  assert.deepEqual(
+    [state.liftRaised[1], state.liftRaised[2]],
+    [0, 1],
+    "raised phase follows the lift and rider"
+  );
+
+  engine.undoMove(state, result);
+  assert.equal(engine.stateKey(state), keyBefore, "carried lift ride undoes exactly");
+}
+
+for (const deviceType of ["attached_lift", "attached_gate"]) {
+  // Pushing the raised panel redirects to its pushblock carrier. The pusher
+  // advances into the vacated cell in lockstep, then settles to the surface
+  // below if the carrier had been its only elevated support there.
+  const terrain = floorTerrain(4, 1);
+  terrain[0][0] = wallStack(1);
+  const device = {
+    type: deviceType,
+    x: 1,
+    y: 0,
+    elevation: 1,
+    removed: false
+  };
+
+  if (deviceType === "attached_lift") {
+    device.raised = true;
+  }
+
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 1, removed: false },
+      { type: "weightless_box", groupId: "M2", x: 1, y: 0, elevation: 0, removed: false },
+      device
+    ]
+  });
+  const keyBefore = engine.stateKey(state);
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, true, `${deviceType} transfers the push to its carrier`);
+  assert.deepEqual(
+    [state.actorX[0], state.actorElevation[0], state.actorX[1], state.actorX[2]],
+    [1, 0, 2, 2],
+    `${deviceType}, pushblock, and pusher advance together`
+  );
+
+  engine.undoMove(state, result);
+  assert.equal(engine.stateKey(state), keyBefore, `${deviceType} carrier push undoes exactly`);
+}
+
+for (const initiallyRaised of [false, true]) {
+  // Clones interact with ordinary terrain lifts in both directions, using
+  // the same enter-and-ride behavior as the main player.
+  const terrain = floorTerrain(4, 1);
+  terrain[0][0] = initiallyRaised ? wallStack(1) : { type: "floor" };
+  terrain[0][1] = playerLiftLayer(0, initiallyRaised);
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain,
+    actors: [
+      {
+        type: "clone",
+        groupId: "lift-clone",
+        x: 0,
+        y: 0,
+        elevation: initiallyRaised ? 1 : 0,
+        removed: false
+      },
+      { type: "player", x: 3, y: 0, removed: false }
+    ]
+  });
+  const result = engine.move(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual(
+    [state.actorX[0], state.actorElevation[0], state.liftRaised[1]],
+    [1, initiallyRaised ? 0 : 1, initiallyRaised ? 0 : 1],
+    `clone ${initiallyRaised ? "lowers" : "raises"} a terrain lift`
+  );
+  assert.deepEqual(result.liftToggles, [
+    { x: 1, y: 0, raised: !initiallyRaised }
+  ]);
+}
+
+for (const { carrierType, initiallyRaised } of ["weightless_box", "clone", "orange_wall"].flatMap(
+  (carrierType) => [false, true].map((initiallyRaised) => ({ carrierType, initiallyRaised }))
+)) {
+  // Attached lifts remain interactive when their support is a pushblock,
+  // another clone group, or a phase-changing orange wall.
+  const terrain = floorTerrain(4, 1);
+  terrain[0][0] = wallStack(initiallyRaised ? 2 : 1);
+  const actors = [
+    { type: "player", x: 3, y: 0, removed: false },
+    {
+      type: "clone",
+      groupId: "lift-rider",
+      x: 0,
+      y: 0,
+      elevation: initiallyRaised ? 2 : 1,
+      removed: false
+    }
+  ];
+
+  if (carrierType === "weightless_box") {
+    actors.push({
+      type: "weightless_box",
+      groupId: "lift-box",
+      x: 1,
+      y: 0,
+      elevation: 0,
+      removed: false
+    });
+  } else if (carrierType === "clone") {
+    // Keep the carrier clone stationary under the shared right input so the
+    // other clone can enter its attached lift.
+    terrain[0][2] = wallStack(1);
+    actors.push({
+      type: "clone",
+      groupId: "lift-carrier",
+      x: 1,
+      y: 0,
+      elevation: 0,
+      removed: false
+    });
+  } else {
+    terrain[0][1] = orangeWallStack(1, 0, [{ type: "floor", elevation: 0 }]);
+  }
+
+  const attachedLiftIndex = actors.length;
+  actors.push({
+    type: "attached_lift",
+    x: 1,
+    y: 0,
+    elevation: 1,
+    raised: initiallyRaised,
+    removed: false
+  });
+
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain,
+    actors
+  });
+  const keyBefore = engine.stateKey(state);
+  const result = engine.moveForSearch(state, 1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual(
+    [state.actorX[1], state.actorElevation[1], state.liftRaised[1]],
+    [1, initiallyRaised ? 1 : 2, initiallyRaised ? 0 : 1],
+    `clone ${initiallyRaised ? "lowers" : "raises"} an attached lift on ${carrierType}`
+  );
+  assert.deepEqual(
+    [state.actorX[attachedLiftIndex], state.actorElevation[attachedLiftIndex]],
+    [1, 1],
+    "attached lift remains anchored to its carrier surface"
+  );
+  assert.deepEqual(result.liftToggles, [
+    { x: 1, y: 0, raised: !initiallyRaised }
+  ]);
+
+  engine.undoMove(state, result);
+  assert.equal(engine.stateKey(state), keyBefore, `${carrierType} lift interaction undoes exactly`);
+}
+
+for (const { initiallyRaised, occupantType } of [false, true].flatMap((initiallyRaised) =>
+  ["circle_player", "clone"].map((occupantType) => ({ initiallyRaised, occupantType }))
+)) {
+  // Device-arrival interaction: an attached lift pushed underneath a player
+  // or clone must toggle even though that occupant did not move onto it and
+  // therefore has no ordinary endpoint interaction to process.
+  const occupant = {
+    type: occupantType,
+    x: 2,
+    y: 0,
+    elevation: initiallyRaised ? 2 : 1,
+    removed: false
+  };
+
+  if (occupantType === "clone") {
+    occupant.groupId = "under-lift-clone";
+  }
+
+  const { engine, state } = createState({
+    width: 3,
+    height: 1,
+    terrain: floorTerrain(3, 1),
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "weightless_box", groupId: "under-lift-box", x: 1, y: 0, elevation: 0, removed: false },
+      {
+        type: "attached_lift",
+        x: 1,
+        y: 0,
+        elevation: 1,
+        raised: initiallyRaised,
+        removed: false
+      },
+      occupant
+    ]
+  });
+  const keyBefore = engine.stateKey(state);
+  const result = engine.moveForSearch(state, 1, 0);
+  const occupantMove = result.moves.find((move) => move.actorIndex === 3);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual(
+    [state.actorX[1], state.actorX[2], state.actorX[3]],
+    [2, 2, 2],
+    "carrier and attached lift arrive underneath the occupant"
+  );
+  assert.deepEqual(
+    [state.liftRaised[1], state.liftRaised[2], state.actorElevation[3]],
+    [0, initiallyRaised ? 0 : 1, initiallyRaised ? 1 : 2],
+    `${occupantType} rides the arriving lift ${initiallyRaised ? "down" : "up"}`
+  );
+  assert.deepEqual(result.liftToggles, [
+    { x: 2, y: 0, raised: !initiallyRaised }
+  ]);
+  assert.deepEqual(
+    [occupantMove.fromElevation, occupantMove.toElevation],
+    [initiallyRaised ? 2 : 1, initiallyRaised ? 1 : 2],
+    "stationary occupant receives the vertical tween record"
+  );
+
+  engine.undoMove(state, result);
+  assert.equal(engine.stateKey(state), keyBefore, "arriving lift interaction undoes exactly");
+}
+
+// Owner rule (2026-07): clones slide up ice slopes of ANY type — including
+// slope-shaped group members (box/clone ice slopes) of other groups.
+{
+  const terrain = floorTerrain(4, 2);
+  terrain[1][2] = {
+    type: "wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "wall", elevation: 0 }
+    ]
+  };
+  const { engine, state } = createState({
+    width: 4,
+    height: 2,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "clone", groupId: "c0", x: 0, y: 1, removed: false },
+      {
+        type: "weightless_box",
+        groupId: "M5",
+        shape: "slope",
+        direction: "right",
+        x: 1,
+        y: 1,
+        removed: false
+      }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0);
+  assert.equal(result.moved, true);
+  assert.deepEqual(
+    [state.actorX[1], state.actorY[1], state.actorElevation[1]],
+    [2, 1, 1],
+    "clone climbs a foreign box ice slope onto the wall top"
+  );
+  assert.deepEqual(
+    [state.actorX[2], state.actorElevation[2]],
+    [1, 0],
+    "the climbed wedge does not move"
+  );
+}
+
+{
+  // Clone climbs a foreign CLONE group's wedge the same way.
+  const terrain = floorTerrain(4, 2);
+  terrain[1][2] = {
+    type: "wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "wall", elevation: 0 }
+    ]
+  };
+  const { engine, state } = createState({
+    width: 4,
+    height: 2,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "clone", groupId: "c0", x: 0, y: 1, removed: false },
+      {
+        type: "clone",
+        groupId: "c1",
+        shape: "slope",
+        direction: "right",
+        x: 1,
+        y: 1,
+        removed: false
+      }
+    ]
+  });
+
+  engine.move(state, 1, 0);
+  assert.deepEqual(
+    [state.actorX[1], state.actorY[1], state.actorElevation[1]],
+    [2, 1, 1],
+    "clone climbs a foreign clone ice slope"
+  );
+}
+
+// Every slope family exposes the same inclined collision band. A blocked
+// downhill exit bounces the player home; movable slope actors must never be
+// treated as flat actor tops that can be stood upon.
+const blockedBounceSlopeFamilies = [
+  {
+    name: "normal ice slope",
+    terrainCell: iceSlopeLayer("up", 0)
+  },
+  {
+    name: "black ice slope",
+    terrainCell: {
+      type: "ice_slope",
+      layers: [
+        { type: "ice_slope", elevation: 0, direction: "up", styleKey: "wall" }
+      ]
+    }
+  },
+  {
+    name: "raised orange ice slope",
+    terrainCell: {
+      type: "orange_ice_slope",
+      layers: [
+        { type: "orange_ice_slope", elevation: 0, direction: "up", styleKey: "orange" }
+      ]
+    }
+  },
+  {
+    name: "box ice slope",
+    slopeActor: {
+      type: "weightless_box",
+      groupId: "M2",
+      shape: "slope",
+      direction: "up",
+      x: 0,
+      y: 1,
+      elevation: 0,
+      removed: false
+    }
+  },
+  {
+    name: "clone ice slope",
+    slopeActor: {
+      type: "clone",
+      groupId: "c2",
+      shape: "slope",
+      direction: "up",
+      x: 0,
+      y: 1,
+      elevation: 0,
+      removed: false
+    }
+  }
+];
+
+for (const family of blockedBounceSlopeFamilies) {
+  const terrain = [
+    [iceBlockLayer(0)],
+    [family.terrainCell || { type: "floor" }],
+    [wallStack(1)]
+  ];
+  const { engine, state } = createState({
+    width: 1,
+    height: 3,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: 1, removed: false },
+      ...(family.slopeActor ? [family.slopeActor] : [])
+    ]
+  });
+
+  const result = engine.move(state, 0, 1);
+  const playerBounce = result.moves.find((move) => move.actorIndex === 0);
+
+  assert.equal(result.moved, false);
+  assert.deepEqual(
+    [state.actorX[0], state.actorY[0], state.actorElevation[0]],
+    [0, 0, 1],
+    `player bounces home from a blocked ${family.name}`
+  );
+  assert.equal(playerBounce?.visualOnly, true, `${family.name} emits a visual bounce`);
+  assert.deepEqual(playerBounce?.path, [
+    { x: 0, y: 0, elevation: 1 },
+    { x: 0, y: 1, elevation: 1 },
+    { x: 0, y: 0, elevation: 1 }
+  ], `${family.name} uses the canonical slope bounce path`);
+}
+
+// Clones may traverse connected slopes, but walking toward a lower slope must
+// not turn a ledge into a fall. This applies to cube and slope-shaped clones.
+for (const cloneShape of [undefined, "slope"]) {
+  const terrain = floorTerrain(3, 3);
+  terrain[0][1] = wallStack(2);
+  const clone = {
+    type: "clone",
+    groupId: "c0",
+    x: 1,
+    y: 0,
+    elevation: 2,
+    removed: false
+  };
+
+  if (cloneShape) {
+    clone.shape = cloneShape;
+    clone.direction = "up";
+  }
+
+  const { engine, state } = createState({
+    width: 3,
+    height: 3,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      clone,
+      {
+        type: "weightless_box",
+        groupId: "M0",
+        shape: "slope",
+        direction: "up",
+        x: 1,
+        y: 1,
+        removed: false
+      }
+    ]
+  });
+
+  const result = engine.move(state, 0, 1);
+
+  assert.equal(result.moved, true, "the player may still move");
+  assert.deepEqual(
+    [state.actorX[1], state.actorY[1], state.actorElevation[1]],
+    [1, 0, 2],
+    `${cloneShape || "cube"} clone does not walk off its support onto a lower slope`
+  );
+  assert.equal(
+    result.moves.some((move) => move.actorIndex === 1),
+    false,
+    "blocked clone emits no movement tween"
+  );
+}
+
+{
+  // level_AxA regression: after the large clone group moves down once, the
+  // second down sends its front wedge across the stacked slopes. One member
+  // reaches a wall top while another is still inside the next slope band.
+  // The group must finish the same blocked-slope bounce as the player; it
+  // must not stop mid-slope and be hoisted to elevation 2 by support sync.
+  const terrain = floorTerrain(3, 6);
+  terrain[2][1] = {
+    type: "ice_slope",
+    layers: [
+      { type: "ice_slope", direction: "down", elevation: 0 },
+      { type: "ice_slope", direction: "down", elevation: 1 }
+    ]
+  };
+  terrain[3][1] = wallStack(1);
+  terrain[4][1] = iceSlopeLayer("up", 0);
+  terrain[5][1] = wallStack(1);
+
+  const { engine, state } = createState({
+    width: 3,
+    height: 6,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "clone", groupId: "c1", x: 1, y: 0, removed: false },
+      { type: "clone", groupId: "c1", x: 2, y: 0, removed: false },
+      {
+        type: "clone",
+        groupId: "c1",
+        shape: "slope",
+        direction: "up",
+        x: 1,
+        y: 1,
+        removed: false
+      }
+    ]
+  });
+
+  const result = engine.move(state, 0, 1);
+
+  assert.deepEqual(
+    [
+      [state.actorX[1], state.actorY[1], state.actorElevation[1]],
+      [state.actorX[2], state.actorY[2], state.actorElevation[2]],
+      [state.actorX[3], state.actorY[3], state.actorElevation[3]]
+    ],
+    [
+      [1, 0, 0],
+      [2, 0, 0],
+      [1, 1, 0]
+    ],
+    "the complete rigid clone group bounces home instead of floating"
+  );
+
+  for (const actorIndex of [1, 2, 3]) {
+    const bounce = result.moves.find((move) => move.actorIndex === actorIndex);
+    assert.ok(bounce?.path?.length > 2, "every clone member receives the shared bounce path");
+    assert.deepEqual(
+      bounce.path.at(-1),
+      bounce.path[0],
+      "every clone member returns to its own starting position and elevation"
+    );
+    assert.equal(
+      Math.max(...bounce.path.map((point) => point.elevation)),
+      1,
+      "the bounce never invents the stacked slope's elevation-2 flat support"
+    );
+  }
+}

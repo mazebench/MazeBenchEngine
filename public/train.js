@@ -31,6 +31,76 @@
     return payload;
   }
 
+  const PRIME_INSTALL_COMMAND = [
+    "# Install uv only if needed",
+    "curl -LsSf https://astral.sh/uv/install.sh | sh",
+    "",
+    "# Install Prime and sign in",
+    "uv tool install -U prime",
+    "prime login"
+  ].join("\n");
+
+  function primeSetupKind(message = "", readiness = null) {
+    if (readiness?.setup === "install" || readiness?.setup === "login") {
+      return readiness.setup;
+    }
+    if (readiness?.cli === false) return "install";
+    if (readiness?.account === false) return "login";
+
+    const text = String(message || "");
+    if (/(?:command not found|enoent|not installed|prime cli is unavailable)/i.test(text)) {
+      return "install";
+    }
+    if (/(?:401|403|api key|auth(?:entication|orization)?|login|not logged|token|unauthorized)/i.test(text)) {
+      return "login";
+    }
+    return "";
+  }
+
+  function showPrimeSetup(kind) {
+    if (kind !== "install" && kind !== "login") return false;
+    const modal = document.getElementById("train-prime-setup-modal");
+    if (!modal) return false;
+    const wasOpen = modal.classList.contains("open");
+    const installing = kind === "install";
+
+    modal.dataset.kind = kind;
+    document.getElementById("train-prime-setup-title").textContent = installing
+      ? "Install Prime CLI"
+      : "Reconnect Prime";
+    document.getElementById("train-prime-setup-message").textContent = installing
+      ? "Prime isn't installed on this computer yet. Run these commands in a terminal, then come back here."
+      : "Your Prime login has expired or is no longer authorized. Run this command in a terminal to sign in again.";
+    document.getElementById("train-prime-setup-command").textContent = installing
+      ? PRIME_INSTALL_COMMAND
+      : "prime login";
+    document.getElementById("train-prime-setup-note").textContent = installing
+      ? "If uv is already installed, skip the first command."
+      : "Prime will open a browser so you can authenticate securely.";
+    modal.hidden = false;
+    window.requestAnimationFrame(() => modal.classList.add("open"));
+    if (!wasOpen) {
+      window.setTimeout(() => document.getElementById("train-prime-setup-retry")?.focus(), 30);
+    }
+    return true;
+  }
+
+  function closePrimeSetup() {
+    const modal = document.getElementById("train-prime-setup-modal");
+    modal?.classList.remove("open");
+    window.setTimeout(() => {
+      if (modal && !modal.classList.contains("open")) modal.hidden = true;
+    }, 180);
+  }
+
+  function handlePrimeSetupError(error, readiness = null) {
+    const kind = primeSetupKind(error?.message || readiness?.issue, readiness);
+    if (!kind) return false;
+    showPrimeSetup(kind);
+    setStatus(kind === "install" ? "Prime CLI setup is needed." : "Prime sign-in is needed.", true);
+    return true;
+  }
+
   function reveal(element, delay = 0) {
     if (!element || !element.hidden) return;
     window.setTimeout(() => {
@@ -129,11 +199,19 @@
 
   function syncReadiness(readiness) {
     state.readiness = readiness;
+    const setupKind = primeSetupKind(readiness.issue, readiness);
     readinessEl.textContent = readiness.ready ? "PRIME READY" : "SETUP NEEDED";
     readinessEl.classList.toggle("is-ready", readiness.ready);
     readinessEl.classList.toggle("is-blocked", !readiness.ready);
-    readinessEl.title = readiness.issue || readiness.environment_id || "";
-    if (!readiness.ready && readiness.issue) setStatus(readiness.issue, true);
+    readinessEl.title = setupKind
+      ? setupKind === "install" ? "Prime CLI setup is needed." : "Prime sign-in is needed."
+      : readiness.issue || readiness.environment_id || "";
+    if (readiness.ready) {
+      closePrimeSetup();
+      setStatus("");
+    } else if (!handlePrimeSetupError(null, readiness) && readiness.issue) {
+      setStatus(readiness.issue, true);
+    }
     syncLaunch();
   }
 
@@ -197,7 +275,11 @@
       const payload = await api(data.runsUrl);
       renderRuns(payload.runs || []);
     } catch (error) {
-      host.innerHTML = `<div class="train-runs-empty is-error">${escapeText(error.message)}</div>`;
+      if (handlePrimeSetupError(error)) {
+        host.innerHTML = '<div class="train-runs-empty">Sign in to Prime to load training runs.</div>';
+      } else {
+        host.innerHTML = `<div class="train-runs-empty is-error">${escapeText(error.message)}</div>`;
+      }
     }
   }
 
@@ -215,10 +297,56 @@
       await loadRuns();
       if (runId) window.open(`https://app.primeintellect.ai/dashboard/training/${encodeURIComponent(runId)}`, "_blank", "noopener");
     } catch (error) {
-      setStatus(error.message, true);
+      if (!handlePrimeSetupError(error)) setStatus(error.message, true);
     } finally {
       launchButton.classList.remove("is-launching");
       syncLaunch();
+    }
+  });
+
+  function refreshedBootstrapUrl() {
+    const url = new URL(data.bootstrapUrl, window.location.href);
+    url.searchParams.set("refresh", "1");
+    return `${url.pathname}${url.search}`;
+  }
+
+  async function loadBootstrap(fresh = false) {
+    try {
+      const payload = await api(fresh ? refreshedBootstrapUrl() : data.bootstrapUrl);
+      applyDefaults(payload.defaults || {});
+      renderModels(payload.models || []);
+      syncReadiness(payload.readiness || {});
+    } catch (error) {
+      if (handlePrimeSetupError(error)) {
+        document.getElementById("train-model-loading").innerHTML = "<span>Prime setup is needed.</span>";
+      } else {
+        document.getElementById("train-model-loading").innerHTML = `<span>${escapeText(error.message)}</span>`;
+        setStatus(error.message, true);
+      }
+    }
+  }
+
+  async function retryPrimeSetup() {
+    const retryButton = document.getElementById("train-prime-setup-retry");
+    closePrimeSetup();
+    if (retryButton) retryButton.disabled = true;
+    readinessEl.textContent = "CHECKING PRIME…";
+    setStatus("Checking Prime setup…");
+    try {
+      await Promise.all([loadRuns(), loadBootstrap(true)]);
+    } finally {
+      if (retryButton) retryButton.disabled = false;
+    }
+  }
+
+  document.getElementById("train-prime-setup-dismiss")?.addEventListener("click", closePrimeSetup);
+  document.getElementById("train-prime-setup-retry")?.addEventListener("click", retryPrimeSetup);
+  document.getElementById("train-prime-setup-modal")?.addEventListener("click", (event) => {
+    if (event.target.id === "train-prime-setup-modal") closePrimeSetup();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.getElementById("train-prime-setup-modal")?.classList.contains("open")) {
+      closePrimeSetup();
     }
   });
 
@@ -226,16 +354,8 @@
     // Training history is independent of model/readiness discovery. Start it
     // immediately so a slow Prime model probe never leaves the whole page
     // looking stalled.
-    loadRuns();
-    try {
-      const payload = await api(data.bootstrapUrl);
-      applyDefaults(payload.defaults || {});
-      renderModels(payload.models || []);
-      syncReadiness(payload.readiness || {});
-    } catch (error) {
-      document.getElementById("train-model-loading").innerHTML = `<span>${escapeText(error.message)}</span>`;
-      setStatus(error.message, true);
-    }
+    void loadRuns();
+    await loadBootstrap();
   }
 
   initialize();

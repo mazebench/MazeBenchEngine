@@ -3355,7 +3355,13 @@
       };
     }
 
-    function addWeightlessGroupFaceLabels(voxels, groupId, renderOffset, opacity) {
+    function addWeightlessGroupFaceLabels(
+      voxels,
+      groupId,
+      renderOffset,
+      opacity,
+      options = {}
+    ) {
       if (!isEditorRenderMode() && !isPalettePreviewRenderMode()) {
         return;
       }
@@ -3369,6 +3375,14 @@
 
       collectPolycubeFaceCells(voxels).forEach((faceGroup) => {
         faceGroup.cells.forEach((cellKey) => {
+          if (
+            options.hiddenFaceCellKeys?.has(
+              `${faceGroup.kind}:${faceGroup.plane}:${cellKey}`
+            )
+          ) {
+            return;
+          }
+
           const [a, b] = cellKey.split(",").map(Number);
           const labelMesh = new THREE.Mesh(
             groupLabelPlaneGeometry(faceGroup.kind),
@@ -3388,6 +3402,85 @@
           scene.add(labelMesh);
         });
       });
+    }
+
+    function iceSlopeGroupLabelGeometry(direction) {
+      const normalized = normalizeCardinalDirection(direction);
+      const key = `ice-slope-group-label:${normalized}:${Math.round(unit * 100)}:${Math.round(elevationUnit * 100)}`;
+
+      if (!geometryCache.has(key)) {
+        const directionVector = cardinalGridVector(normalized);
+        const slopeAngle = Math.atan2(elevationUnit, unit);
+        const slopeLength = Math.hypot(unit, elevationUnit);
+        const geometry = new THREE.PlaneGeometry(unit * 0.68, slopeLength * 0.68);
+        // Text reads across the ramp with its top pointing uphill. Building
+        // that basis explicitly keeps the number printed onto the inclined
+        // face instead of turning it sideways or leaving it screen-upright.
+        const across = {
+          x: -directionVector.dy,
+          y: 0,
+          z: directionVector.dx
+        };
+        const uphill = {
+          x: directionVector.dx * Math.cos(slopeAngle),
+          y: Math.sin(slopeAngle),
+          z: directionVector.dy * Math.cos(slopeAngle)
+        };
+        const positions = geometry.getAttribute("position");
+
+        for (let index = 0; index < positions.count; index += 1) {
+          const localX = positions.getX(index);
+          const localY = positions.getY(index);
+
+          positions.setXYZ(
+            index,
+            across.x * localX + uphill.x * localY,
+            uphill.y * localY,
+            across.z * localX + uphill.z * localY
+          );
+        }
+        positions.needsUpdate = true;
+        geometry.computeVertexNormals();
+        cacheGeometry(key, geometry);
+      }
+
+      return geometryCache.get(key);
+    }
+
+    function addWeightlessSlopeGroupLabel(actor, center, bottomY, opacity) {
+      if (!isEditorRenderMode() && !isPalettePreviewRenderMode()) {
+        return;
+      }
+
+      const label = weightlessGroupLabel(actor.groupId);
+      const labelMaterial = groupLabelMaterial(label, opacity);
+
+      if (!labelMaterial) {
+        return;
+      }
+
+      const normalized = normalizeCardinalDirection(actor.direction);
+      const slopeAngle = Math.atan2(elevationUnit, unit);
+      const normalOffset = Math.max(0.9, unit * 0.014);
+      const normal = { x: 0, y: Math.cos(slopeAngle), z: 0 };
+
+      if (normalized === "right") normal.x = -Math.sin(slopeAngle);
+      if (normalized === "left") normal.x = Math.sin(slopeAngle);
+      if (normalized === "down") normal.z = -Math.sin(slopeAngle);
+      if (normalized === "up") normal.z = Math.sin(slopeAngle);
+
+      const labelMesh = new THREE.Mesh(
+        iceSlopeGroupLabelGeometry(normalized),
+        labelMaterial
+      );
+      labelMesh.position.set(
+        center.x + normal.x * normalOffset,
+        bottomY + elevationUnit / 2 + normal.y * normalOffset,
+        center.z + normal.z * normalOffset
+      );
+      labelMesh.castShadow = false;
+      labelMesh.receiveShadow = false;
+      scene.add(labelMesh);
     }
 
     function pushQuadPositions(positions, vertices) {
@@ -3593,10 +3686,34 @@
       addPolycubeSuppressedEdge(suppressedEdges, corners[3], corners[0]);
     }
 
-    function iceSlopeDescriptorContactsVoxel(slopeX, slopeY, direction, voxelLevel, now) {
+    function iceSlopeMergeSolidType(descriptor) {
+      if (descriptor?.type === "orange_ice_slope") {
+        return "orange_wall";
+      }
+
+      if (descriptor?.type !== "ice_slope") {
+        return null;
+      }
+
+      if (descriptor.layer?.styleKey === "wall") {
+        return "wall";
+      }
+
+      return descriptor.layer?.styleKey ? null : "ice_block";
+    }
+
+    function iceSlopeDescriptorContactsVoxel(
+      slopeX,
+      slopeY,
+      direction,
+      voxelLevel,
+      now,
+      solidType
+    ) {
       return terrainPieceDescriptorsAtGridOrNeighbor(slopeX, slopeY, now).some((descriptor) => {
         if (
-          descriptor.type !== "ice_slope" ||
+          iceSlopeMergeSolidType(descriptor) !== solidType ||
+          descriptor.isLoweredOrangeSurface === true ||
           normalizeCardinalDirection(descriptor.layer?.direction) !== direction
         ) {
           return false;
@@ -3609,7 +3726,7 @@
       });
     }
 
-    function iceSlopeHighSideContactsForVoxel(voxel, now) {
+    function iceSlopeHighSideContactsForVoxel(voxel, now, solidType) {
       const contacts = [];
       const candidates = [
         { dx: -1, dy: 0, direction: "right", face: "xminus" },
@@ -3625,7 +3742,8 @@
             voxel.y + candidate.dy,
             candidate.direction,
             voxel.z,
-            now
+            now,
+            solidType
           )
         ) {
           contacts.push(candidate.face);
@@ -3635,13 +3753,14 @@
       return contacts;
     }
 
-    function iceSlopeBottomContactsForVoxel(voxel, now) {
+    function iceSlopeBottomContactsForVoxel(voxel, now, solidType) {
       if (!renderIsInsideBoard(voxel.x, voxel.y)) {
         return false;
       }
 
       return terrainPieceDescriptorsAt(voxel.x, voxel.y, now).some((descriptor) => (
-        descriptor.type === "ice_slope" &&
+        iceSlopeMergeSolidType(descriptor) === solidType &&
+        descriptor.isLoweredOrangeSurface !== true &&
         terrainPolycubeLevel(descriptor.bottomY ?? 0) === voxel.z + 1
       ));
     }
@@ -3649,14 +3768,15 @@
     function iceSlopeContactSignatureForVoxels(voxels, now, options = {}) {
       const includeSideContacts = options.includeSideContacts !== false;
       const includeTopContacts = options.includeTopContacts === true;
+      const solidType = options.solidType || "ice_block";
 
       return voxels
         .flatMap((voxel) => {
           const contacts = includeSideContacts
-            ? iceSlopeHighSideContactsForVoxel(voxel, now)
+            ? iceSlopeHighSideContactsForVoxel(voxel, now, solidType)
             : [];
 
-          if (includeTopContacts && iceSlopeBottomContactsForVoxel(voxel, now)) {
+          if (includeTopContacts && iceSlopeBottomContactsForVoxel(voxel, now, solidType)) {
             contacts.push("top");
           }
 
@@ -3666,20 +3786,21 @@
         .join("|");
     }
 
-    function iceSlopeCoveredTopFaceCellsForVoxels(voxels, now) {
+    function iceSlopeCoveredTopFaceCellsForVoxels(voxels, now, solidType = "ice_block") {
       return new Set(
         voxels
-          .filter((voxel) => iceSlopeBottomContactsForVoxel(voxel, now))
+          .filter((voxel) => iceSlopeBottomContactsForVoxel(voxel, now, solidType))
           .map((voxel) => `${voxel.z + 1}:${voxel.x},${voxel.y}`)
       );
     }
 
     function addIceSlopeContactSuppressedEdges(suppressedEdges, voxels, now, options = {}) {
       const includeSideContacts = options.includeSideContacts !== false;
+      const solidType = options.solidType || "ice_block";
 
       voxels.forEach((voxel) => {
         if (includeSideContacts) {
-          iceSlopeHighSideContactsForVoxel(voxel, now).forEach((face) => {
+          iceSlopeHighSideContactsForVoxel(voxel, now, solidType).forEach((face) => {
             addPolycubeFaceContactEdges(suppressedEdges, voxel, face);
           });
         }
@@ -3722,7 +3843,7 @@
     function loweredOrangeSurfaceAtElevation(x, y, elevation, now) {
       return terrainPieceDescriptorsAtGridOrNeighbor(x, y, now).some(
         (descriptor) =>
-          descriptor.type === "orange_wall" &&
+          (descriptor.type === "orange_wall" || descriptor.type === "orange_ice_slope") &&
           descriptor.isLoweredOrangeSurface === true &&
           nearlyEqual(descriptor.elevation ?? 0, elevation)
       );
@@ -3999,7 +4120,7 @@
 
         outer: for (let y = 0; y < state.height; y += 1) {
           for (let x = 0; x < state.width; x += 1) {
-            if (renderTerrainLayersAt(x, y, state).some((layer) => layer?.type === "ice_slope")) {
+            if (renderTerrainLayersAt(x, y, state).some((layer) => layer?.type === "ice_slope" || layer?.type === "orange_ice_slope")) {
               has = true;
               break outer;
             }
@@ -4058,8 +4179,10 @@
     }
 
     function polycubeEdgeGeometry(voxels, options = {}) {
+      const groupedSlopeContacts = options?.groupedSlopeContacts || null;
       const wantsIceSideContacts = options?.suppressIceSlopeContacts === true;
       const wantsIceTopContacts = options?.suppressIceSlopeTopContacts === true;
+      const iceSlopeSolidType = options?.descriptor?.type || "ice_block";
       // Slope contacts can only exist when this room or a boundary neighbor
       // actually contains an ice slope; skip the per-voxel signature work
       // entirely otherwise.
@@ -4072,9 +4195,10 @@
       const suppressIceSlopeSideContacts = wantsIceSideContacts && anyIceNearby;
       const suppressIceSlopeTopContacts = wantsIceTopContacts && anyIceNearby;
       const iceSlopeContactSignature = suppressIceSlopeSideContacts || suppressIceSlopeTopContacts
-        ? iceSlopeContactSignatureForVoxels(voxels, options.now, {
+          ? iceSlopeContactSignatureForVoxels(voxels, options.now, {
             includeSideContacts: suppressIceSlopeSideContacts,
-            includeTopContacts: suppressIceSlopeTopContacts
+            includeTopContacts: suppressIceSlopeTopContacts,
+            solidType: iceSlopeSolidType
           })
         : "";
       const loweredOrangeWraps = options?.descriptor?.type === "wall"
@@ -4094,6 +4218,7 @@
           ? `shared:${boundaryNeighborStatesToken(activeRenderContext?.state?.levelId || app.currentLevelId)}`
           : "normal",
         iceSlopeContactSignature,
+        groupedSlopeContacts?.signature || "",
         loweredOrangeWrapSignature(loweredOrangeWraps),
         orangeTopContacts.signature,
         options?.descriptor?.key || "",
@@ -4108,16 +4233,28 @@
       const positions = [];
       const seenSegments = new Set();
       const suppressedEdges = polycubeContactEdgeKeys(voxels);
-      const iceSlopeCoveredTopFaceCells = suppressIceSlopeTopContacts
-        ? iceSlopeCoveredTopFaceCellsForVoxels(voxels, options.now)
+      let iceSlopeCoveredTopFaceCells = suppressIceSlopeTopContacts
+        ? iceSlopeCoveredTopFaceCellsForVoxels(voxels, options.now, iceSlopeSolidType)
         : null;
+
+      if (groupedSlopeContacts?.coveredTopFaceCells?.size > 0) {
+        iceSlopeCoveredTopFaceCells = new Set([
+          ...(iceSlopeCoveredTopFaceCells || []),
+          ...groupedSlopeContacts.coveredTopFaceCells
+        ]);
+      }
 
       if (suppressIceSlopeSideContacts || suppressIceSlopeTopContacts) {
         addIceSlopeContactSuppressedEdges(suppressedEdges, voxels, options.now, {
           includeSideContacts: suppressIceSlopeSideContacts,
-          includeTopContacts: suppressIceSlopeTopContacts
+          includeTopContacts: suppressIceSlopeTopContacts,
+          solidType: iceSlopeSolidType
         });
       }
+
+      groupedSlopeContacts?.sideContacts?.forEach(({ face, voxel }) => {
+        addPolycubeFaceContactEdges(suppressedEdges, voxel, face);
+      });
 
       suppressWallTopEdgesWrappedByLoweredOrange(suppressedEdges, loweredOrangeWraps);
       suppressOrangePolycubeTopContacts(suppressedEdges, orangeTopContacts);
@@ -4649,6 +4786,10 @@
         return "#a9d6f4";
       }
 
+      if (type === "orange_ice_slope") {
+        return "#b85f16";
+      }
+
       if (type === "player_gate") {
         return "#c75652";
       }
@@ -4754,7 +4895,47 @@
           ];
     }
 
+    // Owner rule (2026-07): colored ice slopes match their family's color
+    // EXACTLY — every box slope is the weightless-box blue, every clone slope
+    // is the clone yellow, black matches the wall, orange matches the orange
+    // wall. Ids are differentiated by the editor's number labels, never by
+    // shade (same convention as the boxes and clones themselves).
+    function slopeStyleColor(styleKey, fallback) {
+      if (!styleKey) {
+        return fallback;
+      }
+
+      if (styleKey === "wall") {
+        return terrainColor("wall");
+      }
+
+      if (styleKey === "orange") {
+        return terrainColor("orange_wall");
+      }
+
+      if (styleKey.startsWith("M")) {
+        return "#315991";
+      }
+
+      if (styleKey.startsWith("c")) {
+        return "#b59a2a";
+      }
+
+      return fallback;
+    }
+
     function actorColor(actor) {
+      if (actor?.shape === "slope") {
+        const numberedSlopeColor = slopeStyleColor(
+          actor.styleKey || actor.groupId,
+          null
+        );
+
+        if (numberedSlopeColor) {
+          return numberedSlopeColor;
+        }
+      }
+
       if (actor.type === "player" || actor.type === "circle_player") {
         return "#5aa95c";
       }
@@ -5521,7 +5702,7 @@
         return elevation + (isLiveState ? app.playerLiftAt(x, y, now) : layer.raised === true ? 1 : 0);
       }
 
-      if (layer.type === "orange_wall") {
+      if (layer.type === "orange_wall" || layer.type === "orange_ice_slope") {
         return elevation + renderOrangeWallLiftValue(x, y, layer, now);
       }
 
@@ -5530,7 +5711,9 @@
 
     function renderOrangeWallLiftValue(x, y, layer, now = performance.now()) {
       const key = `${x},${y}`;
-      const surfaceLiftValue = activeRenderContext?.surfaceLiftValues?.get(`orange_wall:${key}`);
+      const surfaceLiftValue =
+        activeRenderContext?.surfaceLiftValues?.get(`${layer.type}:${key}`) ??
+        activeRenderContext?.surfaceLiftValues?.get(`orange_wall:${key}`);
 
       if (typeof surfaceLiftValue === "number") {
         return clamp01(surfaceLiftValue);
@@ -5548,7 +5731,7 @@
     function renderCellHasOrangeWallLayerAtElevation(x, y, elevation) {
       return renderTerrainLayersAt(x, y).some(
         (candidate) =>
-          candidate.type === "orange_wall" &&
+          (candidate.type === "orange_wall" || candidate.type === "orange_ice_slope") &&
           (candidate.elevation ?? 0) === elevation
       );
     }
@@ -5563,7 +5746,11 @@
       const elevation = layer.elevation ?? 0;
 
       return renderTerrainLayersAt(x, y).some((candidate) => {
-        if (candidate === layer || candidate.type === "orange_wall") {
+        if (
+          candidate === layer ||
+          candidate.type === "orange_wall" ||
+          candidate.type === "orange_ice_slope"
+        ) {
           return false;
         }
 
@@ -6008,6 +6195,7 @@
         Math.round(descriptor.bottomY * 100) / 100,
         descriptor.layer?.direction || "",
         descriptor.layer?.modelUrl || "",
+        descriptor.layer?.styleKey || "",
         descriptor.type === "player_lift" ? `${x},${y}` : ""
       ].join(":");
     }
@@ -6024,26 +6212,50 @@
       const topHeight = Math.max(0, terrainHeight) * elevationUnit;
       const baseHeight = Math.max(0, elevation) * elevationUnit;
       const isOrangeWall = type === "orange_wall";
-      const orangeWallLift = isOrangeWall ? renderOrangeWallLiftValue(x, y, layer, now) : null;
-      const orangeWallHasBelow = isOrangeWall && renderOrangeWallHasLayerBelow(layer, x, y);
+      const isOrangeIceSlope = type === "orange_ice_slope";
+      const isOrangeTerrain = isOrangeWall || isOrangeIceSlope;
+      const orangeWallLift = isOrangeTerrain ? renderOrangeWallLiftValue(x, y, layer, now) : null;
+      const orangeWallHasBelow = isOrangeTerrain && renderOrangeWallHasLayerBelow(layer, x, y);
       const orangeWallLowersAsBlock =
-        isOrangeWall &&
+        isOrangeTerrain &&
         !orangeWallHasBelow &&
         elevation > 0 &&
         !renderOrangeWallHasNonOrangeSupportBelow(layer, x, y, now);
-      const orangeWallHasAbove = isOrangeWall && renderOrangeWallHasLayerAbove(layer, x, y);
+      const orangeWallHasAbove = isOrangeTerrain && renderOrangeWallHasLayerAbove(layer, x, y);
       const isLoweredOrangeSurface =
-        isOrangeWall &&
+        isOrangeTerrain &&
         !orangeWallHasBelow &&
         !orangeWallLowersAsBlock &&
         orangeWallLift <= 0.001;
       const isCollapsingOrangeBase =
-        isOrangeWall &&
+        isOrangeTerrain &&
         !orangeWallHasBelow &&
         !orangeWallLowersAsBlock &&
         orangeWallHasAbove &&
         orangeWallLift > 0.001 &&
         orangeWallLift < 0.999;
+
+      if (isOrangeIceSlope && !isLoweredOrangeSurface) {
+        const topY = (elevation + orangeWallLift) * elevationUnit;
+        const blockHeight = elevationUnit;
+        const descriptor = {
+          blockHeight,
+          bottomY: topY - blockHeight,
+          elevation,
+          isLoweredOrangeSurface: false,
+          isLoweredPlayerLift: false,
+          isSurfacePlayerGate: false,
+          isVoid: false,
+          layer,
+          terrainHeight,
+          isSunkenFloor: false,
+          topY,
+          type
+        };
+
+        descriptor.key = terrainPieceDescriptorKey(descriptor, x, y);
+        return descriptor;
+      }
 
       if (isOrangeWall && (orangeWallHasBelow || orangeWallLowersAsBlock)) {
         const topY = (elevation + orangeWallLift) * elevationUnit;
@@ -6263,6 +6475,10 @@
       const descriptor = entries[0].descriptor;
       const bottomY = Math.min(...entries.map((entry) => entry.descriptor.bottomY));
       const topY = Math.max(...entries.map((entry) => entry.descriptor.topY));
+      const joinsSlopeFamily =
+        descriptor.type === "ice_block" ||
+        descriptor.type === "wall" ||
+        descriptor.type === "orange_wall";
 
       addOutlinedMesh(
         polycubeGeometry(voxels),
@@ -6272,8 +6488,8 @@
           edgeGeometry: polycubeEdgeGeometry(voxels, {
             descriptor,
             now,
-            suppressIceSlopeContacts: descriptor.type === "ice_block",
-            suppressIceSlopeTopContacts: true,
+            suppressIceSlopeContacts: joinsSlopeFamily,
+            suppressIceSlopeTopContacts: joinsSlopeFamily,
             suppressSharedRoomEdges:
               descriptor.type === "wall" || descriptor.type === "ice_block"
           }),
@@ -6566,15 +6782,20 @@
       });
     }
 
-    function iceSlopeHighSideHasIceBlockContact(cell, descriptor, now) {
+    function iceSlopeHighSideHasSolidContact(cell, descriptor, now) {
       const direction = normalizeCardinalDirection(descriptor.layer?.direction);
       const vector = cardinalGridVector(direction);
       const neighborX = cell.gridX + vector.dx;
       const neighborY = cell.gridY + vector.dy;
       const slopeLevel = terrainPolycubeLevel(descriptor.bottomY ?? 0);
+      const solidType = iceSlopeMergeSolidType(descriptor);
+
+      if (!solidType) {
+        return false;
+      }
 
       return terrainPieceDescriptorsAtGridOrNeighbor(neighborX, neighborY, now).some((neighbor) => {
-        if (neighbor.type !== "ice_block" || !canRenderTerrainPolycube(neighbor)) {
+        if (neighbor.type !== solidType || !canRenderTerrainPolycube(neighbor)) {
           return false;
         }
 
@@ -6585,11 +6806,16 @@
       });
     }
 
-    function iceSlopeBottomHasIceBlockContact(cell, descriptor, now) {
+    function iceSlopeBottomHasSolidContact(cell, descriptor, now) {
       const slopeLevel = terrainPolycubeLevel(descriptor.bottomY ?? 0);
+      const solidType = iceSlopeMergeSolidType(descriptor);
+
+      if (!solidType) {
+        return false;
+      }
 
       return terrainPieceDescriptorsAt(cell.gridX, cell.gridY, now).some((neighbor) => {
-        if (neighbor.type !== "ice_block" || !canRenderTerrainPolycube(neighbor)) {
+        if (neighbor.type !== solidType || !canRenderTerrainPolycube(neighbor)) {
           return false;
         }
 
@@ -6633,7 +6859,11 @@
     }
 
     function iceSlopeDescriptorsCanMergeAtContact(base, neighbor, contact, neighborContact) {
-      if (neighbor.type !== "ice_slope") {
+      if (neighbor.type !== base.type) {
+        return false;
+      }
+
+      if ((neighbor.layer?.styleKey || "") !== (base.layer?.styleKey || "")) {
         return false;
       }
 
@@ -6668,15 +6898,243 @@
       return false;
     }
 
+    // Numbered Box/Clone Ice Slopes remain individual wedge meshes, but their
+    // same-group contacts visually union with cubes and other wedges exactly
+    // like static ice slopes union with ice-block polycubes. Group identity is
+    // part of every lookup so differently numbered pieces retain a seam.
+    function groupedActorPolycubeLevel(actor) {
+      const value = Number(actor?.renderElevation ?? actor?.elevation ?? 0);
+      const nearest = Math.round(value);
+
+      return Math.abs(value - nearest) <= 0.001 ? nearest : Math.floor(value);
+    }
+
+    function groupedActorCanMergeVisually(actor) {
+      return (
+        actor &&
+        actor.removed !== true &&
+        actor.renderInHole !== true &&
+        actorIsVisible(actor) &&
+        Math.abs(actorVisualScale(actor) - 1) <= 0.001 &&
+        Math.abs(Number(actor.renderSink ?? 0)) <= 0.001
+      );
+    }
+
+    function isGroupedCubeActor(actor, groupId, actorType) {
+      return (
+        groupedActorCanMergeVisually(actor) &&
+        actor.groupId === groupId &&
+        actor.type === actorType &&
+        actor.shape !== "slope"
+      );
+    }
+
+    function isGroupedSlopeActor(actor, groupId, actorType) {
+      return (
+        groupedActorCanMergeVisually(actor) &&
+        actor.groupId === groupId &&
+        actor.type === actorType &&
+        actor.shape === "slope"
+      );
+    }
+
+    function polycubeFaceCellIdentity(voxel, kind) {
+      if (kind === "top") {
+        return `top:${voxel.z + 1}:${voxel.x},${voxel.y}`;
+      }
+      if (kind === "bottom") {
+        return `bottom:${voxel.z}:${voxel.x},${voxel.y}`;
+      }
+      if (kind === "xplus") {
+        return `xplus:${voxel.x + 1}:${voxel.y},${voxel.z}`;
+      }
+      if (kind === "xminus") {
+        return `xminus:${voxel.x}:${voxel.y},${voxel.z}`;
+      }
+      if (kind === "zplus") {
+        return `zplus:${voxel.y + 1}:${voxel.x},${voxel.z}`;
+      }
+      return `zminus:${voxel.y}:${voxel.x},${voxel.z}`;
+    }
+
+    function groupedSlopeActorContactsForVoxels(voxels, groupId, actorType) {
+      const slopes = renderState().actors.filter((actor) =>
+        isGroupedSlopeActor(actor, groupId, actorType)
+      );
+      const sideContacts = [];
+      const coveredTopFaceCells = new Set();
+      const hiddenFaceCellKeys = new Set();
+      const signature = [];
+      const candidates = [
+        { dx: -1, dy: 0, direction: "right", face: "xminus" },
+        { dx: 1, dy: 0, direction: "left", face: "xplus" },
+        { dx: 0, dy: -1, direction: "down", face: "zminus" },
+        { dx: 0, dy: 1, direction: "up", face: "zplus" }
+      ];
+
+      voxels.forEach((voxel) => {
+        candidates.forEach((candidate) => {
+          const touches = slopes.some(
+            (slope) =>
+              slope.x === voxel.x + candidate.dx &&
+              slope.y === voxel.y + candidate.dy &&
+              groupedActorPolycubeLevel(slope) === voxel.z &&
+              normalizeCardinalDirection(slope.direction) === candidate.direction
+          );
+
+          if (!touches) {
+            return;
+          }
+
+          sideContacts.push({ face: candidate.face, voxel });
+          hiddenFaceCellKeys.add(polycubeFaceCellIdentity(voxel, candidate.face));
+          signature.push(`${voxel.x},${voxel.y},${voxel.z}:${candidate.face}`);
+        });
+
+        const touchesBottom = slopes.some(
+          (slope) =>
+            slope.x === voxel.x &&
+            slope.y === voxel.y &&
+            groupedActorPolycubeLevel(slope) === voxel.z + 1
+        );
+
+        if (touchesBottom) {
+          const topFaceKey = `${voxel.z + 1}:${voxel.x},${voxel.y}`;
+
+          coveredTopFaceCells.add(topFaceKey);
+          hiddenFaceCellKeys.add(polycubeFaceCellIdentity(voxel, "top"));
+          signature.push(`${voxel.x},${voxel.y},${voxel.z}:top`);
+        }
+      });
+
+      return {
+        coveredTopFaceCells,
+        hiddenFaceCellKeys,
+        sideContacts,
+        signature: signature.sort().join("|")
+      };
+    }
+
+    function groupedSlopeActorsCanMergeAtContact(base, neighbor, contact, neighborContact) {
+      if (
+        base.groupId !== neighbor.groupId ||
+        base.type !== neighbor.type ||
+        !groupedActorCanMergeVisually(neighbor)
+      ) {
+        return false;
+      }
+
+      const baseDirection = normalizeCardinalDirection(base.direction);
+      const neighborDirection = normalizeCardinalDirection(neighbor.direction);
+      const baseBottom = groupedActorPolycubeLevel(base);
+      const neighborBottom = groupedActorPolycubeLevel(neighbor);
+
+      if (neighborDirection === baseDirection) {
+        if (baseBottom === neighborBottom) {
+          return true;
+        }
+        if (contact === "high") {
+          return neighborBottom === baseBottom + 1;
+        }
+        if (contact === "low") {
+          return neighborBottom + 1 === baseBottom;
+        }
+      }
+
+      return (
+        contact === "high" &&
+        neighborContact === "high" &&
+        baseBottom === neighborBottom
+      );
+    }
+
+    function groupedSlopeActorSuppressedEdgeContacts(actor) {
+      const contacts = new Set();
+
+      if (!groupedActorCanMergeVisually(actor)) {
+        return contacts;
+      }
+
+      const state = renderState();
+      const slopeLevel = groupedActorPolycubeLevel(actor);
+      const direction = normalizeCardinalDirection(actor.direction);
+      const vector = cardinalGridVector(direction);
+      const groupId = actor.groupId;
+      const actorType = actor.type;
+      const cubes = state.actors.filter((candidate) =>
+        isGroupedCubeActor(candidate, groupId, actorType)
+      );
+
+      if (
+        cubes.some(
+          (cube) =>
+            cube.x === actor.x + vector.dx &&
+            cube.y === actor.y + vector.dy &&
+            groupedActorPolycubeLevel(cube) === slopeLevel
+        )
+      ) {
+        contacts.add("high");
+      }
+
+      if (
+        cubes.some(
+          (cube) =>
+            cube.x === actor.x &&
+            cube.y === actor.y &&
+            groupedActorPolycubeLevel(cube) + 1 === slopeLevel
+        )
+      ) {
+        contacts.add("bottom");
+      }
+
+      [
+        { dx: -1, dy: 0 },
+        { dx: 1, dy: 0 },
+        { dx: 0, dy: -1 },
+        { dx: 0, dy: 1 }
+      ].forEach(({ dx, dy }) => {
+        const contact = iceSlopeContactForGridOffset(direction, dx, dy);
+        const touches = state.actors.some((neighbor) => {
+          if (
+            neighbor === actor ||
+            neighbor.x !== actor.x + dx ||
+            neighbor.y !== actor.y + dy ||
+            !isGroupedSlopeActor(neighbor, groupId, actorType)
+          ) {
+            return false;
+          }
+
+          const neighborContact = iceSlopeContactForGridOffset(
+            neighbor.direction,
+            -dx,
+            -dy
+          );
+
+          return groupedSlopeActorsCanMergeAtContact(
+            actor,
+            neighbor,
+            contact,
+            neighborContact
+          );
+        });
+
+        if (touches) {
+          contacts.add(contact);
+        }
+      });
+
+      return contacts;
+    }
+
     function iceSlopeSuppressedEdgeContacts(cell, descriptor, now) {
       const direction = normalizeCardinalDirection(descriptor.layer?.direction);
       const contacts = new Set();
 
-      if (iceSlopeHighSideHasIceBlockContact(cell, descriptor, now)) {
+      if (iceSlopeHighSideHasSolidContact(cell, descriptor, now)) {
         contacts.add("high");
       }
 
-      if (iceSlopeBottomHasIceBlockContact(cell, descriptor, now)) {
+      if (iceSlopeBottomHasSolidContact(cell, descriptor, now)) {
         contacts.add("bottom");
       }
 
@@ -6755,7 +7213,7 @@
 
       addOutlinedMesh(
         iceSlopeGeometry(descriptor.layer?.direction),
-        terrainColor(descriptor.type),
+        slopeStyleColor(descriptor.layer?.styleKey, terrainColor(descriptor.type)),
         {
           x: centerX,
           y: bottomY,
@@ -6793,7 +7251,10 @@
         return;
       }
 
-      if (descriptor.type === "ice_slope") {
+      if (
+        (descriptor.type === "ice_slope" || descriptor.type === "orange_ice_slope") &&
+        !descriptor.isLoweredOrangeSurface
+      ) {
         cells.forEach((cell) => addIceSlopeCell(cell, descriptor, visibility, now));
         return;
       }
@@ -6801,6 +7262,10 @@
       if (descriptor.isLoweredPlayerLift || descriptor.isLoweredOrangeSurface || descriptor.isSurfacePlayerGate) {
         const overlaysSupportingSurface =
           descriptor.isLoweredOrangeSurface || descriptor.isSurfacePlayerGate;
+        // Lowered orange walls share their height with actor bases. The deeper
+        // plate bias used by surface gates covers the actor's contact outline;
+        // one unit still prevents surface z-fighting without hiding that edge.
+        const supportingSurfaceDepthOffset = descriptor.isLoweredOrangeSurface ? -1 : -6;
         addOutlinedMesh(
           componentTopPlaneGeometry(cells),
           terrainColor(descriptor.type),
@@ -6812,8 +7277,8 @@
             edgeThreshold: 18,
             opacity: visibility,
             polygonOffset: overlaysSupportingSurface,
-            polygonOffsetFactor: -6,
-            polygonOffsetUnits: -6,
+            polygonOffsetFactor: supportingSurfaceDepthOffset,
+            polygonOffsetUnits: supportingSurfaceDepthOffset,
             renderOrder: overlaysSupportingSurface ? 20 : 0,
             castShadow: false,
             receiveShadow:
@@ -7133,8 +7598,12 @@
         rounded(column.sink),
         column.hasHoleFade ? 1 : 0
       ].join(":");
+      // Slope-shaped members stay out of the cube-only polycube batch so they
+      // retain wedge geometry. Group-aware contact suppression below removes
+      // internal seams where those wedges touch this same-ID cube mesh.
       const isGroupedPolycubeActor = (actor) =>
-        actor?.type === "weightless_box" || actor?.type === "clone";
+        (actor?.type === "weightless_box" || actor?.type === "clone") &&
+        actor?.shape !== "slope";
       const canMergeStackedWeightlessEntries = (lower, upper) =>
         lower.groupId === upper.groupId &&
         lower.actor.type === upper.actor.type &&
@@ -7190,6 +7659,11 @@
           y: columnYOffset(columns[0]),
           z: columnRenderOffsetY(columns[0]) * unit
         };
+        const groupedSlopeContacts = groupedSlopeActorContactsForVoxels(
+          voxels,
+          columns[0].groupId,
+          columns[0].actor.type
+        );
         const cells = Array.from(
           voxels
             .reduce((cellMap, voxel) => {
@@ -7225,7 +7699,7 @@
           actorColor(columns[0].actor),
           renderOffset,
           {
-            edgeGeometry: polycubeEdgeGeometry(voxels),
+            edgeGeometry: polycubeEdgeGeometry(voxels, { groupedSlopeContacts }),
             edgeThreshold: 18,
             opacity,
             edgeOpacity,
@@ -7247,7 +7721,8 @@
           voxels,
           columns[0].groupId,
           renderOffset,
-          Math.min(0.92, edgeOpacity)
+          Math.min(0.92, edgeOpacity),
+          { hiddenFaceCellKeys: groupedSlopeContacts.hiddenFaceCellKeys }
         );
       };
       const renderPolycubeGroup = (columns) => {
@@ -8017,6 +8492,67 @@
         return;
       }
 
+      // Owner rule (2026-07): stuck rider devices. An attached lift/gate is
+      // drawn exactly like its terrain twin — the flush device plate (with
+      // the lift's arrow marker) sitting on the carrier's top surface. A
+      // raised lift ('L') keeps the full raised block of a raised terrain
+      // lift.
+      if (actor.type === "attached_lift" || actor.type === "attached_gate") {
+        const isLift = actor.type === "attached_lift";
+        const isRaisedLift = isLift && actor.raised === true;
+        const gateLift = isLift
+          ? 0
+          : app.attachedGateLiftAt?.(actor, now) ??
+            (app.liveRaisedPlayerGates?.has?.(`${actor.x},${actor.y}`) ? 1 : 0);
+        const deviceLift = isLift ? (isRaisedLift ? 1 : 0) : gateLift;
+        const surfaceY = elevation * elevationUnit - sink + actorVisualLift;
+        const plateThickness = playerLiftPlateThickness();
+        const loweredTopY = surfaceY + playerLiftPlateOffset() + plateThickness;
+        const raisedTopY = surfaceY + elevationUnit;
+        const bodyHeight = lerp(plateThickness, elevationUnit, deviceLift);
+        const deviceTopY = lerp(loweredTopY, raisedTopY, deviceLift);
+        const sourceLayer = Math.max(0, Math.floor(Number(actor.elevation) || 0));
+        const footprint = unit * scale;
+
+        addOutlinedMesh(
+          new THREE.BoxGeometry(footprint, bodyHeight, footprint),
+          terrainColor(isLift ? "player_lift" : "player_gate"),
+          { x: center.x, y: deviceTopY - bodyHeight / 2, z: center.z },
+          {
+            opacity: opacity * visibility,
+            edgeThreshold: 20,
+            edgeOpacity: fade * visibility,
+            castShadow: renderContextCastsShadows(),
+            receiveShadow: false,
+            editorPick: {
+              kind: "actor",
+              cells: [
+                {
+                  gridX: actor.x,
+                  gridY: actor.y,
+                  left: center.x - footprint / 2,
+                  right: center.x + footprint / 2,
+                  top: center.z - footprint / 2,
+                  bottom: center.z + footprint / 2
+                }
+              ],
+              logicalBottomLayer: sourceLayer,
+              logicalLayerCount: 1,
+              logicalSourceFollowsPaint: true,
+              topY: deviceTopY,
+              bottomY: deviceTopY - bodyHeight,
+              sourceLayer
+            }
+          }
+        );
+
+        if (isLift) {
+          addPlayerLiftTriangle(center, deviceTopY, isRaisedLift ? 1 : -1, fade * visibility);
+        }
+
+        return;
+      }
+
       if (actor.type === "circle_player") {
         const radius = unit * 0.42 * scale;
         const body = new THREE.Mesh(
@@ -8047,6 +8583,51 @@
         bottom: center.z + depth / 2
       };
 
+      const actorEditorPick = {
+        kind: "actor",
+        cells: [actorBounds],
+        logicalBottomLayer: sourceLayer,
+        logicalLayerCount: 1,
+        logicalSourceFollowsPaint: true,
+        topY,
+        bottomY: topY - height,
+        sourceLayer
+      };
+
+      // Owner feature (2026-07): slope-SHAPED group members (Box/Clone Ice
+      // Slopes) render with the ice-slope wedge geometry in their family's
+      // flat color, at the actor's position.
+      if (actor.shape === "slope") {
+        const slopeBottomY = topY - height;
+        const suppressContacts = groupedSlopeActorSuppressedEdgeContacts(actor);
+
+        addOutlinedMesh(
+          iceSlopeGeometry(actor.direction),
+          actorRenderColor(actor),
+          {
+            x: center.x,
+            y: slopeBottomY,
+            z: center.z
+          },
+          {
+            edgeGeometry: iceSlopeEdgeGeometry(actor.direction, { suppressContacts }),
+            edgeThreshold: 18,
+            opacity: opacity * visibility,
+            doubleSide: true,
+            castShadow: renderContextCastsShadows(),
+            receiveShadow: false,
+            editorPick: actorEditorPick
+          }
+        );
+        addWeightlessSlopeGroupLabel(
+          actor,
+          center,
+          slopeBottomY,
+          Math.min(0.92, fade * visibility)
+        );
+        return;
+      }
+
       addTopRoundedCuboid(width, depth, height, radius, actorRenderColor(actor), {
         x: center.x,
         y: topY,
@@ -8056,16 +8637,7 @@
         edgeOpacity: fade * visibility,
         castShadow: renderContextCastsShadows(),
         receiveShadow: false,
-        editorPick: {
-          kind: "actor",
-          cells: [actorBounds],
-          logicalBottomLayer: sourceLayer,
-          logicalLayerCount: 1,
-          logicalSourceFollowsPaint: true,
-          topY,
-          bottomY: topY - height,
-          sourceLayer
-        }
+        editorPick: actorEditorPick
       });
     }
 
@@ -8227,7 +8799,7 @@
         return layer.raised === true ? 1 : 0;
       }
 
-      if (layer.type === "orange_wall") {
+      if (layer.type === "orange_wall" || layer.type === "orange_ice_slope") {
         const raisedOrangeWalls = transitionSet(state?.raisedOrangeWalls);
         return raisedOrangeWalls
           ? raisedOrangeWalls.has(key) ? 1 : 0
@@ -8420,6 +8992,11 @@
 
       app.eachPlayerGate?.((x, y) => {
         parts.push(`G${x},${y}:${Math.round(app.gateLiftAt(x, y, now) * 1000)}`);
+      });
+      app.state.actors.forEach((actor, index) => {
+        if (!actor.removed && actor.type === "attached_gate") {
+          parts.push(`AG${index}:${Math.round((app.attachedGateLiftAt?.(actor, now) || 0) * 1000)}`);
+        }
       });
       app.eachOrangeWall?.((x, y) => {
         parts.push(`O${x},${y}:${Math.round(app.orangeWallLiftAt(x, y, now) * 1000)}`);
@@ -8994,8 +9571,21 @@
       const maxSpan = Math.max(worldWidth, worldHeight, stableHeight, unit);
       const isPalettePreview = isPalettePreviewRenderMode();
       const cameraYaw = isPalettePreview ? 0 : debugCameraYaw;
-      const cameraTilt = clampDebugCameraTilt(isPalettePreview ? Math.PI * 0.18 : debugCameraTilt);
-      const cameraZoom = isPalettePreview ? 1 : debugCameraZoom;
+      const requestedPaletteTilt = app.palettePreviewCameraTilt;
+      const cameraTilt = clampDebugCameraTilt(
+        isPalettePreview && Number.isFinite(requestedPaletteTilt)
+          ? requestedPaletteTilt
+          : isPalettePreview
+            ? Math.PI * 0.18
+            : debugCameraTilt
+      );
+      const requestedPaletteZoom = app.palettePreviewCameraZoom;
+      const cameraZoom =
+        isPalettePreview && Number.isFinite(requestedPaletteZoom)
+          ? clampDebugCameraZoom(requestedPaletteZoom)
+          : isPalettePreview
+            ? 1
+            : debugCameraZoom;
       const horizontalTilt = Math.sin(cameraTilt);
       const verticalTilt = Math.cos(cameraTilt);
       const viewDirection = new THREE.Vector3(

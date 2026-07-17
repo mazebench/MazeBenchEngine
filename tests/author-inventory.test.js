@@ -100,17 +100,53 @@ const previewSection = sourceSection(
 );
 assert.match(previewSection, /const width = 1/);
 assert.match(previewSection, /"__palette_preview_"/);
+assert.match(previewSection, /const promptPreview = promptToolPreviewSpec\(tool\.token\)/);
+assert.match(previewSection, /actor\.groupId = promptPreview\.groupId/);
+assert.match(previewSection, /actor\.styleKey = promptPreview\.groupId/);
+assert.match(previewSection, /const puncherPortrait = kind === "puncher"/);
+assert.match(previewSection, /const slopeSuffix = slopeTokenStyleSuffix\(directionalPreviewToken\)/);
+assert.match(previewSection, /slopeSuffix === null \? directionalPreviewToken : "Sr" \+ slopeSuffix/);
+assert.match(previewSection, /slopePortrait/);
 assert.match(previewSection, /const orderedTools =/);
 assert.match(previewSection, /\.\.\.hotbarTokens\(\)/);
+assert.match(previewSection, /\.\.\.promptPaletteTools\.map\(\(tool\) => tool\.token\)/);
 assert.match(previewSection, /const preloadWindowSize = 4/);
 assert.match(previewSection, /await preloadTool\(tool\)/);
 assert.match(previewSection, /publishPalettePreview\(tool, previewUrl\)/);
 assert.match(previewSection, /await yieldPalettePreviewPaint\(\)/);
+assert.match(previewSection, /async function capturePalettePreviewTools\(orderedTools\)/);
+assert.match(previewSection, /function requestPatternPalettePreview\(tool\)/);
+assert.match(previewSection, /await capturePalettePreviewTools\(\[tool\]\)/);
+assert.match(previewSection, /palettePreviewRenderer\.captureQueue = capturePromise\.catch/);
 assert.match(previewSection, /disposeAuxiliaryRenderApp\(app, canvas\)/);
 assert.match(previewSection, /app\.state\.effects\.fuzzyEnabled = false/);
 assert.match(previewSection, /app\.state\.effects\.noisePhase = 0/);
+assert.match(
+  previewSection,
+  /app\.palettePreviewCameraTilt = entry\.slopePortrait[\s\S]*?\? Math\.PI \* 0\.18/
+);
+assert.match(previewSection, /entry\.puncherPortrait[\s\S]*?Math\.PI \* 0\.43/);
+assert.match(previewSection, /app\.palettePreviewCameraZoom = entry\.puncherPortrait \? 1\.65/);
+assert.match(previewSection, /mode: entry\.slopePortrait \? "isometric" : "perspective"/);
 assert.doesNotMatch(previewSection, /await Promise\.all\(/);
 assert.doesNotMatch(previewSection, /palettePreviewRenderer\.previewsByToken\s*=/);
+assert.doesNotMatch(source, /drawnSwatch/);
+assert.match(source, /\^S\[rlud\]M\\d\+\$\/\.test\(token\)[\s\S]*?blueSlopePromptToken/);
+assert.match(source, /\^S\[rlud\]c\\d\+\$\/\.test\(token\)[\s\S]*?yellowSlopePromptToken/);
+assert.match(source, /requestPatternPalettePreview\(selectedTool\)/);
+
+assert.match(
+  fs.readFileSync(path.join(__dirname, "..", "public", "play-render-three.js"), "utf8"),
+  /isPalettePreview && Number\.isFinite\(requestedPaletteTilt\)/
+);
+assert.match(
+  fs.readFileSync(path.join(__dirname, "..", "public", "play-render-three.js"), "utf8"),
+  /isPalettePreview && Number\.isFinite\(requestedPaletteZoom\)/
+);
+assert.match(
+  fs.readFileSync(path.join(__dirname, "..", "public", "play-render-three.js"), "utf8"),
+  /actor\?\.shape === "slope"[\s\S]*?slopeStyleColor\([\s\S]*?actor\.styleKey \|\| actor\.groupId/
+);
 
 const defaultHotbarSection = sourceSection(
   "const defaultHotbarTokens",
@@ -149,6 +185,33 @@ assert.match(source, /lucide\.dev\/icons\/mouse-pointer-2-off/);
 assert.match(source, /lucide\.dev\/icons\/eraser/);
 assert.match(source, /return deselectToolIconSvg/);
 assert.match(source, /return eraserToolIconSvg/);
+assert.doesNotMatch(source, /promptToolIconSvg/);
+assert.match(source, /if \(slopeSuffix === "#"\) return 1/);
+assert.match(source, /if \(slopeSuffix === "O"\) return 2/);
+assert.match(source, /const permanentToolboxSlopeTokens = \["Sr", "Sr#", "SrO"\]/);
+assert.match(source, /\["r", "l", "u", "d"\]\.forEach\(\(directionChar\) =>/);
+assert.match(
+  source,
+  /toolByToken\.get\(directionToken\) \|\| materializePatternTool\(directionToken\)/
+);
+assert.match(
+  source,
+  /permanentToolboxSlopeTokens\.forEach\(\(token\) => slopeFamilyForToken\(token\)\)/
+);
+assert.match(
+  source,
+  /permanentToolboxSlopeTokens\.forEach\(\(token\) => \{[\s\S]*?tools\.push\(family\.paletteTool\)/
+);
+const cameraSlopeSection = sourceSection(
+  "function cameraFarDirection",
+  "function puncherTokenForDirection"
+);
+assert.match(cameraSlopeSection, /mapCameraRelativeDirection\(0, -1\)/);
+assert.match(cameraSlopeSection, /family\.tokenByDirection\.get\(direction\)/);
+assert.match(cameraSlopeSection, /slopeFamilyForToken\(state\.selectedToken\)/);
+assert.match(source, /function promptToolPreviewSpec/);
+assert.match(source, /return \{ groupId: "MN", token: "M0" \}/);
+assert.match(source, /return \{ groupId: "cN", token: "c0" \}/);
 
 const dirtyStateSection = sourceSection(
   "function syncEditorDirtyState",

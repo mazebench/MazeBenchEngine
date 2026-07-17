@@ -172,6 +172,17 @@
           </div>
         </div>
       </div>
+      <div id="token-id-modal" class="publish-modal author-unsaved-modal" role="dialog" aria-modal="true" aria-labelledby="token-id-title" aria-describedby="token-id-message">
+        <div class="publish-modal__dialog">
+          <h2 id="token-id-title" class="publish-modal__title">Pick an id</h2>
+          <p id="token-id-message" class="author-unsaved-modal__message">Choose a numeric id.</p>
+          <label class="field"><span>Id (0 or more)</span><input id="token-id-input" type="number" min="0" step="1" inputmode="numeric"></label>
+          <div class="publish-modal__actions author-unsaved-modal__actions">
+            <button id="token-id-cancel" class="tool-button" type="button">Cancel</button>
+            <button id="token-id-confirm" class="tool-button author-unsaved-modal__save" type="button">Select</button>
+          </div>
+        </div>
+      </div>
       <div id="publish-modal" class="publish-modal" role="dialog" aria-modal="true" aria-labelledby="publish-modal-title"><div class="publish-modal__dialog"><h2 id="publish-modal-title" class="publish-modal__title">Publish checklist</h2><ul id="publish-modal-list" class="publish-modal__list"></ul><div id="publish-modal-actions" class="publish-modal__actions"></div></div></div>
     </main>
     <main class="build-mobile-blocker"><section class="build-mobile-blocker__panel"><h1>Desktop editor only</h1><p>World editing is available on desktop for now.</p><div class="build-mobile-blocker__actions"></div></section></main>`;

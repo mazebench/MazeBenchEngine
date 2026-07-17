@@ -204,6 +204,83 @@ function createRuntimeApp(playData) {
   return app;
 }
 
+function attachedLiftPlayData(initialRaised = false) {
+  const playerElevation = initialRaised ? 2 : 1;
+  const wallLayers = [
+    { type: "floor", elevation: 0 },
+    { type: "wall", elevation: 0 }
+  ];
+
+  if (initialRaised) {
+    wallLayers.push({ type: "wall", elevation: 1 });
+  }
+
+  return {
+    gameId: "maze",
+    levelId: "__attached_lift_history__",
+    levelLabel: "Attached Lift History",
+    width: 3,
+    height: 1,
+    terrain: [[
+      { type: "wall", layers: wallLayers },
+      { type: "floor", layers: [{ type: "floor", elevation: 0 }] },
+      { type: "floor", layers: [{ type: "floor", elevation: 0 }] }
+    ]],
+    actors: [
+      { type: "player", x: 0, y: 0, elevation: playerElevation, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 0, removed: false },
+      {
+        type: "attached_lift",
+        x: 1,
+        y: 0,
+        elevation: 1,
+        raised: initialRaised,
+        removed: false
+      }
+    ]
+  };
+}
+
+function moveOntoAttachedLift(app) {
+  const result = app.movement.performPlayerMove(1, 0, {
+    animate: false,
+    recordHistory: true
+  });
+
+  assert.equal(result.moved, true, "player should step onto the attached lift");
+}
+
+function assertAttachedLiftHistoryRoundTrips() {
+  const undoApp = createRuntimeApp(attachedLiftPlayData(false));
+  undoApp.render = () => {};
+  moveOntoAttachedLift(undoApp);
+  assert.equal(undoApp.state.actors[2].raised, true, "step raises the attached lift");
+  assert.equal(
+    undoApp.moveHistory.at(-1)?.actors?.[2]?.raised,
+    false,
+    "undo snapshot stores the previous attached-lift phase"
+  );
+  undoApp.undoMove({ instantRestore: true });
+  assert.equal(undoApp.state.actors[2].raised, false, "undo restores the lowered phase");
+
+  const resetApp = createRuntimeApp(attachedLiftPlayData(false));
+  resetApp.render = () => {};
+  moveOntoAttachedLift(resetApp);
+  resetApp.resetPositions();
+  assert.equal(resetApp.state.actors[2].raised, false, "reset restores the lowered phase");
+
+  const initiallyRaisedApp = createRuntimeApp(attachedLiftPlayData(true));
+  initiallyRaisedApp.render = () => {};
+  moveOntoAttachedLift(initiallyRaisedApp);
+  assert.equal(initiallyRaisedApp.state.actors[2].raised, false, "step lowers an authored raised lift");
+  initiallyRaisedApp.resetPositions();
+  assert.equal(
+    initiallyRaisedApp.state.actors[2].raised,
+    true,
+    "reset restores an authored raised phase"
+  );
+}
+
 // --- Comparison ---
 
 function runtimeActorSnapshot(actor) {
@@ -280,6 +357,7 @@ function assertParity(context, app, engine, engineState) {
 // --- Main ---
 
 const startedAtMs = performance.now();
+assertAttachedLiftHistoryRoundTrips();
 const pickedLevels = pickLevels();
 
 assert.equal(

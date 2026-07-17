@@ -40,6 +40,18 @@
       login: "claude auth login"
     }
   };
+  const PRIME_SETUP = {
+    docs: "https://docs.primeintellect.ai/cli-reference/introduction",
+    install: [
+      "# Install uv only if needed",
+      "curl -LsSf https://astral.sh/uv/install.sh | sh",
+      "",
+      "# Install Prime and sign in",
+      "uv tool install -U prime",
+      "prime login"
+    ].join("\n"),
+    login: "prime login"
+  };
   const RUN_COMPANY_NAMES = {
     codex: "OpenAI",
     claude: "Anthropic",
@@ -474,28 +486,69 @@
     };
   }
 
-  function showLocalSetup(harnessId = state.harness, availability = localRunAvailability(harnessId)) {
+  let providerSetupRetry = null;
+
+  function presentProviderSetup({ logo, title, message, command, note = "", docs, retry = null }) {
     const modal = document.getElementById("provider-setup-modal");
     if (!modal) return;
+    const noteElement = document.getElementById("provider-setup-note");
+    const closeButton = document.getElementById("provider-setup-close");
+
+    providerSetupRetry = retry;
+    document.getElementById("provider-setup-logo").innerHTML = logo || "";
+    document.getElementById("provider-setup-title").textContent = title;
+    document.getElementById("provider-setup-message").textContent = message;
+    document.getElementById("provider-setup-command").textContent = command;
+    document.getElementById("provider-setup-docs").href = docs;
+    if (noteElement) {
+      noteElement.textContent = note;
+      noteElement.hidden = !note;
+    }
+    if (closeButton) closeButton.textContent = retry ? "Check again" : "Got it";
+    modal.hidden = false;
+    window.requestAnimationFrame(() => modal.classList.add("open"));
+    window.setTimeout(() => closeButton?.focus(), 30);
+  }
+
+  function showLocalSetup(harnessId = state.harness, availability = localRunAvailability(harnessId)) {
     const harness = HARNESSES.find((entry) => entry.id === harnessId);
     const setup = LOCAL_SETUP[harnessId];
-    document.getElementById("provider-setup-logo").innerHTML = harness?.logo || "";
-    document.getElementById("provider-setup-title").textContent = `${harness?.name || "Local CLI"} subscription is inactive`;
     const wrongLocalAuth = availability.authenticated && !availability.subscription;
-    document.getElementById("provider-setup-message").textContent = !availability.installed
+    const message = !availability.installed
       ? `Install ${harness?.name || "the CLI"}, then sign in once from your terminal.`
       : wrongLocalAuth
         ? `${harness?.name} is signed in with ${availability.authMethod || "non-subscription credentials"}. Sign out, then sign in with your subscription account.`
       : !availability.authenticated
         ? `${harness?.name} is installed. Sign in once from your terminal, then try Local Run again.`
         : `Finish ${harness?.name} setup in your terminal, then try Local Run again.`;
-    document.getElementById("provider-setup-command").textContent = wrongLocalAuth
+    const command = wrongLocalAuth
       ? `${harnessId === "codex" ? "codex logout" : "claude auth logout"}\n${setup.login}`
       : availability.installed ? setup.login : setup.install;
-    document.getElementById("provider-setup-docs").href = setup.docs;
-    modal.hidden = false;
-    window.requestAnimationFrame(() => modal.classList.add("open"));
-    window.setTimeout(() => document.getElementById("provider-setup-close")?.focus(), 30);
+
+    presentProviderSetup({
+      logo: harness?.logo || "",
+      title: `${harness?.name || "Local CLI"} subscription is inactive`,
+      message,
+      command,
+      docs: setup.docs
+    });
+  }
+
+  function showPrimeSetup(environment = data.environment || {}) {
+    const installed = Boolean(environment.prime_installed);
+    presentProviderSetup({
+      logo: '<img src="/logos/prime.png" alt="" width="128" height="128">',
+      title: installed ? "Reconnect Prime" : "Install Prime CLI",
+      message: installed
+        ? "Your Prime login has expired or is no longer authorized. Run this command in a terminal to sign in again."
+        : "Prime isn't installed on this computer yet. Run these commands in a terminal, then come back here.",
+      command: installed ? PRIME_SETUP.login : PRIME_SETUP.install,
+      note: installed
+        ? "Prime will open a browser so you can authenticate securely."
+        : "If uv is already installed, skip the first command.",
+      docs: PRIME_SETUP.docs,
+      retry: checkPrimeAvailability
+    });
   }
 
   function closeProviderSetup() {
@@ -506,7 +559,39 @@
     }, 180);
   }
 
+  async function closeOrRetryProviderSetup() {
+    const retry = providerSetupRetry;
+    providerSetupRetry = null;
+    closeProviderSetup();
+    if (retry) await retry();
+  }
+
   let localAvailabilityRequest = 0;
+  let primeAvailabilityRequest = 0;
+
+  async function checkPrimeAvailability() {
+    const requestId = ++primeAvailabilityRequest;
+    setStatus("Checking Prime login…");
+
+    try {
+      const environment = await refreshEnvironment();
+      if (requestId !== primeAvailabilityRequest || state.execution !== "prime") return environment;
+      if (!environment.prime) {
+        setStatus(
+          environment.prime_installed ? "Prime sign-in is needed." : "Prime CLI setup is needed.",
+          true
+        );
+        showPrimeSetup(environment);
+        return environment;
+      }
+      setStatus("Prime is ready.");
+      return environment;
+    } catch (error) {
+      if (requestId !== primeAvailabilityRequest || state.execution !== "prime") return null;
+      setStatus(error.message, true);
+      return null;
+    }
+  }
 
   async function checkLocalAvailability(harnessId = state.harness) {
     if (!localProviderId(harnessId)) return;
@@ -556,7 +641,10 @@
   }
 
   function selectHarness(harnessId) {
-    if (state.harness === harnessId) return;
+    if (state.harness === harnessId) {
+      if (state.execution === "prime") void checkPrimeAvailability();
+      return;
+    }
     const providerHost = document.getElementById("provider-picker");
     const providerSelectionFrom = selectedRect(providerHost, ".provider-card.is-selected");
     localAvailabilityRequest += 1;
@@ -592,6 +680,7 @@
     tweenResize(document.querySelector(".model-browser"), renderModels, 440);
     syncComposerSteps();
     loadModels(harnessId, { fresh: !state.catalogs[catalogKey(harnessId)] });
+    void checkPrimeAvailability();
     if (localProviderId(harnessId)) checkLocalAvailability(harnessId);
   }
 
@@ -1325,6 +1414,10 @@
     body.count = 1;
 
     try {
+      if (state.execution === "prime") {
+        const environment = await checkPrimeAvailability();
+        if (!environment?.prime) return;
+      }
       setStatus("Launching…");
       const payload = await api(data.apiUrl, { method: "POST", body: JSON.stringify(body) });
       setStatus(payload.message);
@@ -1624,7 +1717,10 @@
 
   function wireModelCatalog() {
     document.getElementById("refresh-models")?.addEventListener("click", () => {
-      if (state.harness) loadModels(state.harness, { fresh: true });
+      if (state.harness) {
+        loadModels(state.harness, { fresh: true });
+        if (state.execution === "prime") void checkPrimeAvailability();
+      }
     });
 
     document.getElementById("model-search-input")?.addEventListener("input", (event) => {
@@ -1677,7 +1773,10 @@
   document.querySelectorAll("[data-execution]").forEach((option) => {
     option.addEventListener("click", () => {
       if (option.dataset.execution === "local") selectLocalRun();
-      else setExecution("prime");
+      else {
+        setExecution("prime");
+        void checkPrimeAvailability();
+      }
     });
   });
   document.querySelectorAll(".segmented__option[data-tool-use]").forEach((option) => {
@@ -1692,7 +1791,7 @@
   wireSelectionResize();
   wireRunsToolbar();
   refreshRuns();
-  document.getElementById("provider-setup-close")?.addEventListener("click", closeProviderSetup);
+  document.getElementById("provider-setup-close")?.addEventListener("click", closeOrRetryProviderSetup);
   document.getElementById("provider-setup-modal")?.addEventListener("click", (event) => {
     if (event.target.id === "provider-setup-modal") closeProviderSetup();
   });

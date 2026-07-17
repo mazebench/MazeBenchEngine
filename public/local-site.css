@@ -1468,6 +1468,12 @@ body.play-body {
 
 .provider-setup-modal__dialog {
   max-width: 500px;
+  transform: translateY(8px) scale(0.985);
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.provider-setup-modal.open .provider-setup-modal__dialog {
+  transform: translateY(0) scale(1);
 }
 
 .provider-setup-modal__head {
@@ -1510,6 +1516,13 @@ body.play-body {
   color: var(--muted, #9aa3c7);
   line-height: 1.6;
   margin: 0;
+}
+
+.provider-setup-modal__note {
+  color: rgba(154, 163, 199, 0.76);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: -5px 0 0;
 }
 
 .provider-setup-modal__command {

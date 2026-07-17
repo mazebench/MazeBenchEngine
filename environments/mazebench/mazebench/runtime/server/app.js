@@ -47,6 +47,7 @@ const PUBLIC_FILE_ROUTES = new Map(
     "/maze-solver.js",
     "/world-solver.js",
     "/world-solver-worker.js",
+    "/maze-token-patterns.js",
     "/author-play-data.js",
     "/author-solver-worker.js",
     "/author-shell.js",
@@ -338,8 +339,10 @@ function agentEnvironment(options = {}) {
   const claudeAuth = claudeSubscriptionStatus(
     claudeInstalled ? probeCommand("claude", ["auth", "status", "--json"]) : null
   );
-  const primeAuthenticated = Boolean(process.env.PRIME_API_KEY) ||
-    (primeInstalled && probeCommand("prime", ["whoami"], 8000).status === 0);
+  // An API key can remain in the environment after it expires. Ask Prime to
+  // validate the current credentials instead of treating presence as proof.
+  const primeAuthenticated =
+    primeInstalled && probeCommand("prime", ["whoami"], 8000).status === 0;
   const docker = dockerState();
   const value = {
     checking: false,
@@ -412,9 +415,7 @@ async function agentEnvironmentAsync(options = {}) {
     const [codexResult, claudeResult, primeResult, dockerResult] = await Promise.all([
       codexInstalled ? runCommand("codex", ["login", "status"]) : null,
       claudeInstalled ? runCommand("claude", ["auth", "status", "--json"]) : null,
-      process.env.PRIME_API_KEY
-        ? { stdout: "environment", stderr: "" }
-        : primeInstalled ? runCommand("prime", ["whoami"], 8000) : null,
+      primeInstalled ? runCommand("prime", ["whoami"], 8000) : null,
       dockerInstalled ? runCommand("docker", ["info", "--format", "{{.ServerVersion}}"], 8000) : null
     ]);
     const codexAuth = codexSubscriptionStatus(codexResult ? { ...codexResult, status: 0 } : null);

@@ -23,6 +23,15 @@ const game = {
       floor: { token: "." },
       wall: { token: "#" },
       ice: { token: "i" },
+      ice_slope: {
+        label: "Ice Slope",
+        tokens: [
+          { token: "Sr", direction: "right" },
+          { token: "Sl", direction: "left" },
+          { token: "Su", direction: "up" },
+          { token: "Sd", direction: "down" }
+        ]
+      },
       gem: { token: "G" },
       player_gate: { token: "g" },
       player_lift: { token: "l" },
@@ -186,6 +195,54 @@ assert.deepEqual(
   [
     ["puncher", 0, 0, 1, "down"],
     ["puncher", 1, 0, 0, "right"]
+  ]
+);
+
+// Older drafts only declared the four plain slope tokens. Black and orange
+// families still synthesize all four directions and must round-trip through
+// the same save sanitizer used by the author endpoint.
+const directionalSlopeTokens = [
+  "Sr#",
+  "Sl#",
+  "Su#",
+  "Sd#",
+  "SrO",
+  "SlO",
+  "SuO",
+  "SdO"
+];
+const slopeSanitized = service.sanitizeEditorPayload(game, {
+  cells: [directionalSlopeTokens],
+  height: 1,
+  width: directionalSlopeTokens.length
+});
+
+assert.deepEqual(slopeSanitized.cells[0], directionalSlopeTokens);
+assert.equal(slopeSanitized.rawText, directionalSlopeTokens.join(" "));
+
+fs.writeFileSync(path.join(levelDir, "test-empty.txt"), slopeSanitized.rawText + "\n", "utf8");
+
+const directionalSlopePlayState = service.getLevelState(
+  game,
+  game.worldMap.byPosition.get("level_AxA")
+);
+
+assert.deepEqual(
+  directionalSlopePlayState.terrain[0].map((cell) => {
+    const slope = (cell.layers || []).find(
+      (layer) => layer.type === "ice_slope" || layer.type === "orange_ice_slope"
+    );
+    return [slope?.type, slope?.direction, slope?.styleKey];
+  }),
+  [
+    ["ice_slope", "right", "wall"],
+    ["ice_slope", "left", "wall"],
+    ["ice_slope", "up", "wall"],
+    ["ice_slope", "down", "wall"],
+    ["orange_ice_slope", "right", "orange"],
+    ["orange_ice_slope", "left", "orange"],
+    ["orange_ice_slope", "up", "orange"],
+    ["orange_ice_slope", "down", "orange"]
   ]
 );
 

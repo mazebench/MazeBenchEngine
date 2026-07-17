@@ -25,6 +25,10 @@
         direction: actor.direction || actor.facing || null,
         groupId: actor.groupId,
         removed: Boolean(actor.removed),
+        // Attached lifts round-trip their raised state through the runtime
+        // actor so each per-keypress engine rebuild starts from the live bit.
+        raised: actor.raised === true,
+        shape: actor.shape || null,
         type: actor.type,
         x: actor.x,
         y: actor.y

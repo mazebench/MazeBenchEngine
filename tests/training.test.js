@@ -3,7 +3,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { collectedAllWorldGems } = require("../server/agent-runs");
-const { HOSTED_TRAINING_DEFAULTS, createTrainingService } = require("../server/training");
+const {
+  HOSTED_TRAINING_DEFAULTS,
+  createTrainingService,
+  primeSetupKind
+} = require("../server/training");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 
@@ -25,6 +29,26 @@ assert.deepEqual(HOSTED_TRAINING_DEFAULTS, {
   max_tokens: 512,
   temperature: 1
 });
+
+assert.equal(primeSetupKind({ cliOk: false, accountOk: false }), "install");
+assert.equal(primeSetupKind({ cliOk: true, accountOk: false }), "login");
+assert.equal(
+  primeSetupKind({ cliOk: true, accountOk: true, error: "API key unauthorized" }),
+  "login"
+);
+assert.equal(primeSetupKind({ cliOk: true, accountOk: true, error: "Network timed out" }), "");
+
+const trainClient = fs.readFileSync(path.join(ROOT_DIR, "public", "train.js"), "utf8");
+const agentClient = fs.readFileSync(path.join(ROOT_DIR, "public", "agent.js"), "utf8");
+const appSource = fs.readFileSync(path.join(ROOT_DIR, "server", "app.js"), "utf8");
+const pagesSource = fs.readFileSync(path.join(ROOT_DIR, "server", "pages.js"), "utf8");
+assert.match(trainClient, /showPrimeSetup\(kind\)/);
+assert.match(trainClient, /Prime login has expired or is no longer authorized/);
+assert.match(trainClient, /uv tool install -U prime/);
+assert.match(appSource, /primeInstalled && probeCommand/);
+assert.match(agentClient, /showPrimeSetup\(environment/);
+assert.match(pagesSource, /id="train-prime-setup-modal"/);
+assert.match(pagesSource, /src="\/logos\/prime\.png"/);
 
 const starterConfig = fs.readFileSync(path.join(ROOT_DIR, "configs", "rl", "mazebench.toml"), "utf8");
 assert.match(starterConfig, /max_steps = 10/);

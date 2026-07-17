@@ -1624,6 +1624,8 @@
         const toRemoved = Boolean(target.removed);
         const fromElevation = actor.elevation ?? 0;
         const toElevation = target.elevation ?? 0;
+        const fromRaised = actor.raised === true;
+        const toRaised = target.raised === true;
         const isCollectedGemTarget =
           actor.type === "gem" &&
           (target.collected === true ||
@@ -1634,6 +1636,11 @@
         actor.elevation = toElevation;
         actor.collectionId = target.collectionId || actor.collectionId || null;
         actor.collected = isCollectedGemTarget;
+
+        if (actor.type === "attached_lift" && fromRaised !== toRaised) {
+          actor.raised = toRaised;
+          app.terrainRenderVersion = (Number(app.terrainRenderVersion) || 0) + 1;
+        }
 
         if (!toRemoved) {
           actor.removed = false;
@@ -3464,6 +3471,11 @@
           ? app.replayMoveDurationMs
           : null,
         recordHistory: true,
+        // Cross-room punch continuations arrive via the transition
+        // controller with this flag; dropping it turned the rest of the
+        // flight into a single walk step in the new room (owner bug:
+        // "puncher doesn't punch the player all the way into far rooms").
+        continuePunchSlide: options.continuePunchSlide === true,
         startOnCurrentSlope: options.startOnCurrentSlope === true,
         beforeAnimate: ({ moveResult: preparedMoveResult }) => {
           const transition = continuationTransitionForMoveResult(preparedMoveResult, dx, dy);

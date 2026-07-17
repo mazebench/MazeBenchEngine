@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 
 const root = path.join(__dirname, "..");
 const appSource = fs.readFileSync(path.join(root, "server", "app.js"), "utf8");
@@ -133,9 +134,71 @@ assert.match(
 );
 assert.match(playRenderer, /const coversTop = orangeWallCoversElevationPlane\(/);
 assert.match(playRenderer, /function variableSolidStepContactEdges\(boxes\)/);
+assert.match(playRenderer, /function iceSlopeGroupLabelGeometry\(direction\)/);
+assert.match(playRenderer, /const across = \{/);
+assert.match(playRenderer, /const uphill = \{/);
+assert.match(playRenderer, /across\.x \* localX \+ uphill\.x \* localY/);
+assert.match(playRenderer, /function addWeightlessSlopeGroupLabel\(actor, center, bottomY, opacity\)/);
+assert.match(playRenderer, /addWeightlessSlopeGroupLabel\(/);
+assert.match(playRenderer, /function groupedSlopeActorContactsForVoxels\(voxels, groupId, actorType\)/);
+assert.match(playRenderer, /function groupedSlopeActorsCanMergeAtContact\(base, neighbor, contact, neighborContact\)/);
+assert.match(playRenderer, /function groupedSlopeActorSuppressedEdgeContacts\(actor\)/);
+assert.match(playRenderer, /base\.groupId !== neighbor\.groupId/);
+assert.match(playRenderer, /edgeGeometry: polycubeEdgeGeometry\(voxels, \{ groupedSlopeContacts \}\)/);
+assert.match(playRenderer, /iceSlopeEdgeGeometry\(actor\.direction, \{ suppressContacts \}\)/);
 assert.match(playRenderer, /stepContacts\.keys\.has\(segmentKey\)/);
+
+function rendererFunctionSource(name, nextName) {
+  const start = playRenderer.indexOf(`function ${name}`);
+  const end = playRenderer.indexOf(`function ${nextName}`, start + 1);
+
+  assert.notEqual(start, -1, `missing renderer function ${name}`);
+  assert.notEqual(end, -1, `missing renderer function ${nextName}`);
+  return playRenderer.slice(start, end).trim();
+}
+
+const groupedSlopeCanMerge = vm.runInNewContext(
+  `(${rendererFunctionSource(
+    "groupedSlopeActorsCanMergeAtContact",
+    "groupedSlopeActorSuppressedEdgeContacts"
+  )})`,
+  {
+    groupedActorCanMergeVisually: () => true,
+    groupedActorPolycubeLevel: (actor) => actor.elevation,
+    normalizeCardinalDirection: (direction) => direction
+  }
+);
+const groupedSlope = (groupId, direction, elevation = 0) => ({
+  direction,
+  elevation,
+  groupId,
+  type: "weightless_box"
+});
+
+assert.equal(
+  groupedSlopeCanMerge(groupedSlope("M0", "right"), groupedSlope("M0", "right"), "left-side", "right-side"),
+  true
+);
+assert.equal(
+  groupedSlopeCanMerge(groupedSlope("M0", "right"), groupedSlope("M1", "right"), "left-side", "right-side"),
+  false
+);
+assert.equal(
+  groupedSlopeCanMerge(groupedSlope("M0", "right"), groupedSlope("M0", "right", 1), "high", "low"),
+  true
+);
+assert.equal(
+  groupedSlopeCanMerge(groupedSlope("M0", "right"), groupedSlope("M0", "left"), "high", "high"),
+  true
+);
 assert.match(playRenderer, /:\s*isLoweredOrangeSurface\s*\?\s*topHeight/);
 assert.match(playRenderer, /const overlaysSupportingSurface =\s*descriptor\.isLoweredOrangeSurface/);
+assert.match(
+  playRenderer,
+  /const supportingSurfaceDepthOffset = descriptor\.isLoweredOrangeSurface \? -1 : -6;/
+);
+assert.match(playRenderer, /polygonOffsetFactor: supportingSurfaceDepthOffset/);
+assert.match(playRenderer, /polygonOffsetUnits: supportingSurfaceDepthOffset/);
 assert.match(playCore, /liveSurfaceActorCodes = null;\s*liveSurfaceActorState = null;\s*invalidateTerrainFeatureIndex\(\)/);
 assert.match(playRenderer, /4 \*\s*zoomDistanceFactor/);
 assert.match(playScript, /app\.homeVectorTheme = true/);

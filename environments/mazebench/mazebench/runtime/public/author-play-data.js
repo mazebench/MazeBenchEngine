@@ -47,6 +47,53 @@
     const defaultFloorToken = authorData?.defaultFloorToken || ".";
     const palette = Array.isArray(authorData?.palette) ? authorData.palette : [];
     const toolByToken = new Map(palette.map((tool) => [tool.token, tool]));
+
+    // Open-ended token families (Box N, Clone N, colored slopes): explicit
+    // palette entries win; on a miss, synthesize a palette-shaped tool from
+    // the family's base entry so painted cells with arbitrary ids round-trip.
+    const tokenPatterns =
+      typeof window !== "undefined" && window.MazeTokenPatterns
+        ? window.MazeTokenPatterns
+        : null;
+
+    function resolveTool(token) {
+      const existing = toolByToken.get(token);
+
+      if (existing || !tokenPatterns) {
+        return existing;
+      }
+
+      const pattern = tokenPatterns.resolvePatternToken(token);
+
+      if (!pattern) {
+        return undefined;
+      }
+
+      const base =
+        toolByName.get(pattern.family) ||
+        toolByName.get(pattern.type) ||
+        (pattern.family === "orange_ice_slope" ? toolByName.get("ice_slope") : null) ||
+        null;
+
+      if (!base) {
+        return undefined;
+      }
+
+      const synthesized = {
+        ...base,
+        direction: pattern.direction,
+        groupId: pattern.groupId || null,
+        label: pattern.label,
+        name: pattern.family,
+        shape: pattern.shape || null,
+        styleKey: pattern.styleKey,
+        token: pattern.token,
+        type: pattern.type
+      };
+
+      toolByToken.set(token, synthesized);
+      return synthesized;
+    }
     const toolByName = new Map(palette.map((tool) => [tool.name, tool]));
 
     function toolType(tool) {
@@ -71,7 +118,7 @@
         return emptyCellToken;
       }
 
-      const invalidToken = tokens.find((token) => token.length > 0 && !toolByToken.has(token));
+      const invalidToken = tokens.find((token) => token.length > 0 && !resolveTool(token));
 
       if (invalidToken) {
         throw new Error('Unknown token "' + invalidToken + '".');
@@ -88,13 +135,13 @@
 
     function getCellTools(value) {
       return getCellTokens(value)
-        .map((token) => toolByToken.get(token))
+        .map((token) => resolveTool(token))
         .filter(Boolean);
     }
 
     function getCellStackEntries(value) {
       return getCellTokens(value)
-        .map((token) => (token.length === 0 ? { isAir: true } : toolByToken.get(token)))
+        .map((token) => (token.length === 0 ? { isAir: true } : resolveTool(token)))
         .filter(Boolean);
     }
 
@@ -135,7 +182,7 @@
           return;
         }
 
-        const tool = toolByToken.get(token);
+        const tool = resolveTool(token);
 
         if (!tool) {
           return;
@@ -194,7 +241,7 @@
     }
 
     function isBaseSurfaceToken(token) {
-      return isBaseSurfaceTool(toolByToken.get(String(token || "").trim()));
+      return isBaseSurfaceTool(resolveTool(String(token || "").trim()));
     }
 
     function normalizeTokenRows(tokens) {
@@ -242,7 +289,7 @@
     function ensureMainPlayerSupportRows(tokens) {
       const rows = tokens.map((token) => String(token || "").trim());
       const hasMainPlayer = rows.some((token) =>
-        isMainPlayerTool(toolByToken.get(token))
+        isMainPlayerTool(resolveTool(token))
       );
       const hasExplicitSupport = rows.some((token) => isBaseSurfaceToken(token));
       const hasExplicitVoid = rows.some((token) => isAirToken(token));
@@ -320,7 +367,7 @@
     function getCellDescriptor(value) {
       const tokens = getCellTokens(value);
       const topToken = tokens.slice().reverse().find((token) => token.length > 0) || "";
-      const tool = toolByToken.get(topToken) || toolByToken.get(tokens[0]) || null;
+      const tool = resolveTool(topToken) || resolveTool(tokens[0]) || null;
 
       return {
         label: tool ? tool.label : topToken || "Empty",
@@ -379,7 +426,7 @@
 
     function setSurfaceAttachmentToken(currentValue, token, targetElevation) {
       const normalizedToken = normalizeCellValue(token);
-      const attachmentTool = toolByToken.get(normalizedToken);
+      const attachmentTool = resolveTool(normalizedToken);
 
       if (!isSurfaceAttachmentTool(attachmentTool)) {
         return normalizeAuthoringCellValue(currentValue);
@@ -400,7 +447,7 @@
           continue;
         }
 
-        const tool = toolByToken.get(currentToken);
+        const tool = resolveTool(currentToken);
 
         if (!tool) {
           continue;
@@ -483,6 +530,7 @@
         imageUrl: tool?.imageUrl || null,
         modelUrl: tool?.modelUrl || null,
         direction: tool?.direction || null,
+        styleKey: tool?.styleKey || null,
         elevation,
         raised: type === "player_lift" ? tool?.initialRaised === true : false
       };
@@ -498,9 +546,12 @@
       let hasAirEntry = false;
       let consumedBaseVoid = false;
 
+      let previousCarrier = false;
+
       entries.forEach((entry) => {
         if (entry?.isAir) {
           hasAirEntry = true;
+          previousCarrier = false;
 
           if (surfaceHeight === null && !consumedBaseVoid) {
             consumedBaseVoid = true;
@@ -526,7 +577,35 @@
 
           surfaceHeight = elevation + actorToolLayerSlotHeight(tool);
           previousSurfaceTerrain = false;
+          previousCarrier =
+            toolType(tool) === "weightless_box" || toolType(tool) === "clone";
 
+          return;
+        }
+
+        // Owner rule (2026-07): a lift/gate stacked directly on a movable
+        // carrier becomes a stuck rider ACTOR (attached_lift / attached_gate)
+        // that travels with the carrier and does not interact with it.
+        const stackedDeviceType = toolType(tool);
+
+        if (
+          (stackedDeviceType === "player_lift" || stackedDeviceType === "player_gate") &&
+          previousCarrier
+        ) {
+          const elevation = Math.max(0, surfaceHeight ?? 0);
+
+          actors.push({
+            elevation,
+            tool: {
+              ...tool,
+              name: stackedDeviceType === "player_lift" ? "attached_lift" : "attached_gate",
+              type: stackedDeviceType === "player_lift" ? "attached_lift" : "attached_gate"
+            }
+          });
+
+          surfaceHeight = elevation + 1;
+          previousSurfaceTerrain = false;
+          previousCarrier = false;
           return;
         }
 
@@ -542,6 +621,7 @@
         terrainLayers.push(buildTerrainLayer(tool, elevation));
         surfaceHeight = elevation + stackHeight;
         previousSurfaceTerrain = isBaseSurface;
+        previousCarrier = toolType(tool) === "orange_wall";
       });
 
       const wallLayer = terrainLayers.find((layer) => layer.type === "wall") || null;
@@ -624,7 +704,7 @@
     function setCellElevationToken(currentValue, token, targetElevation) {
       const normalizedToken = normalizeCellValue(token);
       const elevation = Math.max(0, Math.floor(Number(targetElevation) || 0));
-      const tool = toolByToken.get(normalizedToken);
+      const tool = resolveTool(normalizedToken);
       const tokens = enforceBottomSurfaceRows(getCellTokens(currentValue));
 
       if (isBaseSurfaceTool(tool)) {
@@ -663,7 +743,7 @@
     function placeCellElevationTokenIfVacant(currentValue, token, targetElevation) {
       const normalizedToken = normalizeCellValue(token);
       const elevation = Math.max(0, Math.floor(Number(targetElevation) || 0));
-      const tool = toolByToken.get(normalizedToken);
+      const tool = resolveTool(normalizedToken);
 
       if (isBaseSurfaceTool(tool)) {
         return setCellElevationToken(currentValue, normalizedToken, elevation);
@@ -799,12 +879,16 @@
               type: toolType(tool),
               groupId:
                 toolType(tool) === "weightless_box" || toolType(tool) === "clone"
-                  ? tool.token
+                  ? tool.groupId || tool.token
                   : null,
               label: tool.label,
               imageUrl: tool.imageUrl || null,
               modelUrl: tool.modelUrl || null,
               direction: tool.direction || null,
+              shape: tool.shape || null,
+              styleKey: tool.styleKey || null,
+              // Attached lifts converted from 'L' keep their raised look.
+              raised: tool.initialRaised === true,
               elevation,
               x,
               y

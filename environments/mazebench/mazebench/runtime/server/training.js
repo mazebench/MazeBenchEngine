@@ -49,6 +49,17 @@ function integerInRange(value, name, min, max, fallback) {
   return Math.floor(numberInRange(value, name, min, max, fallback));
 }
 
+function primeSetupKind({ cliOk = true, accountOk = true, error = "" } = {}) {
+  if (!cliOk) return "install";
+  if (!accountOk) return "login";
+
+  return /(?:401|403|api key|auth(?:entication|orization)?|login|not logged|token|unauthorized)/i.test(
+    String(error || "")
+  )
+    ? "login"
+    : "";
+}
+
 function tomlString(value) {
   return JSON.stringify(String(value));
 }
@@ -199,12 +210,18 @@ function createTrainingService({ buildWorlds, getGame, rootDir, worldMaps }) {
   }
 
   function bootstrapValue({ cli, account, published, local, models, modelsError = "" }) {
+    const setup = primeSetupKind({
+      cliOk: cli.ok,
+      accountOk: account.ok,
+      error: modelsError || account.error || ""
+    });
     const readiness = {
       cli: cli.ok,
       account: account.ok,
       local_environment: local.ok,
       published_environment: published.ok,
       ready: cli.ok && account.ok && local.ok && published.ok && models.length > 0,
+      setup,
       environment_id: environmentId,
       version: cli.output || "",
       issue:
@@ -402,4 +419,4 @@ function createTrainingService({ buildWorlds, getGame, rootDir, worldMaps }) {
   };
 }
 
-module.exports = { HOSTED_TRAINING_DEFAULTS, createTrainingService };
+module.exports = { HOSTED_TRAINING_DEFAULTS, createTrainingService, primeSetupKind };

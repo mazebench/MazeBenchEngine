@@ -73,6 +73,35 @@ function assertBefore(source, firstMarker, secondMarker, message) {
   assert.ok(first < second, message || `${firstMarker} must precede ${secondMarker}`);
 }
 
+const iceSlopeMergeSolidTypeSection = sourceSection(
+  rendererSource,
+  "function iceSlopeMergeSolidType",
+  "function iceSlopeDescriptorContactsVoxel"
+);
+const iceSlopeMergeSolidType = vm.runInNewContext(
+  `(${iceSlopeMergeSolidTypeSection.trim()})`
+);
+assert.equal(
+  iceSlopeMergeSolidType({ type: "ice_slope", layer: {} }),
+  "ice_block",
+  "regular ice slopes must visually merge with ice blocks"
+);
+assert.equal(
+  iceSlopeMergeSolidType({ type: "ice_slope", layer: { styleKey: "wall" } }),
+  "wall",
+  "black ice slopes must visually merge with normal walls"
+);
+assert.equal(
+  iceSlopeMergeSolidType({ type: "orange_ice_slope", layer: { styleKey: "orange" } }),
+  "orange_wall",
+  "orange ice slopes must visually merge with orange walls"
+);
+assert.equal(
+  iceSlopeMergeSolidType({ type: "ice_slope", layer: { styleKey: "M0" } }),
+  null,
+  "numbered slope families must not visually merge with unrelated terrain"
+);
+
 const selectCellSection = sourceSection(
   authorSource,
   "function selectCell",

@@ -102,6 +102,20 @@ function buildOrangeWallTerrain() {
   return terrain;
 }
 
+function buildOrangeSlopeTerrain() {
+  const terrain = buildTerrain(2, 1);
+  terrain[0][0] = {
+    type: "orange_ice_slope",
+    label: "Orange Ice Slope",
+    imageUrl: null,
+    underlay: null,
+    raised: false,
+    layers: [{ type: "orange_ice_slope", elevation: 0, direction: "right" }]
+  };
+  terrain[0][1] = buildOrangeWallTerrain()[0][1];
+  return terrain;
+}
+
 function createRenderApp({ terrain, actors, playData = {}, collectedGemIds = [] }) {
   const context = createStubContext();
   const storedCollectedGemIds = JSON.stringify(collectedGemIds);
@@ -197,6 +211,27 @@ function createRenderApp({ terrain, actors, playData = {}, collectedGemIds = [] 
 
 {
   const actors = [{ type: "box", x: 1, y: 0, elevation: 0, removed: false }];
+  const playApp = createRenderApp({ terrain: buildOrangeSlopeTerrain(), actors });
+  const editorApp = createRenderApp({
+    terrain: buildOrangeSlopeTerrain(),
+    actors,
+    playData: { editorRender: true, levelId: "__editor_render__" }
+  });
+
+  assert.equal(
+    playApp.computeRaisedOrangeWallSet().has("0,0"),
+    false,
+    "a pressed orange slope lowers with the walls"
+  );
+  assert.equal(
+    editorApp.computeRaisedOrangeWallSet().has("0,0"),
+    true,
+    "the editor renders the orange slope in its raised wedge state"
+  );
+}
+
+{
+  const actors = [{ type: "box", x: 1, y: 0, elevation: 0, removed: false }];
   const initialTerrain = buildTerrain(2, 1);
   initialTerrain[0][1] = buildOrangeWallTerrain()[0][1];
   const app = createRenderApp({
@@ -282,6 +317,84 @@ function createRenderApp({ terrain, actors, playData = {}, collectedGemIds = [] 
   });
 
   assert.equal(app.computeRaisedPlayerGateSet().has("1,1"), false);
+}
+
+{
+  const carrier = {
+    type: "weightless_box",
+    groupId: "M0",
+    x: 1,
+    y: 0,
+    elevation: 0,
+    removed: false
+  };
+  const gate = { type: "attached_gate", x: 1, y: 0, elevation: 1, removed: false };
+  const clone = { type: "clone", groupId: "c0", x: 3, y: 0, elevation: 1, removed: false };
+  const app = createRenderApp({
+    terrain: buildTerrain(4, 1),
+    actors: [clone, carrier, gate]
+  });
+  const liveClone = app.state.actors[0];
+  const liveGate = app.state.actors[2];
+
+  app.syncLiveRaisedSurfaces();
+  app.syncGateAnimationTargets(0);
+  assert.equal(app.attachedGateLiftAt(liveGate, 0), 0);
+
+  liveClone.x = 1;
+  app.syncLiveRaisedSurfaces();
+  assert.equal(app.liveRaisedPlayerGates.has("1,0"), true, "clone-on-gate activates it");
+  app.syncGateAnimationTargets(10);
+
+  assert.equal(app.attachedGateLiftAt(liveGate, 10), 0, "attached gate starts from its lowered pose");
+  assert.ok(
+    app.attachedGateLiftAt(liveGate, 120) > 0 && app.attachedGateLiftAt(liveGate, 120) < 1.08,
+    "attached gate uses an intermediate tween value"
+  );
+  assert.equal(app.attachedGateLiftAt(liveGate, 230), 1, "attached gate tween reaches raised");
+}
+
+{
+  const player = { type: "player", x: 0, y: 0, elevation: 1, removed: false };
+  const carrier = {
+    type: "weightless_box",
+    groupId: "M0",
+    x: 1,
+    y: 0,
+    elevation: 0,
+    removed: false
+  };
+  const gate = {
+    type: "attached_gate",
+    x: 1,
+    y: 0,
+    elevation: 1,
+    renderX: 1,
+    renderY: 0,
+    removed: false
+  };
+  const app = createRenderApp({
+    terrain: buildTerrain(4, 1),
+    actors: [player, carrier, gate]
+  });
+  const liveCarrier = app.state.actors[1];
+  const liveGate = app.state.actors[2];
+
+  app.syncLiveRaisedSurfaces();
+  app.syncGateAnimationTargets(0);
+  assert.equal(app.attachedGateLiftAt(liveGate, 0), 1);
+
+  liveCarrier.x = 2;
+  liveGate.x = 2;
+  app.gateRenderOverride = new Set(["1,0"]);
+  app.syncLiveRaisedSurfaces();
+  app.syncGateAnimationTargets(20);
+
+  assert.equal(
+    app.attachedGateLiftAt(liveGate, 20),
+    1,
+    "moving attached gate keeps its identity-based phase during the carrier tween"
+  );
 }
 
 {

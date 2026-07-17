@@ -1319,6 +1319,7 @@
         y: actor.y,
         removed: actor.removed,
         elevation: actor.elevation ?? 0,
+        raised: actor.raised === true,
         collectionId: actor.collectionId || null,
         collected: actor.collected === true,
         showCollectedGhost: actor.showCollectedGhost === true
@@ -1333,6 +1334,9 @@
         imageUrl: actor.imageUrl || null,
         modelUrl: actor.modelUrl || null,
         direction: actor.direction || null,
+        shape: actor.shape || null,
+        styleKey: actor.styleKey || null,
+        raised: actor.raised === true,
         facing: actor.facing || null,
         collectionId: actor.collectionId || null,
         collected: actor.collected === true,
@@ -1867,6 +1871,7 @@
           cell?.type === "wall" ||
           cell?.type === "ice_block" ||
           cell?.type === "ice_slope" ||
+          cell?.type === "orange_ice_slope" ||
           cell?.type === "tree" ||
           cell?.type === "shrub" ||
           cell?.type === "block_asset"
@@ -1936,7 +1941,7 @@
         return isRaisedPlayerLift(x, y) ? elevation + 1 : elevation;
       }
 
-      if (layer.type === "orange_wall") {
+      if (layer.type === "orange_wall" || layer.type === "orange_ice_slope") {
         return orangeWallState.has(posKey(x, y)) ? elevation + 1 : elevation;
       }
 
@@ -2013,7 +2018,7 @@
               index.playerGates.push({ x, y, key: posKey(x, y) });
             } else if (type === "player_lift") {
               index.playerLifts.push({ x, y, key: posKey(x, y) });
-            } else if (type === "orange_wall") {
+            } else if (type === "orange_wall" || type === "orange_ice_slope") {
               index.orangeWalls.push({ x, y, key: posKey(x, y) });
             } else if (type === "orange_button") {
               index.orangeButtons.push({ x, y, key: posKey(x, y) });
@@ -2177,7 +2182,27 @@
 
     function setPlayerLiftRaised(x, y, raised) {
       if (!isPlayerLift(x, y)) {
-        return false;
+        // Attached lifts keep their raised state on the actor: engine
+        // rebuilds read it back and the renderer draws the raised block.
+        let toggled = false;
+
+        app.state.actors.forEach((actor) => {
+          if (
+            !actor.removed &&
+            actor.type === "attached_lift" &&
+            actor.x === x &&
+            actor.y === y
+          ) {
+            actor.raised = Boolean(raised);
+            toggled = true;
+          }
+        });
+
+        if (toggled) {
+          app.terrainRenderVersion = (Number(app.terrainRenderVersion) || 0) + 1;
+        }
+
+        return toggled && Boolean(raised);
       }
 
       const cell = terrainAt(x, y);
@@ -2215,7 +2240,13 @@
       return heights.length > 0 ? Math.max(...heights) : null;
     }
 
-    function actorSupportSurfaceHeightsAt(x, y, ignoredActors = null, includePlayers = false) {
+    function actorSupportSurfaceHeightsAt(
+      x,
+      y,
+      ignoredActors = null,
+      includePlayers = false,
+      gateState = app.liveRaisedPlayerGates
+    ) {
       return actorsAt(
         x,
         y,
@@ -2225,8 +2256,13 @@
           (actor.type === "box" ||
             actor.type === "floating_floor" ||
             actor.type === "weightless_box" ||
+            actor.type === "attached_gate" ||
             isPlayerActor(actor))
-      ).map((actor) => actorElevation(actor) + 1);
+      ).map((actor) =>
+        actor.type === "attached_gate"
+          ? actorElevation(actor) + (gateState.has(posKey(x, y)) ? 1 : 0)
+          : actorElevation(actor) + 1
+      );
     }
 
     function hasElevatedActorSurfaceAt(x, y, ignoredActors = null) {
@@ -2247,7 +2283,7 @@
       ignoredActors = null
     ) {
       const heights = terrainSurfaceHeightsAt(x, y, gateState, orangeWallState).concat(
-        actorSupportSurfaceHeightsAt(x, y, ignoredActors, false)
+        actorSupportSurfaceHeightsAt(x, y, ignoredActors, false, gateState)
       );
 
       return heights.length > 0 ? Math.max(...heights) : null;
@@ -2270,7 +2306,7 @@
           member.y,
           gateState,
           orangeWallState
-        ).concat(actorSupportSurfaceHeightsAt(member.x, member.y, memberSet, true));
+        ).concat(actorSupportSurfaceHeightsAt(member.x, member.y, memberSet, true, gateState));
 
         supportHeights.forEach((height) => {
           if (height > currentElevation + 1) {
@@ -2324,12 +2360,57 @@
         });
       }
 
+      // Attached gates share the raised set (same proximity rule at the
+      // carrier-top elevation), keyed by their current cell.
+      activeActors.forEach((gateActor) => {
+        if (gateActor.type !== "attached_gate") {
+          return;
+        }
+
+        const x = gateActor.x;
+        const y = gateActor.y;
+        const gateElevation = actorElevation(gateActor);
+        const sameLevelBlockOnGate = activeActors.some(
+          (actor) =>
+            actor !== gateActor &&
+            !isPlayerActor(actor) &&
+            !isNonBlockingActor(actor) &&
+            actorElevation(actor) === gateElevation &&
+            actor.x === x &&
+            actor.y === y
+        );
+
+        if (
+          players.some((actor) => {
+            const playerElevation = actorElevation(actor);
+            const xyDistance = Math.abs(actor.x - x) + Math.abs(actor.y - y);
+            const standingOnGate = xyDistance === 0 && playerElevation === gateElevation;
+
+            return (
+              standingOnGate ||
+              (xyDistance <= 1 &&
+                (playerElevation !== gateElevation || !sameLevelBlockOnGate))
+            );
+          })
+        ) {
+          raised.add(posKey(x, y));
+        }
+      });
+
       return raised;
     }
 
     function eachPlayerGate(callback) {
       getTerrainFeatureIndex().playerGates.forEach((cell) => {
         callback(cell.x, cell.y, cell.key);
+      });
+    }
+
+    function eachAttachedPlayerGate(callback) {
+      app.state.actors.forEach((actor, index) => {
+        if (!actor.removed && actor.type === "attached_gate") {
+          callback(actor, index);
+        }
       });
     }
 
@@ -2341,6 +2422,7 @@
       return terrainLayersOfType(x, y, "wall").length > 0 ||
         terrainLayersOfType(x, y, "ice_block").length > 0 ||
         terrainLayersOfType(x, y, "ice_slope").length > 0 ||
+        terrainLayersOfType(x, y, "orange_ice_slope").length > 0 ||
         terrainLayersOfType(x, y, "tree").length > 0 ||
         terrainLayersOfType(x, y, "shrub").length > 0 ||
         terrainLayersOfType(x, y, "block_asset").length > 0;
@@ -2390,6 +2472,7 @@
         cell?.type === "wall" ||
         cell?.type === "ice_block" ||
         cell?.type === "ice_slope" ||
+        cell?.type === "orange_ice_slope" ||
         cell?.type === "tree" ||
         cell?.type === "shrub" ||
         cell?.type === "block_asset"
@@ -2632,6 +2715,32 @@
       return clamp(value, 0, 1.08);
     }
 
+    function attachedGateTarget(actor, animation = null) {
+      if (app.gateRenderOverride && animation) {
+        return animation.to;
+      }
+
+      const x = app.gateRenderOverride
+        ? Math.round(actor.renderX ?? actor.x)
+        : actor.x;
+      const y = app.gateRenderOverride
+        ? Math.round(actor.renderY ?? actor.y)
+        : actor.y;
+
+      return app.liveRaisedPlayerGates.has(posKey(x, y)) ? 1 : 0;
+    }
+
+    function attachedGateLiftAt(actor, now = performance.now()) {
+      if (!actor || actor.type !== "attached_gate" || actor.removed) {
+        return 0;
+      }
+
+      const animation = app.gateAnimations.get(actor);
+      const target = attachedGateTarget(actor, animation);
+      const value = animation ? gateAnimationValue(animation, now) : target;
+      return clamp(value, 0, 1.08);
+    }
+
     function canAuxiliaryTickerRender() {
       return !app.isAnimating && !app.isTransitioningLevel && !app.levelTransition;
     }
@@ -2684,14 +2793,22 @@
             durationMs: app.GATE_RISE_DURATION_MS
           });
         });
+        eachAttachedPlayerGate((actor) => {
+          const target = attachedGateTarget(actor);
+          app.gateAnimations.set(actor, {
+            from: target,
+            to: target,
+            startMs: null,
+            durationMs: app.GATE_RISE_DURATION_MS
+          });
+        });
         app.gateAnimationsInitialized = true;
         return;
       }
 
       let hasActiveAnimation = false;
 
-      eachPlayerGate((x, y, key) => {
-        const target = app.liveRaisedPlayerGates.has(key) ? 1 : 0;
+      function syncTarget(key, target) {
         const animation = app.gateAnimations.get(key);
 
         if (!animation) {
@@ -2721,6 +2838,24 @@
 
         if (animation.startMs !== null) {
           hasActiveAnimation = true;
+        }
+      }
+
+      eachPlayerGate((x, y, key) => {
+        const target = app.liveRaisedPlayerGates.has(key) ? 1 : 0;
+        syncTarget(key, target);
+      });
+
+      const activeAttachedGates = new Set();
+
+      eachAttachedPlayerGate((actor) => {
+        activeAttachedGates.add(actor);
+        syncTarget(actor, attachedGateTarget(actor, app.gateAnimations.get(actor)));
+      });
+
+      app.gateAnimations.forEach((_animation, key) => {
+        if (typeof key === "object" && !activeAttachedGates.has(key)) {
+          app.gateAnimations.delete(key);
         }
       });
 
@@ -3359,6 +3494,7 @@
       easeInOutQuad,
       gateAnimationValue,
       gateLiftAt,
+      attachedGateLiftAt,
       orangeWallLiftAt,
       startOrangeWallAnimationLoop,
       syncOrangeWallAnimationTargets,
@@ -3388,6 +3524,12 @@
     app.initialTerrain = cloneTerrainState(app.state.terrain);
     app.levelEntrySnapshot = cloneLevelSnapshot();
     app.renderer = app.gl ? initializeRenderer(app.gl) : null;
+
+    // Debug handle: lets DevTools (and headless checks) inspect the live
+    // runtime state without reaching into module closures.
+    if (typeof window !== "undefined") {
+      window.__MAZEBENCH_APP__ = app;
+    }
 
     return app;
   };
