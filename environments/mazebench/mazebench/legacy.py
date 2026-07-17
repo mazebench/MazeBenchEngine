@@ -18,6 +18,15 @@ from datasets import Dataset
 import verifiers as vf
 from verifiers.utils.message_utils import concat_messages, normalize_messages
 
+from .auto_quit import (
+    AUTO_QUIT_DEFAULT_MODE,
+    AUTO_QUIT_DEFAULT_THRESHOLD,
+    AUTO_QUIT_DEFAULT_WARNING_MOVES,
+    AUTO_QUIT_DEFAULT_WINDOW,
+    auto_quit_warning_text,
+    evaluate_auto_quit,
+    normalize_auto_quit_config,
+)
 from .mazebench import (
     DEFAULT_GAME_ID,
     DEFAULT_MAX_ACTIONS,
@@ -173,6 +182,11 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
         self,
         *,
         allow_quit: bool,
+        auto_quit: bool,
+        auto_quit_threshold: float,
+        auto_quit_mode: str,
+        auto_quit_window: int,
+        auto_quit_warning_moves: int,
         observation_mode: str,
         omniscient: bool,
         hide_names: bool,
@@ -182,10 +196,48 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
     ) -> None:
         super().__init__(max_turns=-1, rubric=rubric, **kwargs)
         self.allow_quit = bool(allow_quit)
+        auto_quit_config = normalize_auto_quit_config(
+            enabled=auto_quit,
+            threshold=auto_quit_threshold,
+            mode=auto_quit_mode,
+            window=auto_quit_window,
+            warning_moves=auto_quit_warning_moves,
+        )
+        self.auto_quit = bool(auto_quit_config["enabled"])
+        self.auto_quit_threshold = float(auto_quit_config["threshold"])
+        self.auto_quit_mode = str(auto_quit_config["mode"])
+        self.auto_quit_window = int(auto_quit_config["window"])
+        self.auto_quit_warning_moves = int(auto_quit_config["warning_moves"])
         self.observation_mode = str(observation_mode)
         self.omniscient = bool(omniscient)
         self.hide_names = bool(hide_names)
         self.max_actions = max(1, int(max_actions))
+
+    def auto_quit_evaluation(self, state: vf.State) -> dict[str, Any] | None:
+        return evaluate_auto_quit(
+            state.get("maze_initial_board_state_hash"),
+            state.get("maze_actions"),
+            enabled=self.auto_quit,
+            threshold=self.auto_quit_threshold,
+            mode=self.auto_quit_mode,
+            window=self.auto_quit_window,
+        )
+
+    def result_with_auto_quit_warning(
+        self,
+        state: vf.State,
+        result_text: str,
+    ) -> str:
+        warning = auto_quit_warning_text(
+            state.get("maze_initial_board_state_hash"),
+            state.get("maze_actions"),
+            enabled=self.auto_quit,
+            threshold=self.auto_quit_threshold,
+            mode=self.auto_quit_mode,
+            window=self.auto_quit_window,
+            warning_moves=self.auto_quit_warning_moves,
+        )
+        return f"{result_text}\n\n{warning}" if warning else result_text
 
     def status_prompt(
         self,
@@ -228,6 +280,7 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
         await super().render_completion(state)
 
     async def setup_state(self, state: vf.State, **_: Any) -> None:
+        state["maze_auto_quit"] = {}
         state["maze_actions"] = []
         state["maze_conversation_log"] = []
         state["maze_scorecard"] = {}
@@ -249,10 +302,17 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
         state["maze_session"] = session
         status = apply_quit_policy(session.request("observe"), self.allow_quit)
         state["maze_status"] = status
+        state["maze_initial_board_state_hash"] = str(
+            status.get("board_state_hash") or ""
+        ).strip()
         state["prompt"] = [
             {
                 "role": "user",
-                "content": self.status_prompt(row, status, "Start of run."),
+                "content": self.status_prompt(
+                    row,
+                    status,
+                    self.result_with_auto_quit_warning(state, "Start of run."),
+                ),
             }
         ]
         state["maze_replay"] = {
@@ -319,21 +379,39 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
         state["game_won"] = bool(status.get("game_won") or int(status.get("gem_count") or 0) >= target)
 
         terminal = state["game_lost"] or state["game_won"]
-        if terminal and not status.get("scorecard") and isinstance(session, MazeSession):
+        auto_quit = None if terminal else self.auto_quit_evaluation(state)
+        if auto_quit is not None:
+            state["maze_auto_quit"] = auto_quit
+        auto_quit_triggered = bool(state.get("maze_auto_quit"))
+        if (terminal or auto_quit_triggered) and not status.get("scorecard") and isinstance(session, MazeSession):
             status = apply_quit_policy(session.request("scorecard"), self.allow_quit)
             state["maze_status"] = status
         set_maze_scorecard(state, status.get("scorecard"))
 
-        if terminal:
+        if auto_quit_triggered:
+            percentage = float((state.get("maze_auto_quit") or {}).get("percentage") or 0)
+            response = [
+                vf.UserMessage(
+                    content=(
+                        "Auto-quit: state novelty reached "
+                        f"{percentage:.1f}% new states. No further action is available."
+                    )
+                )
+            ]
+        elif terminal:
             response = [vf.UserMessage(content="The game has ended. No further action is available.")]
         else:
             response = [
                 vf.UserMessage(
-                    content=self.status_prompt(row, status, result_text)
+                    content=self.status_prompt(
+                        row,
+                        status,
+                        self.result_with_auto_quit_warning(state, result_text),
+                    )
                 )
             ]
 
-        if terminal or len(state.get("maze_actions") or []) >= self.max_actions:
+        if terminal or auto_quit_triggered or len(state.get("maze_actions") or []) >= self.max_actions:
             state["final_env_response"] = response
         return response
 
@@ -344,6 +422,16 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
     @vf.stop(priority=40)
     async def game_won(self, state: vf.State) -> bool:
         return bool(state.get("game_won"))
+
+    @vf.stop(priority=35)
+    async def low_state_novelty(self, state: vf.State) -> bool:
+        if state.get("maze_auto_quit"):
+            return True
+        evaluation = self.auto_quit_evaluation(state)
+        if evaluation is None:
+            return False
+        state["maze_auto_quit"] = evaluation
+        return True
 
     @vf.stop(priority=30)
     async def action_budget(self, state: vf.State) -> bool:
@@ -377,6 +465,11 @@ def load_environment(
     max_actions: int | None = None,
     max_turns: int | None = None,
     allow_quit: bool | None = None,
+    auto_quit: bool | None = None,
+    auto_quit_threshold: float | None = None,
+    auto_quit_mode: str | None = None,
+    auto_quit_window: int | None = None,
+    auto_quit_warning_moves: int | None = None,
     observation_mode: str | None = None,
     omniscient: bool = False,
     hide_names: bool = False,
@@ -409,6 +502,43 @@ def load_environment(
         bool(allow_quit)
         if allow_quit is not None
         else env_bool("MAZEBENCH_ALLOW_QUIT", True)
+    )
+    auto_quit_config = normalize_auto_quit_config(
+        enabled=(
+            auto_quit
+            if auto_quit is not None
+            else env_bool("MAZEBENCH_AUTO_QUIT", False)
+        ),
+        threshold=(
+            auto_quit_threshold
+            if auto_quit_threshold is not None
+            else env_float(
+                "MAZEBENCH_AUTO_QUIT_THRESHOLD",
+                AUTO_QUIT_DEFAULT_THRESHOLD,
+            )
+        ),
+        mode=(
+            auto_quit_mode
+            if auto_quit_mode is not None
+            else os.environ.get("MAZEBENCH_AUTO_QUIT_MODE", AUTO_QUIT_DEFAULT_MODE)
+        ),
+        window=(
+            auto_quit_window
+            if auto_quit_window is not None
+            else env_int(
+                "MAZEBENCH_AUTO_QUIT_WINDOW",
+                AUTO_QUIT_DEFAULT_WINDOW,
+                minimum=1,
+            )
+        ),
+        warning_moves=(
+            auto_quit_warning_moves
+            if auto_quit_warning_moves is not None
+            else env_int(
+                "MAZEBENCH_AUTO_QUIT_WARNING_MOVES",
+                AUTO_QUIT_DEFAULT_WARNING_MOVES,
+            )
+        ),
     )
     weights = {
         "gems": float(
@@ -463,6 +593,11 @@ def load_environment(
         eval_dataset=Dataset.from_list(eval_rows),
         system_prompt=system_prompt or MULTITURN_SYSTEM_PROMPT,
         allow_quit=resolved_allow_quit,
+        auto_quit=bool(auto_quit_config["enabled"]),
+        auto_quit_threshold=float(auto_quit_config["threshold"]),
+        auto_quit_mode=str(auto_quit_config["mode"]),
+        auto_quit_window=int(auto_quit_config["window"]),
+        auto_quit_warning_moves=int(auto_quit_config["warning_moves"]),
         observation_mode=mode,
         omniscient=bool(omniscient),
         hide_names=bool(hide_names),

@@ -20,6 +20,16 @@ from pydantic import Field
 
 import verifiers.v1 as vf
 
+from .auto_quit import (
+    AUTO_QUIT_DEFAULT_MODE,
+    AUTO_QUIT_DEFAULT_THRESHOLD,
+    AUTO_QUIT_DEFAULT_WARNING_MOVES,
+    AUTO_QUIT_DEFAULT_WINDOW,
+    AUTO_QUIT_MAX_WINDOW,
+    auto_quit_warning_text,
+    evaluate_auto_quit,
+)
+
 
 def env_int(name: str, default: int, *, minimum: int = 0) -> int:
     try:
@@ -1251,6 +1261,11 @@ def set_maze_scorecard(state: vf.State, scorecard: dict[str, Any] | None) -> Non
 class MazeBenchTask(vf.Task):
     example_id: int
     allow_quit: bool = env_bool("MAZEBENCH_ALLOW_QUIT", True)
+    auto_quit: bool = env_bool("MAZEBENCH_AUTO_QUIT", False)
+    auto_quit_threshold: float = AUTO_QUIT_DEFAULT_THRESHOLD
+    auto_quit_mode: Literal["cumulative", "rolling"] = AUTO_QUIT_DEFAULT_MODE
+    auto_quit_window: int = AUTO_QUIT_DEFAULT_WINDOW
+    auto_quit_warning_moves: int = AUTO_QUIT_DEFAULT_WARNING_MOVES
     game_id: str = DEFAULT_GAME_ID
     game_won_gem_count: int = GAME_WON_GEM_COUNT
     level_id: str = DEFAULT_START_LEVEL_ID
@@ -1280,6 +1295,31 @@ class MazeBenchConfig(vf.TasksetConfig):
     id: _EnvId = "mazebench"
     num_examples: int = 1
     allow_quit: bool = env_bool("MAZEBENCH_ALLOW_QUIT", True)
+    auto_quit: bool = env_bool("MAZEBENCH_AUTO_QUIT", False)
+    auto_quit_threshold: float = Field(
+        env_float("MAZEBENCH_AUTO_QUIT_THRESHOLD", AUTO_QUIT_DEFAULT_THRESHOLD),
+        ge=0,
+        le=100,
+    )
+    auto_quit_mode: Literal["cumulative", "rolling"] = (
+        "rolling"
+        if str(os.environ.get("MAZEBENCH_AUTO_QUIT_MODE") or "").strip().lower()
+        == "rolling"
+        else AUTO_QUIT_DEFAULT_MODE
+    )
+    auto_quit_window: int = Field(
+        env_int("MAZEBENCH_AUTO_QUIT_WINDOW", AUTO_QUIT_DEFAULT_WINDOW, minimum=1),
+        ge=1,
+        le=AUTO_QUIT_MAX_WINDOW,
+    )
+    auto_quit_warning_moves: int = Field(
+        env_int(
+            "MAZEBENCH_AUTO_QUIT_WARNING_MOVES",
+            AUTO_QUIT_DEFAULT_WARNING_MOVES,
+        ),
+        ge=0,
+        le=AUTO_QUIT_MAX_WINDOW,
+    )
     level_ids: str | list[str] | None = None
     start_level_id: str = DEFAULT_START_LEVEL_ID
     view: str = DEFAULT_VIEW
@@ -1314,7 +1354,9 @@ class MazeBenchEnvConfig(vf.EnvConfig):
 class MazeBenchState(vf.State):
     game_lost: bool = False
     game_won: bool = False
+    maze_auto_quit: dict[str, Any] = Field(default_factory=dict)
     maze_actions: list[dict[str, Any]] = Field(default_factory=list)
+    maze_initial_board_state_hash: str = ""
     maze_replay: dict[str, Any] = Field(default_factory=dict)
     maze_scorecard: dict[str, Any] = Field(default_factory=dict)
     maze_status: dict[str, Any] = Field(default_factory=dict)
@@ -1344,6 +1386,29 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
 
     def export_live_actions(self) -> None:
         write_live_actions(list(self.state.maze_actions or []))
+
+    def auto_quit_evaluation(self) -> dict[str, Any] | None:
+        task = self.task
+        return evaluate_auto_quit(
+            self.state.maze_initial_board_state_hash,
+            self.state.maze_actions,
+            enabled=task.auto_quit,
+            threshold=task.auto_quit_threshold,
+            mode=task.auto_quit_mode,
+            window=task.auto_quit_window,
+        )
+
+    def auto_quit_warning(self) -> str:
+        task = self.task
+        return auto_quit_warning_text(
+            self.state.maze_initial_board_state_hash,
+            self.state.maze_actions,
+            enabled=task.auto_quit,
+            threshold=task.auto_quit_threshold,
+            mode=task.auto_quit_mode,
+            window=task.auto_quit_window,
+            warning_moves=task.auto_quit_warning_moves,
+        )
 
     async def vision_frame_data_url(self) -> str:
         task = self.task
@@ -1375,6 +1440,9 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
     async def build_user_message(self, status: dict[str, Any], result_text: str) -> vf.Messages:
         task = self.task
         target_text = target_text_for_row(task.model_dump())
+        warning = self.auto_quit_warning()
+        if warning:
+            result_text = f"{result_text}\n\n{warning}"
         if task.observation_mode == "ascii":
             return [
                 {
@@ -1436,7 +1504,11 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
 
     def initialize_state(self, status: dict[str, Any]) -> None:
         task = self.task
+        self.state.maze_auto_quit = {}
         self.state.maze_actions = []
+        self.state.maze_initial_board_state_hash = str(
+            status.get("board_state_hash") or ""
+        ).strip()
         self.state.maze_scorecard = {}
         self.state.maze_status = status
         self.state.maze_status_error = ""
@@ -1531,7 +1603,17 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
         self.export_live_actions()
 
         self.update_terminal_flags(status)
-        if (self.state.game_lost or self.state.game_won) and not status.get("scorecard"):
+        auto_quit = (
+            None
+            if self.state.game_lost or self.state.game_won
+            else self.auto_quit_evaluation()
+        )
+        if auto_quit is not None:
+            self.state.maze_auto_quit = auto_quit
+        rollout_ended = bool(
+            self.state.game_lost or self.state.game_won or self.state.maze_auto_quit
+        )
+        if rollout_ended and not status.get("scorecard"):
             status = apply_quit_policy(
                 await run_blocking(session.request, "scorecard"),
                 task.allow_quit,
@@ -1539,8 +1621,19 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
             self.state.maze_status = status
         self.record_scorecard(status)
 
-        if self.state.game_lost or self.state.game_won:
+        if rollout_ended:
             await run_blocking(self.close_session)
+            if self.state.maze_auto_quit:
+                percentage = float(self.state.maze_auto_quit.get("percentage") or 0)
+                return [
+                    {
+                        "role": "user",
+                        "content": (
+                            "Auto-quit: state novelty reached "
+                            f"{percentage:.1f}% new states. No further action is available."
+                        ),
+                    }
+                ]
             return [
                 {
                     "role": "user",
@@ -1577,6 +1670,11 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
                 system_prompt=self.config.system_prompt,
                 example_id=int(row["example_id"]),
                 allow_quit=bool(self.config.allow_quit),
+                auto_quit=bool(self.config.auto_quit),
+                auto_quit_threshold=float(self.config.auto_quit_threshold),
+                auto_quit_mode=self.config.auto_quit_mode,
+                auto_quit_window=int(self.config.auto_quit_window),
+                auto_quit_warning_moves=int(self.config.auto_quit_warning_moves),
                 game_id=str(row["game_id"]),
                 game_won_gem_count=int(row["game_won_gem_count"]),
                 level_id=str(row["level_id"]),
@@ -1610,6 +1708,8 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
     ) -> None:
         del task, runtime
         trace.info["maze_actions"] = trace.state.maze_actions
+        if trace.state.maze_auto_quit:
+            trace.info["maze_auto_quit"] = trace.state.maze_auto_quit
         trace.info["maze_scorecard"] = trace.state.maze_scorecard
         trace.info["maze_replay"] = trace.state.maze_replay
         trace.info["maze_status"] = slim_status(trace.state.maze_status)
@@ -1621,6 +1721,23 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
             or trace.state.game_won
             or len(trace.state.maze_actions) >= int(trace.task.max_actions)
         )
+
+    @vf.stop
+    async def low_state_novelty(self, trace: vf.Trace) -> bool:
+        if trace.state.maze_auto_quit:
+            return True
+        evaluation = evaluate_auto_quit(
+            trace.state.maze_initial_board_state_hash,
+            trace.state.maze_actions,
+            enabled=trace.task.auto_quit,
+            threshold=trace.task.auto_quit_threshold,
+            mode=trace.task.auto_quit_mode,
+            window=trace.task.auto_quit_window,
+        )
+        if evaluation is None:
+            return False
+        trace.state.maze_auto_quit = evaluation
+        return True
 
     @vf.reward
     async def gem_score(self, task: MazeBenchTask, trace: vf.Trace) -> float:

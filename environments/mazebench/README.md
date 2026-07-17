@@ -18,6 +18,7 @@ Models navigate a real JavaScript maze world one action at a time, preserve stat
 | JSON object observations | Supported | Supported |
 | Gem, room, and block rewards | Supported | Supported |
 | Configurable start room, view, yaw, and action limit | Supported | Supported |
+| State-novelty auto-quit with advance warnings | Supported | Supported |
 | Replay state and per-action metadata | Supported | Supported |
 | Perspective image observations | Not yet self-contained | Experimental |
 | Local Codex CLI harness | Not supported | Experimental |
@@ -106,6 +107,7 @@ uv run eval mazebench/mazebench \
 The saved `results.jsonl` trace contains:
 
 - `info.maze_actions` — normalized action records and per-action game status
+- `info.maze_auto_quit` — novelty counts and percentage when auto-quit fires
 - `info.maze_scorecard` — the final authoritative scorecard
 - `info.maze_replay` — initial state, accepted actions, and final scorecard
 - `rewards` — all three reward components
@@ -150,6 +152,11 @@ gem_reward_weight = 1.0
 room_reward_weight = 0.1
 push_reward_weight = 0.05
 allow_quit = false
+auto_quit = true
+auto_quit_threshold = 10.0
+auto_quit_mode = "cumulative"
+auto_quit_window = 100
+auto_quit_warning_moves = 10
 ```
 
 Launch it from a CPU machine; Prime hosts the training infrastructure:
@@ -204,6 +211,11 @@ Prime CLI 0.6.x passes these settings under `[env.args]` to MazeBench's hosted c
 | `push_reward_weight` | number | `0.05` | Novel-block-position reward multiplier. |
 | `max_actions` | integer | `256` | Maximum accepted MazeBench actions. |
 | `allow_quit` | boolean | `true` | Whether `quit` may end the rollout. |
+| `auto_quit` | boolean | `false` | Stop the rollout when its percentage of globally novel board states reaches the configured threshold. |
+| `auto_quit_threshold` | number | `10.0` | New-state percentage at or below which auto-quit fires. |
+| `auto_quit_mode` | `cumulative` or `rolling` | `cumulative` | Measure novelty across the whole rollout or a rolling action window. |
+| `auto_quit_window` | integer | `100` | Rolling-mode action window. Rolling mode waits until this window is full. |
+| `auto_quit_warning_moves` | integer | `10` | Warn when this many repeated-state actions would reach the threshold. `0` disables warnings. |
 | `target_gems` | integer | `0` | Optional gem-score normalization target. `0` uses raw gem count. |
 | `observation_mode` | `ascii`, `json`, or `vision` | `ascii` | Observation surface. Hosted Training supports `ascii` and `json`. |
 | `omniscient` | boolean | `false` | JSON mode includes every object in the current room instead of only ASCII-visible objects. |
@@ -224,6 +236,14 @@ attachments rendered as `8`, with no side character. Pressing a button moves
 each `orange_wall` down one elevation, reflected in its JSON coordinate.
 
 Framework controls such as `max_turns`, token limits, sampling, batch size, and rollout count belong outside the taskset configuration.
+
+Auto-quit uses the authoritative `board_state_hash` returned by the game
+engine. A state is novel only on its first appearance in the entire rollout.
+Cumulative mode includes the initial observation; rolling mode evaluates
+action observations and waits for a full window. Warning countdowns are
+conditional: they assume subsequent actions keep revisiting already observed
+states. Reaching a new state raises the novelty rate and can move the cutoff
+farther away.
 
 ## Experimental local vision
 

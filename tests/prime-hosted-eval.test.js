@@ -123,10 +123,33 @@ try {
     game_won_gem_count: 69,
     max_actions: 5,
     allow_quit: false,
+    auto_quit: false,
+    auto_quit_threshold: 10,
+    auto_quit_mode: "cumulative",
+    auto_quit_window: 100,
+    auto_quit_warning_moves: 10,
     observation_mode: "ascii"
   });
   const sampling = JSON.parse(argv[argv.indexOf("-S") + 1]);
   assert.deepEqual(sampling, { max_tokens: 512, reasoning_effort: "low" });
+
+  const autoQuitOptions = parseArgs([
+    "--hosted",
+    "--out", outDir,
+    "--auto-quit",
+    "--auto-quit-threshold", "7.5",
+    "--auto-quit-mode", "rolling",
+    "--auto-quit-window", "80",
+    "--auto-quit-warning-moves", "10"
+  ]);
+  const autoQuitArgv = hostedEvalArgs(autoQuitOptions);
+  const autoQuitEnvArgs = JSON.parse(autoQuitArgv[autoQuitArgv.indexOf("-a") + 1]);
+  assert.equal(autoQuitEnvArgs.auto_quit, true);
+  assert.equal(autoQuitEnvArgs.auto_quit_threshold, 7.5);
+  assert.equal(autoQuitEnvArgs.auto_quit_mode, "rolling");
+  assert.equal(autoQuitEnvArgs.auto_quit_window, 80);
+  assert.equal(autoQuitEnvArgs.auto_quit_warning_moves, 10);
+  assert(autoQuitArgv[autoQuitArgv.indexOf("--state-columns") + 1].includes("maze_auto_quit"));
 
   const hiddenAsciiOptions = parseArgs([
     "--hosted",
@@ -171,6 +194,7 @@ try {
       token_usage: { input_tokens: 100, output_tokens: 4 }
     },
     state: {
+      maze_auto_quit: { percentage: 10, novel_states: 1, observed_states: 10 },
       maze_actions: [
         {
           turn: 1,
@@ -186,6 +210,7 @@ try {
   assert.equal(row.reward, 1.25);
   assert.equal(row.info.maze_actions[0].command, "up");
   assert.equal(row.info.maze_actions[0].status.level, "BOARD-AFTER");
+  assert.equal(row.info.maze_auto_quit.percentage, 10);
   assert.equal(row.info.maze_scorecard.gems.collected, 1);
 
   const resultsPath = writeHostedResults(options, { evaluation_id: "eval-1", samples: [sample] });

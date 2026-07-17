@@ -3611,6 +3611,20 @@ function createAgentRunService({
       argv.push("--no-quit");
     }
 
+    if (autoQuit.enabled) {
+      argv.push(
+        "--auto-quit",
+        "--auto-quit-threshold",
+        String(autoQuit.threshold),
+        "--auto-quit-mode",
+        autoQuit.mode,
+        "--auto-quit-window",
+        String(autoQuit.window),
+        "--auto-quit-warning-moves",
+        "10"
+      );
+    }
+
     if (!wantVideo) {
       argv.push("--no-video");
     }
@@ -3626,6 +3640,17 @@ function createAgentRunService({
       .concat(hideNames ? ["--hide-names", "--hide-names-seed", hideNamesSeed] : [])
       .concat(reasoning ? ["--reasoning", reasoning] : [])
       .concat(!allowQuit ? ["--no-quit"] : [])
+      .concat(autoQuit.enabled
+        ? [
+            "--auto-quit",
+            "--auto-quit-threshold",
+            String(autoQuit.threshold),
+            "--auto-quit-mode",
+            autoQuit.mode,
+            "--auto-quit-window",
+            String(autoQuit.window)
+          ]
+        : [])
       .join(" ");
 
     return {
