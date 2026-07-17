@@ -34,8 +34,7 @@ try {
   const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "utf8");
 
   assert.match(agentSource, /id: "none",\s*name: "None"/);
-  assert.match(agentSource, /Bot Off is from Lucide Icons \(ISC License\)/);
-  assert.match(agentSource, /M13\.67 8H18a2 2 0 0 1 2 2v4\.33/);
+  assert.match(agentSource, /<circle cx=\"24\" cy=\"24\" r=\"17\.5\"><\/circle><path d=\"M12\.5 35\.5 35\.5 12\.5\"><\/path>/);
   assert.match(agentSource, /id: "codex",\s*name: "Codex"/);
   assert.match(agentSource, /id: "claude-code",\s*name: "Claude Code"/);
   assert.match(agentSource, /harness: state\.harness/);
@@ -62,6 +61,8 @@ try {
   assert.match(siteTheme, /\.execution-option__spinner[\s\S]*?animation: executionStatusSpin/);
   assert.match(agentSource, /renderSelectionSlider\(host, "\.provider-card\.is-selected", selectionFrom, "provider"\)/);
   assert.match(siteTheme, /\.selection-slider--provider \{\s*border-radius: 12px;/);
+  assert.match(agentSource, /tweenVisibility\(wrapper, supportsLocal, 420\)/);
+  assert.match(agentSource, /const collapsedFrame = \{[\s\S]*?marginBottom: "0px",[\s\S]*?marginTop: "0px"/);
   assert.match(appSource, /allowLegacyLocalLaunch: true/);
   assert.match(appSource, /codex.*\["login", "status"\]/s);
   assert.match(appSource, /claude.*\["auth", "status", "--json"\]/s);

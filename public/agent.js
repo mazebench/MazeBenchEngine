@@ -11,12 +11,11 @@
 
   // Harnesses are a small data registry on purpose: Prime can add another
   // built-in harness without changing the model or run-settings flow.
-  // Bot Off is from Lucide Icons (ISC License).
   const HARNESSES = [
     {
       id: "none",
       name: "None",
-      logo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.67 8H18a2 2 0 0 1 2 2v4.33"></path><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M22 22 2 2"></path><path d="M8 8H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 1.414-.586"></path><path d="M9 13v2"></path><path d="M9.67 4H12v2.33"></path></svg>'
+      logo: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="24" cy="24" r="17.5"></circle><path d="M12.5 35.5 35.5 12.5"></path></svg>'
     },
     {
       id: "codex",
@@ -174,12 +173,23 @@
 
     if (show) element.hidden = false;
     const fullHeight = element.getBoundingClientRect().height;
+    const computedStyle = window.getComputedStyle(element);
+    const expandedFrame = {
+      height: `${fullHeight}px`,
+      marginBottom: computedStyle.marginBottom,
+      marginTop: computedStyle.marginTop,
+      opacity: 1
+    };
+    const collapsedFrame = {
+      height: "0px",
+      marginBottom: "0px",
+      marginTop: "0px",
+      opacity: 0
+    };
     const previousOverflow = element.style.overflow;
     element.style.overflow = "clip";
     const animation = element.animate(
-      show
-        ? [{ height: "0px", opacity: 0 }, { height: `${fullHeight}px`, opacity: 1 }]
-        : [{ height: `${fullHeight}px`, opacity: 1 }, { height: "0px", opacity: 0 }],
+      show ? [collapsedFrame, expandedFrame] : [expandedFrame, collapsedFrame],
       { duration, easing: "cubic-bezier(0.22, 1, 0.36, 1)" }
     );
     const entry = { animation, show };
@@ -377,7 +387,7 @@
     const wrapper = document.getElementById("harness-execution");
     const picker = document.getElementById("execution-picker");
     const supportsLocal = Boolean(localProviderId());
-    if (wrapper) wrapper.hidden = !supportsLocal;
+    if (wrapper) tweenVisibility(wrapper, supportsLocal, 420);
     picker?.querySelectorAll("[data-execution]").forEach((option) => {
       const selected = option.dataset.execution === state.execution;
       option.classList.toggle("is-selected", selected);
