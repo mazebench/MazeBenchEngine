@@ -57,6 +57,7 @@ readline.createInterface({ input: process.stdin, terminal: false }).on("line", (
         ok: true,
         action: message.command,
         board_state_hash: "state-" + boardState,
+        player: { x: boardState, y: 8, elevation: 0 },
         level: observationMode === "text" ? "ASCII:" + message.command : undefined,
         json_observation: { mode: "json", omniscient, hide_names: hideNames, objects: [] }
       }) + "\\n");
@@ -149,6 +150,18 @@ try {
   assert.equal(livePrimeProgress.actions[0].level, "ASCII:observe");
   assert.equal(livePrimeProgress.initial_board_state_hash, "state-0");
   assert.equal(livePrimeProgress.actions[0].board_state_hash, "state-1");
+  assert.deepEqual(livePrimeProgress.initial_player, { x: 0, y: 8, elevation: 0 });
+  assert.deepEqual(livePrimeProgress.actions[0].player, { x: 1, y: 8, elevation: 0 });
+  assert.equal(
+    loadJson(path.join(livePrimeRunDir, "actions.jsonl"), {})?.status?.player,
+    undefined,
+    "trusted chart reconstruction must not write coordinates into agent-facing telemetry"
+  );
+  assert.deepEqual(service.getRunObservation(livePrime.id, { turn: 1 }).player, {
+    x: 1,
+    y: 8,
+    elevation: 0
+  });
   assert.equal(livePrimeProgress.run.inference.state, "in_flight");
   assert.equal(livePrimeProgress.run.inference.action, 2);
   assert.equal(service.stopRun(livePrime.id).status, "stopped");

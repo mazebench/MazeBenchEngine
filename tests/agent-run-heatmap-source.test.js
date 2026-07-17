@@ -20,7 +20,10 @@ assert.match(pages, /id="run-heatmap-export-format"[\s\S]*?<option value="gif">G
 assert.match(pages, /id="run-heatmap-export"[^>]+>Export GIF<\/button>/);
 assert.equal((pages.match(/\$\{heatmapSection\}/g) || []).length, 2);
 assert.match(pages, /\$\{explorationSection\}[\s\S]*?\$\{heatmapSection\}[\s\S]*?\$\{movesSection\}/);
-assert.match(runService, /initial_player: readInitialPlayer\(runId\)/);
+assert.match(runService, /const players = new Map\(\)/);
+assert.match(runService, /const player = normalizedPlayerPosition\(response\?\.player\)/);
+assert.match(runService, /initial_player: initialPlayer/);
+assert.match(runService, /action\.player \|\|= reconstructed\.players\.get\(Number\(action\.turn\)\) \|\| null/);
 assert.match(runService, /initial_board_state_hash: initialBoardStateHash \|\| null/);
 assert.match(runService, /board_state_hash: record\.status\?\.board_state_hash \|\| null/);
 assert.match(runScript, /const BOARD_STATE_NOVELTY_WINDOW = 50/);

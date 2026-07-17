@@ -1042,13 +1042,19 @@ function createAgentRunService({
     // Older runs predate initial-status.json. Parse their session once so the
     // heatmap still includes move zero without making every poll pay that cost.
     const status = initialStatus || loadJson(path.join(runDir, "session.json"), null)?.initial || null;
-    const x = Number(status?.player?.x);
-    const y = Number(status?.player?.y);
+    const player = normalizedPlayerPosition(status?.player);
+    if (!player) return null;
+    initialPlayerCache.set(runId, player);
+    return player;
+  }
+
+  function normalizedPlayerPosition(value) {
+    const x = Number(value?.x);
+    const y = Number(value?.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
     const player = { x, y };
-    const elevation = Number(status?.player?.elevation);
+    const elevation = Number(value?.elevation);
     if (Number.isFinite(elevation)) player.elevation = elevation;
-    initialPlayerCache.set(runId, player);
     return player;
   }
 
@@ -2725,12 +2731,18 @@ function createAgentRunService({
         .map((line) => JSON.parse(line));
       const initialHash = String(responses[0]?.board_state_hash || "");
       if (!initialHash) return null;
+      const initialPlayer = normalizedPlayerPosition(responses[0]?.player);
       const hashes = new Map();
+      const players = new Map();
       actions.forEach((action, index) => {
-        const hash = String(responses[index + 1]?.board_state_hash || "");
-        if (hash) hashes.set(Number(action.turn) || index + 1, hash);
+        const response = responses[index + 1];
+        const turn = Number(action.turn) || index + 1;
+        const hash = String(response?.board_state_hash || "");
+        const player = normalizedPlayerPosition(response?.player);
+        if (hash) hashes.set(turn, hash);
+        if (player) players.set(turn, player);
       });
-      const timeline = { initial_hash: initialHash, hashes };
+      const timeline = { initial_hash: initialHash, initial_player: initialPlayer, hashes, players };
       if (reconstructedBoardStateTimelineCache.size >= 32) {
         reconstructedBoardStateTimelineCache.delete(reconstructedBoardStateTimelineCache.keys().next().value);
       }
@@ -2858,6 +2870,13 @@ function createAgentRunService({
     const jsonObservation = mode === "json" && !status?.json_observation
       ? reconstructJsonObservation(runId, requestedInstance, instanceDir, absoluteTurn, summary, metadata)
       : status?.json_observation || null;
+    let player = normalizedPlayerPosition(status?.player);
+    if (primary && !player) {
+      const reconstructed = reconstructBoardStateTimeline(runId, summary);
+      player = absoluteTurn === 0
+        ? reconstructed?.initial_player || null
+        : reconstructed?.players.get(absoluteTurn) || null;
+    }
     const frameName = `frame-${String(absoluteTurn).padStart(3, "0")}.png`;
     const exactFrame = path.join(instanceDir, "frames", frameName);
     let frameUrl = null;
@@ -2886,7 +2905,7 @@ function createAgentRunService({
       frame_url: frameUrl,
       current_room: String(status?.current_room || ""),
       gem_count: Math.max(0, Number(status?.gem_count) || 0),
-      player: status?.player || null,
+      player,
       yaw: Number(status?.yaw) || 0
     };
   }
@@ -2913,12 +2932,19 @@ function createAgentRunService({
       }
     }
     let initialBoardStateHash = readInitialBoardStateHash(runId);
-    if (!initialBoardStateHash || actions.some((action) => !action.board_state_hash)) {
+    let initialPlayer = readInitialPlayer(runId);
+    if (
+      !initialBoardStateHash ||
+      !initialPlayer ||
+      actions.some((action) => !action.board_state_hash || !action.player)
+    ) {
       const reconstructed = reconstructBoardStateTimeline(runId, summary);
       if (reconstructed) {
         initialBoardStateHash ||= reconstructed.initial_hash;
+        initialPlayer ||= reconstructed.initial_player;
         actions.forEach((action) => {
           action.board_state_hash ||= reconstructed.hashes.get(Number(action.turn)) || null;
+          action.player ||= reconstructed.players.get(Number(action.turn)) || null;
         });
       }
     }
@@ -2951,7 +2977,7 @@ function createAgentRunService({
       run: inference ? { ...summary, inference } : summary,
       actions,
       initial_board_state_hash: initialBoardStateHash || null,
-      initial_player: readInitialPlayer(runId),
+      initial_player: initialPlayer,
       log_chunk: log.chunk,
       log_offset: log.offset,
       token_usage: incrementalTokenUsage,
