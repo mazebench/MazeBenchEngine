@@ -965,7 +965,7 @@ function createPageRenderer({
                 <div class="setting-card__head"><span>Budget</span></div>
                 <div class="budget-limit-control">
                   <label class="field setting-card__field setting-card__field--budget"><span>Move limit</span><input id="run-moves" type="number" min="0" max="500" value="0" inputmode="numeric"></label>
-                  <button id="run-unlimited" class="budget-unlimited" type="button" aria-pressed="false"><span aria-hidden="true">∞</span> Unlimited</button>
+                  <button id="run-unlimited" class="budget-unlimited" type="button" data-budget-unlimited aria-pressed="false"><span aria-hidden="true">∞</span> Unlimited</button>
                 </div>
               </article>
               <article class="setting-card setting-card--give-up is-gated" inert aria-hidden="true">
@@ -1009,7 +1009,10 @@ function createPageRenderer({
               </article>
               <article class="setting-card setting-card--budget is-gated" inert aria-hidden="true">
                 <div class="setting-card__head"><span>Budget</span></div>
-                <label class="field setting-card__field"><span>Action limit</span><input id="run-prime-turns" type="number" min="0" value="0" inputmode="numeric"></label>
+                <div class="budget-limit-control">
+                  <label class="field setting-card__field setting-card__field--budget"><span>Action limit</span><input id="run-prime-turns" type="number" min="0" value="0" inputmode="numeric"></label>
+                  <button id="run-prime-unlimited" class="budget-unlimited" type="button" data-budget-unlimited aria-pressed="false"><span aria-hidden="true">∞</span> Unlimited</button>
+                </div>
               </article>
               <article class="setting-card setting-card--give-up is-gated" inert aria-hidden="true">
                 <div class="setting-card__head"><span>Allow model to give up</span></div>

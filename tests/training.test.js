@@ -121,6 +121,8 @@ const legacyProbe = execFileSync(
       "assert env.env_id == 'mazebench'",
       "assert env.__class__.__name__ == 'LegacyMazeEnv'",
       "assert len(env.get_dataset(-1)) == 1",
+      "unlimited=verifiers.load_environment('mazebench', unlimited=True, allow_quit=False)",
+      "assert unlimited.max_actions is None",
       "print('legacy hosted adapter ready')"
     ].join("; ")
   ],

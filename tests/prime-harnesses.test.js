@@ -94,6 +94,9 @@ try {
   assert.match(tasksetSource, /extra_instructions: str = ""/);
   assert.match(tasksetSource, /`view_image` in\s+Codex; `Read` in Claude Code/);
   assert.match(tasksetSource, /playwright-core@\{PLAYWRIGHT_CORE_VERSION\}/);
+  assert.match(tasksetSource, /max_actions: int \| None = 20/);
+  assert.match(tasksetSource, /"unlimited" if unlimited else str\(data\.max_actions\)/);
+  assert.match(runSource, /\["--taskset\.max-actions", "None", "--max-turns", "None"\]/);
   assert.doesNotMatch(tasksetSource, /node \{HELPER\} scorecard/);
   assert.match(tasksetSource, /Scoring is evaluator-only/);
 

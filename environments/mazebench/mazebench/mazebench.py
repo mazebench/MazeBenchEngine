@@ -1269,7 +1269,7 @@ class MazeBenchTask(vf.Task):
     game_id: str = DEFAULT_GAME_ID
     game_won_gem_count: int = GAME_WON_GEM_COUNT
     level_id: str = DEFAULT_START_LEVEL_ID
-    max_actions: int = DEFAULT_MAX_ACTIONS
+    max_actions: int | None = DEFAULT_MAX_ACTIONS
     node_bin: str = DEFAULT_NODE_BIN
     observation: str = ""
     observation_mode: Literal["ascii", "json", "vision"] = DEFAULT_OBSERVATION_MODE
@@ -1328,7 +1328,7 @@ class MazeBenchConfig(vf.TasksetConfig):
     gem_reward_weight: float = Field(DEFAULT_GEM_REWARD_WEIGHT, ge=0)
     room_reward_weight: float = Field(DEFAULT_ROOM_REWARD_WEIGHT, ge=0)
     push_reward_weight: float = Field(DEFAULT_PUSH_REWARD_WEIGHT, ge=0)
-    max_actions: int = Field(DEFAULT_MAX_ACTIONS, ge=1)
+    max_actions: int | None = Field(DEFAULT_MAX_ACTIONS, ge=1)
     node_bin: str = DEFAULT_NODE_BIN
     observation_mode: Literal["ascii", "json", "vision"] = DEFAULT_OBSERVATION_MODE
     omniscient: bool = False
@@ -1678,7 +1678,11 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
                 game_id=str(row["game_id"]),
                 game_won_gem_count=int(row["game_won_gem_count"]),
                 level_id=str(row["level_id"]),
-                max_actions=int(self.config.max_actions),
+                max_actions=(
+                    None
+                    if self.config.max_actions is None
+                    else int(self.config.max_actions)
+                ),
                 node_bin=str(row["node_bin"]),
                 observation=str(row["observation"]),
                 observation_mode=self.config.observation_mode,
@@ -1719,7 +1723,10 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
         return bool(
             trace.state.game_lost
             or trace.state.game_won
-            or len(trace.state.maze_actions) >= int(trace.task.max_actions)
+            or (
+                trace.task.max_actions is not None
+                and len(trace.state.maze_actions) >= int(trace.task.max_actions)
+            )
         )
 
     @vf.stop

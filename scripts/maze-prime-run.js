@@ -11,7 +11,7 @@
 //
 // Usage:
 //   node maze-prime-run.js --env-dir <dir> --out <runDir> [--model <id>]
-//     --harness <none|codex|claude-code> --max-turns <n>
+//     --harness <none|codex|claude-code> (--max-turns <n> | --unlimited)
 //     [--observation-mode <ascii|json|vision>] [--no-video]
 
 const fs = require("node:fs");
@@ -49,6 +49,7 @@ function parseArgs(argv) {
     outDir: "",
     reasoning: "",
     runId: "",
+    unlimited: false,
     vision: false,
     allowQuit: true,
     autoQuit: false,
@@ -75,6 +76,7 @@ function parseArgs(argv) {
     else if (arg === "--level") opts.levelId = String(next() || opts.levelId);
     else if (arg === "--game-won-gem-count") opts.gameWonGemCount = Math.max(1, Number(next()) || 69);
     else if (arg === "--max-turns") opts.maxTurns = positiveTurnBudget(next());
+    else if (arg === "--unlimited") opts.unlimited = true;
     else if (arg === "--hosted") opts.hosted = true;
     else if (arg === "--vision") {
       opts.vision = true;
@@ -210,7 +212,7 @@ function hostedEvalArgs(opts) {
     num_eval_examples: 1,
     start_level_id: opts.levelId,
     game_won_gem_count: opts.gameWonGemCount,
-    max_actions: opts.maxTurns,
+    max_actions: opts.unlimited ? null : opts.maxTurns,
     allow_quit: opts.allowQuit,
     auto_quit: opts.autoQuit,
     auto_quit_threshold: opts.autoQuitThreshold,
@@ -219,6 +221,7 @@ function hostedEvalArgs(opts) {
     auto_quit_warning_moves: opts.autoQuitWarningMoves,
     observation_mode: opts.observationMode
   };
+  if (opts.unlimited) envArgs.unlimited = true;
   if (opts.observationMode === "json") {
     envArgs.omniscient = opts.omniscient;
   }
@@ -253,12 +256,28 @@ function hostedEvalArgs(opts) {
     "--state-columns",
     "maze_actions,maze_auto_quit,maze_scorecard,maze_replay,maze_status",
     "--timeout-minutes",
-    "60",
+    opts.unlimited ? "1440" : "60",
     "--poll-interval",
     "2"
   ];
   if (opts.model) args.push("-m", opts.model);
   return args;
+}
+
+function verifierTurnBudgetArgs(opts) {
+  if (opts.unlimited) {
+    return ["--taskset.max-actions", "None", "--max-turns", "None"];
+  }
+  // Verifiers counts every sampled graph branch against max_turns. Provider
+  // continuation-state retokenization can fork the graph without advancing
+  // the user simulator, so keep this as a safety ceiling and let the
+  // environment's exact max_actions value enforce the requested move budget.
+  return [
+    "--taskset.max-actions",
+    String(opts.maxTurns),
+    "--max-turns",
+    String(Math.max(opts.maxTurns + 16, opts.maxTurns * 4))
+  ];
 }
 
 function primeJson(args) {
@@ -552,14 +571,7 @@ function runEval(opts) {
     opts.levelId,
     "--taskset.game-won-gem-count",
     String(opts.gameWonGemCount),
-    "--taskset.max-actions",
-    String(opts.maxTurns),
-    "--max-turns",
-    // Verifiers counts every sampled graph branch against max_turns. Provider
-    // continuation-state retokenization can fork the graph without advancing
-    // the user simulator, so keep this as a safety ceiling and let the
-    // environment's exact max_actions value enforce the requested move budget.
-    String(Math.max(opts.maxTurns + 16, opts.maxTurns * 4)),
+    ...verifierTurnBudgetArgs(opts),
     "--rich",
     "False",
     "-o",
@@ -961,6 +973,7 @@ module.exports = {
   parseArgs,
   providerReasoningText,
   replayExportArgs,
+  verifierTurnBudgetArgs,
   writeMoveArtifacts,
   writeHostedLiveArtifacts,
   writeHostedResults

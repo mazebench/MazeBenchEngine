@@ -190,7 +190,7 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
         observation_mode: str,
         omniscient: bool,
         hide_names: bool,
-        max_actions: int,
+        max_actions: int | None,
         rubric: vf.Rubric,
         **kwargs: Any,
     ) -> None:
@@ -211,7 +211,7 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
         self.observation_mode = str(observation_mode)
         self.omniscient = bool(omniscient)
         self.hide_names = bool(hide_names)
-        self.max_actions = max(1, int(max_actions))
+        self.max_actions = None if max_actions is None else max(1, int(max_actions))
 
     def auto_quit_evaluation(self, state: vf.State) -> dict[str, Any] | None:
         return evaluate_auto_quit(
@@ -411,7 +411,11 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
                 )
             ]
 
-        if terminal or auto_quit_triggered or len(state.get("maze_actions") or []) >= self.max_actions:
+        budget_exhausted = (
+            self.max_actions is not None
+            and len(state.get("maze_actions") or []) >= self.max_actions
+        )
+        if terminal or auto_quit_triggered or budget_exhausted:
             state["final_env_response"] = response
         return response
 
@@ -435,7 +439,10 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
 
     @vf.stop(priority=30)
     async def action_budget(self, state: vf.State) -> bool:
-        return len(state.get("maze_actions") or []) >= self.max_actions
+        return bool(
+            self.max_actions is not None
+            and len(state.get("maze_actions") or []) >= self.max_actions
+        )
 
     @vf.cleanup
     async def close_maze_session(self, state: vf.State) -> None:
@@ -464,6 +471,7 @@ def load_environment(
     push_reward_weight: float | None = None,
     max_actions: int | None = None,
     max_turns: int | None = None,
+    unlimited: bool = False,
     allow_quit: bool | None = None,
     auto_quit: bool | None = None,
     auto_quit_threshold: float | None = None,
@@ -491,7 +499,7 @@ def load_environment(
         if game_won_gem_count is not None
         else env_int("MAZEBENCH_GAME_WON_GEM_COUNT", GAME_WON_GEM_COUNT, minimum=1)
     )
-    resolved_max_actions = int(
+    resolved_max_actions = None if unlimited else int(
         max_actions
         if max_actions is not None
         else max_turns

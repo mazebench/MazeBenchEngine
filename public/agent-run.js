@@ -814,7 +814,7 @@
   function runConfiguration(run) {
     const params = run.launch_params && typeof run.launch_params === "object" ? run.launch_params : {};
     const prime = run.kind === "prime" || run.model === "prime";
-    const unlimited = !prime && configuredFlag(params, "unlimited", run.unlimited);
+    const unlimited = configuredFlag(params, "unlimited", run.unlimited);
     const moves = prime
       ? configuredValue(params, "max_turns", run.moves)
       : configuredValue(params, "moves", run.moves);
@@ -908,7 +908,7 @@
     const chips = isPrime
       ? [
           ["status", statusLabel],
-          ["turn budget", String(run.moves ?? "")],
+          ["turn budget", run.unlimited ? "∞" : String(run.moves ?? "")],
           run.prime_evaluation_status ? ["Prime", String(run.prime_evaluation_status).toLowerCase()] : null,
           run.prime_evaluation_score != null ? ["score", String(run.prime_evaluation_score)] : null,
           run.turns ? ["moves", String(run.turns)] : null,

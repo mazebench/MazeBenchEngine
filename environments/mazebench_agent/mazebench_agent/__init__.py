@@ -54,6 +54,7 @@ def _runtime_archive() -> bytes:
 
 
 def _prompt(data: "MazeBenchAgentData") -> str:
+    unlimited = data.max_actions is None
     start = [
         "node",
         HELPER,
@@ -71,7 +72,7 @@ def _prompt(data: "MazeBenchAgentData") -> str:
         "--game-won-gem-count",
         str(data.game_won_gem_count),
         "--max-actions",
-        str(data.max_actions),
+        "unlimited" if unlimited else str(data.max_actions),
     ]
     if data.observation_mode == "vision":
         start.append("--vision")
@@ -103,23 +104,39 @@ If an image cannot be inspected, stop and report the visual-observation failure.
         if data.observation_mode == "vision"
         else ""
     )
-    action_policy = (
-        f"""Then inspect the observation and play up to {data.max_actions} maze actions. Run one
+    if unlimited:
+        action_policy = """Then inspect the observation and keep playing without a move ceiling. Run one
 shell command per action:"""
-        if data.allow_quit
-        else f"""Then inspect the observation and take exactly {data.max_actions} maze actions unless
+        termination_policy = (
+            """Stop if the game is won, the player dies, or no useful move remains."""
+            if data.allow_quit
+            else """QUIT IS DISABLED and there is no action ceiling. Do not finish because no useful
+move remains, the player dies, or you would prefer to report the score. If the player
+dies, recover with an available action such as undo or reset and continue until the
+game is won or the run is stopped externally."""
+        )
+        helper_policy = "The helper does not enforce a move ceiling."
+        finish_condition = "the game is won or the run is stopped"
+    else:
+        action_policy = (
+            f"""Then inspect the observation and play up to {data.max_actions} maze actions. Run one
+shell command per action:"""
+            if data.allow_quit
+            else f"""Then inspect the observation and take exactly {data.max_actions} maze actions unless
 the game is won earlier. Run one shell command per action:"""
-    )
-    termination_policy = (
-        """Stop early if the game is won, the player dies, or no useful move remains."""
-        if data.allow_quit
-        else f"""QUIT IS DISABLED. The {data.max_actions}-action budget is a required action count,
+        )
+        termination_policy = (
+            """Stop early if the game is won, the player dies, or no useful move remains."""
+            if data.allow_quit
+            else f"""QUIT IS DISABLED. The {data.max_actions}-action budget is a required action count,
 not an optional maximum. Do not stop because no useful move remains, the player dies,
 or you would prefer to report the score. If the player dies, recover with an available
 action such as undo or reset and continue. Blocked moves and other accepted helper
 actions count toward the budget. Do not finish while the game is not won and fewer
 than {data.max_actions} actions have been accepted."""
-    )
+        )
+        helper_policy = "The helper enforces the action budget."
+        finish_condition = "the game is won or the action budget is exhausted"
     return f"""Play MazeBench using shell commands. The task runtime is already installed.
 
 Run this exact command first:
@@ -142,11 +159,11 @@ node {HELPER} action --state {SESSION_FILE} go to level H I
 ```
 
 Goal: collect {data.target_gems} gems and explore as many rooms as possible.
-{termination_policy} The helper enforces the action budget. Lines beginning with
+{termination_policy} {helper_policy} Lines beginning with
 `{TELEMETRY_PREFIX}` are telemetry; do not interpret or copy them.{vision}{extra}
 
-Scoring is evaluator-only. Do not attempt to access a scorecard. When the game is won or
-the action budget is exhausted, finish with a short summary of the route and gems
+Scoring is evaluator-only. Do not attempt to access a scorecard. When {finish_condition},
+finish with a short summary of the route and gems
 collected. Do not edit the runtime or session artifacts directly.
 """
 
@@ -157,7 +174,7 @@ class MazeBenchAgentData(vf.TaskData):
     yaw: int = DEFAULT_YAW
     game_won_gem_count: int = 69
     target_gems: int = 69
-    max_actions: int = 20
+    max_actions: int | None = 20
     observation_mode: str = "text"
     omniscient: bool = False
     hide_names: bool = False
@@ -312,7 +329,7 @@ class MazeBenchAgentConfig(vf.TasksetConfig):
     start_level_id: str = DEFAULT_LEVEL_ID
     game_won_gem_count: int = 69
     target_gems: int | None = None
-    max_actions: int = 20
+    max_actions: int | None = 20
     observation_mode: str = "text"
     omniscient: bool = False
     hide_names: bool = False
@@ -345,14 +362,23 @@ class MazeBenchAgentTaskset(
                 yaw=int(self.config.yaw),
                 game_won_gem_count=max(1, int(self.config.game_won_gem_count)),
                 target_gems=max(1, target),
-                max_actions=max(1, int(self.config.max_actions)),
+                max_actions=(
+                    None
+                    if self.config.max_actions is None
+                    else max(1, int(self.config.max_actions))
+                ),
                 observation_mode=str(self.config.observation_mode),
                 omniscient=bool(self.config.omniscient),
                 hide_names=bool(self.config.hide_names),
                 hide_names_seed=str(self.config.hide_names_seed),
                 allow_quit=bool(self.config.allow_quit),
                 extra_instructions=str(self.config.extra_instructions),
-                timeout=vf.TaskTimeout(setup=1800, harness=3600, finalize=120, scoring=60),
+                timeout=vf.TaskTimeout(
+                    setup=1800,
+                    harness=None if self.config.max_actions is None else 3600,
+                    finalize=120,
+                    scoring=60,
+                ),
                 resources=vf.TaskResources(cpu=2, memory=4, disk=8),
             )
             data = data.model_copy(update={"prompt": _prompt(data)})
