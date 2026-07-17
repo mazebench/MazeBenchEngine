@@ -25,7 +25,7 @@ assert.match(authorSource, /function closeAuthorInfoPopover\(options = \{\}\)/);
 assert.match(authorSource, /document\.addEventListener\("pointerdown"/);
 assert.match(authorSource, /event\.key === "Escape"/);
 assert.doesNotMatch(authorSource, /const showNote = note\.hidden/);
-assert.match(authorSource, /Playback Solution/);
+assert.match(authorSource, /Play Solution/);
 assert.match(authorSource, /function authorUrlForLevel\(levelId\)/);
 assert.match(authorSource, /function playUrlForLevel\(levelId\)/);
 assert.match(authorSource, /document\.querySelectorAll\("\[data-author-play-link\]"\)/);

@@ -2,7 +2,7 @@
 
 ## Lucide Icons
 
-The Route, Gem, Door Open, Mouse Pointer 2 Off, and Eraser SVG icons are from [Lucide](https://lucide.dev/).
+The Route, Gem, Door Open, Mouse Pointer 2 Off, Eraser, Ghost, Minimize 2, Maximize 2, Circle Stop, and X SVG icons are from [Lucide](https://lucide.dev/).
 
 ISC License
 

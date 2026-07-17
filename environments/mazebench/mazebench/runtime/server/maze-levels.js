@@ -837,6 +837,7 @@ function createMazeLevelService({
       },
       initialLevel,
       previewApiBaseUrl: `/api/author/${encodeURIComponent(game.id)}`,
+      solutionExportApiUrl: `/api/author/${encodeURIComponent(game.id)}`,
       worldColumns: config.worldColumns,
       worldRows: config.worldRows,
       maxBoardHeight: config.gridHeight,

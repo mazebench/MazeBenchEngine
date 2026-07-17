@@ -12,6 +12,7 @@ const { createMazePreviewService } = require("./maze-preview");
 const { createMazeWorldMapService } = require("./maze-world-map");
 const { createPageRenderer } = require("./pages");
 const { createRequestRouter } = require("./router");
+const { createSolverExportService } = require("./solver-exports");
 const {
   ensureDirectory,
   getContentType,
@@ -249,6 +250,11 @@ const remote = createRemoteService({
   ensureDirectory,
   getGame,
   loadJson,
+  rootDir: ROOT_DIR
+});
+
+const solverExports = createSolverExportService({
+  env: enrichedPathEnv(),
   rootDir: ROOT_DIR
 });
 
@@ -646,6 +652,7 @@ const { handleRequest } = createRequestRouter({
   sendHtml,
   sendJson,
   sendRedirect,
+  solverExports,
   training,
   worldMaps,
   writeMazePreviewImageData
