@@ -985,8 +985,8 @@ function createPageRenderer({
                 </div>
                 <div class="auto-quit-options" data-auto-quit-options hidden>
                   <label class="auto-quit-field"><span>New-state threshold</span><span class="auto-quit-number"><input type="number" min="0" max="100" step="0.1" value="10" inputmode="decimal" data-auto-quit-threshold><small>%</small></span></label>
-                  <label class="auto-quit-field"><span>Average</span><select data-auto-quit-mode><option value="cumulative" selected>Cumulative</option><option value="rolling">Rolling window</option></select></label>
-                  <label class="auto-quit-field" data-auto-quit-window-wrap hidden><span>Window</span><span class="auto-quit-number"><input type="number" min="1" max="10000" step="1" value="100" inputmode="numeric" data-auto-quit-window><small>moves</small></span></label>
+                  <label class="auto-quit-field"><span>Average</span><select data-auto-quit-mode><option value="cumulative">Cumulative</option><option value="rolling" selected>Rolling window</option></select></label>
+                  <label class="auto-quit-field" data-auto-quit-window-wrap><span>Window</span><span class="auto-quit-number"><input type="number" min="1" max="10000" step="1" value="100" inputmode="numeric" data-auto-quit-window><small>moves</small></span></label>
                   <p>Quit when globally new board states are at or below this rate. Rolling mode waits for a full window.</p>
                 </div>
               </article>
@@ -1028,8 +1028,8 @@ function createPageRenderer({
                 </div>
                 <div class="auto-quit-options" data-auto-quit-options hidden>
                   <label class="auto-quit-field"><span>New-state threshold</span><span class="auto-quit-number"><input type="number" min="0" max="100" step="0.1" value="10" inputmode="decimal" data-auto-quit-threshold><small>%</small></span></label>
-                  <label class="auto-quit-field"><span>Average</span><select data-auto-quit-mode><option value="cumulative" selected>Cumulative</option><option value="rolling">Rolling window</option></select></label>
-                  <label class="auto-quit-field" data-auto-quit-window-wrap hidden><span>Window</span><span class="auto-quit-number"><input type="number" min="1" max="10000" step="1" value="100" inputmode="numeric" data-auto-quit-window><small>moves</small></span></label>
+                  <label class="auto-quit-field"><span>Average</span><select data-auto-quit-mode><option value="cumulative">Cumulative</option><option value="rolling" selected>Rolling window</option></select></label>
+                  <label class="auto-quit-field" data-auto-quit-window-wrap><span>Window</span><span class="auto-quit-number"><input type="number" min="1" max="10000" step="1" value="100" inputmode="numeric" data-auto-quit-window><small>moves</small></span></label>
                   <p>Quit when globally new board states are at or below this rate. Rolling mode waits for a full window.</p>
                 </div>
               </article>
@@ -1216,7 +1216,7 @@ function createPageRenderer({
                 </select>
                 <select id="run-board-state-scope" class="run-board-state-chart__scope" aria-label="State novelty chart range">
                   <option value="cumulative">Cumulative</option>
-                  <option value="last-50" selected>Last 50 moves</option>
+                  <option value="last-100" selected>Last 100 moves</option>
                   <option value="last-n">Last N moves</option>
                 </select>
                 <label id="run-board-state-custom-window" class="run-board-state-chart__custom-window" hidden>

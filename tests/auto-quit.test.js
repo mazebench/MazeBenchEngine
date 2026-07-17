@@ -12,7 +12,7 @@ function actions(...hashes) {
 assert.deepEqual(normalizeAutoQuitConfig({ auto_quit: true }), {
   enabled: true,
   threshold: 10,
-  mode: "cumulative",
+  mode: "rolling",
   window: 100
 });
 assert.deepEqual(

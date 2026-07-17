@@ -11,7 +11,7 @@ const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "
 assert.match(pages, /id="run-heatmap-canvas"[^>]+aria-label="Player visit heatmap across the explored world"/);
 assert.match(pages, /<h3 class="run-board-state-chart__title">Novelty rate<\/h3>/);
 assert.match(pages, /id="run-board-state-basis"[\s\S]*?Board state[\s\S]*?Player world position/);
-assert.match(pages, /id="run-board-state-scope"[\s\S]*?Cumulative[\s\S]*?Last 50 moves[\s\S]*?Last N moves/);
+assert.match(pages, /id="run-board-state-scope"[\s\S]*?Cumulative[\s\S]*?Last 100 moves[\s\S]*?Last N moves/);
 assert.match(pages, /id="run-board-state-window"[^>]+min="1"[^>]+max="10000"[^>]+value="100"/);
 assert.match(pages, /id="run-board-state-chart"[\s\S]*?<div class="run-heatmap__head">[\s\S]*?<h2>Heatmap<\/h2>[\s\S]*?id="run-heatmap-viewport"/);
 assert.match(pages, /Less visited[\s\S]*Most visited/);
@@ -23,7 +23,8 @@ assert.match(pages, /\$\{explorationSection\}[\s\S]*?\$\{heatmapSection\}[\s\S]*
 assert.match(runService, /initial_player: readInitialPlayer\(runId\)/);
 assert.match(runService, /initial_board_state_hash: initialBoardStateHash \|\| null/);
 assert.match(runService, /board_state_hash: record\.status\?\.board_state_hash \|\| null/);
-assert.match(runScript, /const BOARD_STATE_NOVELTY_WINDOW = 50/);
+assert.match(runScript, /const BOARD_STATE_NOVELTY_WINDOW = 100/);
+assert.match(runScript, /boardStateMetricMode: "last-100"/);
 assert.match(runScript, /function boardStateMetricSettings\(\)/);
 assert.match(runScript, /function playerWorldPositionKey\(player, roomValue\)/);
 assert.match(runScript, /columnIndex \* 16 \+ position\.x/);

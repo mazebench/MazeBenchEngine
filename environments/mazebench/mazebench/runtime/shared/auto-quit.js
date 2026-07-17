@@ -1,5 +1,5 @@
 const AUTO_QUIT_DEFAULT_THRESHOLD = 10;
-const AUTO_QUIT_DEFAULT_MODE = "cumulative";
+const AUTO_QUIT_DEFAULT_MODE = "rolling";
 const AUTO_QUIT_DEFAULT_WINDOW = 100;
 const AUTO_QUIT_MAX_WINDOW = 10_000;
 
@@ -37,7 +37,7 @@ function normalizeAutoQuitConfig(source = {}) {
       0,
       100
     ),
-    mode: modeValue === "rolling" ? "rolling" : AUTO_QUIT_DEFAULT_MODE,
+    mode: ["cumulative", "rolling"].includes(modeValue) ? modeValue : AUTO_QUIT_DEFAULT_MODE,
     window: integerInRange(
       configuredValue(source, "auto_quit_window", "autoQuitWindow", source.window ?? AUTO_QUIT_DEFAULT_WINDOW),
       AUTO_QUIT_DEFAULT_WINDOW,

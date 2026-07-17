@@ -101,7 +101,7 @@
     allowQuit: null,
     autoQuit: null,
     autoQuitThreshold: 10,
-    autoQuitMode: "cumulative",
+    autoQuitMode: "rolling",
     autoQuitWindow: 100,
     catalogs: {},
     catalogRequests: {},
@@ -1328,7 +1328,7 @@
     setUnlimited(false, false);
     setAllowQuit(null, false);
     state.autoQuitThreshold = 10;
-    state.autoQuitMode = "cumulative";
+    state.autoQuitMode = "rolling";
     state.autoQuitWindow = 100;
     setAutoQuit(null, false);
     setMode(null, false);

@@ -159,7 +159,7 @@
   if (isPrime && stopButton) stopButton.textContent = "Cancel Run";
 
   const FEED_RENDER_BATCH = 200;
-  const BOARD_STATE_NOVELTY_WINDOW = 50;
+  const BOARD_STATE_NOVELTY_WINDOW = 100;
   const BOARD_STATE_CUSTOM_WINDOW_DEFAULT = 100;
   const BOARD_STATE_CUSTOM_WINDOW_MAX = 10000;
   const state = {
@@ -209,7 +209,7 @@
     heatmapData: null,
     boardStatePoints: [],
     boardStateMetricBasis: "state",
-    boardStateMetricMode: "last-50",
+    boardStateMetricMode: "last-100",
     boardStateCustomWindow: BOARD_STATE_CUSTOM_WINDOW_DEFAULT,
     heatmapExporting: false,
     worldMapSignature: "",
@@ -836,7 +836,7 @@
     const allowQuit = configuredFlag(params, "allow_quit", run.allow_quit !== false);
     const autoQuit = configuredFlag(params, "auto_quit", run.auto_quit);
     const autoQuitThreshold = Number(configuredValue(params, "auto_quit_threshold", run.auto_quit_threshold ?? 10));
-    const autoQuitMode = String(configuredValue(params, "auto_quit_mode", run.auto_quit_mode || "cumulative"));
+    const autoQuitMode = String(configuredValue(params, "auto_quit_mode", run.auto_quit_mode || "rolling"));
     const autoQuitWindow = Number(configuredValue(params, "auto_quit_window", run.auto_quit_window || 100));
     const reasoning = configuredValue(params, "reasoning", run.reasoning || "");
     const items = [
