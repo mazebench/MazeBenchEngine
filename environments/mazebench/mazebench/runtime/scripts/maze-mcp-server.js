@@ -146,7 +146,8 @@ function startMaze() {
     "--level", process.env.MAZEBENCH_LEVEL_ID || "level_HxI",
     "--view", process.env.MAZEBENCH_VIEW || "top-diagonal",
     "--yaw", String(Number(process.env.MAZEBENCH_YAW) || 0),
-    "--game-won-gem-count", String(positiveInt(process.env.MAZEBENCH_GEMS, 100))
+    "--game-won-gem-count", String(positiveInt(process.env.MAZEBENCH_GEMS, 100)),
+    "--max-actions", PRIMARY_MOVE_BUDGET == null ? "unlimited" : String(PRIMARY_MOVE_BUDGET)
   ];
   if (process.env.MAZEBENCH_MODE === "vision") {
     args.push(
@@ -167,6 +168,16 @@ function startMaze() {
   }
   if (!ALLOW_QUIT) args.push("--no-quit");
   return runHelper(args);
+}
+
+function synchronizePrimarySessionBudget() {
+  const session = readJson(PRIMARY_SESSION, null);
+  if (!session || typeof session !== "object" || Array.isArray(session)) return;
+  const maxActions = PRIMARY_MOVE_BUDGET == null
+    ? null
+    : PRIMARY_INITIAL_ACTION_COUNT + PRIMARY_MOVE_BUDGET;
+  if (session.maxActions === maxActions) return;
+  writeJson(PRIMARY_SESSION, { ...session, maxActions });
 }
 
 function appendJsonLine(filePath, entry) {
@@ -275,6 +286,10 @@ function createWorker(requestedId, options = {}) {
   const workspace = path.join(SWARM_WORKSPACES_DIR, id);
   const agentWorkspace = path.posix.join(AGENT_SWARM_WORKSPACES_DIR, id);
   fs.copyFileSync(sourceSession, session);
+  const clonedSession = readJson(session, null);
+  if (clonedSession && typeof clonedSession === "object" && !Array.isArray(clonedSession)) {
+    writeJson(session, { ...clonedSession, maxActions: null });
+  }
   fs.mkdirSync(workspace, { recursive: true });
   const agentUid = Number(process.env.MAZEBENCH_AGENT_UID);
   const agentGid = Number(process.env.MAZEBENCH_AGENT_GID);
@@ -473,6 +488,7 @@ function normalizedToolCall(name, input = {}) {
 }
 
 function callTool(name, input = {}, { workerOnly = WORKER_ONLY } = {}) {
+  if (!workerOnly && name !== "maze_start") synchronizePrimarySessionBudget();
   if (name === "maze_start") {
     if (workerOnly) throw new Error("Workers cannot start or reset the primary maze. Call maze_clone instead.");
     return startMaze();

@@ -198,6 +198,7 @@ function assertMove(move, yaw, expected) {
     maxActions: 2
   };
   assert.equal(requiredActionsRemaining(unfinished), 1);
+  assert.equal(requiredActionsRemaining({ ...unfinished, maxActions: null }), null);
 }
 
 function createContext(overrides = {}) {
@@ -1370,6 +1371,36 @@ function syntheticFloor(width, height) {
     assert.equal(session.hideNamesSeed, "user-selected-seed");
     assert.equal(Object.prototype.hasOwnProperty.call(session.initial, "level"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(session.initial, "json_observation"), true);
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
+}
+
+{
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "maze-unlimited-budget-"));
+  const stateFile = path.join(outDir, "session.json");
+
+  try {
+    runCodexPlay([
+      "start",
+      "--repo-root", ROOT_DIR,
+      "--state", stateFile,
+      "--level", "level_HxI",
+      "--max-actions", "unlimited",
+      "--no-quit"
+    ]);
+    const session = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    assert.equal(session.maxActions, null);
+    session.actions = Array.from({ length: 100 }, (_, index) => ({
+      turn: index + 1,
+      replay: false,
+      status: {}
+    }));
+    fs.writeFileSync(stateFile, `${JSON.stringify(session, null, 2)}\n`);
+    runCodexPlayRaw(["action", "--state", stateFile, "up"]);
+    const continued = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    assert.equal(continued.actions.length, 101, "unlimited helper sessions must permit action 101");
+    assert.equal(continued.maxActions, null);
   } finally {
     fs.rmSync(outDir, { recursive: true, force: true });
   }

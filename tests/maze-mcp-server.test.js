@@ -54,8 +54,10 @@ try {
   const primary = JSON.parse(fs.readFileSync(path.join(runDir, "session.json"), "utf8"));
   const worker = JSON.parse(fs.readFileSync(path.join(runDir, "swarm", "scout", "session.json"), "utf8"));
   assert.equal(primary.actions.length, 1, "the lead gets exactly its configured action budget");
+  assert.equal(primary.maxActions, 1, "the helper cap must match the selected finite budget");
   assert.equal(Number.isFinite(Date.parse(primary.actions[0].timestamp)), true, "maze actions retain their exact timestamp");
   assert.equal(worker.actions.length, 1, "worker clone should keep its own action history");
+  assert.equal(worker.maxActions, null, "independent worker exploration must not inherit the primary cap");
   const workerMetadata = JSON.parse(fs.readFileSync(path.join(runDir, "swarm", "scout", "worker.json"), "utf8"));
   assert.equal(workerMetadata.fork_action_count, 0);
   assert.equal(workerMetadata.owner_kind, "tool");
@@ -65,6 +67,7 @@ try {
   assert.equal(nestedMetadata.parent_instance_id, "scout");
   assert.equal(nestedMetadata.fork_action_count, 1);
   assert.equal(nestedSession.actions.length, 2);
+  assert.equal(nestedSession.maxActions, null);
   assert.equal(nestedTelemetry.actions_applied, 1);
   assert.equal(nestedTelemetry.own_action_count, 1);
   assert(fs.existsSync(path.join(runDir, "initial-status.json")));
@@ -251,10 +254,34 @@ try {
   assert.equal(unlimitedResult.status, 0, unlimitedResult.stderr);
   const unlimitedResponses = unlimitedResult.stdout.trim().split("\n").map((line) => JSON.parse(line));
   assert(unlimitedResponses.filter((response) => response.id >= 33).every((response) => !response.result?.isError));
+  const unlimitedSession = JSON.parse(fs.readFileSync(path.join(unlimitedDir, "session.json"), "utf8"));
+  assert.equal(unlimitedSession.actions.length, 3, "unlimited mode must not enforce a hidden segment budget");
+  assert.equal(unlimitedSession.maxActions, null, "unlimited mode must not persist a hidden helper cap");
+
+  const largeBudgetDir = path.join(runDir, "large-budget");
+  fs.mkdirSync(largeBudgetDir, { recursive: true });
+  const largeBudgetRequests = [
+    { jsonrpc: "2.0", id: 37, method: "initialize", params: { protocolVersion: "2024-11-05" } },
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+    { jsonrpc: "2.0", id: 38, method: "tools/call", params: { name: "maze_start", arguments: {} } }
+  ];
+  const largeBudgetResult = spawnSync(process.execPath, [path.join(rootDir, "scripts", "maze-mcp-server.js")], {
+    cwd: rootDir,
+    encoding: "utf8",
+    input: `${largeBudgetRequests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+    env: {
+      ...process.env,
+      MAZEBENCH_REPO_ROOT: rootDir,
+      MAZEBENCH_RUN_DIR: largeBudgetDir,
+      MAZEBENCH_SESSION_FILE: path.join(largeBudgetDir, "session.json"),
+      MAZEBENCH_MOVE_BUDGET: "125"
+    }
+  });
+  assert.equal(largeBudgetResult.status, 0, largeBudgetResult.stderr);
   assert.equal(
-    JSON.parse(fs.readFileSync(path.join(unlimitedDir, "session.json"), "utf8")).actions.length,
-    3,
-    "unlimited mode must not enforce a hidden segment budget"
+    JSON.parse(fs.readFileSync(path.join(largeBudgetDir, "session.json"), "utf8")).maxActions,
+    125,
+    "finite selections above the old default must persist their exact cap"
   );
 
   const coldPauseDir = path.join(runDir, "cold-pause");

@@ -68,6 +68,19 @@ function positiveInt(value, fallback) {
   return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
 }
 
+function normalizedMaxActions(value, fallback = 100) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["unlimited", "infinite", "infinity", "none"].includes(normalized)) return null;
+  return positiveInt(value, fallback);
+}
+
+function sessionMaxActions(session) {
+  if (session && Object.prototype.hasOwnProperty.call(session, "maxActions") && session.maxActions === null) {
+    return null;
+  }
+  return normalizedMaxActions(session?.maxActions, 100);
+}
+
 // 1..26 rings of neighbor rooms (1 = the classic 3x3 window) or "world".
 function normalizeVisionView(value) {
   const raw = String(value ?? "1").trim().toLowerCase();
@@ -148,7 +161,8 @@ function storedStatus(session, status) {
 }
 
 function requiredActionsRemaining(session) {
-  const required = positiveInt(session?.maxActions, 100);
+  const required = sessionMaxActions(session);
+  if (required == null) return null;
   const completed = Array.isArray(session?.actions) ? session.actions.length : 0;
   return Math.max(0, required - completed);
 }
@@ -166,7 +180,7 @@ start options:
   --view <name>             top | top-diagonal | diagonal | side-diagonal | side
   --yaw <0-3>               camera yaw
   --game-won-gem-count <n>  unique gems for game_won (default 100)
-  --max-actions <n>          hard action budget enforced by the helper
+  --max-actions <n|unlimited> hard action budget enforced by the helper
   --vision                  render a PNG each turn; output includes frame_image
                             (path) and drops the ASCII board
   --json-observation        return a structured JSON room observation instead
@@ -630,7 +644,7 @@ async function main() {
       createdAt: new Date().toISOString(),
       gameId: String(options.game || "maze").trim() || "maze",
       gameWonGemCount: positiveInt(options.gameWonGemCount, 100),
-      maxActions: positiveInt(options.maxActions, 100),
+      maxActions: normalizedMaxActions(options.maxActions, 100),
       levelId: normalizeLevelId(options.level),
       nodeBin: options.nodeBin || process.execPath,
       observationMode,
@@ -692,9 +706,10 @@ async function main() {
   }
 
   if (command === "action") {
-    if (session.actions.length >= positiveInt(session.maxActions, 100)) {
+    const maxActions = sessionMaxActions(session);
+    if (maxActions != null && session.actions.length >= maxActions) {
       throw new Error(
-        `MazeBench action budget exhausted (${session.actions.length}/${positiveInt(session.maxActions, 100)}). Finish the run.`
+        `MazeBench action budget exhausted (${session.actions.length}/${maxActions}). Finish the run.`
       );
     }
     const message = normalizeAction(options.positional);

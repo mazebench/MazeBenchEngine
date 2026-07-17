@@ -141,8 +141,10 @@ function migrateSeedSessionObservation(config) {
   const hideNamesSeed = String(session.hideNamesSeed || "").trim() ||
     String(config.hideNamesSeed || "").trim() ||
     "1";
+  const completedActions = Array.isArray(session.actions) ? session.actions.length : 0;
   const next = redactAgentStatus({
     ...session,
+    maxActions: config.unlimited ? null : completedActions + positiveInt(config.moves, 20),
     observationMode: config.mode,
     vision: config.mode === "vision",
     omniscient: config.mode === "json" && config.omniscient,
@@ -372,7 +374,7 @@ stands right now:
 Then ${config.unlimited ? "keep taking maze actions from that state" : `continue playing up to ${config.moves} MORE maze action(s) from that state`},`
     : `Your FIRST shell command must start the session (run it exactly once):
 
-  node "${HELPER}" start --repo-root "${ROOT_DIR}" --state "${config.sessionFile}" --game "${config.gameId}" --level "${config.levelId}" --view "${config.view}" --yaw "${config.yaw}" --game-won-gem-count "${config.gems}"${observationFlags}
+  node "${HELPER}" start --repo-root "${ROOT_DIR}" --state "${config.sessionFile}" --game "${config.gameId}" --level "${config.levelId}" --view "${config.view}" --yaw "${config.yaw}" --game-won-gem-count "${config.gems}" --max-actions "${config.unlimited ? "unlimited" : config.moves}"${observationFlags}
 
 Then ${config.unlimited ? "keep taking maze actions" : `play up to ${config.moves} maze action(s)`},`} ${
   config.unlimited

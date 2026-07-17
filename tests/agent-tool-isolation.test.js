@@ -162,6 +162,7 @@ assert.equal(directGame.status, 0);
     sessionFile
   });
   const sanitized = JSON.parse(fs.readFileSync(sessionFile, "utf8"));
+  assert.equal(sanitized.maxActions, 3, "a finite continuation adds its selected moves to existing actions");
   assert.equal(Object.prototype.hasOwnProperty.call(sanitized, "scorecard"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(sanitized, "bridgeCheckpoint"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(sanitized.initial, "player"), false);
@@ -170,6 +171,20 @@ assert.equal(directGame.status, 0);
   assert.equal(fs.existsSync(path.join(resumeDir, "scorecard.json")), false);
   assert.equal(fs.existsSync(path.join(resumeDir, "maze_scorecard.json")), false);
   assert.equal(fs.existsSync(path.join(resumeDir, "current-render-state.json")), false);
+  migrateSeedSessionObservation({
+    ...baseConfig,
+    hideNamesSeed: "resume-seed",
+    mode: "text",
+    outDir: resumeDir,
+    seed: true,
+    sessionFile,
+    unlimited: true
+  });
+  assert.equal(
+    JSON.parse(fs.readFileSync(sessionFile, "utf8")).maxActions,
+    null,
+    "an unlimited continuation clears an older finite helper cap"
+  );
   fs.rmSync(resumeDir, { recursive: true, force: true });
 }
 
