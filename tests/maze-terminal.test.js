@@ -9,7 +9,11 @@ const terminalScript = path.join(ROOT_DIR, "scripts", "maze-terminal.js");
 const bridgeScript = path.join(ROOT_DIR, "scripts", "maze-bridge.js");
 const codexPlayScript = path.join(ROOT_DIR, "scripts", "codex-play.js");
 const modelReplScript = path.join(ROOT_DIR, "scripts", "maze-model-repl.js");
-const { extractAsciiFrames } = require(path.join(ROOT_DIR, "scripts", "maze-export-replay.js"));
+const {
+  extractAsciiFrames,
+  resolveInput,
+  rowFromActionLog
+} = require(path.join(ROOT_DIR, "scripts", "maze-export-replay.js"));
 const {
   redactAgentStatus,
   redactVisionStatus,
@@ -75,6 +79,58 @@ const mazeEngine = loadMazeEngine();
     board("HOSTED-1"),
     board("HOSTED-2")
   ]);
+}
+
+{
+  const actionLogDir = fs.mkdtempSync(path.join(os.tmpdir(), "mazebench-replay-actions-"));
+  const actionsPath = path.join(actionLogDir, "actions.jsonl");
+  fs.writeFileSync(actionsPath, "{}\n");
+  fs.writeFileSync(path.join(actionLogDir, "results.jsonl"), "");
+  assert.deepEqual(resolveInput(actionsPath), {
+    mode: "actions",
+    runDir: actionLogDir,
+    actionsPath
+  });
+  assert.deepEqual(resolveInput(actionLogDir), {
+    mode: "actions",
+    runDir: actionLogDir,
+    actionsPath
+  });
+
+  const row = rowFromActionLog(
+    [
+      {
+        command_text: "up",
+        valid: true,
+        status: { level: "AFTER-UP", current_view: "top", yaw: 1 }
+      },
+      {
+        command_text: "not a maze command",
+        valid: false,
+        status: { level: "AFTER-INVALID" }
+      },
+      {
+        command_text: "rotate camera right",
+        valid: true,
+        status: { level: "AFTER-ROTATE", current_view: "top", yaw: 2 }
+      }
+    ],
+    { game_id: "maze", level_id: "level_AB", gem_total: 70 },
+    { level: "INITIAL", current_view: "diagonal", yaw: 0 }
+  );
+  assert.deepEqual(row.maze_actions, [
+    { command: "up", valid: true },
+    { command: "rotate camera right", valid: true }
+  ]);
+  assert.deepEqual(row.maze_ascii_frames, ["INITIAL", "AFTER-UP", "AFTER-ROTATE"]);
+  assert.deepEqual(row.maze_replay.action_statuses, [
+    { level: "AFTER-UP", current_view: "top", yaw: 1 },
+    { level: "AFTER-ROTATE", current_view: "top", yaw: 2 }
+  ]);
+  assert.equal(row.maze_replay.start_level_id, "level_AB");
+  assert.equal(row.maze_replay.game_won_gem_count, 70);
+  assert.deepEqual(row.maze_replay.initial, { view: "diagonal", yaw: 0 });
+  fs.rmSync(actionLogDir, { recursive: true, force: true });
 }
 
 {

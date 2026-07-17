@@ -34,10 +34,10 @@ function normalizedGemCollectionIds(values) {
 }
 
 function usage() {
-  return `Usage: npm run maze:replay -- [results-dir | results.jsonl | traces.jsonl | session.json | session-dir] [options]
+  return `Usage: npm run maze:replay -- [results-dir | results.jsonl | traces.jsonl | session.json | actions.jsonl | run-dir] [options]
 
 Creates maze_scorecard.json, maze_actions.txt, and maze_replay.mp4 from a mazebench
-eval rollout JSONL or from a local agent run (session.json written by codex-play.js).
+eval rollout JSONL, a local agent session, or a streamed run action log.
 
 Options:
   --index <n>          Rollout row to export from results/traces JSONL. Default: 0.
@@ -305,12 +305,13 @@ function resolveInput(input) {
     const resultsPath = path.join(resolvedInput, "results.jsonl");
     const tracesPath = path.join(resolvedInput, "traces.jsonl");
     const sessionPath = path.join(resolvedInput, "session.json");
+    const actionsPath = path.join(resolvedInput, "actions.jsonl");
 
-    if (fs.existsSync(resultsPath)) {
+    if (fileHasContent(resultsPath)) {
       return { mode: "results", resultsDir: resolvedInput, resultsPath };
     }
 
-    if (fs.existsSync(tracesPath)) {
+    if (fileHasContent(tracesPath)) {
       return { mode: "results", resultsDir: resolvedInput, resultsPath: tracesPath };
     }
 
@@ -318,7 +319,11 @@ function resolveInput(input) {
       return { mode: "session", sessionDir: resolvedInput, sessionPath };
     }
 
-    throw new Error(`No results.jsonl, traces.jsonl, or session.json found in ${resolvedInput}`);
+    if (fileHasContent(actionsPath)) {
+      return { mode: "actions", runDir: resolvedInput, actionsPath };
+    }
+
+    throw new Error(`No completed results, saved session, or action log found in ${resolvedInput}`);
   }
 
   if (path.basename(resolvedInput) === "session.json") {
@@ -329,11 +334,27 @@ function resolveInput(input) {
     };
   }
 
+  if (path.basename(resolvedInput) === "actions.jsonl") {
+    return {
+      mode: "actions",
+      runDir: path.dirname(resolvedInput),
+      actionsPath: resolvedInput
+    };
+  }
+
   return {
     mode: "results",
     resultsDir: path.dirname(resolvedInput),
     resultsPath: resolvedInput
   };
+}
+
+function fileHasContent(filePath) {
+  try {
+    return fs.statSync(filePath).size > 0;
+  } catch (_error) {
+    return false;
+  }
 }
 
 function canonicalFromBridgeMessage(message) {
@@ -394,6 +415,58 @@ function rowFromSession(session) {
       },
       action_statuses: replayEntries.map((entry) => entry.status),
       scorecard
+    }
+  };
+}
+
+// Prime writes actions.jsonl after every turn, while results.jsonl is only
+// finalized when the Verifiers rollout exits normally. Auto-quit and cancelled
+// runs can therefore be replayable even when no final rollout row exists.
+function rowFromActionLog(actionRecords, runMeta = {}, initialStatus = null) {
+  const replayEntries = (Array.isArray(actionRecords) ? actionRecords : [])
+    .filter((action) => action && action.valid !== false)
+    .map((action) => ({
+      command: String(action.command_text || action.command || "").trim(),
+      status: action.status || null,
+      valid: true
+    }))
+    .filter((action) => action.command);
+  const actions = replayEntries.map(({ command, valid }) => ({ command, valid }));
+  const firstStatus = replayEntries.find((entry) => entry.status)?.status || {};
+  const initialLevel = String(initialStatus?.level || firstStatus.level || "");
+  const view = String(
+    runMeta.view ||
+    runMeta.launch_params?.view ||
+    initialStatus?.current_view ||
+    firstStatus.current_view ||
+    "top-diagonal"
+  );
+  const yaw = Number(
+    runMeta.yaw ??
+    runMeta.launch_params?.yaw ??
+    initialStatus?.yaw ??
+    firstStatus.yaw ??
+    0
+  );
+
+  return {
+    maze_ascii_frames: [
+      initialLevel,
+      ...replayEntries.map((entry) => String(entry.status?.level || ""))
+    ],
+    maze_actions: actions,
+    maze_scorecard: {},
+    maze_replay: {
+      game_id: runMeta.game_id || "maze",
+      game_won_gem_count: Number(runMeta.gem_total) || 100,
+      start_level_id: runMeta.level_id || "level_HxI",
+      target_gems: 0,
+      initial: {
+        view,
+        yaw: Number.isInteger(yaw) ? yaw : 0
+      },
+      action_statuses: replayEntries.map((entry) => entry.status),
+      scorecard: {}
     }
   };
 }
@@ -2862,6 +2935,19 @@ async function main() {
     metadata = {};
     sourceDir = input.sessionDir;
     sourceLabel = input.sessionPath;
+  } else if (input.mode === "actions") {
+    const runMetaPath = path.join(input.runDir, "run.json");
+    const initialStatusPath = path.join(input.runDir, "initial-status.json");
+    const runMeta = fs.existsSync(runMetaPath)
+      ? JSON.parse(fs.readFileSync(runMetaPath, "utf8"))
+      : {};
+    const initialStatus = fs.existsSync(initialStatusPath)
+      ? JSON.parse(fs.readFileSync(initialStatusPath, "utf8"))
+      : null;
+    rows = [rowFromActionLog(readJsonl(input.actionsPath), runMeta, initialStatus)];
+    metadata = {};
+    sourceDir = input.runDir;
+    sourceLabel = input.actionsPath;
   } else {
     rows = readJsonl(input.resultsPath);
     metadata = readMetadata(input.resultsDir);
@@ -2974,7 +3060,9 @@ module.exports = {
   extractAsciiFrames,
   humanSize,
   nativeFrameCountIsAcceptable,
+  resolveInput,
   renderReplayVideo,
+  rowFromActionLog,
   validateReplayOptions,
   writeSidecarFiles
 };

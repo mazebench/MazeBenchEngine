@@ -299,6 +299,59 @@ try {
   service.cancelRunVideo(primeVideoId);
   service.deleteRun(primeVideoId);
 
+  const interruptedPrimeVideoId = "prime-video-action-log-fallback-test";
+  const interruptedPrimeVideoDir = path.join(
+    rootDir,
+    "outputs",
+    "maze-local",
+    "site",
+    interruptedPrimeVideoId
+  );
+  const interruptedPrimeResults = path.join(
+    interruptedPrimeVideoDir,
+    "eval-output",
+    "results.jsonl"
+  );
+  const interruptedPrimeActions = path.join(interruptedPrimeVideoDir, "actions.jsonl");
+  fs.mkdirSync(path.dirname(interruptedPrimeResults), { recursive: true });
+  fs.writeFileSync(interruptedPrimeResults, "");
+  fs.writeFileSync(
+    path.join(interruptedPrimeVideoDir, "run.json"),
+    `${JSON.stringify({
+      id: interruptedPrimeVideoId,
+      kind: "prime",
+      created_at: new Date().toISOString(),
+      status: "finished",
+      model: "prime",
+      model_name: "video-fallback-test",
+      game_id: "maze",
+      level_id: "level_HxI",
+      moves: 1,
+      mode: "text",
+      gem_total: 1
+    }, null, 2)}\n`
+  );
+  fs.writeFileSync(
+    interruptedPrimeActions,
+    `${JSON.stringify({ turn: 1, command_text: "up", valid: true, status: {} })}\n`
+  );
+  const interruptedPrimeVideo = service.generateRunVideo(interruptedPrimeVideoId);
+  assert.equal(interruptedPrimeVideo.video_status, "rendering");
+  const interruptedPrimeVideoArgsDeadline = Date.now() + 3000;
+  while (
+    !fs.existsSync(path.join(interruptedPrimeVideoDir, "video-args.json")) &&
+    Date.now() < interruptedPrimeVideoArgsDeadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  const interruptedPrimeVideoArgs = loadJson(
+    path.join(interruptedPrimeVideoDir, "video-args.json"),
+    []
+  );
+  assert.equal(interruptedPrimeVideoArgs[0], interruptedPrimeActions);
+  service.cancelRunVideo(interruptedPrimeVideoId);
+  service.deleteRun(interruptedPrimeVideoId);
+
   const [hostedPrime] = service.launchRuns({
     kind: "prime",
     model_name: "hosted-test",

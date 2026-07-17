@@ -66,6 +66,14 @@ function enrichedPathEnv() {
   return { ...process.env, PATH: merged.join(path.delimiter) };
 }
 
+function fileHasContent(filePath) {
+  try {
+    return Boolean(filePath) && fs.statSync(filePath).size > 0;
+  } catch (_error) {
+    return false;
+  }
+}
+
 // Agent Mode backend: launches scripts/maze-agent-local.js (Codex CLI / Claude
 // Code) or `prime eval run` as detached child processes, one directory per run
 // under outputs/maze-local/site/. The runner writes actions.jsonl + session.json
@@ -4619,10 +4627,17 @@ function createAgentRunService({
 
     const sessionPath = path.join(runDir, "session.json");
     const resultsPath = findPrimeResultsFile(runDir);
-    if (!fs.existsSync(sessionPath) && !resultsPath) {
-      throw new Error("This run has no saved session or eval result to render.");
+    const actionsPath = path.join(runDir, "actions.jsonl");
+    const replayInputPath = fileHasContent(resultsPath)
+      ? resultsPath
+      : fs.existsSync(sessionPath)
+        ? sessionPath
+        : fileHasContent(actionsPath)
+          ? actionsPath
+          : "";
+    if (!replayInputPath) {
+      throw new Error("This run has no completed eval result, saved session, or action log to render.");
     }
-    const replayInputPath = resultsPath || sessionPath;
 
     const snapshotTurns = readActions(runId).length;
     const generationId = crypto.randomUUID();
