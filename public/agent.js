@@ -83,7 +83,6 @@
     omniscient: false,
     hideNames: false,
     hideNamesSeed: "1",
-    isolation: null,
     toolUse: null,
     orchestration: null,
     unlimited: false,
@@ -336,7 +335,7 @@
     return Boolean(
       composerSettingsReady() &&
       state.mode &&
-      (state.execution === "prime" || (state.isolation && state.toolUse && state.orchestration))
+      (state.execution === "prime" || (state.toolUse && state.orchestration))
     );
   }
 
@@ -1061,7 +1060,6 @@
     const localSettings = document.getElementById("local-settings");
     const primeSettings = document.getElementById("prime-settings");
     const hasObservation = Boolean(state.mode);
-    const hasAccess = Boolean(state.isolation);
     const hasToolUse = Boolean(state.toolUse);
     const hasOrchestration = Boolean(state.orchestration);
 
@@ -1072,11 +1070,10 @@
       card.setAttribute("aria-hidden", String(!show));
     };
 
-    setCardVisibility(localSettings?.querySelector(".setting-card--access"), hasObservation);
-    setCardVisibility(localSettings?.querySelector(".setting-card--tool-use"), hasObservation && hasAccess);
-    setCardVisibility(localSettings?.querySelector(".setting-card--orchestration"), hasObservation && hasAccess && state.toolUse === "offline");
-    setCardVisibility(localSettings?.querySelector(".setting-card--budget"), hasObservation && hasAccess && hasToolUse && hasOrchestration);
-    setCardVisibility(localSettings?.querySelector(".setting-card--give-up"), hasObservation && hasAccess && hasToolUse && hasOrchestration);
+    setCardVisibility(localSettings?.querySelector(".setting-card--tool-use"), hasObservation);
+    setCardVisibility(localSettings?.querySelector(".setting-card--orchestration"), hasObservation && state.toolUse === "offline");
+    setCardVisibility(localSettings?.querySelector(".setting-card--budget"), hasObservation && hasToolUse && hasOrchestration);
+    setCardVisibility(localSettings?.querySelector(".setting-card--give-up"), hasObservation && hasToolUse && hasOrchestration);
     setCardVisibility(primeSettings?.querySelector(".setting-card--budget"), hasObservation);
     setCardVisibility(primeSettings?.querySelector(".setting-card--give-up"), hasObservation);
   }
@@ -1182,31 +1179,6 @@
     }
   }
 
-  // Access chooses where the run executes. Tool-use and orchestration are
-  // independent choices that follow it for both Docker and host runs.
-  function setIsolation(value, syncSteps = true) {
-    const next = value === "full" || value === "docker" ? value : null;
-    if (state.isolation !== next) {
-      state.toolUse = null;
-      state.orchestration = null;
-    }
-    state.isolation = next;
-    document.querySelectorAll(".segmented__option[data-isolation]").forEach((option) => {
-      const selected = option.dataset.isolation === state.isolation;
-      option.classList.toggle("is-selected", selected);
-      option.setAttribute("aria-pressed", String(selected));
-    });
-    const picker = document.getElementById("isolation-picker");
-    picker?.classList.toggle("has-selection", Boolean(state.isolation));
-    picker?.classList.toggle("is-second", state.isolation === "full");
-    const hostRisk = document.getElementById("host-access-risk");
-    if (hostRisk) hostRisk.hidden = state.isolation !== "full";
-    syncToolUsePicker();
-    syncOrchestrationPicker();
-    syncRunSettingCards();
-    if (syncSteps) syncComposerSteps();
-  }
-
   function syncToolUsePicker() {
     document.querySelectorAll(".segmented__option[data-tool-use]").forEach((option) => {
       const selected = option.dataset.toolUse === state.toolUse;
@@ -1219,7 +1191,6 @@
   }
 
   function setToolUse(value, syncSteps = true) {
-    if (!state.isolation) return;
     const next = value === "read-only" || value === "offline" ? value : null;
     if (state.toolUse !== next) {
       state.orchestration = next === "read-only" ? "single" : null;
@@ -1243,7 +1214,7 @@
   }
 
   function setOrchestration(value, syncSteps = true) {
-    if (!state.isolation || !state.toolUse) return;
+    if (!state.toolUse) return;
     state.orchestration = state.toolUse === "read-only"
       ? "single"
       : value === "single" || value === "swarm" ? value : null;
@@ -1260,7 +1231,6 @@
     setUnlimited(false, false);
     setAllowQuit(null, false);
     setMode(null, false);
-    setIsolation(null, false);
     setToolUse(null, false);
     setOrchestration(null, false);
   }
@@ -1291,112 +1261,10 @@
     if (syncSteps) syncComposerSteps();
   }
 
-  // Docker mode needs Docker installed AND its daemon running. When it isn't,
-  // disable that option and clear it so access must be chosen again.
-  function syncIsolationPicker() {
-    const dockerOption = document.querySelector('.segmented__option[data-isolation="docker"]');
-    if (!dockerOption) return;
-    const env = data.environment || {};
-    const ready = Boolean(env.docker);
-    const hint = dockerOption.querySelector("small");
-
-    dockerOption.disabled = !ready;
-    dockerOption.classList.toggle("is-disabled", !ready);
-
-    if (ready) {
-      if (hint) hint.textContent = "isolated from your files";
-      dockerOption.removeAttribute("title");
-    } else {
-      if (hint) hint.textContent = env.docker_installed ? "start Docker below" : "Docker not installed";
-      dockerOption.title = env.docker_installed
-        ? "Docker is installed but its daemon isn't running. Start it below, or use Host access."
-        : "Install Docker to isolate agent runs, or use Host access.";
-      if (state.isolation === "docker") setIsolation(null);
-    }
-
-    renderDockerAction();
-  }
-
-  let dockerStarting = false;
-
-  // Show a "Start Docker" button only when Docker is installed but stopped.
-  function renderDockerAction() {
-    const host = document.getElementById("docker-action");
-    if (!host) return;
-    const env = data.environment || {};
-
-    if (env.docker || !env.docker_installed) {
-      host.hidden = true;
-      host.innerHTML = "";
-      return;
-    }
-
-    host.hidden = false;
-    if (dockerStarting) {
-      host.innerHTML = `<span class="docker-action__spinner" aria-hidden="true"></span><span class="docker-action__text">Starting Docker… this can take up to a minute.</span>`;
-      return;
-    }
-
-    host.innerHTML = `<button id="start-docker" type="button" class="button--sky">Start Docker</button>
-      <span class="docker-action__text muted">Docker is installed but not running.</span>`;
-    document.getElementById("start-docker").addEventListener("click", startDocker);
-  }
-
   async function refreshEnvironment() {
     const env = await api("/api/agent/environment");
     data.environment = env;
-    syncIsolationPicker();
     return env;
-  }
-
-  async function startDocker() {
-    dockerStarting = true;
-    renderDockerAction();
-    setStatus("Starting Docker…");
-
-    let result;
-    try {
-      result = await api("/api/agent/docker/start", { method: "POST" });
-    } catch (error) {
-      dockerStarting = false;
-      renderDockerAction();
-      setStatus(error.message, true);
-      return;
-    }
-
-    if (!result.started) {
-      // The server could not auto-start it (e.g. Linux) — show its guidance.
-      dockerStarting = false;
-      renderDockerAction();
-      setStatus(result.message, true);
-      return;
-    }
-
-    // Poll the environment until the daemon is reachable (up to ~90s).
-    const deadline = Date.now() + 90000;
-    const poll = async () => {
-      try {
-        const env = await refreshEnvironment();
-        if (env.docker) {
-          dockerStarting = false;
-          setIsolation("docker"); // the user clearly wants containers
-          syncIsolationPicker();
-          setStatus("Docker is running — Docker mode enabled.");
-          return;
-        }
-      } catch (error) {
-        /* transient — keep polling */
-      }
-
-      if (Date.now() < deadline) {
-        setTimeout(poll, 3000);
-      } else {
-        dockerStarting = false;
-        renderDockerAction();
-        setStatus("Docker is taking a while to start — reload once it's ready.", true);
-      }
-    };
-    setTimeout(poll, 3000);
   }
 
   // ---- launch ---------------------------------------------------------------
@@ -1447,7 +1315,7 @@
           model_name: resolvedModelName(),
           reasoning: state.reasoning,
           codex_fast: state.harness === "codex" && document.getElementById("run-codex-fast").checked,
-          container: state.isolation === "docker",
+          container: false,
           video: false,
           tools: state.toolUse === "offline",
           tool_use: state.toolUse,
@@ -1810,19 +1678,12 @@
       else setExecution("prime");
     });
   });
-  document.querySelectorAll(".segmented__option[data-isolation]").forEach((option) => {
-    option.addEventListener("click", () => {
-      if (option.disabled) return;
-      setIsolation(option.dataset.isolation);
-    });
-  });
   document.querySelectorAll(".segmented__option[data-tool-use]").forEach((option) => {
     option.addEventListener("click", () => setToolUse(option.dataset.toolUse));
   });
   document.querySelectorAll(".segmented__option[data-orchestration]").forEach((option) => {
     option.addEventListener("click", () => setOrchestration(option.dataset.orchestration));
   });
-  syncIsolationPicker();
   syncRunSettingCards();
   wireModelCatalog();
   wireConfigurationSummary();

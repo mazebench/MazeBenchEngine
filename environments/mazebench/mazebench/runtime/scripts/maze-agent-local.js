@@ -200,19 +200,22 @@ field plus the current status.${config.hideNames
   : ""}`;
   const capability = config.toolUse === "offline"
     ? config.hostAccess
-      ? `You have local file, coding, and execution tools on the host. Work in
-${ROOT_DIR} and keep run-specific notes in ${config.workspaceDir}. Outbound
-network access is disabled. Host access is less isolated than Docker.`
-      : `You have full local file, coding, and execution tools inside a persistent
-Docker workspace at ${config.agentWorkspaceDir}. Outbound network access is disabled.
+      ? `TOOLS-ON mode. You may use the local file, coding, and execution tools
+made available to you; tool availability is not guaranteed. Work in ${ROOT_DIR}
+and keep run-specific notes in ${config.workspaceDir}. Outbound network access
+is disabled. Host access is less isolated than Docker.`
+      : `TOOLS-ON mode. You may use the local file, coding, and execution tools
+made available to you; tool availability is not guaranteed. Work inside the
+persistent Docker workspace at ${config.agentWorkspaceDir}. Outbound network access is disabled.
 If a tool or algorithm needs an experimental game branch, call maze_clone
 with a descriptive worker_id and label, then include its clone_id in every maze
 call. Each branch starts from the selected checkpoint and all of its attempted
 and applied actions are tracked separately from the primary score.`
-    : `No external tools are available. You cannot access a shell, files,
-repositories, the web, connectors, resource listings, prior-run memory,
-workers, or private branches. Use only the four game controls named below and
-your current conversation memory.`;
+    : `Do not use any external tools. Do not search the web, do not read any
+files, do not run shell commands, and do not spawn any sub-agents. This is
+TOOLS-OFF mode. Do not access repositories, connectors, resource listings,
+prior-run memory, workers, or private branches. Use only the four game controls
+named below and your current conversation memory.`;
   const firstStep = config.resume || config.seed
     ? `Call ${controls.observe} first. This is the same primary game; do not call ${controls.start}.`
     : `Call ${controls.start} exactly once as your first game-control call.`;
@@ -226,18 +229,18 @@ your current conversation memory.`;
     ? `
 SWARM IS ENABLED. You are the superior lead and retain control of the primary
 maze. ${workerSpawnRule} Every worker uses the exact same model and reasoning
-effort as you and inherits your tool-use policy.
+effort as you and inherits your tool-use policy. Spawn as many sub-agents as
+you like; delegation is optional.
 
-Each worker must begin by calling maze_clone with a unique worker_id. That tool
+Each worker you spawn must begin by calling maze_clone with a unique worker_id. That tool
 creates an independent copy of the maze and returns a private persistent coding
 workspace. The worker must include that clone_id in every maze_observe,
 maze_action, and maze_scorecard call, may explore freely, ${workerCapability},
 then report its findings to you. Workers must never act on
 the primary maze. You decide which findings to use and make every primary move
-yourself by omitting clone_id. Spawn at least one worker before your first
-primary move. ${config.toolUse === "offline" ? "You may also create clearly labelled tool-driven branches with maze_clone; never use those clone ids for the primary score." : "Provider workers create their own branches."}
+yourself by omitting clone_id. ${config.toolUse === "offline" ? "You may also create clearly labelled tool-driven branches with maze_clone; never use those clone ids for the primary score." : "Provider workers create their own branches."}
 Beyond that, spawn, steer, stop, or wait for workers at your
-discretion. Gather their reports before finishing.`
+discretion. If you spawn workers, gather their reports before finishing.`
     : "";
   const budgetInstruction = config.unlimited
     ? `This run has NO MOVE LIMIT. Keep taking primary game actions until the
@@ -1896,7 +1899,7 @@ async function runWizard(raw) {
     { label: "Host", value: "false", hint: "weaker isolation" }
   ]);
 
-  out.tool_use = await promptSelect("Tool-use?", [
+  out.tool_use = await promptSelect("Tool-use (Not guaranteed)?", [
     { label: "No Tools", value: "read-only", hint: "game controls only; no files, shell, web, memory, or workers" },
     { label: "[CLI] Tools", value: "offline", hint: "write files and execute code; no network" }
   ]);

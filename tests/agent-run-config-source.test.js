@@ -11,6 +11,12 @@ const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "
 assert.match(pages, /id="run-meta" class="run-config" aria-label="Launch configuration"/);
 assert.match(runScript, /function runConfiguration\(run\)/);
 assert.match(runScript, /run\.launch_params && typeof run\.launch_params === "object"/);
+assert.doesNotMatch(pages, /setting-card--access/);
+assert.doesNotMatch(pages, /data-isolation=/);
+assert.match(pages, /Tool-use \(Not guaranteed\)/);
+assert.doesNotMatch(agentScript, /state\.isolation/);
+assert.doesNotMatch(agentScript, /syncIsolationPicker|setIsolation/);
+assert.match(agentScript, /container: false/);
 assert.doesNotMatch(runScript, /run-config__heading/);
 assert.doesNotMatch(runScript, /"Eval complete"/);
 assert.doesNotMatch(runScript, /"Eval ended"/);

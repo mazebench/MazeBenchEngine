@@ -59,8 +59,30 @@ for (const mode of ["text", "json", "vision"]) {
   assert.doesNotMatch(prompt, /MazeBench/i, `${mode} game-only prompt must not reveal the benchmark name`);
   assert.doesNotMatch(prompt, /ice_slope|puncher|player_lift|orange_wall/i);
   assert.match(prompt, /game_start/);
-  assert.match(prompt, /No external tools are available/);
+  assert.match(prompt, /TOOLS-OFF mode/);
+  assert.match(prompt, /Do not search the web/);
+  assert.match(prompt, /do not read any\s+files/);
+  assert.match(prompt, /do not spawn any sub-agents/);
 }
+
+const toolsOnConfig = {
+  ...baseConfig,
+  hostAccess: true,
+  model: "codex",
+  swarm: false,
+  toolUse: "offline",
+  tools: true
+};
+const toolsOnPrompt = buildMcpPrompt(toolsOnConfig);
+assert.match(toolsOnPrompt, /TOOLS-ON mode/);
+assert.match(toolsOnPrompt, /tool availability is not guaranteed/);
+assert.doesNotMatch(toolsOnPrompt, /TOOLS-OFF mode/);
+
+const swarmPrompt = buildMcpPrompt({ ...toolsOnConfig, swarm: true });
+assert.match(swarmPrompt, /SWARM IS ENABLED/);
+assert.match(swarmPrompt, /Spawn as many sub-agents as\s+you like/);
+assert.match(swarmPrompt, /delegation is optional/);
+assert.doesNotMatch(swarmPrompt, /Spawn at least one worker/);
 
 const codexConfig = { ...baseConfig, model: "codex" };
 const codex = agentCommand(codexConfig, buildMcpPrompt(codexConfig));

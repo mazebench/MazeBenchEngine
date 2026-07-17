@@ -928,19 +928,9 @@ function createPageRenderer({
                   <label class="identity-seed-field" data-hide-names-seed-wrap hidden><span>Identity seed</span><input type="text" data-hide-names-seed maxlength="128" value="1" placeholder="1" autocomplete="off" spellcheck="false"></label>
                 </div>
               </article>
-              <article class="setting-card setting-card--access is-gated" inert aria-hidden="true">
-                <div class="setting-card__head"><span>Access</span></div>
-                <div class="animated-segmented" id="isolation-picker" role="radiogroup" aria-label="Isolation">
-                  <span class="segmented__glider" aria-hidden="true"></span>
-                  <button type="button" class="segmented__option" data-isolation="docker" aria-pressed="false"><span class="segmented__icon">BOX</span><span>Docker</span></button>
-                  <button type="button" class="segmented__option" data-isolation="full" aria-pressed="false"><span class="segmented__icon">HOST</span><span>Host access</span></button>
-                </div>
-                <div id="docker-action" class="docker-action" hidden></div>
-                <div id="host-access-risk" class="host-access-risk" hidden>WEAKER ISOLATION</div>
-              </article>
               <article class="setting-card setting-card--tool-use is-gated" inert aria-hidden="true">
-                <div class="setting-card__head"><span>Tool-use</span></div>
-                <div class="animated-segmented" id="tool-use-picker" role="radiogroup" aria-label="Tool-use">
+                <div class="setting-card__head"><span>Tool-use (Not guaranteed)</span></div>
+                <div class="animated-segmented" id="tool-use-picker" role="radiogroup" aria-label="Tool-use (Not guaranteed)">
                   <span class="segmented__glider" aria-hidden="true"></span>
                   <button type="button" class="segmented__option" data-tool-use="read-only" aria-pressed="false"><span class="segmented__icon">NO</span><span>No Tools</span></button>
                   <button type="button" class="segmented__option" data-tool-use="offline" aria-pressed="false"><span class="segmented__icon">CLI</span><span>Tools</span></button>

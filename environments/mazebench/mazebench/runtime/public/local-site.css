@@ -2111,36 +2111,6 @@ body.play-body {
   cursor: not-allowed;
 }
 
-/* ---- Start Docker action ---- */
-
-.docker-action {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 4px;
-}
-
-.docker-action__text {
-  font-size: 12.5px;
-}
-
-.docker-action__spinner {
-  animation: docker-spin 0.7s linear infinite;
-  border: 2px solid rgba(124, 143, 255, 0.3);
-  border-radius: 50%;
-  border-top-color: var(--cyan, #34e7f0);
-  display: inline-block;
-  height: 16px;
-  width: 16px;
-}
-
-@keyframes docker-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 /* ---- inline loading spinner (model catalog fetch, etc.) ---- */
 
 .models-loading {
@@ -5316,12 +5286,6 @@ html.has-run-world-map {
   transform: translateX(calc(100% + 4px));
 }
 
-#isolation-picker.is-second .segmented__glider {
-  background: rgba(255, 209, 92, 0.1);
-  border-color: rgba(255, 209, 92, 0.68);
-  box-shadow: 0 0 18px rgba(255, 209, 92, 0.12);
-}
-
 #tool-use-picker.is-second .segmented__glider {
   background: rgba(124, 143, 255, 0.13);
   border-color: rgba(124, 143, 255, 0.72);
@@ -5332,24 +5296,6 @@ html.has-run-world-map {
   background: rgba(164, 116, 255, 0.14);
   border-color: rgba(181, 137, 255, 0.74);
   box-shadow: 0 0 20px rgba(153, 96, 255, 0.18);
-}
-
-.setting-card--access {
-  position: relative;
-}
-
-.host-access-risk {
-  border: 1px solid rgba(255, 209, 92, 0.36);
-  border-radius: 999px;
-  color: rgba(255, 220, 128, 0.78);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 8px;
-  letter-spacing: 0.11em;
-  line-height: 1;
-  padding: 5px 8px;
-  position: absolute;
-  right: 12px;
-  top: 10px;
 }
 
 .animated-segmented .segmented__option {
@@ -5475,10 +5421,6 @@ html.has-run-world-map {
 
 .setting-card__field--budget input:disabled {
   opacity: 0.38;
-}
-
-.docker-action {
-  margin-top: auto;
 }
 
 /* Launch dock */
