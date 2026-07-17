@@ -54,6 +54,17 @@ const codexAtTwo = codexTranscriptPrefix(codexTranscript, 2, newCodexId);
 assert.match(codexAtTwo, /"output":"failed"/);
 assert.match(codexAtTwo, /"output":"two"/);
 assert.doesNotMatch(codexAtTwo, /future/);
+const restrictedCodexTranscript = codexTranscript.replaceAll("mcp__mazebench__maze_", "mcp__game__game_");
+const restrictedCodexAtTwo = codexTranscriptPrefix(restrictedCodexTranscript, 2, newCodexId);
+assert.match(restrictedCodexAtTwo, /"output":"two"/);
+assert.doesNotMatch(restrictedCodexAtTwo, /future/);
+const directToolCodexTranscript = restrictedCodexTranscript.replaceAll(
+  "custom_tool_call_output",
+  "function_call_output"
+);
+const directToolCodexAtTwo = codexTranscriptPrefix(directToolCodexTranscript, 2, newCodexId);
+assert.match(directToolCodexAtTwo, /"output":"two"/);
+assert.doesNotMatch(directToolCodexAtTwo, /future/);
 
 const claudeMessage = (type, uuid, parentUuid, content) => JSON.stringify({
   type,
@@ -93,6 +104,15 @@ const eventPrefix = providerEventPrefix(codexEvents, "codex", 1, oldCodexId, new
 assert.match(eventPrefix, new RegExp(newCodexId));
 assert.match(eventPrefix, /"action":"up"/);
 assert.doesNotMatch(eventPrefix, /invalid|right/);
+const restrictedEventPrefix = providerEventPrefix(
+  codexEvents.replaceAll("mcp__mazebench__maze_", "mcp__game__game_"),
+  "codex",
+  1,
+  oldCodexId,
+  newCodexId
+);
+assert.match(restrictedEventPrefix, /"action":"up"/);
+assert.doesNotMatch(restrictedEventPrefix, /invalid|right/);
 
 const activity = [
   { tool: "maze_start", status: "completed", moves_before: 0, moves_after: 0 },

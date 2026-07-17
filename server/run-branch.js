@@ -14,7 +14,7 @@ function jsonLines(text) {
 }
 
 function isMazeTool(name, tool) {
-  return new RegExp(`(?:^|__)maze_${tool}$`).test(String(name || ""));
+  return new RegExp(`(?:^|__)(?:maze|game)_${tool}$`).test(String(name || ""));
 }
 
 function isPrimaryInvocation(invocation) {
@@ -62,7 +62,7 @@ function codexTranscriptPrefix(text, requestedTurn, newConversationId) {
     if (
       pendingBoundary !== null &&
       record?.type === "response_item" &&
-      payload.type === "custom_tool_call_output"
+      ["custom_tool_call_output", "function_call_output"].includes(payload.type)
     ) {
       boundaries.set(pendingBoundary, index);
       pendingBoundary = null;
