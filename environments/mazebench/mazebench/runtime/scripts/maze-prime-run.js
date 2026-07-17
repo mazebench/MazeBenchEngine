@@ -27,6 +27,11 @@ const HOSTED_SAMPLES_FILE = "prime-evaluation-samples.json";
 const TEXT_RUNTIME_IMAGE = "node:24-bookworm-slim";
 const VISION_RUNTIME_IMAGE = "mcr.microsoft.com/playwright:v1.60.0-noble";
 
+function positiveTurnBudget(value, fallback = 20) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
+}
+
 function parseArgs(argv) {
   const opts = {
     envDir: "",
@@ -64,7 +69,7 @@ function parseArgs(argv) {
     else if (arg === "--run-id") opts.runId = String(next() || "");
     else if (arg === "--level") opts.levelId = String(next() || opts.levelId);
     else if (arg === "--game-won-gem-count") opts.gameWonGemCount = Math.max(1, Number(next()) || 69);
-    else if (arg === "--max-turns") opts.maxTurns = Math.max(1, Math.min(500, Number(next()) || 20));
+    else if (arg === "--max-turns") opts.maxTurns = positiveTurnBudget(next());
     else if (arg === "--hosted") opts.hosted = true;
     else if (arg === "--vision") {
       opts.vision = true;

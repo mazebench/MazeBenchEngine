@@ -77,6 +77,8 @@ try {
   assert.match(runSource, /VISION_RUNTIME_IMAGE = "mcr\.microsoft\.com\/playwright:v1\.60\.0-noble"/);
   assert.match(runSource, /opts\.vision \? VISION_RUNTIME_IMAGE : TEXT_RUNTIME_IMAGE/);
   assert.match(runSource, /const taskset = agentic \? "mazebench-agent" : "mazebench"/);
+  assert.doesNotMatch(runSource, /Math\.min\(500/);
+  assert.doesNotMatch(runsSource, /Math\.min\(500/);
   assert.match(liveSource, /MAZEBENCH_EVENT_V1/);
   assert.match(liveSource, /_patch_prime_codex_reasoning_summary/);
   assert.match(liveSource, /PRIME_HARNESS == "codex"/);

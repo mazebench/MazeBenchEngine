@@ -14,6 +14,10 @@ assert.match(runScript, /run\.launch_params && typeof run\.launch_params === "ob
 assert.doesNotMatch(pages, /setting-card--access/);
 assert.doesNotMatch(pages, /data-isolation=/);
 assert.match(pages, /Tool-use \(Not guaranteed\)/);
+assert.match(pages, /id="run-prime-turns"[^>]+min="0"[^>]+value="0"/);
+assert.doesNotMatch(pages, /id="run-prime-turns"[^>]+max=/);
+assert.doesNotMatch(agentScript, /Math\.min\(500/);
+assert.doesNotMatch(runScript, /Math\.min\(500/);
 assert.doesNotMatch(agentScript, /state\.isolation/);
 assert.doesNotMatch(agentScript, /syncIsolationPicker|setIsolation/);
 assert.match(agentScript, /container: false/);

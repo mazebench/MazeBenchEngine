@@ -134,6 +134,11 @@ function normalizeObservationMode(value) {
   return ["json", "vision"].includes(mode) ? mode : "text";
 }
 
+function positiveTurnBudget(value, fallback = 20) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
+}
+
 function normalizedHideNamesSeed(value) {
   return String(value || "").trim().slice(0, 128);
 }
@@ -3544,7 +3549,7 @@ function createAgentRunService({
         `${definition.label} requires a known-compatible Prime model using ${definition.protocol}. Choose a model from the displayed catalog.`
       );
     }
-    const maxTurns = Math.max(1, Math.min(500, Number(params.max_turns) || 20));
+    const maxTurns = positiveTurnBudget(params.max_turns);
     const mode = normalizeObservationMode(
       params.mode || (params.vision === true || params.vision === "true" ? "vision" : "text")
     );
@@ -4407,13 +4412,16 @@ function createAgentRunService({
       throw new Error("This run ended by Auto-Quit. Branch from an earlier action to try a different route.");
     }
 
-    const add = Math.max(1, Math.min(MAX_LOCAL_MOVE_BUDGET, Math.floor(Number(additionalMoves) || 20)));
+    const requestedAdd = positiveTurnBudget(additionalMoves);
+    const add = meta.kind === "prime"
+      ? requestedAdd
+      : Math.min(MAX_LOCAL_MOVE_BUDGET, requestedAdd);
 
     if (meta.kind === "prime") {
       // Verifiers plays one fresh rollout per run, so "continue" gives the model
       // a bigger total budget on the same maze rather than resuming mid-state.
       const base = { ...(meta.launch_params || reconstructParams(meta)), continue_of: runId, kind: "prime" };
-      base.max_turns = Math.max(1, Math.min(500, (Number(meta.moves) || 0) + add));
+      base.max_turns = Math.max(0, Math.floor(Number(meta.moves) || 0)) + add;
       return launchRun(base);
     }
     requireLegacyLocalLaunch();

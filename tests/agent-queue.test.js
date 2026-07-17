@@ -110,7 +110,7 @@ try {
   const [livePrime] = service.launchRuns({
     kind: "prime",
     model_name: "Qwen/Qwen3.5-0.8B",
-    max_turns: 5,
+    max_turns: 750,
     vision: false,
     reasoning: "low",
     allow_quit: false,
@@ -121,10 +121,11 @@ try {
     path.join(rootDir, "outputs", "maze-local", "site", livePrime.id, "run.json")
   );
   assert.equal(livePrimeMeta.prime_execution, "local");
-  assert.equal(livePrimeMeta.moves, 5);
+  assert.equal(livePrimeMeta.moves, 750);
   assert.equal(livePrimeMeta.allow_quit, false);
   assert.doesNotMatch(livePrimeMeta.command, /--hosted/);
   assert.match(livePrimeMeta.command, /--model Qwen\/Qwen3\.5-0\.8B/);
+  assert.match(livePrimeMeta.command, /--max-turns 750/);
   assert.match(livePrimeMeta.note, /every model turn/);
   const livePrimeRunDir = path.join(rootDir, "outputs", "maze-local", "site", livePrime.id);
   fs.writeFileSync(
@@ -152,6 +153,12 @@ try {
   assert.equal(livePrimeProgress.run.inference.state, "in_flight");
   assert.equal(livePrimeProgress.run.inference.action, 2);
   assert.equal(service.stopRun(livePrime.id).status, "stopped");
+  const continuedPrime = service.continueRun(livePrime.id, 750);
+  launchedIds.push(continuedPrime.id);
+  assert.equal(continuedPrime.moves, 1500, "Prime continuations must not stop at the former 500-turn ceiling");
+  assert.match(continuedPrime.command, /--max-turns 1500/);
+  assert.equal(service.stopRun(continuedPrime.id).status, "stopped");
+  service.deleteRun(continuedPrime.id);
   service.deleteRun(livePrime.id);
 
   const [autoQuitPrime] = service.launchRuns({

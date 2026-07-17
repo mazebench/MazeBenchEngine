@@ -97,7 +97,7 @@ try {
     "--model",
     "Qwen/Qwen3.5-0.8B",
     "--max-turns",
-    "5",
+    "750",
     "--level",
     "level_HxI",
     "--game-won-gem-count",
@@ -108,6 +108,7 @@ try {
     "--no-video"
   ]);
   assert.equal(options.hosted, true);
+  assert.equal(options.maxTurns, 750);
   assert.equal(options.allowQuit, false);
   assert.equal(options.video, false);
 
@@ -121,7 +122,7 @@ try {
     num_eval_examples: 1,
     start_level_id: "level_HxI",
     game_won_gem_count: 69,
-    max_actions: 5,
+    max_actions: 750,
     allow_quit: false,
     observation_mode: "ascii"
   });

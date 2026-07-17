@@ -3354,7 +3354,10 @@
   continueButton?.addEventListener("click", async () => {
     const answer = window.prompt("How many more moves should it run?", "10");
     if (answer === null) return;
-    const moves = Math.max(1, Math.min(500, Math.floor(Number(answer) || 0)));
+    const requestedMoves = Number(answer);
+    const moves = Number.isFinite(requestedMoves) && requestedMoves > 0
+      ? Math.floor(requestedMoves)
+      : 0;
     if (!moves) {
       setStatus("Enter a positive number of moves.", true);
       return;

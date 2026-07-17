@@ -1009,7 +1009,7 @@ function createPageRenderer({
               </article>
               <article class="setting-card setting-card--budget is-gated" inert aria-hidden="true">
                 <div class="setting-card__head"><span>Budget</span></div>
-                <label class="field setting-card__field"><span>Action limit</span><input id="run-prime-turns" type="number" min="0" max="200" value="0" inputmode="numeric"></label>
+                <label class="field setting-card__field"><span>Action limit</span><input id="run-prime-turns" type="number" min="0" value="0" inputmode="numeric"></label>
               </article>
               <article class="setting-card setting-card--give-up is-gated" inert aria-hidden="true">
                 <div class="setting-card__head"><span>Allow model to give up</span></div>
