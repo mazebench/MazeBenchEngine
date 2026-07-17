@@ -8,6 +8,7 @@ These instructions apply to the entire MazeBenchEngine repository.
 - Start work from the current `origin/main` on a focused `codex/<task>` branch.
 - Commit and push the branch, run the relevant tests, and open a pull request for the user to review.
 - Do not merge the pull request until the user says the branch is approved. After approval, merge it and verify `main` CI.
+- After the merge and green `main` CI, remove every fully merged, no-longer-needed topic or release branch from `origin` and locally, remove any dedicated worktree, and prune stale tracking references. Never delete `main`, a branch with an open pull request, or any branch containing unmerged work.
 - A branch push, pull request, or merge does not by itself authorize a package release.
 
 ## Explicit release gate
