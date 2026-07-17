@@ -2194,16 +2194,6 @@ body.play-body {
   margin: 12px 0 15px;
 }
 
-.run-config__heading {
-  color: #7985aa;
-  font-family: var(--font-display);
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
 .run-config__list {
   display: flex;
   flex-wrap: wrap;

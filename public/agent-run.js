@@ -884,8 +884,7 @@
     const meta = document.getElementById("run-meta");
     meta.className = "run-config";
     meta.setAttribute("aria-label", "Launch configuration");
-    meta.innerHTML = `<span class="run-config__heading">Launch configuration</span>
-      <span class="run-config__list" role="list">
+    meta.innerHTML = `<span class="run-config__list" role="list">
         ${runConfiguration(run).map(([label, value, active]) => `<span class="run-config__item${active ? " is-active" : ""}" role="listitem">
           <span class="run-config__key">${escapeText(label)}</span>
           <strong class="run-config__value">${escapeText(value)}</strong>
@@ -3269,9 +3268,7 @@
             : progress.run.status !== "finished"
               ? `Run ${progress.run.status}.`
             : isPrime
-              ? `${progress.run.complete ? "Eval complete" : "Eval ended"} — ${progress.run.turns || 0} move${progress.run.turns === 1 ? "" : "s"}${
-                  progress.run.has_video ? ", replay video above" : ""
-                }; see the runner log for rewards and scores.`
+              ? ""
               : `${progress.run.complete ? "Complete" : "Ended"} — ${progress.run.gem_count ?? 0}/${progress.run.gem_total ?? "—"} gems in ${progress.run.turns} moves.`,
           progress.run.status === "failed"
         );

@@ -1102,7 +1102,6 @@ function createPageRenderer({
           <div class="run-heatmap__head run-replay-export__head">
             <div>
               <h2>Replay video</h2>
-              <p class="muted">Generate a compact MP4 replay of this run.</p>
             </div>
             <div class="run-heatmap__actions run-replay-export__actions">
               <button id="generate-video" class="run-heatmap__export run-replay-export__button" type="button" hidden><span>Generate replay</span></button>
