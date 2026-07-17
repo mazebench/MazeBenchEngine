@@ -40,7 +40,7 @@ the right distribution mode for a dev tool like this.
 To let teammates install straight from Git without cloning first:
 
 ```bash
-pip install "maze-bench @ git+https://github.com/<you>/PixelGameTest.git"
+pip install "mazebench @ git+https://github.com/mazebench/MazeBenchEngine.git"
 ```
 
 Even then, set `MAZEBENCH_REPO_ROOT` (or run from a checkout) so the CLI can

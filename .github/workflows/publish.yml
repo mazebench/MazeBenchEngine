@@ -6,7 +6,7 @@
 #   1. https://pypi.org/manage/account/publishing/ -> "Add a new pending publisher"
 #   2. PyPI project name: mazebench
 #      Owner:             mazebench            (this GitHub org/user)
-#      Repository:        MazeBench            (this repo)
+#      Repository:        MazeBenchEngine      (this repo)
 #      Workflow name:     publish.yml
 #      Environment:       pypi
 #   3. Create a GitHub environment named "pypi" in the repo settings.
