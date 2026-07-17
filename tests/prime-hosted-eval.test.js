@@ -11,6 +11,7 @@ const {
   parseArgs,
   providerReasoningText,
   replayExportArgs,
+  verifierTurnBudgetArgs,
   writeHostedLiveArtifacts,
   writeHostedResults
 } = require("../scripts/maze-prime-run");
@@ -109,6 +110,7 @@ try {
   ]);
   assert.equal(options.hosted, true);
   assert.equal(options.maxTurns, 750);
+  assert.equal(options.unlimited, false);
   assert.equal(options.allowQuit, false);
   assert.equal(options.video, false);
 
@@ -133,6 +135,24 @@ try {
   });
   const sampling = JSON.parse(argv[argv.indexOf("-S") + 1]);
   assert.deepEqual(sampling, { max_tokens: 512, reasoning_effort: "low" });
+  assert.deepEqual(verifierTurnBudgetArgs(options), [
+    "--taskset.max-actions", "750", "--max-turns", "3000"
+  ]);
+
+  const unlimitedOptions = parseArgs([
+    "--hosted",
+    "--out", outDir,
+    "--unlimited"
+  ]);
+  assert.equal(unlimitedOptions.unlimited, true);
+  assert.deepEqual(verifierTurnBudgetArgs(unlimitedOptions), [
+    "--taskset.max-actions", "None", "--max-turns", "None"
+  ]);
+  const unlimitedArgv = hostedEvalArgs(unlimitedOptions);
+  const unlimitedEnvArgs = JSON.parse(unlimitedArgv[unlimitedArgv.indexOf("-a") + 1]);
+  assert.equal(unlimitedEnvArgs.max_actions, null);
+  assert.equal(unlimitedEnvArgs.unlimited, true);
+  assert.equal(unlimitedArgv[unlimitedArgv.indexOf("--timeout-minutes") + 1], "1440");
 
   const autoQuitOptions = parseArgs([
     "--hosted",

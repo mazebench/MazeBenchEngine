@@ -209,7 +209,8 @@ Prime CLI 0.6.x passes these settings under `[env.args]` to MazeBench's hosted c
 | `gem_reward_weight` | number | `1.0` | Gem reward multiplier. |
 | `room_reward_weight` | number | `0.1` | New-room reward multiplier. |
 | `push_reward_weight` | number | `0.05` | Novel-block-position reward multiplier. |
-| `max_actions` | integer | `256` | Maximum accepted MazeBench actions. |
+| `max_actions` | integer or `None` | `256` | Maximum accepted MazeBench actions. `None` removes the action ceiling in v1 evaluations. |
+| `unlimited` | boolean | `false` | Hosted-compatibility switch that removes the action ceiling. |
 | `allow_quit` | boolean | `true` | Whether `quit` may end the rollout. |
 | `auto_quit` | boolean | `false` | Stop the rollout when its percentage of globally novel board states reaches the configured threshold. |
 | `auto_quit_threshold` | number | `10.0` | New-state percentage at or below which auto-quit fires. |
@@ -236,6 +237,12 @@ attachments rendered as `8`, with no side character. Pressing a button moves
 each `orange_wall` down one elevation, reflected in its JSON coordinate.
 
 Framework controls such as `max_turns`, token limits, sampling, batch size, and rollout count belong outside the taskset configuration.
+
+The Agent Runner's **Unlimited** Prime option uses both layers: it sets the
+MazeBench action ceiling to `None` and Verifiers' framework `max_turns` to
+`None`. The rollout then ends only when the game ends, Auto-Quit fires, the
+user stops it, an inference/runtime error occurs, or an external hosted runtime
+timeout is reached.
 
 Auto-quit uses the authoritative `board_state_hash` returned by the game
 engine. A state is novel only on its first appearance in the entire rollout.

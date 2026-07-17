@@ -356,13 +356,16 @@
   }
 
   function moveBudget() {
-    if (state.execution === "local" && state.unlimited) return 500;
+    if (state.unlimited) return null;
     const input = document.getElementById(state.execution === "prime" ? "run-prime-turns" : "run-moves");
     return Math.max(0, Math.floor(Number(input?.value) || 0));
   }
 
   function runReady() {
-    return runOptionsReady() && state.allowQuit !== null && state.autoQuit !== null && moveBudget() > 0;
+    return runOptionsReady() &&
+      state.allowQuit !== null &&
+      state.autoQuit !== null &&
+      (state.unlimited || moveBudget() > 0);
   }
 
   function syncComposerSteps(animate = true) {
@@ -1337,14 +1340,15 @@
   }
 
   function setUnlimited(selected, syncSteps = true) {
-    state.unlimited = state.execution === "local" && Boolean(selected);
-    const button = document.getElementById("run-unlimited");
-    const input = document.getElementById("run-moves");
-    if (button) {
+    state.unlimited = Boolean(selected);
+    document.querySelectorAll("[data-budget-unlimited]").forEach((button) => {
       button.classList.toggle("is-selected", state.unlimited);
       button.setAttribute("aria-pressed", String(state.unlimited));
-    }
-    if (input) input.disabled = state.unlimited;
+    });
+    ["run-moves", "run-prime-turns"].forEach((id) => {
+      const input = document.getElementById(id);
+      if (input) input.disabled = state.unlimited;
+    });
     if (syncSteps) syncComposerSteps();
   }
 
@@ -1431,6 +1435,7 @@
           harness: state.harness,
           model_name: resolvedModelName(),
           max_turns: moveBudget(),
+          unlimited: state.unlimited,
           mode: state.mode,
           vision: state.mode === "vision",
           omniscient: state.mode === "json" && state.omniscient,
@@ -1803,8 +1808,8 @@
         syncComposerSteps();
       });
     });
-    document.getElementById("run-unlimited")?.addEventListener("click", () => {
-      setUnlimited(!state.unlimited);
+    document.querySelectorAll("[data-budget-unlimited]").forEach((button) => {
+      button.addEventListener("click", () => setUnlimited(!state.unlimited));
     });
     document.querySelectorAll("[data-allow-quit]").forEach((option) => {
       option.addEventListener("click", () => setAllowQuit(option.dataset.allowQuit === "true"));

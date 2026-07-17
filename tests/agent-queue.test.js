@@ -176,6 +176,29 @@ try {
   service.deleteRun(continuedPrime.id);
   service.deleteRun(livePrime.id);
 
+  const [unlimitedPrime] = service.launchRuns({
+    kind: "prime",
+    model_name: "Qwen/Qwen3.5-0.8B",
+    unlimited: true,
+    allow_quit: false,
+    video: false
+  });
+  launchedIds.push(unlimitedPrime.id);
+  const unlimitedPrimeMeta = loadJson(
+    path.join(rootDir, "outputs", "maze-local", "site", unlimitedPrime.id, "run.json")
+  );
+  assert.equal(unlimitedPrimeMeta.moves, null);
+  assert.equal(unlimitedPrimeMeta.unlimited, true);
+  assert.equal(unlimitedPrimeMeta.launch_params.unlimited, true);
+  assert.match(unlimitedPrimeMeta.command, /--unlimited/);
+  assert.doesNotMatch(unlimitedPrimeMeta.command, /--max-turns/);
+  const unlimitedPrimeSummary = service.summarizeRun(unlimitedPrime.id);
+  assert.equal(unlimitedPrimeSummary.progress.unlimited, true);
+  assert.equal(unlimitedPrimeSummary.progress.total, null);
+  assert.equal(unlimitedPrimeSummary.progress.eta_ms, null);
+  assert.equal(service.stopRun(unlimitedPrime.id).status, "stopped");
+  service.deleteRun(unlimitedPrime.id);
+
   const [specialEffortPrime] = service.launchRuns({
     kind: "prime",
     model_name: "openai/gpt-5.6-sol",

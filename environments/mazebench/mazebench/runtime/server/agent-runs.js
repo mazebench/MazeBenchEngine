@@ -3650,7 +3650,8 @@ function createAgentRunService({
         `${definition.label} requires a known-compatible Prime model using ${definition.protocol}. Choose a model from the displayed catalog.`
       );
     }
-    const maxTurns = positiveTurnBudget(params.max_turns);
+    const unlimited = params.unlimited === true || params.unlimited === "true";
+    const maxTurns = unlimited ? null : positiveTurnBudget(params.max_turns);
     const mode = normalizeObservationMode(
       params.mode || (params.vision === true || params.vision === "true" ? "vision" : "text")
     );
@@ -3690,10 +3691,14 @@ function createAgentRunService({
       "--level",
       levelId,
       "--game-won-gem-count",
-      String(gemTotal),
-      "--max-turns",
-      String(maxTurns)
+      String(gemTotal)
     ];
+
+    if (unlimited) {
+      argv.push("--unlimited");
+    } else {
+      argv.push("--max-turns", String(maxTurns));
+    }
 
     if (hosted) {
       argv.push("--hosted", "--environment", "mazebench/mazebench");
@@ -3740,7 +3745,8 @@ function createAgentRunService({
     // A readable command string for the run page / logs (not the resolved path).
     const display = ["node", "scripts/maze-prime-run.js"]
       .concat(hosted ? ["--hosted"] : [])
-      .concat(["--out", "<run>", "--harness", harness, "--max-turns", String(maxTurns)])
+      .concat(["--out", "<run>", "--harness", harness])
+      .concat(unlimited ? ["--unlimited"] : ["--max-turns", String(maxTurns)])
       .concat(model ? ["--model", model] : [])
       .concat(vision ? ["--vision"] : [])
       .concat(mode === "json" ? ["--observation-mode", "json"] : [])
@@ -3768,6 +3774,7 @@ function createAgentRunService({
       harness,
       model,
       maxTurns,
+      unlimited,
       mode,
       vision,
       omniscient,
@@ -3824,6 +3831,7 @@ function createAgentRunService({
           gem_total: command.gemTotal,
           room_total: game.worldMap?.levels?.length || 0,
           moves: command.maxTurns,
+          unlimited: command.unlimited,
           mode: command.mode,
           vision: command.vision,
           omniscient: command.omniscient,
@@ -3836,6 +3844,7 @@ function createAgentRunService({
           launch_params: {
             ...launchParamsOf(params),
             ...autoQuitLaunchParams(command.autoQuit),
+            unlimited: command.unlimited,
             harness: command.harness,
             ...(command.hideNames ? { hide_names_seed: command.hideNamesSeed } : {})
           },
@@ -4196,6 +4205,7 @@ function createAgentRunService({
         hide_names: Boolean(meta.hide_names),
         hide_names_seed: normalizedHideNamesSeed(meta.hide_names_seed),
         reasoning: meta.reasoning || "",
+        unlimited: Boolean(meta.unlimited),
         allow_quit: meta.allow_quit !== false,
         ...autoQuitLaunchParams(meta),
         video: meta.video !== false
