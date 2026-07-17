@@ -111,6 +111,10 @@ The saved `results.jsonl` trace contains:
 - `rewards` — all three reward components
 - `metrics` — gems, rooms, room state, and block progress
 
+These scoring fields are evaluator output for the run owner. The model never
+receives the scorecard. ASCII and vision observations omit explicit player
+coordinates and elevation; JSON observations retain coordinates by design.
+
 ## Hosted Training
 
 Choose an available model with:
@@ -223,7 +227,7 @@ Framework controls such as `max_turns`, token limits, sampling, batch size, and 
 
 ## Experimental local vision
 
-Vision mode uses the same persistent game state, commands, stop conditions, rewards, and metrics as ASCII mode. Instead of an ASCII board, the model receives a short status message and a perspective PNG frame.
+Vision mode uses the same persistent game state, commands, stop conditions, rewards, and metrics as ASCII mode. Instead of an ASCII board, the model receives a short non-positional status message and a perspective PNG frame.
 
 It currently requires a full MazeBench checkout with Node dependencies plus a compatible Chrome or Chromium binary:
 
@@ -246,6 +250,10 @@ Do not select vision for Hosted Training until the environment publishes a self-
 ## Local agent tooling
 
 The repository also contains a `mazebench_codex` plugin and a much broader local Agent runner supporting Codex, Claude Code, Docker access, tools, orchestration, live views, pause/resume, and replay controls. Those capabilities are separate from the `mazebench/mazebench` Hosted Training environment.
+
+In these coding-agent paths, scoring is finalized after the agent exits. The
+agent-facing helper exposes start, observe, and action operations, but no
+scorecard operation.
 
 The local Codex v1 harness can be exercised from a full checkout with:
 

@@ -408,7 +408,6 @@ def render_multiturn_user_prompt(
         terminal_note=terminal_note_text(status),
         visited_rooms=", ".join(str(room) for room in visited_rooms) or "(none)",
         yaw=status.get("yaw", 0),
-        **player_fields(status.get("player")),
     )
 
 
@@ -421,7 +420,6 @@ def render_vision_user_prompt(
     visited_rooms = status.get("visited_levels") or []
     current_room = status.get("current_room") or status.get("level_id") or "?"
     current_view = status.get("current_view") or status.get("view") or "?"
-    fields = player_fields(status.get("player"))
     lines = [
         result_text,
         "",
@@ -430,12 +428,6 @@ def render_vision_user_prompt(
         f"Current room: `{current_room}`",
         f"Current view: {current_view}",
         f"Yaw: {status.get('yaw', 0)}",
-        (
-            "Player: "
-            f"x={fields['player_x']} "
-            f"y={fields['player_y']} "
-            f"elevation={fields['player_elevation']}"
-        ),
         f"Gems collected: {status.get('gem_count', 0)}",
         "Visited rooms: " + (", ".join(str(room) for room in visited_rooms) or "(none)"),
     ]
@@ -1152,10 +1144,6 @@ def action_result_text(
         )
     if status_player_dead(status):
         details.append(DEATH_MESSAGE)
-    is_terminal = status.get("quit") or status.get("game_lost") or status.get("game_won")
-    if is_terminal and status.get("scorecard"):
-        details.append("Final scorecard:\n" + scorecard_text(status))
-
     return " ".join(details)
 
 
@@ -1556,9 +1544,7 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
             return [
                 {
                     "role": "user",
-                    "content": "Final scorecard:\n```json\n"
-                    + scorecard_text(status)
-                    + "\n```",
+                    "content": "The game has ended. No further action is available.",
                 }
             ]
 

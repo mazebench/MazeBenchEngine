@@ -1,12 +1,14 @@
 const assert = require("node:assert/strict");
 const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {
   agentCommand,
   buildMcpPrompt,
   claudeSandboxSettings,
-  codexMcpConfigArgs
+  codexMcpConfigArgs,
+  migrateSeedSessionObservation
 } = require("../scripts/maze-agent-local");
 
 const root = path.resolve(__dirname, "..");
@@ -59,8 +61,33 @@ for (const mode of ["text", "json", "vision"]) {
   assert.doesNotMatch(prompt, /MazeBench/i, `${mode} game-only prompt must not reveal the benchmark name`);
   assert.doesNotMatch(prompt, /ice_slope|puncher|player_lift|orange_wall/i);
   assert.match(prompt, /game_start/);
-  assert.match(prompt, /No external tools are available/);
+  assert.match(prompt, /TOOLS-OFF mode/);
+  assert.match(prompt, /Do not search the web/);
+  assert.match(prompt, /do not read any\s+files/);
+  assert.match(prompt, /do not spawn any sub-agents/);
+  assert.doesNotMatch(prompt, /(?:game|maze)_scorecard/);
+  if (mode !== "json") assert.doesNotMatch(prompt, /player position|x\/y\/elevation/i);
 }
+
+const toolsOnConfig = {
+  ...baseConfig,
+  hostAccess: true,
+  model: "codex",
+  swarm: false,
+  toolUse: "offline",
+  tools: true
+};
+const toolsOnPrompt = buildMcpPrompt(toolsOnConfig);
+assert.match(toolsOnPrompt, /TOOLS-ON mode/);
+assert.match(toolsOnPrompt, /tool availability is not guaranteed/);
+assert.doesNotMatch(toolsOnPrompt, /TOOLS-OFF mode/);
+assert.doesNotMatch(toolsOnPrompt, /maze_scorecard/);
+
+const swarmPrompt = buildMcpPrompt({ ...toolsOnConfig, swarm: true });
+assert.match(swarmPrompt, /SWARM IS ENABLED/);
+assert.match(swarmPrompt, /Spawn as many sub-agents as\s+you like/);
+assert.match(swarmPrompt, /delegation is optional/);
+assert.doesNotMatch(swarmPrompt, /Spawn at least one worker/);
 
 const codexConfig = { ...baseConfig, model: "codex" };
 const codex = agentCommand(codexConfig, buildMcpPrompt(codexConfig));
@@ -77,7 +104,7 @@ for (const feature of ["apps", "plugins", "memories", "multi_agent", "tool_searc
 }
 assert.deepEqual(
   codexMcpConfigArgs(codexConfig).filter((value) => value.includes("enabled_tools")),
-  ['mcp_servers.game.enabled_tools=["game_start","game_observe","game_action","game_scorecard"]']
+  ['mcp_servers.game.enabled_tools=["game_start","game_observe","game_action"]']
 );
 
 const claudeConfig = { ...baseConfig, model: "claude", modelName: "claude-test" };
@@ -89,8 +116,7 @@ assert.deepEqual(
   new Set([
     "mcp__game__game_start",
     "mcp__game__game_observe",
-    "mcp__game__game_action",
-    "mcp__game__game_scorecard"
+    "mcp__game__game_action"
   ])
 );
 for (const denied of ["Bash", "Read", "Glob", "Grep", "WebFetch", "WebSearch", "Task", "Agent", "ToolSearch"]) {
@@ -112,5 +138,39 @@ const directGame = spawnSync(process.execPath, [guard], {
   encoding: "utf8"
 });
 assert.equal(directGame.status, 0);
+
+{
+  const resumeDir = fs.mkdtempSync(path.join(os.tmpdir(), "maze-resume-policy-"));
+  const sessionFile = path.join(resumeDir, "session.json");
+  const session = {
+    actions: [{ turn: 1, status: { level: "P..", player: { x: 4, y: 15, elevation: 0 }, scorecard: { secret: true } } }],
+    bridgeCheckpoint: { player: { x: 4, y: 15, elevation: 0 } },
+    initial: { level: "P..", player: { x: 4, y: 15, elevation: 0 } },
+    lastStatus: { level: ".P.", player: { x: 5, y: 15, elevation: 0 } },
+    scorecard: { current_position: { x: 5, y: 15, elevation: 0 } }
+  };
+  fs.writeFileSync(sessionFile, `${JSON.stringify(session, null, 2)}\n`);
+  fs.writeFileSync(path.join(resumeDir, "scorecard.json"), "{}\n");
+  fs.writeFileSync(path.join(resumeDir, "maze_scorecard.json"), "{}\n");
+  fs.writeFileSync(path.join(resumeDir, "current-render-state.json"), "{}\n");
+  migrateSeedSessionObservation({
+    ...baseConfig,
+    hideNamesSeed: "resume-seed",
+    mode: "text",
+    outDir: resumeDir,
+    seed: true,
+    sessionFile
+  });
+  const sanitized = JSON.parse(fs.readFileSync(sessionFile, "utf8"));
+  assert.equal(Object.prototype.hasOwnProperty.call(sanitized, "scorecard"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(sanitized, "bridgeCheckpoint"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(sanitized.initial, "player"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(sanitized.lastStatus, "player"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(sanitized.actions[0].status, "scorecard"), false);
+  assert.equal(fs.existsSync(path.join(resumeDir, "scorecard.json")), false);
+  assert.equal(fs.existsSync(path.join(resumeDir, "maze_scorecard.json")), false);
+  assert.equal(fs.existsSync(path.join(resumeDir, "current-render-state.json")), false);
+  fs.rmSync(resumeDir, { recursive: true, force: true });
+}
 
 console.log("agent tool isolation tests passed");

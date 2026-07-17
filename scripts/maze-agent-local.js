@@ -55,6 +55,7 @@ const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
 const { spawn, spawnSync } = require("node:child_process");
+const { redactAgentStatus } = require("./codex-play");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const HELPER = path.join(ROOT_DIR, "scripts", "codex-play.js");
@@ -140,24 +141,36 @@ function migrateSeedSessionObservation(config) {
   const hideNamesSeed = String(session.hideNamesSeed || "").trim() ||
     String(config.hideNamesSeed || "").trim() ||
     "1";
-  const next = {
+  const next = redactAgentStatus({
     ...session,
     observationMode: config.mode,
     vision: config.mode === "vision",
     omniscient: config.mode === "json" && config.omniscient,
     hideNames: config.mode !== "vision" && config.hideNames,
     hideNamesSeed
-  };
-  const unchanged = session.observationMode === next.observationMode &&
-    session.vision === next.vision &&
-    session.omniscient === next.omniscient &&
-    session.hideNames === next.hideNames &&
-    session.hideNamesSeed === next.hideNamesSeed;
-  if (unchanged) return;
+  }, { mode: config.mode });
+  delete next.bridgeCheckpoint;
 
   const temporary = `${config.sessionFile}.observation-${process.pid}.tmp`;
   fs.writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`);
   fs.renameSync(temporary, config.sessionFile);
+
+  if (next.initial) {
+    fs.writeFileSync(
+      path.join(config.outDir, "initial-status.json"),
+      `${JSON.stringify(next.initial, null, 2)}\n`
+    );
+  }
+  if (Array.isArray(next.actions)) {
+    fs.writeFileSync(
+      path.join(config.outDir, "actions.jsonl"),
+      next.actions.map((action) => JSON.stringify(action)).join("\n") +
+        (next.actions.length ? "\n" : "")
+    );
+  }
+  for (const file of ["current-render-state.json", "scorecard.json", "maze_scorecard.json"]) {
+    fs.rmSync(path.join(config.outDir, file), { force: true });
+  }
 }
 
 function timestampSlug() {
@@ -170,13 +183,12 @@ function buildMcpPrompt(config) {
   const controls = {
     start: `${controlPrefix}_start`,
     observe: `${controlPrefix}_observe`,
-    action: `${controlPrefix}_action`,
-    scorecard: `${controlPrefix}_scorecard`
+    action: `${controlPrefix}_action`
   };
   const observation = config.mode === "vision"
     ? `This is VISION mode. Every observation includes the current PNG as an
 image attachment. Inspect that image before choosing a move; there is no
-ASCII board. The status also includes the room, gems, player position, and
+ASCII board. The status also includes the room, gems, game state, and
 allowed commands.`
     : config.mode === "json"
       ? config.hideNames
@@ -200,19 +212,22 @@ field plus the current status.${config.hideNames
   : ""}`;
   const capability = config.toolUse === "offline"
     ? config.hostAccess
-      ? `You have local file, coding, and execution tools on the host. Work in
-${ROOT_DIR} and keep run-specific notes in ${config.workspaceDir}. Outbound
-network access is disabled. Host access is less isolated than Docker.`
-      : `You have full local file, coding, and execution tools inside a persistent
-Docker workspace at ${config.agentWorkspaceDir}. Outbound network access is disabled.
+      ? `TOOLS-ON mode. You may use the local file, coding, and execution tools
+made available to you; tool availability is not guaranteed. Work in ${ROOT_DIR}
+and keep run-specific notes in ${config.workspaceDir}. Outbound network access
+is disabled. Host access is less isolated than Docker.`
+      : `TOOLS-ON mode. You may use the local file, coding, and execution tools
+made available to you; tool availability is not guaranteed. Work inside the
+persistent Docker workspace at ${config.agentWorkspaceDir}. Outbound network access is disabled.
 If a tool or algorithm needs an experimental game branch, call maze_clone
 with a descriptive worker_id and label, then include its clone_id in every maze
 call. Each branch starts from the selected checkpoint and all of its attempted
 and applied actions are tracked separately from the primary score.`
-    : `No external tools are available. You cannot access a shell, files,
-repositories, the web, connectors, resource listings, prior-run memory,
-workers, or private branches. Use only the four game controls named below and
-your current conversation memory.`;
+    : `Do not use any external tools. Do not search the web, do not read any
+files, do not run shell commands, and do not spawn any sub-agents. This is
+TOOLS-OFF mode. Do not access repositories, connectors, resource listings,
+prior-run memory, workers, or private branches. Use only the three game controls
+named below and your current conversation memory.`;
   const firstStep = config.resume || config.seed
     ? `Call ${controls.observe} first. This is the same primary game; do not call ${controls.start}.`
     : `Call ${controls.start} exactly once as your first game-control call.`;
@@ -226,23 +241,22 @@ your current conversation memory.`;
     ? `
 SWARM IS ENABLED. You are the superior lead and retain control of the primary
 maze. ${workerSpawnRule} Every worker uses the exact same model and reasoning
-effort as you and inherits your tool-use policy.
+effort as you and inherits your tool-use policy. Spawn as many sub-agents as
+you like; delegation is optional.
 
-Each worker must begin by calling maze_clone with a unique worker_id. That tool
+Each worker you spawn must begin by calling maze_clone with a unique worker_id. That tool
 creates an independent copy of the maze and returns a private persistent coding
-workspace. The worker must include that clone_id in every maze_observe,
-maze_action, and maze_scorecard call, may explore freely, ${workerCapability},
+workspace. The worker must include that clone_id in every maze_observe and
+maze_action call, may explore freely, ${workerCapability},
 then report its findings to you. Workers must never act on
 the primary maze. You decide which findings to use and make every primary move
-yourself by omitting clone_id. Spawn at least one worker before your first
-primary move. ${config.toolUse === "offline" ? "You may also create clearly labelled tool-driven branches with maze_clone; never use those clone ids for the primary score." : "Provider workers create their own branches."}
+yourself by omitting clone_id. ${config.toolUse === "offline" ? "You may also create clearly labelled tool-driven branches with maze_clone; never use those clone ids for the primary score." : "Provider workers create their own branches."}
 Beyond that, spawn, steer, stop, or wait for workers at your
-discretion. Gather their reports before finishing.`
+discretion. If you spawn workers, gather their reports before finishing.`
     : "";
   const budgetInstruction = config.unlimited
     ? `This run has NO MOVE LIMIT. Keep taking primary game actions until the
-game is won or the user stops the run. Do not call ${controls.scorecard} merely because
-an action count or provider turn count has been reached.`
+game is won or the user stops the run.`
     : `Then play up to ${config.moves} ${config.resume || config.seed ? "MORE " : ""}primary game actions unless the game reaches a terminal state earlier.`;
   const quitPolicy = config.allowQuit
     ? ""
@@ -255,10 +269,10 @@ an action count or provider turn count has been reached.`
 
   const intro = restricted
     ? `You are solving a 3D grid game. Control it only through ${controls.start},
-${controls.observe}, ${controls.action}, and ${controls.scorecard}.`
+${controls.observe}, and ${controls.action}.`
     : `You are controlling a 3D grid game. Control game state only
-through the configured MCP tools: maze_start, maze_observe, maze_action, and
-maze_scorecard. Offline tool runs and swarm workers also receive maze_clone for
+through the configured MCP tools: maze_start, maze_observe, and maze_action.
+Offline tool runs and swarm workers also receive maze_clone for
 independent, fully tracked branches. Never edit session JSON directly.`;
 
   return `${intro}
@@ -277,7 +291,7 @@ strings include ${validActions}.
 
 After every action, inspect the returned ${config.mode === "vision" ? "frame and status" : config.mode === "json" ? "JSON observation and status" : "board and status"} before choosing the next move. Collect as many
 unique gems as possible. If the player dies, recover with undo, reset, or a room
-change. Before finishing, always call ${controls.scorecard} on the primary game and
+change. Scoring is runner-only; do not attempt to access a scorecard. When done,
 give a one-line summary of the route and gems collected.`;
 }
 
@@ -295,8 +309,8 @@ function buildPrompt(config) {
     ? `This is VISION mode. Every helper command prints JSON containing a
 "frame_image" field: an absolute path to a PNG of the current maze view. OPEN
 and LOOK AT that image to decide your next move — there is NO ASCII board. The
-JSON also carries a short text status (current_room, gem_count, player
-x/y/elevation, allowed_commands). The first command boots a headless browser
+JSON also carries a short text status (current_room, gem_count, game state,
+allowed_commands). The first command boots a headless browser
 (a few seconds); later commands render quickly.`
     : config.mode === "json"
       ? `This is JSON mode. Every helper command prints json_observation.objects,
@@ -381,11 +395,8 @@ Action command forms:
 Goal: collect as many unique gems as you can within the action budget. If the
 player dies, recover with undo / reset / go to level.
 
-Before you finish, ALWAYS write the final scorecard:
-
-  node "${HELPER}" scorecard --state "${config.sessionFile}"
-
-Finish with a one-line summary of the path you took and how many gems you got.`;
+Scoring is runner-only; do not attempt to access a scorecard. Finish with a
+one-line summary of the path you took and how many gems you got.`;
 }
 
 function mcpEnvironment(config, workerOnly = false) {
@@ -441,8 +452,8 @@ function codexMcpConfigArgs(config) {
   const restricted = config.toolUse === "read-only";
   const prefix = `mcp_servers.${restricted ? "game" : "mazebench"}`;
   const enabledTools = restricted
-    ? '["game_start","game_observe","game_action","game_scorecard"]'
-    : '["maze_start","maze_observe","maze_action","maze_scorecard","maze_clone","maze_workers"]';
+    ? '["game_start","game_observe","game_action"]'
+    : '["maze_start","maze_observe","maze_action","maze_clone","maze_workers"]';
   if (config.mcpUrl) {
     return [
       "-c", `${prefix}.url=${tomlString(config.mcpUrl)}`,
@@ -553,7 +564,6 @@ function claudeSandboxSettings(config) {
         "mcp__mazebench_worker__maze_clone",
         "mcp__mazebench_worker__maze_observe",
         "mcp__mazebench_worker__maze_action",
-        "mcp__mazebench_worker__maze_scorecard",
         "mcp__mazebench_worker__maze_workers"
       ]
     : [];
@@ -629,7 +639,6 @@ function claudeAgents(config) {
       "mcp__mazebench_worker__maze_clone",
       "mcp__mazebench_worker__maze_observe",
       "mcp__mazebench_worker__maze_action",
-      "mcp__mazebench_worker__maze_scorecard",
       "mcp__mazebench_worker__maze_workers"
     ],
     mcpServers: [{
@@ -879,14 +888,12 @@ function agentCommand(config, prompt) {
         ? [
             "mcp__game__game_start",
             "mcp__game__game_observe",
-            "mcp__game__game_action",
-            "mcp__game__game_scorecard"
+            "mcp__game__game_action"
           ]
         : [
             "mcp__mazebench__maze_start",
             "mcp__mazebench__maze_observe",
             "mcp__mazebench__maze_action",
-            "mcp__mazebench__maze_scorecard",
             "mcp__mazebench__maze_clone",
             "mcp__mazebench__maze_workers"
           ];
@@ -1419,10 +1426,11 @@ function ensureScorecard(config) {
   if (!fs.existsSync(config.sessionFile)) {
     return false;
   }
-  // Idempotent: writes scorecard.json even if the agent already did.
-  const result = spawnSync(process.execPath, [HELPER, "scorecard", "--state", config.sessionFile], {
+  // Scoring runs only after the provider process has exited.
+  const result = spawnSync(process.execPath, [HELPER, "finalize", "--state", config.sessionFile], {
     cwd: ROOT_DIR,
     encoding: "utf8",
+    env: { ...process.env, MAZEBENCH_TRUSTED_FINALIZE: "1" },
     timeout: 30000,
     killSignal: "SIGKILL"
   });
@@ -1896,7 +1904,7 @@ async function runWizard(raw) {
     { label: "Host", value: "false", hint: "weaker isolation" }
   ]);
 
-  out.tool_use = await promptSelect("Tool-use?", [
+  out.tool_use = await promptSelect("Tool-use (Not guaranteed)?", [
     { label: "No Tools", value: "read-only", hint: "game controls only; no files, shell, web, memory, or workers" },
     { label: "[CLI] Tools", value: "offline", hint: "write files and execute code; no network" }
   ]);
@@ -2146,6 +2154,7 @@ module.exports = {
   distillClaudeEvents,
   distillCodexEvents,
   loadCodexModels,
+  migrateSeedSessionObservation,
   providerFailureFromEvents,
   resultFromOutput,
   resultsFromOutput

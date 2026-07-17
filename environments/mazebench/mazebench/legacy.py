@@ -325,7 +325,7 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
         set_maze_scorecard(state, status.get("scorecard"))
 
         if terminal:
-            response = [vf.UserMessage(content="Final scorecard:\n```json\n" + scorecard_text(status) + "\n```")]
+            response = [vf.UserMessage(content="The game has ended. No further action is available.")]
         else:
             response = [
                 vf.UserMessage(

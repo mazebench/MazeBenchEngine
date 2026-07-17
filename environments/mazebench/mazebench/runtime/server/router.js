@@ -158,7 +158,8 @@ function createRequestRouter({
         response,
         200,
         agentRuns.listProviderModels(decodeURIComponent(segments[3]), {
-          fresh: url.searchParams.get("refresh") === "1"
+          fresh: url.searchParams.get("refresh") === "1",
+          harness: url.searchParams.get("harness") || "none"
         })
       );
       return;

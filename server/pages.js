@@ -16,11 +16,9 @@ const TRASH_ICON = `<svg class="trash-icon" viewBox="0 0 24 24" fill="none" stro
 
 // Folder Closed from Lucide Icons (ISC License).
 const FOLDER_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path><path d="M2 10h20"></path></svg>`;
-// Clapperboard and Download from Lucide Icons (ISC License).
+// Download from Lucide Icons (ISC License).
 // https://lucide.dev/
 const VIDEO_ICONS = Object.freeze({
-  cancel: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="m15 9-6 6"></path><path d="m9 9 6 6"></path></svg>`,
-  clapperboard: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12.296 3.464 3.02 3.956"></path><path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z"></path><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="m6.18 5.276 3.1 3.899"></path></svg>`,
   download: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"></path><path d="m7 10 5 5 5-5"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path></svg>`
 });
 const PLAY_ASSET_VERSION = "20260714-play-hud-stats-2";
@@ -87,7 +85,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css?v=20260710-card-parity-1">
-    <link rel="stylesheet" href="/local-site.css?v=20260714-heatmap-export-layout-99">
+    <link rel="stylesheet" href="/local-site.css?v=20260716-loading-spinner-1">
     ${extraHeadHtml}`
     })}
   </head>
@@ -250,7 +248,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css?v=${PLAY_ASSET_VERSION}">
-    <link rel="stylesheet" href="/local-site.css?v=20260714-heatmap-export-layout-99">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260716-loading-spinner-1">`;
   }
 
   function renderPlayPage(game, level) {
@@ -460,7 +458,7 @@ function createPageRenderer({
     ${includeRuntimeStyles ? '<link rel="stylesheet" href="/styles.css">' : ""}
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260714-heatmap-export-layout-99">' : ""}`;
+    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260716-loading-spinner-1">' : ""}`;
   }
 
   function renderAuthorPage(game, level) {
@@ -833,9 +831,23 @@ function createPageRenderer({
           <section class="composer-section composer-section--agent">
             <div class="composer-section-title">
               <span class="composer-step">01</span>
-              <div><h3>Pick a provider</h3></div>
+              <div><h3>Harness</h3><p id="execution-note" class="muted">Choose a harness. Prime supplies inference by default.</p></div>
             </div>
-            <div id="provider-picker" class="provider-grid" role="radiogroup" aria-label="Agent provider"></div>
+            <div id="provider-picker" class="provider-grid" role="radiogroup" aria-label="Agent harness"></div>
+            <div id="harness-execution" class="harness-execution" hidden>
+              <span class="harness-execution__label">Run through</span>
+              <div id="execution-picker" class="execution-picker" role="radiogroup" aria-label="Execution provider">
+                <button type="button" class="execution-option is-selected" data-execution="prime" aria-pressed="true">
+                  <span class="execution-option__logo"><img src="/logos/prime.png" alt="" width="128" height="128"></span>
+                  <span class="execution-option__copy"><strong>Prime</strong><small>Prime inference</small></span>
+                </button>
+                <button type="button" class="execution-option" data-execution="local" aria-pressed="false">
+                  <span class="execution-option__logo execution-option__logo--local" aria-hidden="true">LOCAL</span>
+                  <span class="execution-option__copy"><strong>Local Run</strong><small>Use your subscription</small></span>
+                  <span id="local-run-status" class="execution-option__status is-idle" hidden></span>
+                </button>
+              </div>
+            </div>
           </section>
 
           <section class="composer-section composer-section--model" hidden>
@@ -916,19 +928,9 @@ function createPageRenderer({
                   <label class="identity-seed-field" data-hide-names-seed-wrap hidden><span>Identity seed</span><input type="text" data-hide-names-seed maxlength="128" value="1" placeholder="1" autocomplete="off" spellcheck="false"></label>
                 </div>
               </article>
-              <article class="setting-card setting-card--access is-gated" inert aria-hidden="true">
-                <div class="setting-card__head"><span>Access</span></div>
-                <div class="animated-segmented" id="isolation-picker" role="radiogroup" aria-label="Isolation">
-                  <span class="segmented__glider" aria-hidden="true"></span>
-                  <button type="button" class="segmented__option" data-isolation="docker" aria-pressed="false"><span class="segmented__icon">BOX</span><span>Docker</span></button>
-                  <button type="button" class="segmented__option" data-isolation="full" aria-pressed="false"><span class="segmented__icon">HOST</span><span>Host access</span></button>
-                </div>
-                <div id="docker-action" class="docker-action" hidden></div>
-                <div id="host-access-risk" class="host-access-risk" hidden>WEAKER ISOLATION</div>
-              </article>
               <article class="setting-card setting-card--tool-use is-gated" inert aria-hidden="true">
-                <div class="setting-card__head"><span>Tool-use</span></div>
-                <div class="animated-segmented" id="tool-use-picker" role="radiogroup" aria-label="Tool-use">
+                <div class="setting-card__head"><span>Tool-use (Not guaranteed)</span></div>
+                <div class="animated-segmented" id="tool-use-picker" role="radiogroup" aria-label="Tool-use (Not guaranteed)">
                   <span class="segmented__glider" aria-hidden="true"></span>
                   <button type="button" class="segmented__option" data-tool-use="read-only" aria-pressed="false"><span class="segmented__icon">NO</span><span>No Tools</span></button>
                   <button type="button" class="segmented__option" data-tool-use="offline" aria-pressed="false"><span class="segmented__icon">CLI</span><span>Tools</span></button>
@@ -976,7 +978,7 @@ function createPageRenderer({
               </article>
               <article class="setting-card setting-card--budget is-gated" inert aria-hidden="true">
                 <div class="setting-card__head"><span>Budget</span></div>
-                <label class="field setting-card__field"><span>Max turns</span><input id="run-prime-turns" type="number" min="0" max="200" value="0" inputmode="numeric"></label>
+                <label class="field setting-card__field"><span>Action limit</span><input id="run-prime-turns" type="number" min="0" max="200" value="0" inputmode="numeric"></label>
               </article>
               <article class="setting-card setting-card--give-up is-gated" inert aria-hidden="true">
                 <div class="setting-card__head"><span>Allow model to give up</span></div>
@@ -1040,7 +1042,7 @@ function createPageRenderer({
           <div class="build-modal__dialog provider-setup-modal__dialog">
             <div class="provider-setup-modal__head">
               <span id="provider-setup-logo" class="provider-setup-modal__logo" aria-hidden="true"></span>
-              <div><span class="provider-setup-modal__eyebrow">Setup needed</span><h2 id="provider-setup-title">Provider inactive</h2></div>
+              <div><span class="provider-setup-modal__eyebrow">Setup needed</span><h2 id="provider-setup-title">Prime inactive</h2></div>
             </div>
             <p id="provider-setup-message" class="provider-setup-modal__message"></p>
             <pre class="provider-setup-modal__command"><code id="provider-setup-command"></code></pre>
@@ -1051,7 +1053,7 @@ function createPageRenderer({
           </div>
         </div>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
-        <script src="/agent.js?v=20260712-provider-logos-68" defer></script>`
+        <script src="/agent.js?v=20260716-prime-intellect-1" defer></script>`
     });
   }
 
@@ -1086,19 +1088,28 @@ function createPageRenderer({
             <pre id="run-json" class="agent-board"></pre>
           </div>`
       : "";
-    const replayProgress = `<section class="panel run-replay-progress-panel" id="run-replay-progress" aria-live="polite" hidden>
-          <div class="run-replay-progress-panel__copy">
-            <strong>Rendering replay video</strong>
-            <span id="run-replay-label" class="muted"></span>
+    const replayExportSection = `<section class="panel run-replay-export" id="run-replay-export">
+          <div class="run-heatmap__head run-replay-export__head">
+            <div>
+              <h2>Replay video</h2>
+            </div>
+            <div class="run-heatmap__actions run-replay-export__actions">
+              <button id="generate-video" class="run-heatmap__export run-replay-export__button" type="button" hidden><span>Generate replay</span></button>
+              <a id="download-video" class="run-heatmap__export run-replay-export__button" href="#" download="maze-replay.mp4" hidden><span>Download MP4</span></a>
+              <button id="regenerate-video" class="run-heatmap__export run-replay-export__button" type="button" hidden><span>Regenerate replay</span></button>
+              <button id="cancel-video" class="run-heatmap__export run-replay-export__cancel" type="button" hidden><span>Cancel</span></button>
+            </div>
           </div>
-          <div class="replay-progress__track"><div id="run-replay-bar" class="replay-progress__fill"></div></div>
-        </section>`;
-    const replaySection = `<section class="panel" id="run-replay-section" hidden>
-          <div class="run-replay__head">
-            <h2>Replay</h2>
-            <a id="download-video" class="button run-video-action" href="#" download="maze-replay.mp4" hidden>${VIDEO_ICONS.download}<span>Download</span></a>
+          <div class="run-replay-progress-panel" id="run-replay-progress" aria-live="polite" hidden>
+            <div class="run-replay-progress-panel__copy">
+              <strong>Rendering replay video</strong>
+              <span id="run-replay-label" class="muted"></span>
+            </div>
+            <div id="run-replay-track" class="replay-progress__track" role="progressbar" aria-label="Replay rendering progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="run-replay-bar" class="replay-progress__fill"></div></div>
           </div>
-          <video id="run-video" class="run-video" controls playsinline hidden></video>
+          <div class="run-replay-media" id="run-replay-section" hidden>
+            <video id="run-video" class="run-video" controls playsinline preload="metadata" hidden></video>
+          </div>
         </section>`;
     const explorationSection = `<section class="panel run-exploration" id="run-exploration-section">
           <h2>Exploration progress</h2>
@@ -1225,8 +1236,6 @@ function createPageRenderer({
           <p id="run-see-empty" class="muted">Waiting for the model's first observation…</p>
         </section>
 
-        ${replaySection}
-
         ${tokenSection}
 
         ${explorationSection}
@@ -1265,8 +1274,6 @@ function createPageRenderer({
           </details>
         </section>
 
-        ${replaySection}
-
         ${tokenSection}
 
         ${explorationSection}
@@ -1283,9 +1290,6 @@ function createPageRenderer({
             <button id="pause-run" class="button" type="button" hidden>Pause</button>
             <button id="resume-run" class="button--primary" type="button" hidden>Resume</button>
             <button id="continue-run" class="button" type="button" hidden>Continue</button>
-            <button id="generate-video" class="button run-video-action" type="button" hidden>${VIDEO_ICONS.clapperboard}<span>Generate video</span></button>
-            <button id="regenerate-video" class="button run-video-action" type="button" hidden>${VIDEO_ICONS.clapperboard}<span>Regenerate video</span></button>
-            <button id="cancel-video" class="button--coral run-video-action" type="button" hidden>${VIDEO_ICONS.cancel}<span>Cancel video</span></button>
             ${isPrime ? '<a id="open-prime-evaluation" class="button" href="#" target="_blank" rel="noreferrer" hidden>Open in Prime ↗</a>' : ""}
             ${isPrime ? '<button id="stop-run" class="button--coral" type="button" hidden>Cancel Run</button>' : ""}
             <button id="delete-run" class="button--ghost delete-button" type="button" title="Delete run">${TRASH_ICON}<span>Delete</span></button>
@@ -1305,16 +1309,15 @@ function createPageRenderer({
           <p id="run-status" class="author-status" role="status" aria-live="polite"></p>
         </div>
 
-        ${replayProgress}
-
         ${mazeSections}
 
         <section class="panel">
           <h2>Runner log</h2>
           <pre id="run-log" class="agent-log"></pre>
         </section>
+        ${replayExportSection}
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260714-prime-live-errors-98" defer></script>`
+        <script src="/agent-run.js?v=20260716-bottom-replay-export-1" defer></script>`
     });
   }
 

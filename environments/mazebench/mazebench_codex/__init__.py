@@ -130,8 +130,7 @@ function usage() {
   console.log(`Usage:
   node codex-play.js start --repo-root <path> --state <session.json> [options]
   node codex-play.js observe --state <session.json>
-  node codex-play.js action --state <session.json> <command words...>
-  node codex-play.js scorecard --state <session.json>`);
+  node codex-play.js action --state <session.json> <command words...>`);
 }
 
 function bridgeArgs(session) {
@@ -191,8 +190,24 @@ function normalizeAction(words) {
 }
 
 function printStatus(response) {
-  const value = response.status || response;
+  const value = redactAgentStatus(response.status || response);
   console.log(JSON.stringify(value, null, 2));
+}
+
+function redactAgentStatus(value) {
+  if (Array.isArray(value)) return value.map(redactAgentStatus);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => {
+        const normalized = String(key).toLowerCase();
+        return !normalized.includes("scorecard") &&
+          normalized !== "_render_state" &&
+          normalized !== "json_observation" &&
+          !["current_position", "player", "player_elevation", "player_x", "player_y"].includes(normalized);
+      })
+      .map(([key, nested]) => [key, redactAgentStatus(nested)])
+  );
 }
 
 function main() {
@@ -216,7 +231,7 @@ function main() {
       yaw: normalizeYaw(Number(options.yaw))
     };
     const response = runBridge(session, { command: "observe" });
-    session.initial = response.status || response;
+    session.initial = redactAgentStatus(response.status || response);
     session.lastStatus = session.initial;
     writeJson(options.state, session);
     printStatus(response);
@@ -232,19 +247,24 @@ function main() {
   }
 
   if (command === "scorecard") {
+    throw new Error("Scorecards are evaluator-only and are not available to game agents.");
+  }
+
+  if (command === "finalize") {
+    if (process.env.MAZEBENCH_TRUSTED_FINALIZE !== "1") throw new Error("Unknown command: finalize");
     const response = runBridge(session, { command: "scorecard" });
     session.scorecard = (response.status || response).scorecard || response.scorecard || response.status || response;
-    session.lastStatus = response.status || response;
+    session.lastStatus = redactAgentStatus(response.status || response);
     writeJson(options.state, session);
     writeJson(path.join(path.dirname(options.state), "scorecard.json"), session.scorecard);
-    printStatus(response);
+    console.log(JSON.stringify({ ok: true, finalized: true }, null, 2));
     return;
   }
 
   if (command === "action") {
     const message = normalizeAction(options.positional);
     const response = runBridge(session, message);
-    const status = response.status || response;
+    const status = redactAgentStatus(response.status || response);
     const record = {
       turn: session.actions.length + 1,
       command_text: options.positional.join(" ").trim(),
@@ -307,13 +327,8 @@ node "{helper}" action --state "{session_file}" go to level H I
 
 Goal: {target_text}
 
-Before your final answer, always write the final scorecard:
-
-```bash
-node "{helper}" scorecard --state "{session_file}"
-```
-
-Finish with a short summary of the path you tried and how many gems were collected.
+Scoring is evaluator-only. Do not attempt to access a scorecard. Finish with a
+short summary of the path you tried and how many gems were collected.
 """
 
 
@@ -475,9 +490,20 @@ class MazeBenchCodexTaskset(
         trace: vf.Trace,
         runtime: vf.Runtime,
     ) -> None:
-        del runtime
         artifact_dir = Path(task.repo_root) / task.artifact_root / trace.id
         session = read_json_file(artifact_dir / "session.json", {})
+        if session:
+            await runtime.run(
+                [
+                    task.node_bin,
+                    str(artifact_dir / "codex-play.js"),
+                    "finalize",
+                    "--state",
+                    str(artifact_dir / "session.json"),
+                ],
+                {"MAZEBENCH_TRUSTED_FINALIZE": "1"},
+            )
+            session = read_json_file(artifact_dir / "session.json", session)
         scorecard = read_json_file(artifact_dir / "scorecard.json", {})
         actions = normalize_codex_actions(session.get("actions") or [])
 

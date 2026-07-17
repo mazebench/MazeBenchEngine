@@ -79,7 +79,7 @@ const game = {
   worldMap: { levels: [{ id: "level_HxI" }] }
 };
 const service = createAgentRunService({
-  agentEnvironment: () => ({ docker: false, docker_installed: false }),
+  agentEnvironment: () => ({ codex: true, claude: true, docker: false, docker_installed: false }),
   ensureDirectory: (directory) => fs.mkdirSync(directory, { recursive: true }),
   getGame: (id) => (id === "maze" ? game : null),
   buildWorlds: { countWorldGems: () => 1 },
@@ -655,14 +655,13 @@ try {
   });
   launchedIds.push(...runs.map((run) => run.id));
 
-  assert.deepEqual(runs.map((run) => run.status), ["running", "waiting", "waiting"]);
-  assert.ok(runs[0].pid, "the first Claude run should own the provider slot");
-  assert.equal(runs[1].pid, null);
-  assert.equal(runs[2].pid, null);
+  assert.deepEqual(runs.map((run) => run.status), ["running", "running", "running"]);
+  runs.forEach((run) => assert.ok(run.pid, "every Claude run should start immediately"));
 
   const secondMeta = loadJson(path.join(rootDir, "outputs", "maze-local", "site", runs[1].id, "run.json"));
   const thirdMeta = loadJson(path.join(rootDir, "outputs", "maze-local", "site", runs[2].id, "run.json"));
-  assert.ok(secondMeta.queue_order < thirdMeta.queue_order, "waiting runs should have stable FIFO order");
+  assert.equal(secondMeta.queue_order, undefined);
+  assert.equal(thirdMeta.queue_order, undefined);
 
   const metricFixtures = [
     { run: runs[0], actions: 1, rooms: 2, gems: 3 },
@@ -712,7 +711,7 @@ try {
 
   service.deleteRun(runs[0].id);
   assert.equal(service.summarizeRun(runs[1].id).status, "running");
-  assert.equal(service.summarizeRun(runs[2].id).status, "waiting");
+  assert.equal(service.summarizeRun(runs[2].id).status, "running");
 
   service.deleteRun(runs[1].id);
   assert.equal(service.summarizeRun(runs[2].id).status, "running");
@@ -813,7 +812,7 @@ process.exit(75);
   assert(Date.parse(providerFailureSummary.retry_at) > Date.now());
 
   // Backoff pauses created before pause_mode was recorded are also resource-free
-  // and must not keep a newer Claude run waiting.
+  // and must not prevent a newer Claude run from starting.
   const providerFailureMetaPath = path.join(
     rootDir,
     "outputs",
@@ -847,7 +846,7 @@ process.exit(75);
   });
   launchedIds.push(runAfterProviderBackoff.id);
   assert.equal(runAfterProviderBackoff.status, "running");
-  assert.ok(runAfterProviderBackoff.pid, "a provider-backoff pause must release the Claude slot");
+  assert.ok(runAfterProviderBackoff.pid, "a newer Claude run should start during provider backoff");
   service.stopRun(runAfterProviderBackoff.id);
   service.deleteRun(runAfterProviderBackoff.id);
   service.deleteRun(providerFailureRun.id);
@@ -896,7 +895,7 @@ process.exit(75);
     // The last-known-good catalog survives a local server restart.
     writeCodexCache(["gpt-current"], "2026-07-10T04:00:00Z");
     const restartedService = createAgentRunService({
-      agentEnvironment: () => ({ docker: false, docker_installed: false }),
+      agentEnvironment: () => ({ codex: true, claude: true, docker: false, docker_installed: false }),
       ensureDirectory: (directory) => fs.mkdirSync(directory, { recursive: true }),
       getGame: (id) => (id === "maze" ? game : null),
       buildWorlds: { countWorldGems: () => 1 },

@@ -884,8 +884,7 @@
     const meta = document.getElementById("run-meta");
     meta.className = "run-config";
     meta.setAttribute("aria-label", "Launch configuration");
-    meta.innerHTML = `<span class="run-config__heading">Launch configuration</span>
-      <span class="run-config__list" role="list">
+    meta.innerHTML = `<span class="run-config__list" role="list">
         ${runConfiguration(run).map(([label, value, active]) => `<span class="run-config__item${active ? " is-active" : ""}" role="listitem">
           <span class="run-config__key">${escapeText(label)}</span>
           <strong class="run-config__value">${escapeText(value)}</strong>
@@ -1022,7 +1021,7 @@
     generateVideoButton.hidden = !canGenerateVideo && !renderingVideo;
     generateVideoButton.classList.toggle("is-rendering", renderingVideo);
     const generateLabel = generateVideoButton.querySelector("span");
-    if (generateLabel) generateLabel.textContent = renderingVideo ? "Generating…" : "Generate video";
+    if (generateLabel) generateLabel.textContent = renderingVideo ? "Generating…" : "Generate replay";
     cancelVideoButton.hidden = !renderingVideo;
     cancelVideoButton.disabled = false;
     regenerateVideoButton.hidden = !run.has_video || renderingVideo;
@@ -3078,6 +3077,7 @@
   function updateReplay(run, progress) {
     const section = document.getElementById("run-replay-section");
     const bar = document.getElementById("run-replay-bar");
+    const track = document.getElementById("run-replay-track");
     const label = document.getElementById("run-replay-label");
     const progressBox = document.getElementById("run-replay-progress");
     const video = document.getElementById("run-video");
@@ -3102,6 +3102,7 @@
       section.hidden = true;
       progressBox.hidden = false;
       bar.style.width = "0%";
+      track?.setAttribute("aria-valuenow", "0");
       label.textContent = run.video_error || "Video generation failed. You can try again.";
       return;
     }
@@ -3113,19 +3114,21 @@
       progressBox.hidden = false;
       const pct = progress && Number.isFinite(progress.percent) ? progress.percent : 0;
       bar.style.width = `${pct}%`;
+      track?.setAttribute("aria-valuenow", String(Math.round(pct)));
       const phase = progress && progress.phase ? progress.phase : "starting";
       const eta = progress && Number.isFinite(progress.eta_ms)
         ? ` · about ${formatDuration(progress.eta_ms)} left`
         : " · measuring render speed…";
       const detail = progress && progress.current != null && progress.total != null
-        ? ` (${progress.current}/${progress.total} ${progress.unit || ""})`
+        ? ` · ${progress.current}/${progress.total} ${progress.unit || ""}`
         : "";
-      label.textContent = `Rendering replay video — ${phase}${detail} ${pct}%${eta}`;
+      label.textContent = `${phase}${detail} · ${pct}%${eta}`;
       return;
     }
 
     section.hidden = true;
     progressBox.hidden = true;
+    track?.setAttribute("aria-valuenow", "0");
     video.hidden = true;
     video.removeAttribute("src");
     video.load();
@@ -3265,9 +3268,7 @@
             : progress.run.status !== "finished"
               ? `Run ${progress.run.status}.`
             : isPrime
-              ? `${progress.run.complete ? "Eval complete" : "Eval ended"} — ${progress.run.turns || 0} move${progress.run.turns === 1 ? "" : "s"}${
-                  progress.run.has_video ? ", replay video above" : ""
-                }; see the runner log for rewards and scores.`
+              ? ""
               : `${progress.run.complete ? "Complete" : "Ended"} — ${progress.run.gem_count ?? 0}/${progress.run.gem_total ?? "—"} gems in ${progress.run.turns} moves.`,
           progress.run.status === "failed"
         );

@@ -256,7 +256,8 @@ the helper renders a perspective PNG of the current room each turn (via the same
 `scripts/maze-render-frame.js` renderer the Verifiers vision taskset uses),
 drops the ASCII board, and prints a `frame_image` path in the JSON. The agent —
 Codex CLI and Claude Code are both multimodal — opens that PNG to decide its
-move. Frames are saved under `<run>/frames/`.
+move. Text and vision status do not include explicit player coordinates or
+elevation. Frames are saved under `<run>/frames/`.
 
 In `mode=json`, the model instead receives objects grouped by type with
 `[x,y,elevation]` coordinates. Directional names such as `ice_slope_up` and
@@ -274,8 +275,8 @@ mazebench model=codex moves=10 mode=json omniscient=true hide_names=true
 
 Vision mode boots a headless browser to render each frame, so it is noticeably
 slower than text mode and needs a Chromium-family browser (the same dependency
-as the replay video). If a frame fails to render, the helper falls back to the
-ASCII board for that turn and reports `frame_error`.
+as the replay video). A frame-render failure stops that observation rather than
+falling back to an ASCII board.
 
 Each run writes a timestamped directory under `outputs/maze-local/<model>/`:
 
@@ -285,6 +286,10 @@ Each run writes a timestamped directory under `outputs/maze-local/<model>/`:
 - `maze_replay.mp4` — the replay video (unless `video=off`)
 - `reasoning.json`, `agent.log`, `agent-events.jsonl` — the agent's reasoning
   (see below)
+
+Scorecards are runner-only artifacts generated after Codex or Claude Code exits.
+They are not exposed as CLI or MCP game controls and never appear in a model
+observation. JSON is the only mode that includes explicit player coordinates.
 
 ### Reasoning logs
 

@@ -68,6 +68,61 @@ function enrichedPathEnv() {
 // — no state beyond run.json survives a server restart, and none is needed.
 
 const VIEW_NAMES = ["top", "top-diagonal", "diagonal", "side-diagonal", "side"];
+const PRIME_HARNESSES = new Map([
+  ["none", { id: "none", label: "Prime Intellect", taskset: "mazebench", protocol: "Prime model API" }],
+  ["codex", { id: "codex", label: "Codex", taskset: "mazebench-agent", protocol: "OpenAI Responses" }],
+  ["claude-code", { id: "claude-code", label: "Claude Code", taskset: "mazebench-agent", protocol: "Anthropic Messages" }]
+]);
+
+function primeHarnessModelCompatible(modelId, harnessId) {
+  const harness = normalizePrimeHarness(harnessId);
+  const id = String(modelId || "").trim().toLowerCase();
+  if (!id) return false;
+  if (harness === "none") return true;
+
+  // Prime's /models response currently publishes ids and prices, but no wire-
+  // protocol capability bit. Stay on the strict native boundary instead of
+  // guessing whether Prime translates another vendor's payload: Codex speaks
+  // Responses and Claude Code speaks Anthropic Messages.
+  if (harness === "codex") {
+    return /^openai\/gpt-(?:4o|4\.1|5(?:[.-]|$))/i.test(id);
+  }
+  return /^anthropic\/claude-/i.test(id);
+}
+
+function filterPrimeCatalogForHarness(catalog, harnessId) {
+  const harness = normalizePrimeHarness(harnessId);
+  if (harness === "none") return { ...catalog, harness };
+  const definition = PRIME_HARNESSES.get(harness);
+  const allModels = Array.isArray(catalog?.models) ? catalog.models : [];
+  const models = allModels
+    .filter((model) => primeHarnessModelCompatible(model.id, harness))
+    .map((model) => ({
+      ...model,
+      harness_compatible: true,
+      compatibility: definition.protocol
+    }));
+  return {
+    ...catalog,
+    harness,
+    models,
+    default_model_id: models[0]?.id || "",
+    note: models.length
+      ? `${models.length} known-compatible ${definition.label} model${models.length === 1 ? "" : "s"} from ${allModels.length} live Prime models. Filtered by native ${definition.protocol} support; Prime's model list does not publish harness capability flags.`
+      : catalog?.note || `No known-compatible ${definition.label} models are currently in Prime's live catalog.`
+  };
+}
+
+function normalizePrimeHarness(value) {
+  const requested = String(value || "none").trim().toLowerCase();
+  const normalized = requested === "claude" ? "claude-code" : requested;
+  if (!PRIME_HARNESSES.has(normalized)) {
+    throw new Error(
+      `Unknown Prime harness "${value}". Supported harnesses: ${[...PRIME_HARNESSES.keys()].join(", ")}.`
+    );
+  }
+  return normalized;
+}
 
 function normalizeObservationMode(value) {
   const mode = String(value || "text").toLowerCase();
@@ -153,6 +208,7 @@ function collectedAllWorldGems(gemCount, gemTotal) {
 function createAgentRunService({
   agentEnvironment,
   agentEnvironmentAsync,
+  allowLegacyLocalLaunch = true,
   ensureDirectory,
   getGame,
   buildWorlds,
@@ -172,6 +228,36 @@ function createAgentRunService({
   const legacyClaudeSnapshotTimers = new Map();
   const legacyClaudeSnapshotStamps = new Map();
   const codexSessionPaths = new Map();
+
+  function requireLegacyLocalLaunch() {
+    if (!allowLegacyLocalLaunch) {
+      throw new Error(
+        'Subscription-backed local Codex and Claude Code launches are disabled. Choose the Prime harness "Codex" or "Claude Code".'
+      );
+    }
+  }
+
+  function requireLocalSubscription(params) {
+    if (!(params?.subscription === true || params?.subscription === "true")) return;
+    const provider = String(params.model || "").toLowerCase();
+    const environment = typeof agentEnvironment === "function"
+      ? agentEnvironment({ fresh: true })
+      : {};
+    if (!environment[provider]) {
+      const label = provider === "claude" ? "Claude Code" : "Codex";
+      const login = provider === "claude" ? "claude auth login" : "codex login";
+      throw new Error(`${label} needs an active local subscription session. Run \`${login}\`, then refresh the Agent page.`);
+    }
+  }
+
+  function localLaunchEnvironment(params) {
+    const environment = enrichedPathEnv();
+    if (!(params?.subscription === true || params?.subscription === "true")) return environment;
+    for (const key of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CODEX_ACCESS_TOKEN"]) {
+      delete environment[key];
+    }
+    return environment;
+  }
   const primeResultsPaths = new Map();
   const actionCache = new Map();
   const reasoningCache = new Map();
@@ -187,7 +273,6 @@ function createAgentRunService({
   const LARGE_TELEMETRY_REFRESH_MS = 10_000;
   const stableCodexCatalogPath = path.join(runsDir, ".codex-model-catalog.json");
   let stableCodexCatalog;
-  let claudeQueueOrder = Date.now() * 1000;
   let startingClaudeQueue = false;
 
   // Container mode needs Docker installed AND its daemon running. Prefer the
@@ -481,7 +566,7 @@ function createAgentRunService({
 
   function readPrimeRolloutFailure(runId) {
     const samplesPath = path.join(runDirFor(runId), "prime-evaluation-samples.json");
-    const localResultsPath = path.join(runDirFor(runId), "eval-output", "results.jsonl");
+    const localResultsPath = findPrimeResultsFile(runDirFor(runId));
     const signature = `${fileStamp(samplesPath)}|${fileStamp(localResultsPath)}`;
     const cached = primeRolloutFailureCache.get(runId);
     if (cached?.signature === signature) return cached.value;
@@ -504,7 +589,7 @@ function createAgentRunService({
       };
       break;
     }
-    if (!value && fs.existsSync(localResultsPath)) {
+    if (!value && localResultsPath && fs.existsSync(localResultsPath)) {
       try {
         const firstLine = fs.readFileSync(localResultsPath, "utf8").split(/\r?\n/).find((line) => line.trim());
         const result = firstLine ? JSON.parse(firstLine) : null;
@@ -787,11 +872,6 @@ function createAgentRunService({
     return updated;
   }
 
-  function allocateClaudeQueueOrder() {
-    claudeQueueOrder = Math.max(claudeQueueOrder + 1, Date.now() * 1000);
-    return claudeQueueOrder;
-  }
-
   function runMetaEntries() {
     if (!fs.existsSync(runsDir)) return [];
 
@@ -802,19 +882,6 @@ function createAgentRunService({
       .filter((entry) => entry.meta);
   }
 
-  function claudeSlotOccupied(excludeRunId = "") {
-    return runMetaEntries().some((entry) => {
-      if (entry.id === excludeRunId || entry.meta.model !== "claude") return false;
-      const meta = entry.meta.status === "running" ? finalizeStatus(entry.id, entry.meta) : entry.meta;
-      return (
-        ["running", "pausing", "stopping"].includes(meta.status) ||
-        (meta.status === "paused" &&
-          !["quota", "provider_backoff"].includes(meta.pause_reason) &&
-          meta.pause_mode !== "cold")
-      );
-    });
-  }
-
   function waitingClaudeRuns(excludeRunId = "") {
     return runMetaEntries()
       .filter((entry) => entry.id !== excludeRunId && entry.meta.model === "claude" && entry.meta.status === "waiting")
@@ -822,25 +889,6 @@ function createAgentRunService({
         const orderDifference = Number(left.meta.queue_order || 0) - Number(right.meta.queue_order || 0);
         return orderDifference || String(left.meta.created_at || "").localeCompare(String(right.meta.created_at || ""));
       });
-  }
-
-  function queuedLocalRunMeta(meta, args, extras = {}) {
-    const now = new Date().toISOString();
-    return {
-      ...meta,
-      ...extras,
-      status: "waiting",
-      pid: null,
-      queued_args: args,
-      queued_at: now,
-      queue_order: allocateClaudeQueueOrder(),
-      active_started_at: null,
-      exit_code: undefined,
-      finished_at: undefined,
-      pause_reason: undefined,
-      pause_message: undefined,
-      paused_at: undefined
-    };
   }
 
   function startWaitingClaudeRun(runId) {
@@ -860,7 +908,7 @@ function createAgentRunService({
       child = spawn(process.execPath, [runnerScript, ...args], {
         cwd: rootDir,
         detached: true,
-        env: enrichedPathEnv(),
+        env: localLaunchEnvironment(meta.launch_params),
         stdio: ["ignore", logFd, logFd]
       });
     } catch (error) {
@@ -888,13 +936,14 @@ function createAgentRunService({
   }
 
   function startNextWaitingClaudeRun() {
+    if (!allowLegacyLocalLaunch) return null;
     if (startingClaudeQueue) return null;
     startingClaudeQueue = true;
 
     try {
-      if (claudeSlotOccupied()) return null;
-      const next = waitingClaudeRuns()[0];
-      return next ? startWaitingClaudeRun(next.id) : null;
+      const waiting = waitingClaudeRuns();
+      waiting.forEach((entry) => startWaitingClaudeRun(entry.id));
+      return waiting.length ? summarizeRun(waiting[waiting.length - 1].id) : null;
     } finally {
       startingClaudeQueue = false;
     }
@@ -1176,6 +1225,7 @@ function createAgentRunService({
   }
 
   function retryDueProviderBackoffs() {
+    if (!allowLegacyLocalLaunch) return;
     runMetaEntries().forEach(({ id, meta }) => {
       if (meta.status === "paused" && meta.pause_reason === "provider_backoff") {
         retryProviderBackoff(id, meta);
@@ -3183,7 +3233,7 @@ function createAgentRunService({
     }
   }
 
-  function listProviderModels(provider, { fresh = false } = {}) {
+  function listProviderModels(provider, { fresh = false, harness = "none" } = {}) {
     const normalized = String(provider || "").toLowerCase();
 
     if (!["codex", "claude", "prime"].includes(normalized)) {
@@ -3199,14 +3249,16 @@ function createAgentRunService({
     const cached = fresh ? null : providerModelCache.get(normalized);
 
     if (cached && Date.now() < cached.expiresAt) {
-      return cached.value;
+      return normalized === "prime"
+        ? filterPrimeCatalogForHarness(cached.value, harness)
+        : cached.value;
     }
 
     const value = normalized === "claude" ? claudeModelCatalog() : primeModelCatalog();
     const ttl = value.models.length ? PROVIDER_MODEL_TTL_MS : PROVIDER_MODEL_ERROR_TTL_MS;
 
     providerModelCache.set(normalized, { value, expiresAt: Date.now() + ttl });
-    return value;
+    return normalized === "prime" ? filterPrimeCatalogForHarness(value, harness) : value;
   }
 
   function normalizedGameForRun(gameId) {
@@ -3377,7 +3429,14 @@ function createAgentRunService({
   // platform's schedule, which can be after this single long rollout finishes.
   // Keep hosted execution as an API-level opt-in for evaluation workflows.
   function buildPrimeCommand(params, runDir, runId, game) {
+    const harness = normalizePrimeHarness(params.harness);
     const model = String(params.model_name || params.model || "").trim();
+    if (harness !== "none" && !primeHarnessModelCompatible(model, harness)) {
+      const definition = PRIME_HARNESSES.get(harness);
+      throw new Error(
+        `${definition.label} requires a known-compatible Prime model using ${definition.protocol}. Choose a model from the displayed catalog.`
+      );
+    }
     const maxTurns = Math.max(1, Math.min(500, Number(params.max_turns) || 20));
     const mode = normalizeObservationMode(
       params.mode || (params.vision === true || params.vision === "true" ? "vision" : "text")
@@ -3386,7 +3445,7 @@ function createAgentRunService({
     const omniscient = mode === "json" && (params.omniscient === true || params.omniscient === "true");
     const hideNames = mode !== "vision" && (params.hide_names === true || params.hide_names === "true");
     const hideNamesSeed = resolvedHideNamesSeed(hideNames, params.hide_names_seed);
-    const hosted = !vision && (params.hosted === true || params.hosted === "true");
+    const hosted = harness === "none" && !vision && (params.hosted === true || params.hosted === "true");
     const wantVideo = !(params.video === false || params.video === "false");
     const allowQuit = !(params.allow_quit === false || params.allow_quit === "false");
     // Reasoning effort → --sampling.reasoning-effort. OpenAI reasoning models and
@@ -3394,7 +3453,11 @@ function createAgentRunService({
     const reasoning = ["low", "medium", "high"].includes(String(params.reasoning))
       ? String(params.reasoning)
       : "";
-    const envDir = path.join(rootDir, "environments", "mazebench");
+    const envDir = path.join(
+      rootDir,
+      "environments",
+      harness === "none" ? "mazebench" : "mazebench_agent"
+    );
     const levelId = String(params.level_id || "level_HxI");
     const gemTotal = buildWorlds.countWorldGems(game);
 
@@ -3406,6 +3469,8 @@ function createAgentRunService({
       runDir,
       "--run-id",
       runId,
+      "--harness",
+      harness,
       "--level",
       levelId,
       "--game-won-gem-count",
@@ -3445,7 +3510,7 @@ function createAgentRunService({
     // A readable command string for the run page / logs (not the resolved path).
     const display = ["node", "scripts/maze-prime-run.js"]
       .concat(hosted ? ["--hosted"] : [])
-      .concat(["--out", "<run>", "--max-turns", String(maxTurns)])
+      .concat(["--out", "<run>", "--harness", harness, "--max-turns", String(maxTurns)])
       .concat(model ? ["--model", model] : [])
       .concat(vision ? ["--vision"] : [])
       .concat(mode === "json" ? ["--observation-mode", "json"] : [])
@@ -3459,6 +3524,7 @@ function createAgentRunService({
       bin: process.execPath,
       argv,
       display,
+      harness,
       model,
       maxTurns,
       mode,
@@ -3477,6 +3543,7 @@ function createAgentRunService({
 
   function launchRun(params = {}) {
     const kind = String(params.kind || "local");
+    if (kind !== "prime") requireLegacyLocalLaunch();
     const runId = generateRunId();
     const runDir = runDirFor(runId);
 
@@ -3508,6 +3575,7 @@ function createAgentRunService({
           command: command.display,
           model: "prime",
           model_name: command.model || "(prime default)",
+          harness: command.harness,
           game_id: "maze",
           game_title: "Maze Bench Environment",
           level_id: command.levelId,
@@ -3524,13 +3592,16 @@ function createAgentRunService({
           video: command.video,
           launch_params: {
             ...launchParamsOf(params),
+            harness: command.harness,
             ...(command.hideNames ? { hide_names_seed: command.hideNamesSeed } : {})
           },
           continue_of: params.continue_of || null,
           prime_execution: command.hosted ? "hosted" : "local",
           note: command.hosted
             ? "Prime Hosted Evaluation. Sample artifacts sync as Prime publishes them; per-turn streaming requires local Agent execution."
-            : "Local Prime Verifiers evaluation using Prime inference. Moves, boards, reasoning, and usage stream into this page after every model turn."
+            : command.harness === "none"
+              ? "Local Prime Verifiers evaluation using Prime inference. Moves, boards, reasoning, and usage stream into this page after every model turn."
+              : `${PRIME_HARNESSES.get(command.harness).label} runs as a built-in Verifiers harness in a Prime sandbox; inference, moves, and usage stream through Prime.`
         };
       } else {
         let effectiveParams = params;
@@ -3551,6 +3622,7 @@ function createAgentRunService({
           };
         }
 
+        requireLocalSubscription(effectiveParams);
         const game = normalizedGameForRun(effectiveParams.game_id);
         const { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit, mode, omniscient, hideNames, hideNamesSeed } = buildLocalRunArgs(runId, effectiveParams, game);
         const requestedModelName = String(effectiveParams.model_name || "");
@@ -3561,21 +3633,18 @@ function createAgentRunService({
         const roomTotal = game.worldMap?.levels?.length || 0;
         const segmentStartTurns = readActions(runId).length;
 
-        const shouldWait = model === "claude" && (claudeSlotOccupied() || waitingClaudeRuns().length > 0);
-        if (!shouldWait) {
-          child = spawn(process.execPath, [runnerScript, ...args], {
-            cwd: rootDir,
-            detached: true,
-            env: enrichedPathEnv(),
-            stdio: ["ignore", logFd, logFd]
-          });
-        }
+        child = spawn(process.execPath, [runnerScript, ...args], {
+          cwd: rootDir,
+          detached: true,
+          env: localLaunchEnvironment(effectiveParams),
+          stdio: ["ignore", logFd, logFd]
+        });
         meta = {
           id: runId,
           kind: "local",
           created_at: new Date().toISOString(),
-          status: shouldWait ? "waiting" : "running",
-          pid: child?.pid || null,
+          status: "running",
+          pid: child.pid,
           command: ["node", "scripts/maze-agent-local.js", ...args].join(" "),
           model,
           model_name: exactModelName,
@@ -3615,9 +3684,6 @@ function createAgentRunService({
             ? "run-dir"
             : "cli"
         };
-        if (shouldWait) {
-          meta = queuedLocalRunMeta(meta, args);
-        }
       }
     } catch (error) {
       fs.closeSync(logFd);
@@ -3631,7 +3697,6 @@ function createAgentRunService({
     meta.active_elapsed_ms = 0;
     writeRunMeta(runId, meta);
     if (child) attachRunChild(runId, child);
-    else startNextWaitingClaudeRun();
     return summarizeRun(runId);
   }
 
@@ -3740,8 +3805,8 @@ function createAgentRunService({
     return rest;
   }
 
-  // Launch N runs of the same config at once. Claude Code runs after the first
-  // are persisted as FIFO waiters and started one at a time.
+  // Launch N runs of the same config at once. Both local CLIs support parallel
+  // sessions; provider subscription limits are enforced by their own service.
   function launchRuns(params = {}) {
     const count = Math.max(1, Math.min(8, Math.floor(Number(params.count) || 1)));
 
@@ -3816,6 +3881,7 @@ function createAgentRunService({
     if (!meta) {
       throw new Error(`Unknown run "${runId}".`);
     }
+    if (meta.kind !== "prime") requireLegacyLocalLaunch();
 
     if (meta.status !== "paused") {
       return summarizeRun(runId);
@@ -3873,6 +3939,7 @@ function createAgentRunService({
       const model = meta.model_name && meta.model_name !== "(prime default)" ? meta.model_name : "";
       return {
         kind: "prime",
+        harness: meta.harness || "none",
         model_name: model,
         mode: normalizeObservationMode(meta.mode),
         vision: meta.mode === "vision",
@@ -4131,6 +4198,7 @@ function createAgentRunService({
   // conversation resumed, so the model keeps its full memory and the maze keeps
   // its state (both live here). The run itself is extended in place.
   function continueLocalInPlace(runId, meta, add, conversationId) {
+    requireLegacyLocalLaunch();
     const runDir = runDirFor(runId);
     clearColdPauseMarkers(runId);
     clearColdPauseCapability(runId);
@@ -4147,12 +4215,6 @@ function createAgentRunService({
       command: ["node", "scripts/maze-agent-local.js", ...args].join(" ")
     };
 
-    if (meta.model === "claude" && (claudeSlotOccupied(runId) || waitingClaudeRuns(runId).length > 0)) {
-      writeRunMeta(runId, queuedLocalRunMeta(nextMeta, args));
-      startNextWaitingClaudeRun();
-      return summarizeRun(runId);
-    }
-
     const logFd = fs.openSync(path.join(runDir, "launcher.log"), "a");
     let child;
 
@@ -4160,7 +4222,7 @@ function createAgentRunService({
       child = spawn(process.execPath, [runnerScript, ...args], {
         cwd: rootDir,
         detached: true,
-        env: enrichedPathEnv(),
+        env: localLaunchEnvironment(params),
         stdio: ["ignore", logFd, logFd]
       });
     } finally {
@@ -4191,6 +4253,7 @@ function createAgentRunService({
     const meta = readRunMeta(runId);
     if (!meta) throw new Error(`Unknown run "${runId}".`);
     if (meta.kind === "prime") throw new Error("Prime eval budgets cannot be changed while running.");
+    requireLegacyLocalLaunch();
 
     const turns = readActions(runId).length;
     const requested = Math.floor(Number(requestedTarget));
@@ -4232,6 +4295,7 @@ function createAgentRunService({
       base.max_turns = Math.max(1, Math.min(500, (Number(meta.moves) || 0) + add));
       return launchRun(base);
     }
+    requireLegacyLocalLaunch();
 
     // Resume the same CLI conversation in the same run directory. Host agents
     // use their normal CLI session store; new Docker runs keep a private,
@@ -4262,6 +4326,7 @@ function createAgentRunService({
     if (meta.kind === "prime") {
       throw new Error("Prime evaluations do not expose a resumable provider transcript.");
     }
+    requireLegacyLocalLaunch();
     if (!["codex", "claude"].includes(meta.model)) {
       throw new Error("Only Codex and Claude runs can preserve a provider context prefix.");
     }
@@ -4687,5 +4752,7 @@ module.exports = {
   collectedAllWorldGems,
   createAgentRunService,
   enrichedPathEnv,
+  filterPrimeCatalogForHarness,
+  primeHarnessModelCompatible,
   replayMessageForCommandText
 };

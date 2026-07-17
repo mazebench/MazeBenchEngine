@@ -11,6 +11,23 @@ const {
 } = require("./playwright-process");
 
 const directions = new Set(["up", "down", "left", "right"]);
+const VISION_TEXT_BOARD_KEYS = new Set([
+  "_render_state",
+  "ascii",
+  "board",
+  "header",
+  "json_observation",
+  "level",
+  "observation",
+  "screen"
+]);
+const EXPLICIT_PLAYER_POSITION_KEYS = new Set([
+  "current_position",
+  "player",
+  "player_elevation",
+  "player_x",
+  "player_y"
+]);
 
 function readJson(file, fallback) {
   try {
@@ -27,18 +44,10 @@ function writeJson(file, value) {
 
 function consumeRenderState(response, stateFile) {
   const status = response?.status || response;
-  const snapshot = status?._render_state;
-
-  if (!snapshot) {
-    return response;
-  }
-
-  writeJson(path.join(path.dirname(stateFile), "current-render-state.json"), {
-    snapshot,
-    turn: Math.max(0, Number(status.action_count) || 0),
-    updated_at: new Date().toISOString()
-  });
-  delete status._render_state;
+  if (status && typeof status === "object") delete status._render_state;
+  // Older runs may contain this renderer-only actor snapshot. It includes
+  // exact coordinates, so never leave it beside a model-accessible session.
+  fs.rmSync(path.join(path.dirname(stateFile), "current-render-state.json"), { force: true });
   return response;
 }
 
@@ -79,6 +88,7 @@ function parseArgs(argv) {
     else if (arg === "--view") options.view = next();
     else if (arg === "--yaw") options.yaw = next();
     else if (arg === "--game-won-gem-count") options.gameWonGemCount = next();
+    else if (arg === "--max-actions") options.maxActions = next();
     else if (arg === "--node-bin") options.nodeBin = next();
     else if (arg === "--vision") options.vision = true;
     else if (arg === "--json-observation") options.observationMode = "json";
@@ -106,12 +116,48 @@ function applyQuitPolicy(response, session) {
   return response;
 }
 
+// Keep evaluator-only scoring out of every model-facing surface. Text and
+// vision observations also omit explicit player coordinates; JSON intentionally
+// retains them as part of its structured observation contract. Vision removes
+// every text/JSON board representation as well.
+function redactAgentStatus(value, { mode = "text" } = {}) {
+  if (Array.isArray(value)) return value.map((item) => redactAgentStatus(item, { mode }));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => {
+        const normalized = String(key).toLowerCase();
+        if (normalized.includes("scorecard")) return false;
+        if (normalized === "_render_state") return false;
+        if (mode !== "json" && EXPLICIT_PLAYER_POSITION_KEYS.has(normalized)) return false;
+        if (mode === "text" && normalized === "json_observation") return false;
+        if (mode === "json" && normalized !== "json_observation" && VISION_TEXT_BOARD_KEYS.has(normalized)) return false;
+        if (mode === "vision" && VISION_TEXT_BOARD_KEYS.has(normalized)) return false;
+        return true;
+      })
+      .map(([key, nested]) => [key, redactAgentStatus(nested, { mode })])
+  );
+}
+
+function redactVisionStatus(value) {
+  return redactAgentStatus(value, { mode: "vision" });
+}
+
+function storedStatus(session, status) {
+  return redactAgentStatus(status, { mode: session?.observationMode || "text" });
+}
+
+function requiredActionsRemaining(session) {
+  const required = positiveInt(session?.maxActions, 100);
+  const completed = Array.isArray(session?.actions) ? session.actions.length : 0;
+  return Math.max(0, required - completed);
+}
+
 function usage() {
   console.log(`Usage:
   node codex-play.js start --repo-root <path> --state <session.json> [options]
   node codex-play.js observe --state <session.json>
   node codex-play.js action --state <session.json> <command words...>
-  node codex-play.js scorecard --state <session.json>
 
 start options:
   --game <id>               game directory under games/ (default maze; draft
@@ -120,6 +166,7 @@ start options:
   --view <name>             top | top-diagonal | diagonal | side-diagonal | side
   --yaw <0-3>               camera yaw
   --game-won-gem-count <n>  unique gems for game_won (default 100)
+  --max-actions <n>          hard action budget enforced by the helper
   --vision                  render a PNG each turn; output includes frame_image
                             (path) and drops the ASCII board
   --json-observation        return a structured JSON room observation instead
@@ -223,6 +270,12 @@ function printStatus(response) {
   console.log(JSON.stringify(value, null, 2));
 }
 
+function emitTelemetry(record, mode = "text") {
+  const telemetryRecord = redactAgentStatus(record, { mode });
+  const payload = Buffer.from(JSON.stringify(telemetryRecord), "utf8").toString("base64url");
+  console.log(`MAZEBENCH_EVENT_V1:${payload}`);
+}
+
 function canonicalActionText(message) {
   if (!message || typeof message !== "object") return "";
   if (message.command === "move") return String(message.direction || "");
@@ -237,17 +290,11 @@ function rendererScript(session) {
 }
 
 function visionRenderPayload(session, stateFile) {
-  const actionCount = Array.isArray(session.actions) ? session.actions.length : 0;
-  const checkpoint = readJson(path.join(path.dirname(stateFile), "current-render-state.json"), null);
-  const hasCurrentCheckpoint =
-    Number(checkpoint?.turn) === actionCount &&
-    checkpoint?.snapshot?.level_id &&
-    Array.isArray(checkpoint.snapshot.actors);
   return {
-    // A current checkpoint is authoritative and constant-size. Sending the
-    // whole action history after a pause/restart made Chromium replay hundreds
-    // (eventually thousands) of moves just to show the current observation.
-    actions: hasCurrentCheckpoint ? [] : (session.actions || [])
+    // The persistent renderer applies only the new suffix when this full
+    // action list extends its current state. Avoid an actor snapshot sidecar:
+    // it would disclose exact coordinates to tool-capable coding agents.
+    actions: (session.actions || [])
       .map((action) => canonicalActionText(action.message))
       .filter(Boolean),
     draft: true,
@@ -257,8 +304,7 @@ function visionRenderPayload(session, stateFile) {
     levelId: normalizeLevelId(session.levelId),
     view: normalizeVisionView(session.visionView),
     width: positiveInt(session.visionWidth, 512),
-    yaw: normalizeYaw(session.yaw),
-    snapshot: hasCurrentCheckpoint ? checkpoint.snapshot : null
+    yaw: normalizeYaw(session.yaw)
   };
 }
 
@@ -540,19 +586,18 @@ async function emitStatus(session, response, turnIndex, stateFile) {
   const status = response.status || response;
 
   if (session.observationMode === "json") {
-    const printable = { ...status, observation_mode: "json" };
+    const printable = { ...redactAgentStatus(status, { mode: "json" }), observation_mode: "json" };
     delete printable.level;
     console.log(JSON.stringify(printable, null, 2));
     return true;
   }
 
   if (!session.vision) {
-    console.log(JSON.stringify(status, null, 2));
+    console.log(JSON.stringify(redactAgentStatus(status, { mode: "text" }), null, 2));
     return true;
   }
 
-  const printable = { ...status, observation_mode: "vision" };
-  delete printable.level;
+  const printable = { ...redactVisionStatus(status), observation_mode: "vision" };
   try {
     printable.frame_image = await renderVisionFrame(session, turnIndex, stateFile);
   } catch (error) {
@@ -585,6 +630,7 @@ async function main() {
       createdAt: new Date().toISOString(),
       gameId: String(options.game || "maze").trim() || "maze",
       gameWonGemCount: positiveInt(options.gameWonGemCount, 100),
+      maxActions: positiveInt(options.maxActions, 100),
       levelId: normalizeLevelId(options.level),
       nodeBin: options.nodeBin || process.execPath,
       observationMode,
@@ -603,7 +649,7 @@ async function main() {
       runBridge(session, { command: "observe" }),
       options.state
     ), session);
-    session.initial = response.status || response;
+    session.initial = storedStatus(session, response.status || response);
     session.lastStatus = session.initial;
     writeJson(options.state, session);
     writeJson(path.join(path.dirname(options.state), "initial-status.json"), session.initial);
@@ -624,30 +670,33 @@ async function main() {
   }
 
   if (command === "scorecard") {
+    throw new Error("Scorecards are evaluator-only and are not available to game agents.");
+  }
+
+  if (command === "finalize") {
+    if (process.env.MAZEBENCH_TRUSTED_FINALIZE !== "1") {
+      throw new Error("Unknown command: finalize");
+    }
     const response = applyQuitPolicy(consumeRenderState(
       runBridge(session, { command: "scorecard" }),
       options.state
     ), session);
-    session.scorecard = (response.status || response).scorecard || response.scorecard || response.status || response;
-    session.lastStatus = response.status || response;
+    const scorecard = (response.status || response).scorecard || response.scorecard || response.status || response;
+    session.scorecard = scorecard;
+    session.lastStatus = storedStatus(session, response.status || response);
     writeJson(options.state, session);
     writeJson(path.join(path.dirname(options.state), "scorecard.json"), session.scorecard);
-    // A scorecard is structured text, not a new observation. Rendering another
-    // vision frame here wastes a browser boot and used to strand Chromium after
-    // provider failures. Print it directly and release any existing daemon.
-    const printable = { ...(response.status || response) };
-    if (session.observationMode === "json") {
-      printable.observation_mode = "json";
-      delete printable.level;
-    }
-    console.log(JSON.stringify(printable, null, 2));
-    // The scorecard marks the end of the run — release the render daemon's
-    // headless browser instead of waiting out its idle timer.
+    console.log(JSON.stringify({ ok: true, finalized: true }, null, 2));
     if (session.vision) await stopRenderDaemon(options.state);
     return;
   }
 
   if (command === "action") {
+    if (session.actions.length >= positiveInt(session.maxActions, 100)) {
+      throw new Error(
+        `MazeBench action budget exhausted (${session.actions.length}/${positiveInt(session.maxActions, 100)}). Finish the run.`
+      );
+    }
     const message = normalizeAction(options.positional);
     if (message.command === "quit" && session.allowQuit === false) {
       throw new Error("Quit is disabled by the user for this run. Continue playing until the budget is exhausted or the user stops the run.");
@@ -657,25 +706,39 @@ async function main() {
       session
     );
     const status = response.status || response;
+    const persistedStatus = storedStatus(session, status);
     const record = {
       turn: session.actions.length + 1,
       timestamp: new Date().toISOString(),
       command_text: options.positional.join(" ").trim(),
+      valid: true,
+      error: null,
       message,
-      status
+      status: persistedStatus
     };
     session.actions.push(record);
-    session.lastStatus = status;
+    session.lastStatus = persistedStatus;
     writeJson(options.state, session);
     fs.appendFileSync(path.join(path.dirname(options.state), "actions.jsonl"), `${JSON.stringify(record)}\n`);
     if (!(await emitStatus(session, response, session.actions.length, options.state))) process.exitCode = 1;
+    emitTelemetry(record, session.observationMode);
     return;
   }
 
   throw new Error(`Unknown command: ${command}`);
 }
 
-main().catch((error) => {
-  console.error(error && error.stack ? error.stack : String(error));
-  process.exit(1);
-});
+const invokedThroughMazePlay = require.main && path.basename(require.main.filename) === "maze-play.js";
+
+if (require.main === module || invokedThroughMazePlay) {
+  main().catch((error) => {
+    console.error(error && error.stack ? error.stack : String(error));
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  redactAgentStatus,
+  redactVisionStatus,
+  requiredActionsRemaining
+};

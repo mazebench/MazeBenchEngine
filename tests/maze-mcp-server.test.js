@@ -42,8 +42,13 @@ try {
 
   assert.equal(result.status, 0, result.stderr);
   const responses = result.stdout.trim().split("\n").map((line) => JSON.parse(line));
-  assert(responses.find((response) => response.id === 2)?.result?.structuredContent?.current_room);
-  assert(responses.find((response) => response.id === 10)?.result?.tools?.some((tool) => tool.name === "maze_clone"));
+  const firstObservation = responses.find((response) => response.id === 2)?.result?.structuredContent;
+  assert(firstObservation?.current_room);
+  assert.equal(Object.prototype.hasOwnProperty.call(firstObservation, "player"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(firstObservation, "scorecard"), false);
+  const listedTools = responses.find((response) => response.id === 10)?.result?.tools || [];
+  assert(listedTools.some((tool) => tool.name === "maze_clone"));
+  assert.equal(listedTools.some((tool) => /scorecard/i.test(tool.name)), false);
   assert.equal(responses.find((response) => response.id === 3)?.result?.structuredContent?.id, "scout");
 
   const primary = JSON.parse(fs.readFileSync(path.join(runDir, "session.json"), "utf8"));
@@ -67,6 +72,7 @@ try {
   assert(fs.existsSync(path.join(runDir, "swarm", "scout-branch", "initial-status.json")));
   assert(fs.existsSync(path.join(runDir, "swarm", "scout", "frames", "frame-000.png")));
   assert(fs.existsSync(path.join(runDir, "swarm", "scout-branch", "frames", "frame-000.png")));
+  assert.equal(fs.existsSync(path.join(runDir, "current-render-state.json")), false);
   assert.equal(responses.find((response) => response.id === 6)?.result?.isError, true, "the MCP boundary enforces the lead budget");
   const invalidAction = responses.find((response) => response.id === 7)?.result?.content?.[0]?.text || "";
   assert(!invalidAction.includes(rootDir));
@@ -116,12 +122,11 @@ try {
   const restrictedTools = restrictedResponses.find((response) => response.id === 91)?.result?.tools || [];
   assert.deepEqual(
     restrictedTools.map((tool) => tool.name),
-    ["game_start", "game_observe", "game_action", "game_scorecard"]
+    ["game_start", "game_observe", "game_action"]
   );
   assert.doesNotMatch(JSON.stringify(restrictedTools), /MazeBench|clone_id|worker/i);
   assert(restrictedResponses.find((response) => response.id === 92)?.result?.structuredContent?.current_room);
-  assert(restrictedResponses.find((response) => response.id === 96)?.result?.structuredContent?.scorecard);
-  for (const id of [93, 94, 95]) {
+  for (const id of [93, 94, 95, 96]) {
     assert(restrictedResponses.find((response) => response.id === id)?.error, `restricted request ${id} must fail closed`);
   }
 

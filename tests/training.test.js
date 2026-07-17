@@ -104,6 +104,31 @@ const legacyProbe = execFileSync(
 );
 assert.match(legacyProbe, /legacy hosted adapter ready/);
 
+const observationPolicyProbe = execFileSync(
+  "uv",
+  [
+    "run",
+    "--project",
+    path.join(ROOT_DIR, "environments", "mazebench"),
+    "python",
+    "-c",
+    [
+      "from mazebench.mazebench import action_result_text,render_json_user_prompt,render_multiturn_user_prompt,render_vision_user_prompt",
+      "s={'allowed_commands':['up'],'current_room':'level_HxI','current_view':'top-diagonal','gem_count':0,'json_observation':{'objects':{'player':[[4,15,0]]}},'level':'P..','player':{'x':4,'y':15,'elevation':0},'scorecard':{'current_position':{'x':4,'y':15,'elevation':0}},'visited_levels':['level_HxI'],'yaw':0}",
+      "t=render_multiturn_user_prompt(status=s,target_text='play',result_text='start')",
+      "v=render_vision_user_prompt(status=s,target_text='play',result_text='start')",
+      "j=render_json_user_prompt(status=s,target_text='play',result_text='start')",
+      "assert 'Player:' not in t and 'elevation=0' not in t",
+      "assert 'Player:' not in v and 'elevation=0' not in v",
+      "assert 'Player: x=4 y=15 elevation=0' in j",
+      "assert 'scorecard' not in action_result_text(command='quit',status={**s,'quit':True}).lower()",
+      "print('model observation policy ready')"
+    ].join("; ")
+  ],
+  { cwd: ROOT_DIR, encoding: "utf8" }
+);
+assert.match(observationPolicyProbe, /model observation policy ready/);
+
 const input = [
   { command: "observe" },
   { command: "move", direction: "right" },

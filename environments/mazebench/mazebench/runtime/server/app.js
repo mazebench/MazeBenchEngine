@@ -227,6 +227,7 @@ const buildWorlds = createLocalBuildWorldService({
 const agentRuns = createAgentRunService({
   agentEnvironment,
   agentEnvironmentAsync,
+  allowLegacyLocalLaunch: true,
   buildWorlds,
   ensureDirectory,
   getGame,
@@ -278,6 +279,33 @@ function dockerState() {
   return { installed: true, running };
 }
 
+function codexSubscriptionStatus(result) {
+  const output = String(result?.stdout || result?.stderr || "").trim();
+  const authenticated = result?.status === 0;
+  return {
+    authenticated,
+    subscription: authenticated && /logged in using chatgpt/i.test(output),
+    method: /chatgpt/i.test(output) ? "chatgpt" : /api key/i.test(output) ? "api-key" : authenticated ? "other" : ""
+  };
+}
+
+function claudeSubscriptionStatus(result) {
+  let payload = {};
+  try {
+    payload = JSON.parse(String(result?.stdout || "{}"));
+  } catch (_error) {
+    /* a non-JSON result is not a confirmed subscription session */
+  }
+  const authenticated = result?.status === 0 && payload.loggedIn === true;
+  const subscriptionType = String(payload.subscriptionType || "").trim();
+  return {
+    authenticated,
+    subscription: authenticated && payload.authMethod === "claude.ai" && Boolean(subscriptionType),
+    method: String(payload.authMethod || ""),
+    subscriptionType
+  };
+}
+
 function agentEnvironment(options = {}) {
   if (!options.fresh && agentEnvironmentCache && Date.now() - agentEnvironmentCache.at < 15000) {
     return agentEnvironmentCache.value;
@@ -294,33 +322,38 @@ function agentEnvironment(options = {}) {
       encoding: "utf8",
       env: enrichedPathEnv()
     }).status === 0;
-  const probeCommand = (bin, args, timeout = 5000) => {
-    const result = spawnSync(bin, args, {
+  const probeCommand = (bin, args, timeout = 5000) =>
+    spawnSync(bin, args, {
       encoding: "utf8",
       env: enrichedPathEnv(),
       timeout,
       maxBuffer: 2 * 1024 * 1024
     });
-    return result.status === 0;
-  };
   const codexInstalled = probe("codex");
   const claudeInstalled = probe("claude");
   const primeInstalled = probe("prime");
-  const codexAuthenticated = Boolean(process.env.OPENAI_API_KEY) ||
-    (codexInstalled && probeCommand("codex", ["login", "status"]));
-  const claudeAuthenticated = Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ||
-    (claudeInstalled && probeCommand("claude", ["auth", "status", "--json"]));
+  const codexAuth = codexSubscriptionStatus(
+    codexInstalled ? probeCommand("codex", ["login", "status"]) : null
+  );
+  const claudeAuth = claudeSubscriptionStatus(
+    claudeInstalled ? probeCommand("claude", ["auth", "status", "--json"]) : null
+  );
   const primeAuthenticated = Boolean(process.env.PRIME_API_KEY) ||
-    (primeInstalled && probeCommand("prime", ["whoami"], 8000));
+    (primeInstalled && probeCommand("prime", ["whoami"], 8000).status === 0);
   const docker = dockerState();
   const value = {
     checking: false,
-    codex: codexInstalled && codexAuthenticated,
+    codex: codexInstalled && codexAuth.subscription,
     codex_installed: codexInstalled,
-    codex_authenticated: codexAuthenticated,
-    claude: claudeInstalled && claudeAuthenticated,
+    codex_authenticated: codexAuth.authenticated,
+    codex_subscription: codexAuth.subscription,
+    codex_auth_method: codexAuth.method,
+    claude: claudeInstalled && claudeAuth.subscription,
     claude_installed: claudeInstalled,
-    claude_authenticated: claudeAuthenticated,
+    claude_authenticated: claudeAuth.authenticated,
+    claude_subscription: claudeAuth.subscription,
+    claude_auth_method: claudeAuth.method,
+    claude_subscription_type: claudeAuth.subscriptionType,
     // `docker` means "ready for a container run" — installed AND daemon up.
     docker: docker.running,
     docker_installed: docker.installed,
@@ -355,17 +388,16 @@ async function agentEnvironmentAsync(options = {}) {
       return false;
     }
   };
-  const commandSucceeds = async (bin, args, timeout = 5000) => {
+  const runCommand = async (bin, args, timeout = 5000) => {
     try {
-      await execFileAsync(bin, args, {
+      return await execFileAsync(bin, args, {
         encoding: "utf8",
         env: enrichedPathEnv(),
         timeout,
         maxBuffer: 2 * 1024 * 1024
       });
-      return true;
     } catch (_error) {
-      return false;
+      return null;
     }
   };
 
@@ -377,32 +409,37 @@ async function agentEnvironmentAsync(options = {}) {
       commandExists("uv"),
       commandExists("docker")
     ]);
-    const [codexAuthenticated, claudeAuthenticated, primeAuthenticated, dockerRunning] = await Promise.all([
-      process.env.OPENAI_API_KEY
-        ? true
-        : codexInstalled && commandSucceeds("codex", ["login", "status"]),
-      process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN
-        ? true
-        : claudeInstalled && commandSucceeds("claude", ["auth", "status", "--json"]),
+    const [codexResult, claudeResult, primeResult, dockerResult] = await Promise.all([
+      codexInstalled ? runCommand("codex", ["login", "status"]) : null,
+      claudeInstalled ? runCommand("claude", ["auth", "status", "--json"]) : null,
       process.env.PRIME_API_KEY
-        ? true
-        : primeInstalled && commandSucceeds("prime", ["whoami"], 8000),
-      dockerInstalled && commandSucceeds("docker", ["info", "--format", "{{.ServerVersion}}"], 8000)
+        ? { stdout: "environment", stderr: "" }
+        : primeInstalled ? runCommand("prime", ["whoami"], 8000) : null,
+      dockerInstalled ? runCommand("docker", ["info", "--format", "{{.ServerVersion}}"], 8000) : null
     ]);
+    const codexAuth = codexSubscriptionStatus(codexResult ? { ...codexResult, status: 0 } : null);
+    const claudeAuth = claudeSubscriptionStatus(claudeResult ? { ...claudeResult, status: 0 } : null);
+    const primeAuthenticated = Boolean(primeResult);
+    const dockerRunning = Boolean(dockerResult && String(dockerResult.stdout || "").trim());
     const value = {
       checking: false,
-      codex: codexInstalled && Boolean(codexAuthenticated),
+      codex: codexInstalled && codexAuth.subscription,
       codex_installed: codexInstalled,
-      codex_authenticated: Boolean(codexAuthenticated),
-      claude: claudeInstalled && Boolean(claudeAuthenticated),
+      codex_authenticated: codexAuth.authenticated,
+      codex_subscription: codexAuth.subscription,
+      codex_auth_method: codexAuth.method,
+      claude: claudeInstalled && claudeAuth.subscription,
       claude_installed: claudeInstalled,
-      claude_authenticated: Boolean(claudeAuthenticated),
+      claude_authenticated: claudeAuth.authenticated,
+      claude_subscription: claudeAuth.subscription,
+      claude_auth_method: claudeAuth.method,
+      claude_subscription_type: claudeAuth.subscriptionType,
       docker: Boolean(dockerRunning),
       docker_installed: dockerInstalled,
       docker_running: Boolean(dockerRunning),
-      prime: primeInstalled && Boolean(primeAuthenticated),
+      prime: primeInstalled && primeAuthenticated,
       prime_installed: primeInstalled,
-      prime_authenticated: Boolean(primeAuthenticated),
+      prime_authenticated: primeAuthenticated,
       uv: uvInstalled
     };
     agentEnvironmentCache = { at: Date.now(), value };

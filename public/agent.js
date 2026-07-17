@@ -9,44 +9,35 @@
   const statusEl = document.getElementById("agent-status");
   const runsEl = document.getElementById("agent-runs");
 
-  const PROVIDERS = [
+  // Harnesses are a small data registry on purpose: Prime can add another
+  // built-in harness without changing the model or run-settings flow.
+  const HARNESSES = [
+    {
+      id: "none",
+      name: "Prime Intellect",
+      logo: '<img src="/logos/prime.png" alt="" width="128" height="128" loading="eager" decoding="sync" fetchpriority="high">'
+    },
     {
       id: "codex",
       name: "Codex",
-      enabled: false,
-      envKey: "codex",
       logo: '<img src="/logos/codex.png" alt="" width="128" height="128" loading="eager" decoding="sync" fetchpriority="high">'
     },
     {
-      id: "claude",
+      id: "claude-code",
       name: "Claude Code",
-      enabled: false,
-      envKey: "claude",
       logo: '<img src="/logos/claude.png" alt="" width="128" height="128" loading="eager" decoding="sync" fetchpriority="high">'
-    },
-    {
-      id: "prime",
-      name: "Prime Intellect",
-      enabled: true,
-      envKey: "prime",
-      logo: '<img src="/logos/prime.png" alt="" width="128" height="128" loading="eager" decoding="sync" fetchpriority="high">'
     }
   ];
-  const PROVIDER_SETUP = {
+  const LOCAL_SETUP = {
     codex: {
-      docs: "https://help.openai.com/en/articles/11096431-openai-codex-cli-getting-started",
-      install: "npm install -g @openai/codex\ncodex --login",
-      login: "codex --login"
+      docs: "https://developers.openai.com/codex/cli/",
+      install: "npm install -g @openai/codex\ncodex login",
+      login: "codex login"
     },
-    claude: {
+    "claude-code": {
       docs: "https://docs.anthropic.com/en/docs/claude-code/getting-started",
-      install: "npm install -g @anthropic-ai/claude-code\nclaude",
-      login: "claude"
-    },
-    prime: {
-      docs: "https://docs.primeintellect.ai/cli-reference/introduction",
-      install: "uv tool install -U prime\nprime login",
-      login: "prime login"
+      install: "npm install -g @anthropic-ai/claude-code\nclaude auth login",
+      login: "claude auth login"
     }
   };
   const RUN_COMPANY_NAMES = {
@@ -80,7 +71,8 @@
   const selectionTargets = new WeakMap();
 
   const state = {
-    provider: null,
+    execution: "prime",
+    harness: null,
     modelId: null,
     customModel: "",
     reasoning: null,
@@ -91,7 +83,6 @@
     omniscient: false,
     hideNames: false,
     hideNamesSeed: "1",
-    isolation: null,
     toolUse: null,
     orchestration: null,
     unlimited: false,
@@ -99,7 +90,8 @@
     catalogs: {},
     catalogRequests: {},
     openFolders: new Set(),
-    modelQuery: ""
+    modelQuery: "",
+    localAvailability: "idle"
   };
 
   function setStatus(message, isError = false) {
@@ -180,12 +172,23 @@
 
     if (show) element.hidden = false;
     const fullHeight = element.getBoundingClientRect().height;
+    const computedStyle = window.getComputedStyle(element);
+    const expandedFrame = {
+      height: `${fullHeight}px`,
+      marginBottom: computedStyle.marginBottom,
+      marginTop: computedStyle.marginTop,
+      opacity: 1
+    };
+    const collapsedFrame = {
+      height: "0px",
+      marginBottom: "0px",
+      marginTop: "0px",
+      opacity: 0
+    };
     const previousOverflow = element.style.overflow;
     element.style.overflow = "clip";
     const animation = element.animate(
-      show
-        ? [{ height: "0px", opacity: 0 }, { height: `${fullHeight}px`, opacity: 1 }]
-        : [{ height: `${fullHeight}px`, opacity: 1 }, { height: "0px", opacity: 0 }],
+      show ? [collapsedFrame, expandedFrame] : [expandedFrame, collapsedFrame],
       { duration, easing: "cubic-bezier(0.22, 1, 0.36, 1)" }
     );
     const entry = { animation, show };
@@ -321,10 +324,10 @@
 
   function composerSettingsReady() {
     return Boolean(
-      state.provider &&
+      state.harness &&
       state.modelId &&
       state.reasoningChosen &&
-      (state.provider === "prime" || state.worldId)
+      (state.execution === "prime" || state.worldId)
     );
   }
 
@@ -332,14 +335,13 @@
     return Boolean(
       composerSettingsReady() &&
       state.mode &&
-      (state.provider === "prime" ||
-        (state.isolation && state.toolUse && state.orchestration))
+      (state.execution === "prime" || (state.toolUse && state.orchestration))
     );
   }
 
   function moveBudget() {
-    if (state.provider !== "prime" && state.unlimited) return 500;
-    const input = document.getElementById(state.provider === "prime" ? "run-prime-turns" : "run-moves");
+    if (state.execution === "local" && state.unlimited) return 500;
+    const input = document.getElementById(state.execution === "prime" ? "run-prime-turns" : "run-moves");
     return Math.max(0, Math.floor(Number(input?.value) || 0));
   }
 
@@ -348,14 +350,14 @@
   }
 
   function syncComposerSteps(animate = true) {
-    const hasProvider = Boolean(state.provider);
+    const hasHarness = Boolean(state.harness);
     const hasModel = Boolean(state.modelId);
-    const showTarget = hasProvider && hasModel && state.reasoningChosen && state.provider !== "prime";
+    const showTarget = hasHarness && hasModel && state.reasoningChosen && state.execution === "local";
     const showSettings = composerSettingsReady();
     const showRun = runReady();
     const visibility = [
-      [document.querySelector(".composer-section--model"), hasProvider],
-      [document.querySelector(".composer-section--reasoning"), hasProvider && hasModel],
+      [document.querySelector(".composer-section--model"), hasHarness],
+      [document.querySelector(".composer-section--reasoning"), hasHarness && hasModel],
       [document.getElementById("world-section"), showTarget],
       [document.querySelector(".composer-section--settings"), showSettings],
       [document.querySelector(".composer-section--run"), showRun]
@@ -368,64 +370,127 @@
     });
   }
 
-  // ---- provider picker ----------------------------------------------------
+  // ---- harness picker -----------------------------------------------------
 
-  function renderProviders(selectionFrom = null) {
+  function localProviderId(harnessId = state.harness) {
+    if (harnessId === "codex") return "codex";
+    if (harnessId === "claude-code") return "claude";
+    return "";
+  }
+
+  function catalogKey(harnessId = state.harness, execution = state.execution) {
+    return `${execution}:${harnessId || "none"}`;
+  }
+
+  function renderExecutionPicker() {
+    const wrapper = document.getElementById("harness-execution");
+    const picker = document.getElementById("execution-picker");
+    const supportsLocal = Boolean(localProviderId());
+    if (wrapper) tweenVisibility(wrapper, supportsLocal, 420);
+    picker?.querySelectorAll("[data-execution]").forEach((option) => {
+      const selected = option.dataset.execution === state.execution;
+      option.classList.toggle("is-selected", selected);
+      option.setAttribute("aria-pressed", String(selected));
+    });
+
+    const status = document.getElementById("local-run-status");
+    if (status) {
+      const labels = { checking: "Checking", active: "Active", inactive: "Setup needed" };
+      status.hidden = state.localAvailability === "idle";
+      status.innerHTML = state.localAvailability === "checking"
+        ? `<span class="execution-option__spinner" aria-hidden="true"></span><span>${labels.checking}</span>`
+        : labels[state.localAvailability] || "";
+      status.className = `execution-option__status is-${state.localAvailability}`;
+    }
+
+    const note = document.getElementById("execution-note");
+    if (note) {
+      note.textContent = state.execution === "prime"
+        ? "Choose a harness. Prime supplies inference by default."
+        : "This run uses the signed-in CLI and your local subscription limits.";
+    }
+  }
+
+  function setExecution(value) {
+    const next = value === "local" ? "local" : "prime";
+    if (next === "local" && !localProviderId()) return;
+    if (state.execution === next) return;
+    state.execution = next;
+    state.modelId = null;
+    state.customModel = "";
+    state.modelQuery = "";
+    state.reasoning = null;
+    state.reasoningChosen = false;
+    state.worldId = null;
+    state.levelId = null;
+    resetRunOptions();
+    renderExecutionPicker();
+    renderHarnesses();
+    renderWorlds(null, false);
+    renderLevelSummary();
+    tweenResize(document.querySelector(".settings-stage"), () => {
+      document.getElementById("local-settings").hidden = next !== "local";
+      document.getElementById("prime-settings").hidden = next !== "prime";
+    }, 440);
+    tweenResize(document.querySelector(".model-browser"), renderModels, 440);
+    syncComposerSteps();
+    if (state.harness) {
+      loadModels(state.harness, { fresh: !state.catalogs[catalogKey()] });
+    }
+  }
+
+  function renderHarnesses(selectionFrom = null) {
     const host = document.getElementById("provider-picker");
-    host.innerHTML = PROVIDERS.filter((provider) => provider.enabled).map((provider) => {
-      const availability = providerAvailability(provider.id);
-      const statusClass = availability.checking ? "is-checking" : availability.available ? "is-ok" : "is-missing";
-      const statusLabel = availability.checking ? "CHECKING" : availability.available ? "ACTIVE" : "INACTIVE";
-      return `<button type="button" class="provider-card${state.provider === provider.id ? " is-selected" : ""}"
-          data-provider="${provider.id}" role="radio" aria-checked="${state.provider === provider.id}">
-        <span class="provider-card__logo">${provider.logo}</span>
-        <span class="provider-card__name">${escapeText(provider.name)}</span>
-        <span class="provider-card__avail ${statusClass}">${statusLabel}</span>
+    host.innerHTML = HARNESSES.map((harness) => {
+      return `<button type="button" class="provider-card${state.harness === harness.id ? " is-selected" : ""}"
+          data-harness="${harness.id}" role="radio" aria-checked="${state.harness === harness.id}">
+        <span class="provider-card__logo">${harness.logo}</span>
+        <span class="provider-card__name">${escapeText(harness.name)}</span>
       </button>`;
     }).join("");
 
     host.querySelectorAll(".provider-card").forEach((card) => {
-      card.addEventListener("click", () => selectProvider(card.dataset.provider));
+      card.addEventListener("click", () => selectHarness(card.dataset.harness));
     });
     renderSelectionSlider(host, ".provider-card.is-selected", selectionFrom, "provider");
   }
 
-  function providerAvailability(providerId) {
-    const env = data.environment || {};
+  function localRunAvailability(harnessId = state.harness, env = data.environment || {}) {
     if (env.checking || !Object.keys(env).length) {
       return { checking: true, available: false, installed: false, authenticated: false };
     }
-    const provider = PROVIDERS.find((entry) => entry.id === providerId);
-    const installed = env[`${providerId}_installed`] ?? Boolean(env[provider?.envKey]);
-    const authenticated = env[`${providerId}_authenticated`] ?? Boolean(env[provider?.envKey]);
-    const runtimeReady = providerId !== "prime" || Boolean(env.uv);
+    const provider = localProviderId(harnessId);
+    if (!provider) return { checking: false, available: false, installed: false, authenticated: false };
+    const installed = env[`${provider}_installed`] ?? Boolean(env[provider]);
+    const authenticated = env[`${provider}_authenticated`] ?? Boolean(env[provider]);
+    const subscription = env[`${provider}_subscription`] ?? Boolean(env[provider]);
     return {
       checking: false,
-      available: Boolean(env[provider?.envKey]) && runtimeReady,
+      available: Boolean(env[provider]) && Boolean(subscription),
       installed: Boolean(installed),
       authenticated: Boolean(authenticated),
-      runtimeReady
+      subscription: Boolean(subscription),
+      authMethod: env[`${provider}_auth_method`] || ""
     };
   }
 
-  function showProviderSetup(providerId) {
-    const provider = PROVIDERS.find((entry) => entry.id === providerId);
-    const setup = PROVIDER_SETUP[providerId];
-    const availability = providerAvailability(providerId);
+  function showLocalSetup(harnessId = state.harness, availability = localRunAvailability(harnessId)) {
     const modal = document.getElementById("provider-setup-modal");
-    if (!provider || !setup || !modal) return;
-    document.getElementById("provider-setup-logo").innerHTML = provider.logo;
-    document.getElementById("provider-setup-title").textContent = `${provider.name} is inactive`;
-    const missingRuntime = providerId === "prime" && availability.installed && availability.authenticated && !availability.runtimeReady;
+    if (!modal) return;
+    const harness = HARNESSES.find((entry) => entry.id === harnessId);
+    const setup = LOCAL_SETUP[harnessId];
+    document.getElementById("provider-setup-logo").innerHTML = harness?.logo || "";
+    document.getElementById("provider-setup-title").textContent = `${harness?.name || "Local CLI"} subscription is inactive`;
+    const wrongLocalAuth = availability.authenticated && !availability.subscription;
     document.getElementById("provider-setup-message").textContent = !availability.installed
-      ? `Install ${provider.name}, then sign in once from your terminal.`
+      ? `Install ${harness?.name || "the CLI"}, then sign in once from your terminal.`
+      : wrongLocalAuth
+        ? `${harness?.name} is signed in with ${availability.authMethod || "non-subscription credentials"}. Sign out, then sign in with your subscription account.`
       : !availability.authenticated
-        ? `${provider.name} is installed. Sign in once from your terminal, then refresh this page.`
-        : missingRuntime
-          ? "Prime is ready, but MazeBench also needs uv installed to run verifiers."
-          : `Finish ${provider.name} setup in your terminal, then refresh this page.`;
-    document.getElementById("provider-setup-command").textContent = missingRuntime
-      ? "curl -LsSf https://astral.sh/uv/install.sh | sh"
+        ? `${harness?.name} is installed. Sign in once from your terminal, then try Local Run again.`
+        : `Finish ${harness?.name} setup in your terminal, then try Local Run again.`;
+    document.getElementById("provider-setup-command").textContent = wrongLocalAuth
+      ? `${harnessId === "codex" ? "codex logout" : "claude auth logout"}\n${setup.login}`
       : availability.installed ? setup.login : setup.install;
     document.getElementById("provider-setup-docs").href = setup.docs;
     modal.hidden = false;
@@ -441,20 +506,63 @@
     }, 180);
   }
 
-  function selectProvider(providerId) {
-    const availability = providerAvailability(providerId);
-    if (availability.checking) {
-      setStatus("Checking provider setup…");
+  let localAvailabilityRequest = 0;
+
+  async function checkLocalAvailability(harnessId = state.harness) {
+    if (!localProviderId(harnessId)) return;
+    const requestId = ++localAvailabilityRequest;
+    state.localAvailability = "checking";
+    renderExecutionPicker();
+    const harnessName = HARNESSES.find((entry) => entry.id === harnessId)?.name || "Local";
+    setStatus(`Checking ${harnessName} subscription…`);
+
+    try {
+      const env = await refreshEnvironment();
+      if (requestId !== localAvailabilityRequest || state.harness !== harnessId) return;
+      const availability = localRunAvailability(harnessId, env);
+      if (!availability.available) {
+        if (state.execution === "local") setExecution("prime");
+        state.localAvailability = "inactive";
+        renderExecutionPicker();
+        setStatus("Local subscription setup is needed.", true);
+        return availability;
+      }
+
+      state.localAvailability = "active";
+      renderExecutionPicker();
+      setStatus(`${harnessName} local subscription is active.`);
+      return availability;
+    } catch (error) {
+      if (requestId !== localAvailabilityRequest || state.harness !== harnessId) return;
+      if (state.execution === "local") setExecution("prime");
+      state.localAvailability = "inactive";
+      renderExecutionPicker();
+      setStatus(error.message, true);
+    }
+  }
+
+  function selectLocalRun() {
+    const harnessId = state.harness;
+    if (!localProviderId(harnessId)) return;
+    if (state.localAvailability === "active") {
+      setExecution("local");
       return;
     }
-    if (!availability.available) {
-      showProviderSetup(providerId);
+    if (state.localAvailability === "inactive") {
+      showLocalSetup(harnessId, localRunAvailability(harnessId));
       return;
     }
-    if (state.provider === providerId) return;
+    if (state.localAvailability === "idle") checkLocalAvailability(harnessId);
+  }
+
+  function selectHarness(harnessId) {
+    if (state.harness === harnessId) return;
     const providerHost = document.getElementById("provider-picker");
     const providerSelectionFrom = selectedRect(providerHost, ".provider-card.is-selected");
-    state.provider = providerId;
+    localAvailabilityRequest += 1;
+    state.execution = "prime";
+    state.localAvailability = "idle";
+    state.harness = harnessId;
     state.modelId = null;
     state.customModel = "";
     state.modelQuery = "";
@@ -470,34 +578,35 @@
     document.getElementById("run-codex-fast").checked = false;
 
     providerHost.querySelectorAll(".provider-card").forEach((card) => {
-      const selected = card.dataset.provider === providerId;
+      const selected = card.dataset.harness === harnessId;
       card.classList.toggle("is-selected", selected);
       card.setAttribute("aria-checked", String(selected));
     });
     renderSelectionSlider(providerHost, ".provider-card.is-selected", providerSelectionFrom, "provider");
+    renderExecutionPicker();
 
-    const isPrime = providerId === "prime";
     tweenResize(document.querySelector(".settings-stage"), () => {
-      document.getElementById("local-settings").hidden = isPrime;
-      document.getElementById("prime-settings").hidden = !isPrime;
+      document.getElementById("local-settings").hidden = true;
+      document.getElementById("prime-settings").hidden = false;
     }, 440);
-    tweenResize(document.querySelector(".model-browser"), () => {
-      renderModels();
-    }, 440);
+    tweenResize(document.querySelector(".model-browser"), renderModels, 440);
     syncComposerSteps();
-    loadModels(providerId, { fresh: providerId === "codex" || !state.catalogs[providerId] });
+    loadModels(harnessId, { fresh: !state.catalogs[catalogKey(harnessId)] });
+    if (localProviderId(harnessId)) checkLocalAvailability(harnessId);
   }
 
   // ---- model picker ---------------------------------------------------------
 
-  async function loadModels(providerId, { fresh = false } = {}) {
-    const existing = state.catalogs[providerId];
+  async function loadModels(harnessId, { fresh = false } = {}) {
+    const execution = state.execution;
+    const key = catalogKey(harnessId, execution);
+    const existing = state.catalogs[key];
     if (existing?.models?.length && !fresh) {
       return;
     }
 
-    const requestId = (state.catalogRequests[providerId] || 0) + 1;
-    state.catalogRequests[providerId] = requestId;
+    const requestId = (state.catalogRequests[key] || 0) + 1;
+    state.catalogRequests[key] = requestId;
 
     const host = document.getElementById("model-picker");
     tweenResize(document.querySelector(".model-browser"), () => {
@@ -510,28 +619,35 @@
     }
 
     try {
-      const suffix = fresh ? `?refresh=1&t=${Date.now()}` : "";
-      const catalog = await api(`${data.modelsApiBase}/${encodeURIComponent(providerId)}${suffix}`);
-      if (state.catalogRequests[providerId] !== requestId) return;
-      state.catalogs[providerId] = catalog;
+      const provider = execution === "prime" ? "prime" : localProviderId(harnessId);
+      const query = new URLSearchParams();
+      if (execution === "prime") query.set("harness", harnessId);
+      if (fresh) {
+        query.set("refresh", "1");
+        query.set("t", String(Date.now()));
+      }
+      const suffix = query.size ? `?${query}` : "";
+      const catalog = await api(`${data.modelsApiBase}/${encodeURIComponent(provider)}${suffix}`);
+      if (state.catalogRequests[key] !== requestId) return;
+      state.catalogs[key] = catalog;
     } catch (error) {
-      if (state.catalogRequests[providerId] !== requestId) return;
+      if (state.catalogRequests[key] !== requestId) return;
       // A transient request failure must never erase a catalog that was
       // already rendered successfully.
       if (!existing?.models?.length) {
-        state.catalogs[providerId] = { models: [], note: error.message };
+        state.catalogs[key] = { models: [], note: error.message };
       }
     } finally {
-      if (refreshButton && state.catalogRequests[providerId] === requestId) {
+      if (refreshButton && state.catalogRequests[key] === requestId) {
         refreshButton.disabled = false;
         refreshButton.textContent = "↻ Refresh";
       }
     }
 
-    if (state.provider === providerId) {
+    if (state.execution === execution && state.harness === harnessId) {
       await waitForVisibilityTween(document.querySelector(".composer-section--model"));
-      if (state.provider !== providerId) return;
-      const models = state.catalogs[providerId]?.models || [];
+      if (state.execution !== execution || state.harness !== harnessId) return;
+      const models = state.catalogs[key]?.models || [];
       if (state.modelId !== "__custom__" && !models.some((model) => model.id === state.modelId)) {
         state.modelId = null;
       }
@@ -542,7 +658,7 @@
   }
 
   function selectedModel() {
-    const catalog = state.catalogs[state.provider] || { models: [] };
+    const catalog = state.catalogs[catalogKey()] || { models: [] };
     return catalog.models.find((model) => model.id === state.modelId) || null;
   }
 
@@ -618,7 +734,7 @@
     const noteEl = document.getElementById("model-note");
     const metaEl = document.getElementById("model-meta");
     const searchWrap = document.getElementById("model-search");
-    const catalog = state.catalogs[state.provider];
+    const catalog = state.catalogs[catalogKey()];
 
     if (!catalog) {
       host.innerHTML = MODELS_LOADING_MARKUP;
@@ -629,12 +745,18 @@
       return;
     }
 
-    const showCatalogNote = Boolean(catalog.note) && !catalog.models.length;
+    const showCatalogNote = Boolean(catalog.note) && (
+      !catalog.models.length || (state.execution === "prime" && state.harness !== "none")
+    );
     noteEl.textContent = showCatalogNote ? catalog.note : "";
     noteEl.hidden = !showCatalogNote;
     metaEl.textContent = [catalog.source, catalogTime(catalog)].filter(Boolean).join(" · ");
 
     const customChip = { id: "__custom__", label: "Custom…", description: "type any model id" };
+    const allowCustomModel = state.execution === "local" || state.harness === "none";
+    const customMarkup = allowCustomModel
+      ? `<div class="model-custom-row">${modelChip(customChip)}</div>`
+      : "";
     const grouped = catalog.models.some((model) => model.group);
     searchWrap.hidden = !grouped;
 
@@ -683,10 +805,10 @@
             <div class="model-section-title">${filteredModels.length} match${filteredModels.length === 1 ? "" : "es"}</div>
             ${filteredModels.length ? `<div class="model-grid">${filteredModels.map((model) => modelChip(model, { showGroup: true })).join("")}</div>` : '<p class="muted model-empty">No models match that search.</p>'}
           </div>
-          <div class="model-custom-row">${modelChip(customChip)}</div>`
+          ${customMarkup}`
         : `${recentModels.length ? `<div class="model-recent"><div class="model-section-title">Recently added</div><div class="model-grid">${recentModels.map((model) => modelChip(model, { showGroup: true })).join("")}</div></div>` : ""}
           <div class="model-folders">${folderMarkup}</div>
-          <div class="model-custom-row">${modelChip(customChip)}</div>`;
+          ${customMarkup}`;
 
       host.querySelectorAll(".model-folder__head").forEach((head) => {
         head.addEventListener("click", () => {
@@ -721,7 +843,8 @@
         });
       });
     } else {
-      host.innerHTML = `<div class="model-grid model-grid--primary">${[...catalog.models, customChip].map((model) => modelChip(model)).join("")}</div>`;
+      const models = allowCustomModel ? [...catalog.models, customChip] : catalog.models;
+      host.innerHTML = `<div class="model-grid model-grid--primary">${models.map((model) => modelChip(model)).join("")}</div>`;
     }
 
     host.querySelectorAll(".chip[data-model-id]").forEach((chip) => {
@@ -740,7 +863,7 @@
     });
 
     const customWrap = document.getElementById("model-custom");
-    customWrap.hidden = state.modelId !== "__custom__";
+    customWrap.hidden = !allowCustomModel || state.modelId !== "__custom__";
     if (state.modelId === "__custom__" && catalog.models.length) {
       document.getElementById("model-custom-input").focus();
     }
@@ -751,25 +874,12 @@
     if (reveal) requestAnimationFrame(() => revealModelChoices(host));
   }
 
-  // Both Codex and Claude Code expose reasoning effort per model. The installed
-  // Claude CLI accepts five possible values, but not every Claude model supports
-  // all (or any) of them, so its catalog supplies the valid subset.
   function reasoningOptions() {
-    const catalog = state.catalogs[state.provider] || {};
-
-    if (state.provider === "prime") {
-      // Passed through to the eval as --sampling.reasoning-effort. OpenAI
-      // reasoning models and Claude (extended thinking) honor it; models that
-      // don't support reasoning simply ignore it. "" = off (no effort sent).
-      return ["low", "medium", "high"];
-    }
-
-    if (state.provider === "claude") {
-      const model = selectedModel();
+    if (state.execution === "prime") return ["low", "medium", "high"];
+    const model = selectedModel();
+    if (state.harness === "claude-code") {
       return model && Array.isArray(model.reasoning_levels) ? model.reasoning_levels : [];
     }
-
-    const model = selectedModel();
     return model && Array.isArray(model.reasoning_levels) && model.reasoning_levels.length
       ? model.reasoning_levels
       : ["low", "medium", "high", "xhigh"];
@@ -780,14 +890,13 @@
     const host = document.getElementById("reasoning-picker");
     const fastSwitch = document.getElementById("fast-switch");
 
-    if (!state.modelId || (state.provider !== "codex" && state.provider !== "claude" && state.provider !== "prime")) {
+    if (!state.modelId || !state.harness) {
       row.hidden = true;
       return;
     }
 
-    const model = selectedModel();
     const levels = reasoningOptions();
-    const choices = state.provider === "prime" || (state.provider === "claude" && levels.length === 0)
+    const choices = state.execution === "prime" || (state.harness === "claude-code" && levels.length === 0)
       ? [{ id: "", label: "off" }, ...levels.map((level) => ({ id: level, label: level }))]
       : levels.map((level) => ({ id: level, label: level }));
     if (state.reasoning !== null && !choices.some((choice) => choice.id === state.reasoning)) {
@@ -812,8 +921,7 @@
       });
     });
 
-    // Fast mode is a Codex-only tier; only offer it when the model supports it.
-    fastSwitch.hidden = state.provider !== "codex" || (Boolean(model) && !model.fast);
+    fastSwitch.hidden = state.execution !== "local" || state.harness !== "codex" || (Boolean(selectedModel()) && !selectedModel().fast);
     renderSelectionSlider(host, ".chip.is-selected", selectionFrom, "reasoning");
   }
 
@@ -952,7 +1060,6 @@
     const localSettings = document.getElementById("local-settings");
     const primeSettings = document.getElementById("prime-settings");
     const hasObservation = Boolean(state.mode);
-    const hasAccess = Boolean(state.isolation);
     const hasToolUse = Boolean(state.toolUse);
     const hasOrchestration = Boolean(state.orchestration);
 
@@ -963,11 +1070,10 @@
       card.setAttribute("aria-hidden", String(!show));
     };
 
-    setCardVisibility(localSettings?.querySelector(".setting-card--access"), hasObservation);
-    setCardVisibility(localSettings?.querySelector(".setting-card--tool-use"), hasObservation && hasAccess);
-    setCardVisibility(localSettings?.querySelector(".setting-card--orchestration"), hasObservation && hasAccess && state.toolUse === "offline");
-    setCardVisibility(localSettings?.querySelector(".setting-card--budget"), hasObservation && hasAccess && hasToolUse && hasOrchestration);
-    setCardVisibility(localSettings?.querySelector(".setting-card--give-up"), hasObservation && hasAccess && hasToolUse && hasOrchestration);
+    setCardVisibility(localSettings?.querySelector(".setting-card--tool-use"), hasObservation);
+    setCardVisibility(localSettings?.querySelector(".setting-card--orchestration"), hasObservation && state.toolUse === "offline");
+    setCardVisibility(localSettings?.querySelector(".setting-card--budget"), hasObservation && hasToolUse && hasOrchestration);
+    setCardVisibility(localSettings?.querySelector(".setting-card--give-up"), hasObservation && hasToolUse && hasOrchestration);
     setCardVisibility(primeSettings?.querySelector(".setting-card--budget"), hasObservation);
     setCardVisibility(primeSettings?.querySelector(".setting-card--give-up"), hasObservation);
   }
@@ -1036,10 +1142,10 @@
 
   // Prime models differ in whether they accept image inputs and the catalog
   // can't tell us directly, so the server infers it (primeModelVision) and tags
-  // each model with `vision`. A text-only model locks Vision off. A custom
-  // (user-typed) id is unknown, so we trust the user and allow it.
+  // each model with `vision`. A text-only model locks Vision off. Custom ids
+  // are available only when no coding-agent harness is selected.
   function primeModelAcceptsImages() {
-    if (state.provider !== "prime") return true;
+    if (state.execution === "local") return true;
     if (state.modelId === "__custom__") return true;
     const model = selectedModel();
     return model ? Boolean(model.vision) : true;
@@ -1066,34 +1172,11 @@
     const note = document.getElementById("prime-vision-note");
     if (note) {
       const model = selectedModel();
-      note.textContent = canVision ? "" : `${model ? model.label : "This model"} is text-only — Vision (image inputs) is unavailable.`;
+      note.textContent = canVision
+        ? ""
+        : `${model ? model.label : "This model"} is text-only — Vision (image inputs) is unavailable.`;
       note.hidden = canVision;
     }
-  }
-
-  // Access chooses where the run executes. Tool-use and orchestration are
-  // independent choices that follow it for both Docker and host runs.
-  function setIsolation(value, syncSteps = true) {
-    const next = value === "full" || value === "docker" ? value : null;
-    if (state.isolation !== next) {
-      state.toolUse = null;
-      state.orchestration = null;
-    }
-    state.isolation = next;
-    document.querySelectorAll(".segmented__option[data-isolation]").forEach((option) => {
-      const selected = option.dataset.isolation === state.isolation;
-      option.classList.toggle("is-selected", selected);
-      option.setAttribute("aria-pressed", String(selected));
-    });
-    const picker = document.getElementById("isolation-picker");
-    picker?.classList.toggle("has-selection", Boolean(state.isolation));
-    picker?.classList.toggle("is-second", state.isolation === "full");
-    const hostRisk = document.getElementById("host-access-risk");
-    if (hostRisk) hostRisk.hidden = state.isolation !== "full";
-    syncToolUsePicker();
-    syncOrchestrationPicker();
-    syncRunSettingCards();
-    if (syncSteps) syncComposerSteps();
   }
 
   function syncToolUsePicker() {
@@ -1108,7 +1191,6 @@
   }
 
   function setToolUse(value, syncSteps = true) {
-    if (!state.isolation) return;
     const next = value === "read-only" || value === "offline" ? value : null;
     if (state.toolUse !== next) {
       state.orchestration = next === "read-only" ? "single" : null;
@@ -1132,7 +1214,7 @@
   }
 
   function setOrchestration(value, syncSteps = true) {
-    if (!state.isolation || !state.toolUse) return;
+    if (!state.toolUse) return;
     state.orchestration = state.toolUse === "read-only"
       ? "single"
       : value === "single" || value === "swarm" ? value : null;
@@ -1149,13 +1231,12 @@
     setUnlimited(false, false);
     setAllowQuit(null, false);
     setMode(null, false);
-    setIsolation(null, false);
     setToolUse(null, false);
     setOrchestration(null, false);
   }
 
   function setUnlimited(selected, syncSteps = true) {
-    state.unlimited = state.provider !== "prime" && Boolean(selected);
+    state.unlimited = state.execution === "local" && Boolean(selected);
     const button = document.getElementById("run-unlimited");
     const input = document.getElementById("run-moves");
     if (button) {
@@ -1180,113 +1261,10 @@
     if (syncSteps) syncComposerSteps();
   }
 
-  // Docker mode needs Docker installed AND its daemon running. When it isn't,
-  // disable that option and clear it so access must be chosen again.
-  function syncIsolationPicker() {
-    const dockerOption = document.querySelector('.segmented__option[data-isolation="docker"]');
-    if (!dockerOption) return;
-    const env = data.environment || {};
-    const ready = Boolean(env.docker);
-    const hint = dockerOption.querySelector("small");
-
-    dockerOption.disabled = !ready;
-    dockerOption.classList.toggle("is-disabled", !ready);
-
-    if (ready) {
-      if (hint) hint.textContent = "isolated from your files";
-      dockerOption.removeAttribute("title");
-    } else {
-      if (hint) hint.textContent = env.docker_installed ? "start Docker below" : "Docker not installed";
-      dockerOption.title = env.docker_installed
-        ? "Docker is installed but its daemon isn't running. Start it below, or use Host access."
-        : "Install Docker to isolate agent runs, or use Host access.";
-      if (state.isolation === "docker") setIsolation(null);
-    }
-
-    renderDockerAction();
-  }
-
-  let dockerStarting = false;
-
-  // Show a "Start Docker" button only when Docker is installed but stopped.
-  function renderDockerAction() {
-    const host = document.getElementById("docker-action");
-    if (!host) return;
-    const env = data.environment || {};
-
-    if (env.docker || !env.docker_installed) {
-      host.hidden = true;
-      host.innerHTML = "";
-      return;
-    }
-
-    host.hidden = false;
-    if (dockerStarting) {
-      host.innerHTML = `<span class="docker-action__spinner" aria-hidden="true"></span><span class="docker-action__text">Starting Docker… this can take up to a minute.</span>`;
-      return;
-    }
-
-    host.innerHTML = `<button id="start-docker" type="button" class="button--sky">Start Docker</button>
-      <span class="docker-action__text muted">Docker is installed but not running.</span>`;
-    document.getElementById("start-docker").addEventListener("click", startDocker);
-  }
-
   async function refreshEnvironment() {
     const env = await api("/api/agent/environment");
     data.environment = env;
-    renderProviders();
-    syncIsolationPicker();
     return env;
-  }
-
-  async function startDocker() {
-    dockerStarting = true;
-    renderDockerAction();
-    setStatus("Starting Docker…");
-
-    let result;
-    try {
-      result = await api("/api/agent/docker/start", { method: "POST" });
-    } catch (error) {
-      dockerStarting = false;
-      renderDockerAction();
-      setStatus(error.message, true);
-      return;
-    }
-
-    if (!result.started) {
-      // The server could not auto-start it (e.g. Linux) — show its guidance.
-      dockerStarting = false;
-      renderDockerAction();
-      setStatus(result.message, true);
-      return;
-    }
-
-    // Poll the environment until the daemon is reachable (up to ~90s).
-    const deadline = Date.now() + 90000;
-    const poll = async () => {
-      try {
-        const env = await refreshEnvironment();
-        if (env.docker) {
-          dockerStarting = false;
-          setIsolation("docker"); // the user clearly wants containers
-          syncIsolationPicker();
-          setStatus("Docker is running — Docker mode enabled.");
-          return;
-        }
-      } catch (error) {
-        /* transient — keep polling */
-      }
-
-      if (Date.now() < deadline) {
-        setTimeout(poll, 3000);
-      } else {
-        dockerStarting = false;
-        renderDockerAction();
-        setStatus("Docker is taking a while to start — reload once it's ready.", true);
-      }
-    };
-    setTimeout(poll, 3000);
   }
 
   // ---- launch ---------------------------------------------------------------
@@ -1300,48 +1278,49 @@
 
   document.getElementById("launch-run")?.addEventListener("click", async () => {
     if (!runReady()) return;
-    if (state.modelId === "__custom__" && !resolvedModelName() && (state.catalogs[state.provider]?.models || []).length) {
+    if (state.modelId === "__custom__" && !resolvedModelName() && (state.catalogs[catalogKey()]?.models || []).length) {
       setStatus("Type a model id or pick one from the list.", true);
       return;
     }
 
-    const body =
-      state.provider === "prime"
-        ? {
-            kind: "prime",
-            model_name: resolvedModelName(),
-            max_turns: moveBudget(),
-            mode: state.mode,
-            vision: state.mode === "vision",
-            omniscient: state.mode === "json" && state.omniscient,
-            hide_names: state.mode !== "vision" && state.hideNames,
-            hide_names_seed: state.mode !== "vision" && state.hideNames ? state.hideNamesSeed.trim() : "",
-            reasoning: state.reasoning,
-            allow_quit: state.allowQuit,
-            video: false
-          }
-        : {
-            kind: "local",
-            model: state.provider,
-            game_id: state.worldId,
-            level_id: effectiveLevelId(),
-            moves: moveBudget(),
-            unlimited: state.unlimited,
-            allow_quit: state.allowQuit,
-            mode: state.mode,
-            omniscient: state.mode === "json" && state.omniscient,
-            hide_names: state.mode !== "vision" && state.hideNames,
-            hide_names_seed: state.mode !== "vision" && state.hideNames ? state.hideNamesSeed.trim() : "",
-            vision_view: "",
-            model_name: resolvedModelName(),
-            reasoning: state.provider === "codex" || state.provider === "claude" ? state.reasoning : "",
-            codex_fast: state.provider === "codex" && document.getElementById("run-codex-fast").checked,
-            container: state.isolation === "docker",
-            video: false,
-            tools: state.toolUse === "offline",
-            tool_use: state.toolUse,
-            swarm: state.orchestration === "swarm"
-          };
+    const body = state.execution === "prime"
+      ? {
+          kind: "prime",
+          harness: state.harness,
+          model_name: resolvedModelName(),
+          max_turns: moveBudget(),
+          mode: state.mode,
+          vision: state.mode === "vision",
+          omniscient: state.mode === "json" && state.omniscient,
+          hide_names: state.mode !== "vision" && state.hideNames,
+          hide_names_seed: state.mode !== "vision" && state.hideNames ? state.hideNamesSeed.trim() : "",
+          reasoning: state.reasoning,
+          allow_quit: state.allowQuit,
+          video: false
+        }
+      : {
+          kind: "local",
+          subscription: true,
+          model: localProviderId(),
+          game_id: state.worldId,
+          level_id: effectiveLevelId(),
+          moves: moveBudget(),
+          unlimited: state.unlimited,
+          allow_quit: state.allowQuit,
+          mode: state.mode,
+          omniscient: state.mode === "json" && state.omniscient,
+          hide_names: state.mode !== "vision" && state.hideNames,
+          hide_names_seed: state.mode !== "vision" && state.hideNames ? state.hideNamesSeed.trim() : "",
+          vision_view: "",
+          model_name: resolvedModelName(),
+          reasoning: state.reasoning,
+          codex_fast: state.harness === "codex" && document.getElementById("run-codex-fast").checked,
+          container: false,
+          video: false,
+          tools: state.toolUse === "offline",
+          tool_use: state.toolUse,
+          swarm: state.orchestration === "swarm"
+        };
 
     body.count = 1;
 
@@ -1405,11 +1384,12 @@
             : "ended"
           : run.status;
     const modelName = run.model_name || run.model;
-    const providerName = {
-      codex: "Codex",
-      claude: "Claude Code",
-      prime: "Prime Intellect"
-    }[run.provider || run.model] || run.model;
+    const harnessName = HARNESSES.find((harness) => harness.id === (run.harness || "none"))?.name || run.harness;
+    const providerName = run.provider === "prime"
+      ? (run.harness || "none") === "none"
+        ? "Prime Intellect"
+        : `${harnessName || "Prime Intellect"} via Prime`
+      : ({ codex: "Codex", claude: "Claude Code" }[run.provider || run.model] || run.model);
     const reasoningEffort = String(run.reasoning || (run.provider === "prime" ? "off" : "auto")).toLowerCase();
     const showStartRoom = Boolean(run.level_id) && !run.start_room_is_default;
     const createdAt = escapeText(run.created_at ? new Date(run.created_at).toLocaleString() : "");
@@ -1644,7 +1624,7 @@
 
   function wireModelCatalog() {
     document.getElementById("refresh-models")?.addEventListener("click", () => {
-      loadModels(state.provider, { fresh: true });
+      if (state.harness) loadModels(state.harness, { fresh: true });
     });
 
     document.getElementById("model-search-input")?.addEventListener("input", (event) => {
@@ -1690,13 +1670,14 @@
 
   // ---- boot -----------------------------------------------------------------
 
-  renderProviders();
+  renderExecutionPicker();
+  renderHarnesses();
   renderWorlds();
   renderLevelSummary();
-  document.querySelectorAll(".segmented__option[data-isolation]").forEach((option) => {
+  document.querySelectorAll("[data-execution]").forEach((option) => {
     option.addEventListener("click", () => {
-      if (option.disabled) return;
-      setIsolation(option.dataset.isolation);
+      if (option.dataset.execution === "local") selectLocalRun();
+      else setExecution("prime");
     });
   });
   document.querySelectorAll(".segmented__option[data-tool-use]").forEach((option) => {
@@ -1705,7 +1686,6 @@
   document.querySelectorAll(".segmented__option[data-orchestration]").forEach((option) => {
     option.addEventListener("click", () => setOrchestration(option.dataset.orchestration));
   });
-  syncIsolationPicker();
   syncRunSettingCards();
   wireModelCatalog();
   wireConfigurationSummary();
@@ -1720,11 +1700,6 @@
     if (event.key === "Escape" && document.getElementById("provider-setup-modal")?.classList.contains("open")) {
       closeProviderSetup();
     }
-  });
-  refreshEnvironment().catch((error) => {
-    data.environment = { checking: false };
-    renderProviders();
-    setStatus(error.message, true);
   });
   syncComposerSteps(false);
 })();

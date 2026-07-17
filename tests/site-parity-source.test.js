@@ -13,6 +13,7 @@ const playCore = fs.readFileSync(path.join(root, "public", "play-core.js"), "utf
 const playRenderer = fs.readFileSync(path.join(root, "public", "play-render-three.js"), "utf8");
 const playScript = fs.readFileSync(path.join(root, "public", "play.js"), "utf8");
 const playTheme = fs.readFileSync(path.join(root, "public", "play-theme.css"), "utf8");
+const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "utf8");
 const replayExporter = fs.readFileSync(path.join(root, "scripts", "maze-export-replay.js"), "utf8");
 const favicon = fs.readFileSync(path.join(root, "public", "favicon.svg"), "utf8");
 const router = fs.readFileSync(path.join(root, "server", "router.js"), "utf8");
@@ -56,15 +57,29 @@ assert.match(
   pages,
   /id="train-model-loading" class="models-loading" role="status" aria-live="polite"><span class="inline-spinner" aria-hidden="true"><\/span><span class="models-loading__label">Loading models<\/span>/
 );
+assert.match(siteTheme, /\.inline-spinner \{[\s\S]*?animation: loading-spin 0\.85s linear infinite/);
+assert.match(siteTheme, /@keyframes loading-spin \{[\s\S]*?transform: rotate\(360deg\)/);
 assert.match(pages, /rel="preload" as="image" href="\/logos\/codex\.png"[^>]*fetchpriority="high"/);
 assert.match(pages, /rel="preload" as="image" href="\/logos\/claude\.png"[^>]*fetchpriority="high"/);
 assert.match(pages, /rel="preload" as="image" href="\/logos\/prime\.png"[^>]*fetchpriority="high"/);
 assert.doesNotMatch(agentScript, /logos\/(?:codex|claude|prime)\.png" alt="" loading="lazy"/);
 assert.equal((agentScript.match(/loading="eager" decoding="sync" fetchpriority="high"/g) || []).length, 3);
-assert.match(agentScript, /id: "codex",\s*name: "Codex",\s*enabled: false/);
-assert.match(agentScript, /id: "claude",\s*name: "Claude Code",\s*enabled: false/);
-assert.match(agentScript, /id: "prime",\s*name: "Prime Intellect",\s*enabled: true/);
-assert.match(agentScript, /PROVIDERS\.filter\(\(provider\) => provider\.enabled\)\.map/);
+assert.match(agentScript, /const HARNESSES = \[/);
+assert.match(agentScript, /id: "none",\s*name: "Prime Intellect",\s*logo: '<img src="\/logos\/prime\.png"/);
+assert.match(agentScript, /id: "codex",\s*name: "Codex"/);
+assert.match(agentScript, /id: "claude-code",\s*name: "Claude Code"/);
+assert.match(agentScript, /kind: "prime",\s*harness: state\.harness/);
+assert.match(agentScript, /kind: "local",\s*subscription: true/);
+assert.match(pages, /data-execution="prime"/);
+assert.match(pages, /data-execution="local"/);
+assert.match(pages, /data-execution="prime"[\s\S]*?src="\/logos\/prime\.png"/);
+assert.match(pages, /id="local-run-status"[^>]*hidden/);
+assert.doesNotMatch(agentScript, /provider-card__avail/);
+assert.ok(
+  pages.indexOf('id="provider-picker"') < pages.indexOf('id="harness-execution"'),
+  "Run through choices should appear beneath the selected harness"
+);
+assert.match(pages, /<h3>Harness<\/h3>/);
 assert.match(pages, /window\.__PLAY_WORLD_DATA__/);
 assert.match(pages, /maze-frame is-loading/);
 assert.match(pages, /class="maze-load-label">Loading</);
@@ -157,6 +172,17 @@ assert.equal(nativeFrameCountIsAcceptable(2696, 2698), false);
 assert.equal(nativeFrameCountIsAcceptable(2699, 2698), false);
 assert.match(replayExporter, /Accelerated replay produced a blank gameplay frame/);
 assert.match(replayExporter, /Accelerated replay diverged after action/);
+assert.match(replayExporter, /await captureFixedFrames\(edgeFrames\)/);
+assert.match(replayExporter, /const startedAt = Number\(window\.__MAZE_REPLAY_NOW__\) \|\| performance\.now\(\)/);
+assert.match(replayExporter, /app\.vectorGlowAmount = 1 - eased/);
+assert.match(replayExporter, /await captureFixedFrames\(diveFrames\)/);
+assert.ok(
+  replayExporter.indexOf("await captureFixedFrames(edgeFrames)") <
+    replayExporter.indexOf("app.vectorGlowAmount = 1 - eased") &&
+    replayExporter.indexOf("app.vectorGlowAmount = 1 - eased") <
+      replayExporter.indexOf("await captureFixedFrames(diveFrames)"),
+  "replay intro must finish the blue edge sweep before the color-fade camera dive"
+);
 assert.doesNotMatch(replayExporter, /ASCII OBSERVATION/);
 assert.match(pages, /id="regenerate-video"/);
 assert.match(pages, /id="cancel-video"/);

@@ -68,5 +68,15 @@ assert.match(runScript, /function showMetricTooltip\(canvas, target, event\)/);
 assert.match(runScript, /tooltip\.textContent = `Frame \$\{target\.action\.toLocaleString\(\)\} · \$\{noun\}`/);
 assert.match(siteTheme, /\.run-metric-chart__canvas\.has-jump-target/);
 assert.match(siteTheme, /\.run-metric-chart__tooltip \{/);
+assert.equal((pages.match(/id="run-replay-export"/g) || []).length, 1);
+assert.match(
+  pages,
+  /id="run-replay-export"[\s\S]*?id="generate-video" class="run-heatmap__export run-replay-export__button"[\s\S]*?>Generate replay<[\s\S]*?id="run-replay-progress"[\s\S]*?id="run-replay-section"/
+);
+assert.match(pages, /<h2>Runner log<\/h2>[\s\S]*?\$\{replayExportSection\}/);
+assert.doesNotMatch(pages, /id="generate-video" class="button run-video-action"/);
+assert.match(runScript, /generateLabel\.textContent = renderingVideo \? "Generating…" : "Generate replay"/);
+assert.match(siteTheme, /\.run-video \{[\s\S]*?max-height: min\(62vh, 540px\);[\s\S]*?width: min\(100%, 760px\);/);
+assert.match(siteTheme, /\.run-replay-progress-panel \{[\s\S]*?margin-top: 16px/);
 
 console.log("agent-run-playback-source: OK — exact-frame input and linked logs/charts share race-safe replay navigation.");

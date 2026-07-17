@@ -1,0 +1,24 @@
+[project]
+name = "mazebench-agent"
+description = "Harness-neutral MazeBench taskset for Prime-managed coding agents."
+tags = ["maze", "game", "agentic", "codex", "claude-code", "eval"]
+version = "0.1.0"
+license = "MIT"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "verifiers @ git+https://github.com/PrimeIntellect-ai/verifiers.git@df9c5aa58c28db717cfeb1150c1d0c751f4570a6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mazebench_agent"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.verifiers.eval]
+num_tasks = 1
+num_rollouts = 1

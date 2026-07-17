@@ -4,15 +4,15 @@
 // Prime Verifiers run wrapper (Agent Mode).
 //
 // Runs the mazebench Verifiers v1 taskset via `uv run eval`, then builds the
-// same replay artifacts the local Codex/Claude runner produces — maze_replay.mp4,
-// maze_scorecard.json, and a per-move actions.jsonl — from the eval's
-// results.jsonl. That lets the web run page show renderings + a video for Prime
-// runs, not just the log. Spawned detached by server/agent-runs.js with its
-// stdout/stderr wired to the run's launcher.log.
+// the web run artifacts — maze_replay.mp4, maze_scorecard.json, and a per-move
+// actions.jsonl — from the eval's results.jsonl or traces.jsonl. That lets the
+// run page show renderings + a video for Prime runs, not just the log. Spawned
+// detached by server/agent-runs.js with stdout/stderr wired to launcher.log.
 //
 // Usage:
 //   node maze-prime-run.js --env-dir <dir> --out <runDir> [--model <id>]
-//     --max-turns <n> [--observation-mode <ascii|json|vision>] [--no-video]
+//     --harness <none|codex|claude-code> --max-turns <n>
+//     [--observation-mode <ascii|json|vision>] [--no-video]
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -24,12 +24,15 @@ const LIVE_EVAL = path.join(ROOT_DIR, "scripts", "maze-prime-live-eval.py");
 const TERMINAL = path.join(ROOT_DIR, "scripts", "maze-terminal.js");
 const HOSTED_STATE_FILE = "prime-evaluation.json";
 const HOSTED_SAMPLES_FILE = "prime-evaluation-samples.json";
+const TEXT_RUNTIME_IMAGE = "node:24-bookworm-slim";
+const VISION_RUNTIME_IMAGE = "mcr.microsoft.com/playwright:v1.60.0-noble";
 
 function parseArgs(argv) {
   const opts = {
     envDir: "",
     environment: "mazebench/mazebench",
     gameWonGemCount: 69,
+    harness: "none",
     hosted: false,
     levelId: "level_HxI",
     maxTurns: 20,
@@ -51,6 +54,10 @@ function parseArgs(argv) {
     const next = () => argv[(index += 1)];
 
     if (arg === "--env-dir") opts.envDir = next();
+    else if (arg === "--harness") {
+      const harness = String(next() || "none").trim().toLowerCase();
+      opts.harness = harness === "claude" ? "claude-code" : harness;
+    }
     else if (arg === "--environment") opts.environment = String(next() || opts.environment);
     else if (arg === "--out") opts.outDir = next();
     else if (arg === "--model") opts.model = next();
@@ -79,7 +86,12 @@ function parseArgs(argv) {
   if (!opts.outDir || (!opts.hosted && !opts.envDir)) {
     throw new Error("maze-prime-run.js requires --out and, for local evaluations, --env-dir");
   }
-
+  if (!["none", "codex", "claude-code"].includes(opts.harness)) {
+    throw new Error(`Unknown Prime harness "${opts.harness}".`);
+  }
+  if (opts.hosted && opts.harness !== "none") {
+    throw new Error("Prime coding-agent harnesses currently run through the local evaluator with a Prime sandbox.");
+  }
   return opts;
 }
 
@@ -485,7 +497,9 @@ function runEval(opts) {
   const liveUsagePath = path.join(opts.outDir, "prime-usage.jsonl");
   const liveActionsPath = path.join(opts.outDir, "actions.jsonl");
   const liveReasoningPath = path.join(opts.outDir, "prime-reasoning.jsonl");
-  const argv = ["run", "--project", opts.envDir, "python", LIVE_EVAL, "mazebench"];
+  const agentic = opts.harness !== "none";
+  const taskset = agentic ? "mazebench-agent" : "mazebench";
+  const argv = ["run", "--project", opts.envDir, "python", LIVE_EVAL, taskset];
 
   // The live exporter appends after every model turn. Start each run clean so
   // polling clients never mix usage from an earlier attempt.
@@ -520,6 +534,28 @@ function runEval(opts) {
     evalOutDir
   );
 
+  if (agentic) {
+    const runtimeImage = opts.vision ? VISION_RUNTIME_IMAGE : TEXT_RUNTIME_IMAGE;
+    argv.push(
+      "--harness.id",
+      opts.harness,
+      "--harness.runtime.type",
+      "prime",
+      "--harness.runtime.image",
+      runtimeImage,
+      "--harness.runtime.workdir",
+      "/app",
+      "--harness.runtime.cpu",
+      "2",
+      "--harness.runtime.memory",
+      "4",
+      "--harness.runtime.disk",
+      "8",
+      "--push",
+      "False"
+    );
+  }
+
   if (opts.vision) {
     argv.push("--taskset.observation-mode", "vision");
   } else if (opts.observationMode === "json") {
@@ -549,6 +585,7 @@ function runEval(opts) {
       cwd: opts.envDir,
       env: {
         ...process.env,
+        MAZEBENCH_PRIME_HARNESS: opts.harness,
         MAZEBENCH_LIVE_USAGE_PATH: liveUsagePath,
         MAZEBENCH_LIVE_ACTIONS_PATH: liveActionsPath,
         MAZEBENCH_LIVE_REASONING_PATH: liveReasoningPath
@@ -571,7 +608,7 @@ function findResults(dir, depth = 0) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
 
   for (const entry of entries) {
-    if (entry.isFile() && entry.name === "results.jsonl") {
+    if (entry.isFile() && ["results.jsonl", "traces.jsonl"].includes(entry.name)) {
       return path.join(dir, entry.name);
     }
   }
@@ -681,6 +718,42 @@ function conversationTurns(row) {
   return turns;
 }
 
+function agenticConversationTurns(row) {
+  const nodes = Array.isArray(row.nodes) ? row.nodes : [];
+  const turns = [];
+  let assistant = null;
+
+  for (const node of nodes) {
+    const message = node && node.message;
+    if (!message || typeof message !== "object") continue;
+    if (message.role === "assistant") {
+      const normalizedReasoning = String(messageText(message.reasoning_content) || "").trim();
+      assistant = {
+        reasoning: normalizedReasoning || providerReasoningText(message.provider_state),
+        action: String(messageText(message.content) || "").trim()
+      };
+      continue;
+    }
+    if (message.role !== "tool") continue;
+    const markers = String(messageText(message.content) || "").matchAll(/MAZEBENCH_EVENT_V1:([A-Za-z0-9_-]+)/g);
+    for (const marker of markers) {
+      try {
+        const event = JSON.parse(Buffer.from(marker[1], "base64url").toString("utf8"));
+        turns.push({
+          turn: Number(event.turn) || turns.length + 1,
+          board: String(event.status?.level || ""),
+          reasoning: assistant?.reasoning || "",
+          action: String(event.command_text || assistant?.action || "").trim()
+        });
+      } catch (_error) {
+        /* malformed telemetry is ignored; finalized task artifacts remain authoritative */
+      }
+    }
+  }
+
+  return turns.sort((left, right) => left.turn - right.turn);
+}
+
 // Build the per-move artifacts the run page reads: actions.jsonl (turn,
 // command_text, status incl. the text board) drives the board + move list, and
 // reasoning.json drives the per-move reasoning shown alongside each move.
@@ -700,7 +773,8 @@ function writeMoveArtifacts(resultsPath, outDir) {
   const mazeActions = (Array.isArray(info.maze_actions) ? info.maze_actions : []).filter(
     (action) => action && action.turn != null
   );
-  const turns = conversationTurns(row);
+  const agenticTurns = agenticConversationTurns(row);
+  const turns = agenticTurns.length ? agenticTurns : conversationTurns(row);
 
   const actionLines = [];
   const reasoning = [];
@@ -796,7 +870,7 @@ async function main() {
   const resultsPath = findResults(path.join(opts.outDir, "eval-output"));
 
   if (!resultsPath) {
-    console.error("[mazebench] eval finished but no results.jsonl was found; skipping replay.");
+    console.error("[mazebench] eval finished but no rollout JSONL was found; skipping replay.");
     process.exit(0);
   }
 
@@ -832,6 +906,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  agenticConversationTurns,
   conversationTurns,
   hostedEvalArgs,
   hostedRolloutError,
@@ -840,6 +915,7 @@ module.exports = {
   parseArgs,
   providerReasoningText,
   replayExportArgs,
+  writeMoveArtifacts,
   writeHostedLiveArtifacts,
   writeHostedResults
 };

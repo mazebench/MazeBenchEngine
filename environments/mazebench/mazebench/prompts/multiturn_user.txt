@@ -5,7 +5,6 @@ Objective: $target_text
 Current room: `$current_room`
 Current view: $current_view
 Yaw: $yaw
-Player: x=$player_x y=$player_y elevation=$player_elevation
 Gems collected: $gem_count
 Visited rooms: $visited_rooms
 $death_text

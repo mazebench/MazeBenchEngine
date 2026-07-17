@@ -11,20 +11,69 @@ from __future__ import annotations
 
 import json
 import os
+import base64
+import re
 import sys
 import threading
 import time
 from pathlib import Path
 
+from openai.types.responses.response_usage import InputTokensDetails
 from verifiers.v1.graph import PendingTurn
+from verifiers.v1.dialects.responses import OpenAIResponse, ProviderUsage, ResponsesDialect
 
 
 LIVE_USAGE_PATH = os.environ.get("MAZEBENCH_LIVE_USAGE_PATH", "").strip()
 LIVE_ACTIONS_PATH = os.environ.get("MAZEBENCH_LIVE_ACTIONS_PATH", "").strip()
 LIVE_REASONING_PATH = os.environ.get("MAZEBENCH_LIVE_REASONING_PATH", "").strip()
+PRIME_HARNESS = os.environ.get("MAZEBENCH_PRIME_HARNESS", "").strip().lower()
 _write_lock = threading.Lock()
 _original_commit = PendingTurn.commit
 _exported_action_counts: dict[str, int] = {}
+_exported_agent_markers: dict[str, set[str]] = {}
+_agent_marker = re.compile(r"MAZEBENCH_EVENT_V1:([A-Za-z0-9_-]+)")
+
+
+def _patch_prime_codex_reasoning_summary() -> None:
+    """Prime Responses rejects Codex's automatic summary knob; keep the harness native."""
+    if getattr(ResponsesDialect, "_mazebench_prime_codex_patched", False):
+        return
+    original = ResponsesDialect.apply_overrides
+
+    def apply_overrides(self, body, model, sampling):
+        patched = original(self, body, model, sampling)
+        model_name = str(model).rsplit("/", 1)[-1].lower()
+        # Codex CLI adds this knob for every model it drives, not only models
+        # whose IDs contain "codex". Prime's Responses endpoint rejects it.
+        if PRIME_HARNESS == "codex" or "codex" in model_name:
+            reasoning = dict(patched.get("reasoning") or {})
+            if reasoning.get("summary") == "auto":
+                reasoning.pop("summary", None)
+            if reasoning:
+                patched["reasoning"] = reasoning
+            else:
+                patched.pop("reasoning", None)
+        return patched
+
+    ResponsesDialect.apply_overrides = apply_overrides
+    ResponsesDialect._mazebench_prime_codex_patched = True
+
+
+_patch_prime_codex_reasoning_summary()
+
+
+def _patch_prime_usage_schema() -> None:
+    """Accept Prime's valid cached-token detail with newer OpenAI SDK models."""
+    field = InputTokensDetails.model_fields.get("cache_write_tokens")
+    if field is None or not field.is_required():
+        return
+    field.default = 0
+    InputTokensDetails.model_rebuild(force=True)
+    ProviderUsage.model_rebuild(force=True)
+    OpenAIResponse.model_rebuild(force=True)
+
+
+_patch_prime_usage_schema()
 
 
 def _append_jsonl(path: str, record: dict) -> None:
@@ -57,6 +106,39 @@ def _export_synchronized_actions(trace) -> None:
             },
         )
     _exported_action_counts[trace.id] = len(actions or [])
+
+
+def _export_agent_actions(pending: PendingTurn) -> None:
+    """Export shell-helper events normalized by either coding-agent dialect."""
+    if not LIVE_ACTIONS_PATH:
+        return
+    seen = _exported_agent_markers.setdefault(pending.trace.id, set())
+    for message in pending.prompt:
+        if getattr(message, "role", "") != "tool":
+            continue
+        for match in _agent_marker.finditer(_content_text(getattr(message, "content", ""))):
+            encoded = match.group(1)
+            if encoded in seen:
+                continue
+            try:
+                padded = encoded + "=" * (-len(encoded) % 4)
+                action = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(action, dict):
+                continue
+            _append_jsonl(
+                LIVE_ACTIONS_PATH,
+                {
+                    "turn": action.get("turn"),
+                    "timestamp": action.get("timestamp"),
+                    "command_text": action.get("command_text") or "",
+                    "valid": action.get("valid", True),
+                    "error": action.get("error"),
+                    "status": action.get("status") or {},
+                },
+            )
+            seen.add(encoded)
 
 
 def _content_text(content) -> str:
@@ -142,13 +224,14 @@ def _response_reasoning(response) -> str:
     return "\n".join(parts).strip()
 
 
-def _commit_with_live_usage(self: PendingTurn, response) -> None:
-    _original_commit(self, response)
+def _commit_with_live_usage(self: PendingTurn, response, *args, **kwargs) -> None:
+    result = _original_commit(self, response, *args, **kwargs)
     # Telemetry must never turn a successfully committed model response into an
     # HTTP 500. Provider response schemas legitimately omit optional reasoning
     # fields, and the maze rollout must continue when that happens.
     try:
         _export_synchronized_actions(self.trace)
+        _export_agent_actions(self)
         message = getattr(response, "message", None)
         reasoning = _response_reasoning(response)
         if LIVE_REASONING_PATH and reasoning:
@@ -179,6 +262,7 @@ def _commit_with_live_usage(self: PendingTurn, response) -> None:
         _append_jsonl(LIVE_USAGE_PATH, record)
     except Exception as error:
         print(f"[mazebench] live telemetry skipped: {error}", file=sys.stderr)
+    return result
 
 
 PendingTurn.commit = _commit_with_live_usage

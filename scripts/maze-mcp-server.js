@@ -12,6 +12,7 @@ const http = require("node:http");
 const path = require("node:path");
 const readline = require("node:readline");
 const { spawnSync } = require("node:child_process");
+const { redactAgentStatus } = require("./codex-play");
 
 const REPO_ROOT = path.resolve(process.env.MAZEBENCH_REPO_ROOT || path.join(__dirname, ".."));
 const HELPER = path.join(REPO_ROOT, "scripts", "codex-play.js");
@@ -200,7 +201,7 @@ function compactStatus(value) {
     game_lost: Boolean(status.game_lost || status.player_dead),
     game_won: Boolean(status.game_won || status.solved),
     gem_count: Math.max(0, Number(status.gem_count) || 0),
-    player: status.player || null,
+    ...(process.env.MAZEBENCH_MODE === "json" ? { player: status.player || null } : {}),
     quit: Boolean(status.quit),
     yaw: Number(status.yaw) || 0
   };
@@ -349,7 +350,7 @@ function createWorker(requestedId, options = {}) {
     ...metadata,
     own_action_count: 0,
     instruction:
-      `Use clone_id \"${id}\" for every MazeBench MCP observe/action/scorecard call. ` +
+      `Use clone_id \"${id}\" for every MazeBench MCP observe/action call. ` +
       `Put code and notes in ${agentWorkspace}. Never act on the primary maze; report findings to the lead.`
   };
 }
@@ -407,15 +408,6 @@ const TOOLS = [
     }
   },
   {
-    name: "maze_scorecard",
-    description: "Read the scorecard for the primary maze or a private worker clone.",
-    inputSchema: {
-      type: "object",
-      properties: { clone_id: { type: "string" } },
-      additionalProperties: false
-    }
-  },
-  {
     name: "maze_clone",
     description: "Fork the current primary maze, or another private clone, into an independently tracked exploration instance.",
     inputSchema: {
@@ -463,17 +455,12 @@ const RESTRICTED_TOOLS = [
       required: ["action"],
       additionalProperties: false
     }
-  },
-  {
-    name: "game_scorecard",
-    description: "Return the scorecard for the current game.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false }
   }
 ];
 
 function normalizedToolCall(name, input = {}) {
   if (!RESTRICTED_MODE) return { name, input };
-  if (!/^game_(start|observe|action|scorecard)$/.test(name)) {
+  if (!/^game_(start|observe|action)$/.test(name)) {
     throw new Error(`Unknown game control "${name}".`);
   }
   const allowedKeys = name === "game_action" ? new Set(["action"]) : new Set();
@@ -519,7 +506,7 @@ function callTool(name, input = {}, { workerOnly = WORKER_ONLY } = {}) {
       !input.clone_id &&
       sessionActionCount(PRIMARY_SESSION) - PRIMARY_INITIAL_ACTION_COUNT >= PRIMARY_MOVE_BUDGET
     ) {
-      throw new Error(`The primary move budget of ${PRIMARY_MOVE_BUDGET} action(s) is exhausted. Call maze_scorecard and finish.`);
+      throw new Error(`The primary move budget of ${PRIMARY_MOVE_BUDGET} action(s) is exhausted. Finish the run.`);
     }
     const result = runHelper(["action", "--state", sessionFor(input.clone_id), String(input.action)]);
     if (!input.clone_id) {
@@ -544,10 +531,6 @@ function callTool(name, input = {}, { workerOnly = WORKER_ONLY } = {}) {
       }
     }
     return result;
-  }
-  if (name === "maze_scorecard") {
-    if (workerOnly && !input.clone_id) throw new Error("Workers must supply their clone_id.");
-    return runHelper(["scorecard", "--state", sessionFor(input.clone_id)]);
   }
   if (name === "maze_clone") {
     if (!workerOnly && !LEAD_CLONES_ALLOWED) {
@@ -595,6 +578,11 @@ function toolsFor(workerOnly) {
 }
 
 function publicToolValue(value) {
+  value = redactAgentStatus(value, {
+    mode: ["json", "vision"].includes(process.env.MAZEBENCH_MODE)
+      ? process.env.MAZEBENCH_MODE
+      : "text"
+  });
   if (Array.isArray(value)) return value.map(publicToolValue);
   if (!value || typeof value !== "object") return value;
   const printable = {};

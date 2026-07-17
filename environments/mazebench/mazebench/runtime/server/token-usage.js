@@ -859,7 +859,11 @@ function findClaudeSessionFile(claudeHome, conversationId) {
 }
 
 function findPrimeResultsFile(runDir) {
-  return findFile(path.join(runDir, "eval-output"), (name) => name === "results.jsonl", 0);
+  return findFile(
+    path.join(runDir, "eval-output"),
+    (name) => name === "results.jsonl" || name === "traces.jsonl",
+    0
+  );
 }
 
 module.exports = {

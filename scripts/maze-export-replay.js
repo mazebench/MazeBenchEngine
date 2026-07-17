@@ -34,13 +34,13 @@ function normalizedGemCollectionIds(values) {
 }
 
 function usage() {
-  return `Usage: npm run maze:replay -- [results-dir | results.jsonl | session.json | session-dir] [options]
+  return `Usage: npm run maze:replay -- [results-dir | results.jsonl | traces.jsonl | session.json | session-dir] [options]
 
 Creates maze_scorecard.json, maze_actions.txt, and maze_replay.mp4 from a mazebench
-eval (results.jsonl) or from a local agent run (session.json written by codex-play.js).
+eval rollout JSONL or from a local agent run (session.json written by codex-play.js).
 
 Options:
-  --index <n>          Rollout row to export from results.jsonl. Default: 0.
+  --index <n>          Rollout row to export from results/traces JSONL. Default: 0.
   --action-limit <n>   Render only the first n actions (useful for replay QA).
   --out-dir <path>     Directory for exported artifacts. Default: eval results dir.
   --video              Render maze_replay.mp4. Enabled by default.
@@ -56,7 +56,8 @@ Options:
   --fast               Capture only settled states, not animation tweens.
   --draft              Lower replay DPR and disable the fuzzy effect for
                        faster capture.
-  --intro              Begin with the blue edge-reveal zoom used by Maze Bench.
+  --intro              Begin with the blue edge reveal, then zoom in while
+                       the normal fill colors fade into view.
   --ascii-side-by-side Render the visual maze and ASCII observation together.
   --no-edges           Drop the black outline pass (on by default, matching
                        how the game looks in the browser).
@@ -275,7 +276,7 @@ function findResultsFiles(dir, depth = 0, found = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const entryPath = path.join(dir, entry.name);
 
-    if (entry.isFile() && entry.name === "results.jsonl") {
+    if (entry.isFile() && ["results.jsonl", "traces.jsonl"].includes(entry.name)) {
       found.push(entryPath);
     } else if (entry.isDirectory()) {
       findResultsFiles(entryPath, depth + 1, found);
@@ -289,7 +290,7 @@ function latestResultsPath() {
   const candidates = findResultsFiles(DEFAULT_RESULTS_ROOT);
 
   if (candidates.length === 0) {
-    throw new Error(`No results.jsonl files found under ${DEFAULT_RESULTS_ROOT}`);
+    throw new Error(`No rollout JSONL files found under ${DEFAULT_RESULTS_ROOT}`);
   }
 
   candidates.sort((a, b) => fileMtimeMs(b) - fileMtimeMs(a));
@@ -302,17 +303,22 @@ function resolveInput(input) {
 
   if (stats.isDirectory()) {
     const resultsPath = path.join(resolvedInput, "results.jsonl");
+    const tracesPath = path.join(resolvedInput, "traces.jsonl");
     const sessionPath = path.join(resolvedInput, "session.json");
 
     if (fs.existsSync(resultsPath)) {
       return { mode: "results", resultsDir: resolvedInput, resultsPath };
     }
 
+    if (fs.existsSync(tracesPath)) {
+      return { mode: "results", resultsDir: resolvedInput, resultsPath: tracesPath };
+    }
+
     if (fs.existsSync(sessionPath)) {
       return { mode: "session", sessionDir: resolvedInput, sessionPath };
     }
 
-    throw new Error(`No results.jsonl or session.json found in ${resolvedInput}`);
+    throw new Error(`No results.jsonl, traces.jsonl, or session.json found in ${resolvedInput}`);
   }
 
   if (path.basename(resolvedInput) === "session.json") {
@@ -1203,10 +1209,16 @@ function estimatedActionSeconds(parsed, options) {
   return 0.1;
 }
 
+const REPLAY_INTRO_EDGE_SECONDS = 2.2;
+const REPLAY_INTRO_DIVE_SECONDS = 0.9;
+
 function estimateCaptureFrameCount(actions, options) {
   const parsedActions = actions.map(parseCommandLine).filter(Boolean);
   const tailFrames = Math.round(options.tailSeconds * options.fps);
-  const introFrames = options.intro ? Math.round(2.4 * options.fps) : 0;
+  const introFrames =
+    options.intro && !options.fast
+      ? Math.round((REPLAY_INTRO_EDGE_SECONDS + REPLAY_INTRO_DIVE_SECONDS) * options.fps)
+      : 0;
 
   if (options.fast) {
     return Math.max(1, 1 + introFrames + parsedActions.length + tailFrames);
@@ -2224,18 +2236,28 @@ async function renderReplayVideo(
 
     async function captureIntro() {
       if (!options.intro || options.fast) return false;
-      // Headless Chromium advances at roughly 60 RAFs/sec. Capture the tuned
-      // number of output frames while running the reveal faster in wall time,
-      // yielding a smooth ~2.2-second opening at the requested output FPS.
-      const outputFrames = Math.max(1, Math.round(2.2 * options.fps));
-      const durationMs = Math.max(
+      // The intro deliberately has two non-overlapping phases, matching the
+      // browser's world boot: first the camera holds still while the blue
+      // wireframe traces in; only once that is complete does the camera dive
+      // while the near-black vector fills melt into the normal palette.
+      const edgeFrames = Math.max(1, Math.round(REPLAY_INTRO_EDGE_SECONDS * options.fps));
+      const diveFrames = Math.max(1, Math.round(REPLAY_INTRO_DIVE_SECONDS * options.fps));
+      // Headless Chromium advances at roughly 60 RAFs/sec. In the reliable
+      // PNG path, shorten wall-clock animation durations while retaining the
+      // requested number of output frames and therefore the intended video
+      // duration. Accelerated capture already advances at the output FPS.
+      const edgeDurationMs = Math.max(
         550,
-        Math.round((outputFrames / (options.accelerated ? options.fps : 60)) * 1000)
+        Math.round((edgeFrames / (options.accelerated ? options.fps : 60)) * 1000)
+      );
+      const diveDurationMs = Math.max(
+        200,
+        Math.round((diveFrames / (options.accelerated ? options.fps : 60)) * 1000)
       );
       if (options.accelerated) {
         await page.evaluate(() => window.__syncMazeReplayClock__?.());
       }
-      await page.evaluate(({ duration, tiltDegrees, yawTurns, zoom }) => {
+      await page.evaluate(({ duration, yawTurns }) => {
         const app = window.__PIXEL_GAME_APP__;
         const renderer = app?.threeRenderer;
         if (!renderer) return;
@@ -2254,21 +2276,68 @@ async function renderReplayVideo(
         renderer.invalidateSceneCache?.();
         app.render?.();
         renderer.beginHomeEdgeReveal?.({ durationMs: duration });
-        renderer.setDebugCameraView?.({
-          animate: true,
-          durationMs: duration,
-          mode: "perspective",
-          tilt: (tiltDegrees * Math.PI) / 180,
-          yaw: yawTurns * (Math.PI / 2),
-          zoom
-        });
       }, {
-        duration: durationMs,
+        duration: edgeDurationMs,
+        yawTurns: cameraYawTurns
+      });
+
+      await captureFixedFrames(edgeFrames);
+
+      await page.evaluate(({ duration, tiltDegrees, yawTurns, zoom }) => {
+        const app = window.__PIXEL_GAME_APP__;
+        const renderer = app?.threeRenderer;
+        if (!app || !renderer) return;
+
+        const startTilt = 1.28;
+        const endTilt = (tiltDegrees * Math.PI) / 180;
+        const startZoom = 0.24;
+        const endZoom = zoom;
+        const startLogZoom = Math.log(startZoom);
+        const endLogZoom = Math.log(endZoom);
+        // Accelerated capture drives RAF with a synthetic clock that may be
+        // several seconds ahead of real performance.now() after the edge
+        // phase. Start from that same clock or the first dive frame would
+        // incorrectly read as already complete and jump straight to color.
+        const startedAt = Number(window.__MAZE_REPLAY_NOW__) || performance.now();
+
+        // Turning off the theme here does not flash the final palette:
+        // vectorGlowAmount starts at 1, keeping fills near-black and edges
+        // blue, then drives both continuously toward their gameplay colors.
+        renderer.cancelHomeEdgeReveal?.();
+        app.homeVectorTheme = false;
+        app.vectorGlowAmount = 1;
+
+        const step = (now) => {
+          const raw = (now - startedAt) / duration;
+          const progress = raw < 0 ? 0 : raw > 1 ? 1 : raw;
+          const eased = 0.5 - Math.cos(Math.PI * progress) / 2;
+          renderer.setDebugCameraView?.({
+            animate: false,
+            mode: "perspective",
+            tilt: startTilt + (endTilt - startTilt) * eased,
+            yaw: yawTurns * (Math.PI / 2),
+            zoom: Math.exp(startLogZoom + (endLogZoom - startLogZoom) * eased),
+            skipRender: true
+          });
+          app.vectorGlowAmount = 1 - eased;
+          renderer.invalidateSceneCache?.();
+          app.render?.(now);
+
+          if (progress < 1) {
+            window.requestAnimationFrame(step);
+          }
+        };
+
+        window.requestAnimationFrame(step);
+      }, {
+        duration: diveDurationMs,
         tiltDegrees: cameraTiltDegrees,
         yawTurns: cameraYawTurns,
         zoom: options.cameraZoom
       });
-      await captureFixedFrames(outputFrames);
+
+      await captureFixedFrames(diveFrames);
+
       await page.evaluate(() => {
         const app = window.__PIXEL_GAME_APP__;
         if (!app) return;

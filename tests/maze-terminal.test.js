@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { execFileSync } = require("node:child_process");
+const { execFileSync, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -10,6 +10,11 @@ const bridgeScript = path.join(ROOT_DIR, "scripts", "maze-bridge.js");
 const codexPlayScript = path.join(ROOT_DIR, "scripts", "codex-play.js");
 const modelReplScript = path.join(ROOT_DIR, "scripts", "maze-model-repl.js");
 const { extractAsciiFrames } = require(path.join(ROOT_DIR, "scripts", "maze-export-replay.js"));
+const {
+  redactAgentStatus,
+  redactVisionStatus,
+  requiredActionsRemaining
+} = require(codexPlayScript);
 const {
   applyMove,
   boardStateHash,
@@ -117,6 +122,22 @@ function runCodexPlay(args) {
   }));
 }
 
+function runCodexPlayRaw(args) {
+  return execFileSync(process.execPath, [codexPlayScript, ...args], {
+    cwd: ROOT_DIR,
+    encoding: "utf8",
+    maxBuffer: 20 * 1024 * 1024
+  });
+}
+
+function runCodexPlayFailure(args) {
+  return spawnSync(process.execPath, [codexPlayScript, ...args], {
+    cwd: ROOT_DIR,
+    encoding: "utf8",
+    maxBuffer: 20 * 1024 * 1024
+  });
+}
+
 function body(output) {
   return output.split("\n").slice(1).join("\n");
 }
@@ -131,6 +152,52 @@ function countMatches(value, pattern) {
 
 function assertMove(move, yaw, expected) {
   assert.deepEqual(screenMoveVector(move, yaw), expected);
+}
+
+{
+  const secretBoard = "maze level_HxI | view=top\nASCII-BOARD-SECRET";
+  const source = {
+    _render_state: { actors: [{ type: "player", x: 1, y: 2, elevation: 0 }] },
+    level: secretBoard,
+    board: secretBoard,
+    player: { x: 1, y: 2, elevation: 0 },
+    observation: { screen: secretBoard },
+    nested: {
+      header: "board header",
+      json_observation: { objects: { player: [[1, 2, 0]] } },
+      scorecard: { actions: { total: 9 }, gems: { collected: 1 } }
+    },
+    current_room: "level_HxI",
+    frame_image: "/tmp/frame.png"
+  };
+  const redacted = redactVisionStatus(source);
+
+  assert.equal(JSON.stringify(redacted).includes(secretBoard), false);
+  assert.equal(redacted.current_room, "level_HxI");
+  assert.equal(redacted.frame_image, "/tmp/frame.png");
+  assert.equal(Object.prototype.hasOwnProperty.call(redacted, "player"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(redacted.nested, "scorecard"), false);
+
+  const text = redactAgentStatus(source, { mode: "text" });
+  assert.equal(text.level, secretBoard);
+  assert.equal(Object.prototype.hasOwnProperty.call(text, "player"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(text, "_render_state"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(text.nested, "json_observation"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(text.nested, "scorecard"), false);
+
+  const json = redactAgentStatus(source, { mode: "json" });
+  assert.deepEqual(json.player, { x: 1, y: 2, elevation: 0 });
+  assert.deepEqual(json.nested.json_observation.objects.player, [[1, 2, 0]]);
+  assert.equal(Object.prototype.hasOwnProperty.call(json, "level"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(json.nested, "scorecard"), false);
+
+  const unfinished = {
+    actions: [{ command: "up" }],
+    allowQuit: false,
+    lastStatus: { game_won: false },
+    maxActions: 2
+  };
+  assert.equal(requiredActionsRemaining(unfinished), 1);
 }
 
 function createContext(overrides = {}) {
@@ -1255,8 +1322,89 @@ function syntheticFloor(width, height) {
     assert.equal(Object.prototype.hasOwnProperty.call(initial, "level"), false);
     assert.equal(initial.json_observation.omniscient, true);
     assert.equal(initial.json_observation.hide_names, true);
+    assert.equal(Number.isFinite(initial.player.x), true);
+    assert.equal(initial.json_observation.objects.player.length > 0, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(initial, "scorecard"), false);
     assert.deepEqual(initial.json_observation.objects, observed.json_observation.objects);
     assert.equal(session.hideNamesSeed, "user-selected-seed");
+    assert.equal(Object.prototype.hasOwnProperty.call(session.initial, "level"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(session.initial, "json_observation"), true);
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
+}
+
+{
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "maze-no-quit-budget-"));
+  const stateFile = path.join(outDir, "session.json");
+
+  try {
+    runCodexPlay([
+      "start",
+      "--repo-root", ROOT_DIR,
+      "--state", stateFile,
+      "--level", "level_HxI",
+      "--max-actions", "2",
+      "--no-quit"
+    ]);
+    const blockedScorecard = runCodexPlayFailure(["scorecard", "--state", stateFile]);
+    assert.notEqual(blockedScorecard.status, 0);
+    assert.match(blockedScorecard.stderr, /Scorecards are evaluator-only/);
+
+    runCodexPlayRaw(["action", "--state", stateFile, "up"]);
+    runCodexPlayRaw(["action", "--state", stateFile, "up"]);
+    const stillBlocked = runCodexPlayFailure(["scorecard", "--state", stateFile]);
+    assert.notEqual(stillBlocked.status, 0);
+    assert.match(stillBlocked.stderr, /Scorecards are evaluator-only/);
+    const finalized = execFileSync(
+      process.execPath,
+      [codexPlayScript, "finalize", "--state", stateFile],
+      {
+        cwd: ROOT_DIR,
+        encoding: "utf8",
+        env: { ...process.env, MAZEBENCH_TRUSTED_FINALIZE: "1" }
+      }
+    );
+    assert.deepEqual(JSON.parse(finalized), { ok: true, finalized: true });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(outDir, "scorecard.json"), "utf8")).actions.total, 2);
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
+}
+
+{
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "maze-vision-scorecard-"));
+  const stateFile = path.join(outDir, "session.json");
+
+  try {
+    runCodexPlay([
+      "start",
+      "--repo-root", ROOT_DIR,
+      "--state", stateFile,
+      "--level", "level_HxI"
+    ]);
+    const session = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    session.vision = true;
+    session.observationMode = "vision";
+    fs.writeFileSync(stateFile, `${JSON.stringify(session, null, 2)}\n`);
+
+    const blocked = runCodexPlayFailure(["scorecard", "--state", stateFile]);
+    assert.notEqual(blocked.status, 0);
+    assert.match(blocked.stderr, /Scorecards are evaluator-only/);
+    const finalized = execFileSync(
+      process.execPath,
+      [codexPlayScript, "finalize", "--state", stateFile],
+      {
+        cwd: ROOT_DIR,
+        encoding: "utf8",
+        env: { ...process.env, MAZEBENCH_TRUSTED_FINALIZE: "1" }
+      }
+    );
+    const saved = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    assert.deepEqual(JSON.parse(finalized), { ok: true, finalized: true });
+    assert.equal(Object.prototype.hasOwnProperty.call(saved.lastStatus, "level"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(saved.lastStatus, "player"), false);
+    assert.equal(saved.scorecard.actions.total, 0);
   } finally {
     fs.rmSync(outDir, { recursive: true, force: true });
   }
