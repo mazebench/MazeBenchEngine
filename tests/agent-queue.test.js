@@ -154,6 +154,42 @@ try {
   assert.equal(service.stopRun(livePrime.id).status, "stopped");
   service.deleteRun(livePrime.id);
 
+  const [autoQuitPrime] = service.launchRuns({
+    kind: "prime",
+    model_name: "Qwen/Qwen3.5-0.8B",
+    max_turns: 50,
+    auto_quit: true,
+    auto_quit_threshold: 0,
+    auto_quit_mode: "rolling",
+    auto_quit_window: 2,
+    video: false
+  });
+  launchedIds.push(autoQuitPrime.id);
+  const autoQuitDir = path.join(rootDir, "outputs", "maze-local", "site", autoQuitPrime.id);
+  fs.writeFileSync(
+    path.join(autoQuitDir, "initial-status.json"),
+    `${JSON.stringify({ board_state_hash: "repeat-state" })}\n`
+  );
+  fs.writeFileSync(
+    path.join(autoQuitDir, "actions.jsonl"),
+    `${[
+      { turn: 1, command_text: "up", status: { board_state_hash: "repeat-state" } },
+      { turn: 2, command_text: "down", status: { board_state_hash: "repeat-state" } }
+    ].map(JSON.stringify).join("\n")}\n`
+  );
+  const autoQuitDeadline = Date.now() + 4000;
+  let autoQuitSummary = service.summarizeRun(autoQuitPrime.id);
+  while (autoQuitSummary.status !== "finished" && Date.now() < autoQuitDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    autoQuitSummary = service.summarizeRun(autoQuitPrime.id);
+  }
+  assert.equal(autoQuitSummary.status, "finished");
+  assert.equal(autoQuitSummary.auto_quit_triggered, true);
+  assert.equal(autoQuitSummary.auto_quit_percentage, 0);
+  assert.equal(autoQuitSummary.auto_quit_novel_states, 0);
+  assert.equal(autoQuitSummary.auto_quit_observed_states, 2);
+  service.deleteRun(autoQuitPrime.id);
+
   const failedPrimeId = "prime-rollout-failure-test";
   const livePrimeDir = path.join(rootDir, "outputs", "maze-local", "site", failedPrimeId);
   fs.mkdirSync(livePrimeDir, { recursive: true });

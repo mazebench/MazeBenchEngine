@@ -99,6 +99,10 @@
     orchestration: null,
     unlimited: false,
     allowQuit: null,
+    autoQuit: null,
+    autoQuitThreshold: 10,
+    autoQuitMode: "cumulative",
+    autoQuitWindow: 100,
     catalogs: {},
     catalogRequests: {},
     openFolders: new Set(),
@@ -358,7 +362,7 @@
   }
 
   function runReady() {
-    return runOptionsReady() && state.allowQuit !== null && moveBudget() > 0;
+    return runOptionsReady() && state.allowQuit !== null && state.autoQuit !== null && moveBudget() > 0;
   }
 
   function syncComposerSteps(animate = true) {
@@ -1163,8 +1167,10 @@
     setCardVisibility(localSettings?.querySelector(".setting-card--orchestration"), hasObservation && state.toolUse === "offline");
     setCardVisibility(localSettings?.querySelector(".setting-card--budget"), hasObservation && hasToolUse && hasOrchestration);
     setCardVisibility(localSettings?.querySelector(".setting-card--give-up"), hasObservation && hasToolUse && hasOrchestration);
+    setCardVisibility(localSettings?.querySelector(".setting-card--auto-quit"), hasObservation && hasToolUse && hasOrchestration && state.allowQuit !== null);
     setCardVisibility(primeSettings?.querySelector(".setting-card--budget"), hasObservation);
     setCardVisibility(primeSettings?.querySelector(".setting-card--give-up"), hasObservation);
+    setCardVisibility(primeSettings?.querySelector(".setting-card--auto-quit"), hasObservation && state.allowQuit !== null);
   }
 
   function setMode(mode, syncSteps = true) {
@@ -1319,6 +1325,10 @@
     });
     setUnlimited(false, false);
     setAllowQuit(null, false);
+    state.autoQuitThreshold = 10;
+    state.autoQuitMode = "cumulative";
+    state.autoQuitWindow = 100;
+    setAutoQuit(null, false);
     setMode(null, false);
     setToolUse(null, false);
     setOrchestration(null, false);
@@ -1347,6 +1357,47 @@
       picker.classList.toggle("has-selection", state.allowQuit !== null);
       picker.classList.toggle("is-second", state.allowQuit === false);
     });
+    syncRunSettingCards();
+    if (syncSteps) syncComposerSteps();
+  }
+
+  function normalizedAutoQuitThreshold(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : 10;
+  }
+
+  function normalizedAutoQuitWindow(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.max(1, Math.min(10000, Math.round(number))) : 100;
+  }
+
+  function syncAutoQuitOptions(animate = true) {
+    document.querySelectorAll(".setting-card--auto-quit").forEach((card) => {
+      const options = card.querySelector("[data-auto-quit-options]");
+      const mutate = () => {
+        options.hidden = state.autoQuit !== true;
+        options.querySelector("[data-auto-quit-threshold]").value = String(state.autoQuitThreshold);
+        options.querySelector("[data-auto-quit-mode]").value = state.autoQuitMode;
+        options.querySelector("[data-auto-quit-window]").value = String(state.autoQuitWindow);
+        options.querySelector("[data-auto-quit-window-wrap]").hidden = state.autoQuitMode !== "rolling";
+      };
+      if (animate) tweenResize(card, mutate, 440);
+      else mutate();
+    });
+  }
+
+  function setAutoQuit(value, syncSteps = true) {
+    state.autoQuit = typeof value === "boolean" ? value : null;
+    document.querySelectorAll("[data-auto-quit]").forEach((option) => {
+      const selected = state.autoQuit !== null && option.dataset.autoQuit === String(state.autoQuit);
+      option.classList.toggle("is-selected", selected);
+      option.setAttribute("aria-pressed", String(selected));
+    });
+    document.querySelectorAll(".auto-quit-picker").forEach((picker) => {
+      picker.classList.toggle("has-selection", state.autoQuit !== null);
+      picker.classList.toggle("is-second", state.autoQuit === false);
+    });
+    syncAutoQuitOptions();
     if (syncSteps) syncComposerSteps();
   }
 
@@ -1385,6 +1436,10 @@
           hide_names_seed: state.mode !== "vision" && state.hideNames ? state.hideNamesSeed.trim() : "",
           reasoning: state.reasoning,
           allow_quit: state.allowQuit,
+          auto_quit: state.autoQuit,
+          auto_quit_threshold: state.autoQuitThreshold,
+          auto_quit_mode: state.autoQuitMode,
+          auto_quit_window: state.autoQuitWindow,
           video: false
         }
       : {
@@ -1396,6 +1451,10 @@
           moves: moveBudget(),
           unlimited: state.unlimited,
           allow_quit: state.allowQuit,
+          auto_quit: state.autoQuit,
+          auto_quit_threshold: state.autoQuitThreshold,
+          auto_quit_mode: state.autoQuitMode,
+          auto_quit_window: state.autoQuitWindow,
           mode: state.mode,
           omniscient: state.mode === "json" && state.omniscient,
           hide_names: state.mode !== "vision" && state.hideNames,
@@ -1744,6 +1803,41 @@
     });
     document.querySelectorAll("[data-allow-quit]").forEach((option) => {
       option.addEventListener("click", () => setAllowQuit(option.dataset.allowQuit === "true"));
+    });
+    document.querySelectorAll("[data-auto-quit]").forEach((option) => {
+      option.addEventListener("click", () => setAutoQuit(option.dataset.autoQuit === "true"));
+    });
+    document.querySelectorAll("[data-auto-quit-threshold]").forEach((input) => {
+      input.addEventListener("input", () => {
+        if (input.value === "") return;
+        state.autoQuitThreshold = normalizedAutoQuitThreshold(input.value);
+        document.querySelectorAll("[data-auto-quit-threshold]").forEach((peer) => {
+          if (peer !== input) peer.value = String(state.autoQuitThreshold);
+        });
+      });
+      input.addEventListener("change", () => {
+        state.autoQuitThreshold = normalizedAutoQuitThreshold(input.value);
+        syncAutoQuitOptions(false);
+      });
+    });
+    document.querySelectorAll("[data-auto-quit-mode]").forEach((select) => {
+      select.addEventListener("change", () => {
+        state.autoQuitMode = select.value === "rolling" ? "rolling" : "cumulative";
+        syncAutoQuitOptions();
+      });
+    });
+    document.querySelectorAll("[data-auto-quit-window]").forEach((input) => {
+      input.addEventListener("input", () => {
+        if (input.value === "") return;
+        state.autoQuitWindow = normalizedAutoQuitWindow(input.value);
+        document.querySelectorAll("[data-auto-quit-window]").forEach((peer) => {
+          if (peer !== input) peer.value = String(state.autoQuitWindow);
+        });
+      });
+      input.addEventListener("change", () => {
+        state.autoQuitWindow = normalizedAutoQuitWindow(input.value);
+        syncAutoQuitOptions(false);
+      });
     });
   }
 

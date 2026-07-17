@@ -33,6 +33,11 @@ const {
   playwrightBrowserProcess,
   signalProcessGroup
 } = require("../scripts/playwright-process");
+const {
+  autoQuitLaunchParams,
+  evaluateAutoQuit,
+  normalizeAutoQuitConfig
+} = require("../shared/auto-quit");
 
 // GUI-launched servers (editors, preview harnesses) often get a minimal PATH
 // that misses the dirs where codex/claude/docker/prime live. Enrich the PATH
@@ -228,6 +233,7 @@ function createAgentRunService({
   const legacyClaudeSnapshotTimers = new Map();
   const legacyClaudeSnapshotStamps = new Map();
   const codexSessionPaths = new Map();
+  const autoQuitMonitors = new Map();
 
   function requireLegacyLocalLaunch() {
     if (!allowLegacyLocalLaunch) {
@@ -807,7 +813,7 @@ function createAgentRunService({
     }
 
     if (meta.status === "stopping" && !pidAlive(meta.pid) && !liveChildren.has(runId)) {
-      const updated = terminalRunMeta(meta, "stopped", {
+      const updated = terminalRunMeta(meta, meta.auto_quit_triggered ? "finished" : "stopped", {
         exit_code: meta.exit_code ?? null,
         finished_at: meta.finished_at || new Date().toISOString()
       });
@@ -1005,6 +1011,9 @@ function createAgentRunService({
         command_text: record.command_text,
         moved: record.status?.moved,
         gem_count: record.status?.gem_count,
+        game_won: Boolean(record.status?.game_won),
+        game_lost: Boolean(record.status?.game_lost),
+        quit: Boolean(record.status?.quit),
         current_room: record.status?.current_room,
         player: record.status?.player || null,
         player_dead: Boolean(record.status?.player_dead),
@@ -1048,6 +1057,96 @@ function createAgentRunService({
     const initialStatus = loadJson(path.join(runDir, "initial-status.json"), null);
     const status = initialStatus || loadJson(path.join(runDir, "session.json"), null)?.initial || null;
     return String(status?.board_state_hash || "");
+  }
+
+  function autoQuitConfigForMeta(meta) {
+    const params = meta?.launch_params && typeof meta.launch_params === "object"
+      ? { ...meta.launch_params }
+      : {};
+    for (const key of ["auto_quit", "auto_quit_threshold", "auto_quit_mode", "auto_quit_window"]) {
+      if (meta && Object.prototype.hasOwnProperty.call(meta, key)) params[key] = meta[key];
+    }
+    return normalizeAutoQuitConfig(params);
+  }
+
+  function stopAutoQuitMonitor(runId) {
+    const timer = autoQuitMonitors.get(runId);
+    if (timer) clearInterval(timer);
+    autoQuitMonitors.delete(runId);
+  }
+
+  function autoQuitEvaluation(runId, meta) {
+    const config = autoQuitConfigForMeta(meta);
+    if (!config.enabled) return null;
+    const actions = readActions(runId);
+    const last = actions[actions.length - 1];
+    if (last?.game_won || last?.quit) return null;
+    return evaluateAutoQuit(readInitialBoardStateHash(runId), actions, config);
+  }
+
+  function forceAutoQuitShutdown(runId) {
+    const current = readRunMeta(runId);
+    if (!current?.auto_quit_triggered || current.status !== "stopping") return;
+    if (current.container) {
+      try {
+        dockerRunControl(runId, ["rm", "-f"], "auto-quit", { required: false });
+      } catch (_error) {
+        /* already removed */
+      }
+    }
+    signalRunProcess(current, "SIGKILL");
+  }
+
+  function triggerAutoQuit(runId, meta, evaluation) {
+    const triggeredAt = new Date().toISOString();
+    const updated = {
+      ...meta,
+      status: "stopping",
+      auto_quit_triggered: true,
+      auto_quit_triggered_at: triggeredAt,
+      auto_quit_percentage: evaluation.percentage,
+      auto_quit_novel_states: evaluation.novel_states,
+      auto_quit_observed_states: evaluation.observed_states,
+      auto_quit_action_count: evaluation.action_count
+    };
+    writeRunMeta(runId, updated);
+    stopAutoQuitMonitor(runId);
+    if (meta.kind === "prime") cancelPrimeEvaluation(runId);
+    stopLegacyClaudeSnapshots(runId);
+    stopLiveRenderer(runId, { force: true });
+    stopDetachedRunRenderers(runId, { force: true });
+
+    if (meta.container) {
+      try {
+        dockerRunControl(runId, ["stop", "-t", "2"], "auto-quit", { required: false });
+      } catch (_error) {
+        /* the force-shutdown fallback below reaps a surviving container */
+      }
+    }
+    signalRunProcess(meta, "SIGTERM");
+    const forceTimer = setTimeout(() => forceAutoQuitShutdown(runId), 3000);
+    forceTimer.unref?.();
+    return updated;
+  }
+
+  function maybeAutoQuitRun(runId) {
+    const meta = readRunMeta(runId);
+    if (!meta || meta.status !== "running" || meta.auto_quit_triggered) return meta;
+    const evaluation = autoQuitEvaluation(runId, meta);
+    return evaluation ? triggerAutoQuit(runId, meta, evaluation) : meta;
+  }
+
+  function startAutoQuitMonitor(runId) {
+    if (autoQuitMonitors.has(runId)) return;
+    const meta = readRunMeta(runId);
+    if (!meta || meta.status !== "running" || !autoQuitConfigForMeta(meta).enabled) return;
+    const timer = setInterval(() => {
+      const current = maybeAutoQuitRun(runId);
+      if (!current || current.status !== "running") stopAutoQuitMonitor(runId);
+    }, 500);
+    timer.unref?.();
+    autoQuitMonitors.set(runId, timer);
+    maybeAutoQuitRun(runId);
   }
 
   function readPrimeLiveTurns(runDir) {
@@ -1313,6 +1412,10 @@ function createAgentRunService({
       return null;
     }
 
+    if (meta.status === "running") {
+      meta = maybeAutoQuitRun(runId) || meta;
+    }
+
     const runDir = runDirFor(runId);
     const primeRolloutFailure = meta.kind === "prime" ? readPrimeRolloutFailure(runId) : null;
     if (primeRolloutFailure && meta.status === "finished") {
@@ -1324,7 +1427,10 @@ function createAgentRunService({
       };
     }
 
-    if (meta.status === "running") startLegacyClaudeSnapshots(runId);
+    if (meta.status === "running") {
+      startLegacyClaudeSnapshots(runId);
+      startAutoQuitMonitor(runId);
+    }
 
     const actions = readActions(runId);
     const last = actions[actions.length - 1] || null;
@@ -1411,7 +1517,7 @@ function createAgentRunService({
         meta.kind !== "prime" &&
         (meta.container === false || Boolean(runContainerId(runId))),
       resumable: meta.status === "paused",
-      continuable: meta.status === "finished" || meta.status === "stopped",
+      continuable: !meta.auto_quit_triggered && (meta.status === "finished" || meta.status === "stopped"),
       branchable:
         meta.kind !== "prime" &&
         ["codex", "claude"].includes(meta.model) &&
@@ -3301,6 +3407,7 @@ function createAgentRunService({
         : "read-only";
     const swarm = toolUse === "offline" && (params.swarm === true || params.swarm === "true");
     const allowQuit = !(params.allow_quit === false || params.allow_quit === "false");
+    const autoQuit = normalizeAutoQuitConfig(params);
     const mode = normalizeObservationMode(params.mode);
     const omniscient = mode === "json" && (params.omniscient === true || params.omniscient === "true");
     const hideNames = mode !== "vision" && (params.hide_names === true || params.hide_names === "true");
@@ -3420,7 +3527,7 @@ function createAgentRunService({
       args.push(`session_id=${String(params.session_id)}`);
     }
 
-    return { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit, mode, omniscient, hideNames, hideNamesSeed };
+    return { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit, autoQuit, mode, omniscient, hideNames, hideNamesSeed };
   }
 
   // Agent Runner defaults to a local Verifiers evaluator (while inference still
@@ -3448,6 +3555,7 @@ function createAgentRunService({
     const hosted = harness === "none" && !vision && (params.hosted === true || params.hosted === "true");
     const wantVideo = !(params.video === false || params.video === "false");
     const allowQuit = !(params.allow_quit === false || params.allow_quit === "false");
+    const autoQuit = normalizeAutoQuitConfig(params);
     // Reasoning effort → --sampling.reasoning-effort. OpenAI reasoning models and
     // Claude (extended thinking) honor it; others ignore it. "" = don't send one.
     const reasoning = ["low", "medium", "high"].includes(String(params.reasoning))
@@ -3537,6 +3645,7 @@ function createAgentRunService({
       gemTotal,
       reasoning,
       allowQuit,
+      autoQuit,
       video: wantVideo
     };
   }
@@ -3589,9 +3698,11 @@ function createAgentRunService({
           hide_names_seed: command.hideNamesSeed,
           reasoning: command.reasoning,
           allow_quit: command.allowQuit,
+          ...autoQuitLaunchParams(command.autoQuit),
           video: command.video,
           launch_params: {
             ...launchParamsOf(params),
+            ...autoQuitLaunchParams(command.autoQuit),
             harness: command.harness,
             ...(command.hideNames ? { hide_names_seed: command.hideNamesSeed } : {})
           },
@@ -3624,7 +3735,7 @@ function createAgentRunService({
 
         requireLocalSubscription(effectiveParams);
         const game = normalizedGameForRun(effectiveParams.game_id);
-        const { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit, mode, omniscient, hideNames, hideNamesSeed } = buildLocalRunArgs(runId, effectiveParams, game);
+        const { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit, autoQuit, mode, omniscient, hideNames, hideNamesSeed } = buildLocalRunArgs(runId, effectiveParams, game);
         const requestedModelName = String(effectiveParams.model_name || "");
         const exactModelName = model === "claude"
           ? resolveClaudeCatalogModelId(requestedModelName)
@@ -3658,6 +3769,7 @@ function createAgentRunService({
           moves: unlimited ? null : segmentStartTurns + moves,
           unlimited,
           allow_quit: allowQuit,
+          ...autoQuitLaunchParams(autoQuit),
           segment_start_turns: segmentStartTurns,
           segment_move_budget: moves,
           gems,
@@ -3673,6 +3785,7 @@ function createAgentRunService({
           video: !(effectiveParams.video === false || effectiveParams.video === "false"),
           launch_params: {
             ...launchParamsOf(effectiveParams),
+            ...autoQuitLaunchParams(autoQuit),
             ...(hideNames ? { hide_names_seed: hideNamesSeed } : {})
           },
           continue_of: effectiveParams.continue_of || null,
@@ -3705,8 +3818,10 @@ function createAgentRunService({
   function attachRunChild(runId, child) {
     child.unref();
     liveChildren.set(runId, child);
+    startAutoQuitMonitor(runId);
     child.on("exit", (code) => {
       liveChildren.delete(runId);
+      stopAutoQuitMonitor(runId);
       const current = readRunMeta(runId);
 
       if (!current) {
@@ -3736,7 +3851,7 @@ function createAgentRunService({
         // A user stop is terminal even when Docker/provider shutdown is clean
         // and therefore exits 0. Never relabel an explicitly stopped run as
         // naturally finished (or auto-continue it).
-        updated = terminalRunMeta(current, "stopped", { exit_code: code });
+        updated = terminalRunMeta(current, current.auto_quit_triggered ? "finished" : "stopped", { exit_code: code });
       } else if (readProviderFailure(runId)) {
         // Claude Code can emit a structured API error while still exiting 0.
         // Treat the event artifact as authoritative, release the provider slot,
@@ -3771,6 +3886,7 @@ function createAgentRunService({
     });
     child.on("error", (error) => {
       liveChildren.delete(runId);
+      stopAutoQuitMonitor(runId);
       const current = readRunMeta(runId);
       if (!current || current.status === "paused") return;
       if (current.status === "pausing") {
@@ -3948,6 +4064,7 @@ function createAgentRunService({
         hide_names_seed: normalizedHideNamesSeed(meta.hide_names_seed),
         reasoning: meta.reasoning || "",
         allow_quit: meta.allow_quit !== false,
+        ...autoQuitLaunchParams(meta),
         video: meta.video !== false
       };
     }
@@ -3965,6 +4082,7 @@ function createAgentRunService({
       reasoning: meta.reasoning || "",
       unlimited: Boolean(meta.unlimited),
       allow_quit: meta.allow_quit !== false,
+      ...autoQuitLaunchParams(meta),
       container: meta.container !== false,
       video: meta.video !== false,
       tools: Boolean(meta.tools),
@@ -4285,6 +4403,9 @@ function createAgentRunService({
     if (!meta) {
       throw new Error(`Unknown run "${runId}".`);
     }
+    if (meta.auto_quit_triggered) {
+      throw new Error("This run ended by Auto-Quit. Branch from an earlier action to try a different route.");
+    }
 
     const add = Math.max(1, Math.min(MAX_LOCAL_MOVE_BUDGET, Math.floor(Number(additionalMoves) || 20)));
 
@@ -4597,6 +4718,7 @@ function createAgentRunService({
     }
 
     liveChildren.delete(runId);
+    stopAutoQuitMonitor(runId);
     stopLegacyClaudeSnapshots(runId);
     stopLiveRenderer(runId);
     actionCache.delete(runId);
@@ -4655,6 +4777,7 @@ function createAgentRunService({
     }
 
     writeRunMeta(runId, { ...meta, status: "stopping" });
+    stopAutoQuitMonitor(runId);
     if (meta.kind === "prime") cancelPrimeEvaluation(runId);
     stopLegacyClaudeSnapshots(runId);
     stopLiveRenderer(runId, { force: true });
@@ -4694,6 +4817,7 @@ function createAgentRunService({
     // a late child exit callback explicitly preserves it.
     signalRunProcess(meta, "SIGKILL");
     liveChildren.delete(runId);
+    stopAutoQuitMonitor(runId);
     const stopped = terminalRunMeta(readRunMeta(runId), "stopped", { exit_code: meta.exit_code ?? null });
     writeRunMeta(runId, stopped);
     if (meta.model === "claude") startNextWaitingClaudeRun();
@@ -4717,6 +4841,9 @@ function createAgentRunService({
   setImmediate(() => {
     startNextWaitingClaudeRun();
     retryDueProviderBackoffs();
+    runMetaEntries()
+      .filter((entry) => entry.meta.status === "running")
+      .forEach((entry) => startAutoQuitMonitor(entry.id));
   });
   const providerRetryTimer = setInterval(retryDueProviderBackoffs, PROVIDER_RETRY_SCAN_MS);
   providerRetryTimer.unref?.();

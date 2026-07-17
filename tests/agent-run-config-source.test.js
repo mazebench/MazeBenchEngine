@@ -33,6 +33,8 @@ for (const label of [
   "Observation",
   "Reasoning",
   "Allow model to give up",
+  "Auto-Quit",
+  "Auto-Quit rule",
   "Fast mode",
   "Identity seed",
   "Isolation",
@@ -85,12 +87,24 @@ assert.match(pages, /<span class="segmented__icon">CLI<\/span><span>Tools<\/span
 assert.doesNotMatch(pages, /Offline Tools/);
 assert.equal((pages.match(/setting-card--give-up/g) || []).length, 2);
 assert.equal((pages.match(/<span>Allow model to give up<\/span>/g) || []).length, 2);
+assert.equal((pages.match(/setting-card--auto-quit/g) || []).length, 2);
+assert.equal((pages.match(/<span>Auto-Quit<\/span>/g) || []).length, 2);
+assert.equal((pages.match(/data-auto-quit-threshold/g) || []).length, 2);
+assert.equal((pages.match(/data-auto-quit-window/g) || []).length >= 4, true);
+assert.match(pages, /value="10"[^>]+data-auto-quit-threshold/);
+assert.match(pages, /value="100"[^>]+data-auto-quit-window/);
 assert.doesNotMatch(pages, /quit-policy-control__label/);
+assert.match(agentScript, /autoQuitThreshold: 10/);
+assert.match(agentScript, /autoQuitMode: "cumulative"/);
+assert.match(agentScript, /autoQuitWindow: 100/);
+assert.match(agentScript, /auto_quit: state\.autoQuit/);
+assert.match(agentScript, /state\.autoQuit !== null/);
 assert.match(runScript, /No Tools/);
 assert.match(runScript, /run\.model === "codex" && Object\.prototype\.hasOwnProperty\.call\(params, "codex_fast"\)/);
 assert.doesNotMatch(runScript, /`run \$\{run\.id\}`/);
 assert.match(runScript, /class="run-config__item\$\{active \? " is-active" : ""\}"/);
 assert.match(siteTheme, /\.run-config__list \{/);
 assert.match(siteTheme, /\.run-config__item\.is-active \{/);
+assert.match(siteTheme, /\.auto-quit-options \{/);
 
 console.log("agent-run-config-source: OK — saved launch choices render as structured configuration pills.");

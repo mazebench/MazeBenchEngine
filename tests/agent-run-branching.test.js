@@ -117,7 +117,18 @@ assert.equal(inheritedUnlimited.branch_turn, 42);
 
 const inheritedFinite = branchLaunchParams(
   { unlimited: false, segment_move_budget: 12, moves: 90 },
-  { model: "claude", mode: "text", unlimited: false, moves: 35, hide_names: true, hide_names_seed: "branch-seed" },
+  {
+    model: "claude",
+    mode: "text",
+    unlimited: false,
+    moves: 35,
+    hide_names: true,
+    hide_names_seed: "branch-seed",
+    auto_quit: true,
+    auto_quit_threshold: 5,
+    auto_quit_mode: "rolling",
+    auto_quit_window: 80
+  },
   "source-finite",
   9
 );
@@ -125,6 +136,10 @@ assert.equal(inheritedFinite.unlimited, false);
 assert.equal(inheritedFinite.moves, 35);
 assert.equal(inheritedFinite.model, "claude");
 assert.equal(inheritedFinite.hide_names_seed, "branch-seed");
+assert.equal(inheritedFinite.auto_quit, true);
+assert.equal(inheritedFinite.auto_quit_threshold, 5);
+assert.equal(inheritedFinite.auto_quit_mode, "rolling");
+assert.equal(inheritedFinite.auto_quit_window, 80);
 
 const root = path.join(__dirname, "..");
 const router = fs.readFileSync(path.join(root, "server", "router.js"), "utf8");

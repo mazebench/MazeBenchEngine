@@ -85,7 +85,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css?v=20260710-card-parity-1">
-    <link rel="stylesheet" href="/local-site.css?v=20260716-loading-spinner-1">
+    <link rel="stylesheet" href="/local-site.css?v=20260717-auto-quit-1">
     ${extraHeadHtml}`
     })}
   </head>
@@ -248,7 +248,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css?v=${PLAY_ASSET_VERSION}">
-    <link rel="stylesheet" href="/local-site.css?v=20260716-loading-spinner-1">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260717-auto-quit-1">`;
   }
 
   function renderPlayPage(game, level) {
@@ -458,7 +458,7 @@ function createPageRenderer({
     ${includeRuntimeStyles ? '<link rel="stylesheet" href="/styles.css">' : ""}
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260716-loading-spinner-1">' : ""}`;
+    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260717-auto-quit-1">' : ""}`;
   }
 
   function renderAuthorPage(game, level) {
@@ -976,6 +976,20 @@ function createPageRenderer({
                   <button type="button" class="segmented__option" data-allow-quit="false" aria-pressed="false"><span>No</span></button>
                 </div>
               </article>
+              <article class="setting-card setting-card--auto-quit is-gated" inert aria-hidden="true">
+                <div class="setting-card__head"><span>Auto-Quit</span></div>
+                <div class="animated-segmented auto-quit-picker" role="radiogroup" aria-label="Automatically quit repetitive runs">
+                  <span class="segmented__glider" aria-hidden="true"></span>
+                  <button type="button" class="segmented__option" data-auto-quit="true" aria-pressed="false"><span>Yes</span></button>
+                  <button type="button" class="segmented__option" data-auto-quit="false" aria-pressed="false"><span>No</span></button>
+                </div>
+                <div class="auto-quit-options" data-auto-quit-options hidden>
+                  <label class="auto-quit-field"><span>New-state threshold</span><span class="auto-quit-number"><input type="number" min="0" max="100" step="0.1" value="10" inputmode="decimal" data-auto-quit-threshold><small>%</small></span></label>
+                  <label class="auto-quit-field"><span>Average</span><select data-auto-quit-mode><option value="cumulative" selected>Cumulative</option><option value="rolling">Rolling window</option></select></label>
+                  <label class="auto-quit-field" data-auto-quit-window-wrap hidden><span>Window</span><span class="auto-quit-number"><input type="number" min="1" max="10000" step="1" value="100" inputmode="numeric" data-auto-quit-window><small>moves</small></span></label>
+                  <p>Quit when globally new board states are at or below this rate. Rolling mode waits for a full window.</p>
+                </div>
+              </article>
               </div>
               <div id="prime-settings" class="settings-deck settings-deck--prime" hidden>
               <article class="setting-card setting-card--observation">
@@ -1003,6 +1017,20 @@ function createPageRenderer({
                   <span class="segmented__glider" aria-hidden="true"></span>
                   <button type="button" class="segmented__option" data-allow-quit="true" aria-pressed="false"><span>Yes</span></button>
                   <button type="button" class="segmented__option" data-allow-quit="false" aria-pressed="false"><span>No</span></button>
+                </div>
+              </article>
+              <article class="setting-card setting-card--auto-quit is-gated" inert aria-hidden="true">
+                <div class="setting-card__head"><span>Auto-Quit</span></div>
+                <div class="animated-segmented auto-quit-picker" role="radiogroup" aria-label="Automatically quit repetitive runs">
+                  <span class="segmented__glider" aria-hidden="true"></span>
+                  <button type="button" class="segmented__option" data-auto-quit="true" aria-pressed="false"><span>Yes</span></button>
+                  <button type="button" class="segmented__option" data-auto-quit="false" aria-pressed="false"><span>No</span></button>
+                </div>
+                <div class="auto-quit-options" data-auto-quit-options hidden>
+                  <label class="auto-quit-field"><span>New-state threshold</span><span class="auto-quit-number"><input type="number" min="0" max="100" step="0.1" value="10" inputmode="decimal" data-auto-quit-threshold><small>%</small></span></label>
+                  <label class="auto-quit-field"><span>Average</span><select data-auto-quit-mode><option value="cumulative" selected>Cumulative</option><option value="rolling">Rolling window</option></select></label>
+                  <label class="auto-quit-field" data-auto-quit-window-wrap hidden><span>Window</span><span class="auto-quit-number"><input type="number" min="1" max="10000" step="1" value="100" inputmode="numeric" data-auto-quit-window><small>moves</small></span></label>
+                  <p>Quit when globally new board states are at or below this rate. Rolling mode waits for a full window.</p>
                 </div>
               </article>
               </div>
@@ -1071,7 +1099,7 @@ function createPageRenderer({
           </div>
         </div>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
-        <script src="/agent.js?v=20260716-prime-setup-2" defer></script>`
+        <script src="/agent.js?v=20260717-auto-quit-1" defer></script>`
     });
   }
 
@@ -1335,7 +1363,7 @@ function createPageRenderer({
         </section>
         ${replayExportSection}
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260716-bottom-replay-export-1" defer></script>`
+        <script src="/agent-run.js?v=20260717-auto-quit-1" defer></script>`
     });
   }
 

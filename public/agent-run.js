@@ -834,6 +834,10 @@
     );
     const observation = observationMode === "text" ? "ASCII" : titleCase(observationMode);
     const allowQuit = configuredFlag(params, "allow_quit", run.allow_quit !== false);
+    const autoQuit = configuredFlag(params, "auto_quit", run.auto_quit);
+    const autoQuitThreshold = Number(configuredValue(params, "auto_quit_threshold", run.auto_quit_threshold ?? 10));
+    const autoQuitMode = String(configuredValue(params, "auto_quit_mode", run.auto_quit_mode || "cumulative"));
+    const autoQuitWindow = Number(configuredValue(params, "auto_quit_window", run.auto_quit_window || 100));
     const reasoning = configuredValue(params, "reasoning", run.reasoning || "");
     const items = [
       ["Provider", prime ? "Prime" : titleCase(run.model)],
@@ -844,7 +848,12 @@
       ["Budget", budgetLabel],
       ["Observation", observation, observation === "Vision"],
       ["Reasoning", reasoning ? titleCase(reasoning) : "Off"],
-      ["Allow model to give up", allowQuit ? "Yes" : "No"]
+      ["Allow model to give up", allowQuit ? "Yes" : "No"],
+      ["Auto-Quit", autoQuit ? "Yes" : "No", autoQuit],
+      ...(autoQuit ? [["Auto-Quit rule",
+        `${autoQuitThreshold}% new or less · ${autoQuitMode === "rolling" ? `last ${autoQuitWindow} moves` : "cumulative"}`,
+        true
+      ]] : [])
     ];
 
     if (["ascii", "json"].includes(String(observation).toLowerCase())) {
@@ -893,7 +902,9 @@
   }
 
   function renderStats(run) {
-    const statusLabel = run.status === "finished" ? (run.complete ? "complete" : "ended") : run.status;
+    const statusLabel = run.auto_quit_triggered
+      ? run.status === "stopping" ? "auto-quitting" : "auto-quit"
+      : run.status === "finished" ? (run.complete ? "complete" : "ended") : run.status;
     const chips = isPrime
       ? [
           ["status", statusLabel],
@@ -902,14 +913,14 @@
           run.prime_evaluation_score != null ? ["score", String(run.prime_evaluation_score)] : null,
           run.turns ? ["moves", String(run.turns)] : null,
           run.turns ? ["gems", String(run.gem_count ?? 0)] : null,
-          run.solved ? ["result", "SOLVED"] : null
+          run.solved ? ["result", "SOLVED"] : run.auto_quit_triggered ? ["result", "AUTO-QUIT"] : null
         ].filter(Boolean)
       : [
           ["status", statusLabel],
           ["moves", `${run.turns}/${run.unlimited ? "∞" : run.moves}`],
           ["gems", String(run.gem_count ?? 0)],
           ["room", levelLabel(run.current_room)],
-          run.solved ? ["result", "SOLVED"] : null
+          run.solved ? ["result", "SOLVED"] : run.auto_quit_triggered ? ["result", "AUTO-QUIT"] : null
         ].filter(Boolean);
     if (run.swarm) {
       chips.push(
@@ -958,15 +969,17 @@
       run.status === "waiting"
         ? "Waiting"
         : run.status === "finished"
-        ? run.complete
-          ? "Complete"
-          : "Ended"
+        ? run.auto_quit_triggered
+          ? `Auto-quit at ${Number(run.auto_quit_percentage).toFixed(1)}% new states`
+          : run.complete
+            ? "Complete"
+            : "Ended"
         : run.status === "paused"
           ? "Paused"
           : run.status === "pausing"
             ? "Pausing…"
           : run.status === "stopping"
-            ? "Stopping…"
+            ? run.auto_quit_triggered ? "Auto-quitting…" : "Stopping…"
             : run.status === "stopped"
               ? "Stopped"
               : run.status === "failed"
@@ -3222,7 +3235,9 @@
         if (progress.run.status === "pausing") {
           setStatus(`Pausing after move ${progress.run.pause_after_turn || "the next completed action"}…`);
         } else if (progress.run.status === "stopping") {
-          setStatus("Stopping…");
+          setStatus(progress.run.auto_quit_triggered
+            ? "Auto-quitting — state novelty reached the configured threshold."
+            : "Stopping…");
         } else if (isPrime) {
           const rp = progress.replay_progress;
           setStatus(
@@ -3263,7 +3278,9 @@
       } else {
         const rolloutError = String(progress.run.rollout_error || "").trim();
         setStatus(
-          progress.run.status === "failed" && rolloutError
+          progress.run.auto_quit_triggered && progress.run.status === "finished"
+            ? `Auto-quit — ${Number(progress.run.auto_quit_percentage).toFixed(1)}% of observed states were new (${progress.run.auto_quit_novel_states}/${progress.run.auto_quit_observed_states}).`
+            : progress.run.status === "failed" && rolloutError
             ? `Run failed — ${rolloutError}.`
             : progress.run.status !== "finished"
               ? `Run ${progress.run.status}.`
