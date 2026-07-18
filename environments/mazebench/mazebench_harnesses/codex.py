@@ -1,0 +1,146 @@
+"""Codex harness with isolated Streamable HTTP MCP configuration."""
+
+from __future__ import annotations
+
+import base64
+import json
+import logging
+import re
+
+from verifiers.v1.clients import ModelContext
+from verifiers.v1.harnesses.codex.harness import (
+    CODEX_BIN,
+    KEY_VAR,
+    PROVIDER,
+    CodexHarness,
+)
+from verifiers.v1.runtimes import ProgramResult, Runtime
+from verifiers.v1.trace import Trace
+from verifiers.v1.types import TextContentPart
+
+logger = logging.getLogger(__name__)
+
+
+class MazeBenchCodexHarness(CodexHarness):
+    SUPPORTS_MCP = True
+
+    async def launch(
+        self,
+        ctx: ModelContext,
+        trace: Trace,
+        runtime: Runtime,
+        endpoint: str,
+        secret: str,
+        mcp_urls: dict[str, str],
+    ) -> ProgramResult:
+        task = trace.task.data
+        system_prompt, prompt = self.resolve_prompt(task)
+        image_args: list[str] = []
+        image_dir = f".vf-codex-images-{trace.id}"
+        if prompt is not None and not isinstance(prompt, str):
+            texts = [system_prompt] if system_prompt else []
+            image_index = 0
+            for message in prompt:
+                role = str(message.role)
+                parts = (
+                    [TextContentPart(text=message.content)]
+                    if isinstance(message.content, str)
+                    else message.content
+                )
+                message_text: list[str] = []
+                for part in parts:
+                    if isinstance(part, TextContentPart):
+                        message_text.append(part.text)
+                        continue
+                    image = getattr(part, "image_url", None)
+                    if image is None:
+                        message_text.append(str(part))
+                        continue
+                    metadata, separator, encoded = image.url.partition(",")
+                    media_type, *parameters = metadata.removeprefix("data:").split(";")
+                    if (
+                        not separator
+                        or not metadata.startswith("data:image/")
+                        or not any(p.lower() == "base64" for p in parameters)
+                    ):
+                        raise ValueError("codex image prompts require base64 data:image URLs")
+                    extension = re.sub(
+                        r"[^a-zA-Z0-9]+", "_", media_type.removeprefix("image/")
+                    ).strip("_")
+                    path = f"{image_dir}/image_{image_index}.{extension or 'image'}"
+                    await runtime.write(path, base64.b64decode(encoded))
+                    image_args += ["-i", path]
+                    image_index += 1
+                if message_text:
+                    texts.append(f"[{role}]\n" + "\n".join(message_text))
+            prompt = "\n\n".join(texts)
+        elif system_prompt:
+            prompt = "\n\n".join(part for part in (system_prompt, prompt) if part)
+
+        env = {**self.config.resolved_env, KEY_VAR: secret}
+        tool_config = [
+            arg
+            for tool in self.config.disabled_tools or []
+            for arg in ("--disable", tool)
+        ]
+        mcp_config: list[str] = []
+        for name, url in mcp_urls.items():
+            prefix = f"mcp_servers.{name}"
+            mcp_config += [
+                "-c",
+                f"{prefix}.url={json.dumps(url)}",
+                "-c",
+                f"{prefix}.required=true",
+                "-c",
+                f"{prefix}.startup_timeout_sec=30",
+                "-c",
+                f"{prefix}.tool_timeout_sec=120",
+                "-c",
+                f"{prefix}.default_tools_approval_mode=auto",
+                "-c",
+                f'{prefix}.enabled_tools=["start","observe","action"]',
+            ]
+        argv = [
+            CODEX_BIN,
+            "exec",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--skip-git-repo-check",
+            "--disable",
+            "apps",
+            "--disable",
+            "plugins",
+            "--disable",
+            "multi_agent",
+            "-c",
+            f"features.multi_agent_v2.enabled={str(self.config.multi_agent).lower()}",
+            "-m",
+            ctx.model,
+            "-c",
+            f"model_provider={PROVIDER}",
+            "-c",
+            f"model_providers.{PROVIDER}.name={PROVIDER}",
+            "-c",
+            f"model_providers.{PROVIDER}.base_url={endpoint}",
+            "-c",
+            f"model_providers.{PROVIDER}.env_key={KEY_VAR}",
+            "-c",
+            f"model_providers.{PROVIDER}.wire_api=responses",
+            "-c",
+            f"model_providers.{PROVIDER}.requires_openai_auth=false",
+            *mcp_config,
+            *tool_config,
+            *image_args,
+            "--",
+            prompt or "",
+        ]
+        try:
+            return await runtime.run_program(argv, env)
+        finally:
+            if image_args:
+                try:
+                    await runtime.run(["rm", "-rf", image_dir], {})
+                except Exception:
+                    logger.warning("failed to clean up Codex prompt images", exc_info=True)
+
+
+__all__ = ["MazeBenchCodexHarness"]

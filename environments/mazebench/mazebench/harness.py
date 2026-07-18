@@ -1,16 +1,14 @@
-"""Maze harness with resilient Prime calls and live per-turn telemetry."""
+"""Safe model loop with bounded Prime transport and blank-response retries."""
 
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 
-from verifiers.v1.clients import RolloutContext
+from verifiers.v1.clients import ModelContext
 from verifiers.v1.dialects.chat import message_to_wire
-from verifiers.v1.harnesses.default.harness import (
-    DefaultHarness,
-    PROGRAM_SOURCE as DEFAULT_PROGRAM_SOURCE,
+from verifiers.v1.harnesses.null.harness import (
+    NullHarness,
+    PROGRAM_SOURCE as NULL_PROGRAM_SOURCE,
 )
 from verifiers.v1.runtimes import ProgramResult, Runtime
 from verifiers.v1.trace import Trace
@@ -33,7 +31,6 @@ TRANSIENT_MODEL_ERRORS = (
     RateLimitError,
 )
 """
-
 _OLD_CHAT = """async def chat(
     client: AsyncOpenAI, model: str, messages: list[dict], tools: list[dict]
 ):
@@ -42,7 +39,6 @@ _OLD_CHAT = """async def chat(
     )
     return completion.choices[0].message
 """
-
 _NEW_CHAT = """async def chat(
     client: AsyncOpenAI, model: str, messages: list[dict], tools: list[dict]
 ):
@@ -70,49 +66,32 @@ _NEW_CHAT = """async def chat(
             await asyncio.sleep(min(8, 2 ** (attempt - 1)))
 """
 
-if _OLD_IMPORT not in DEFAULT_PROGRAM_SOURCE or _OLD_CHAT not in DEFAULT_PROGRAM_SOURCE:
-    raise RuntimeError("The pinned Verifiers default harness changed; update the maze retry patch.")
+if _OLD_IMPORT not in NULL_PROGRAM_SOURCE or _OLD_CHAT not in NULL_PROGRAM_SOURCE:
+    raise RuntimeError(
+        "The pinned Verifiers null harness changed; update MazeBench's retry patch."
+    )
 
-PROGRAM_SOURCE = DEFAULT_PROGRAM_SOURCE.replace(_OLD_IMPORT, _NEW_IMPORT).replace(
+PROGRAM_SOURCE = NULL_PROGRAM_SOURCE.replace(_OLD_IMPORT, _NEW_IMPORT).replace(
     _OLD_CHAT, _NEW_CHAT
 )
-_OLD_INITIAL_MESSAGES = 'initial = json.loads(os.environ.get("INITIAL_MESSAGES", "[]"))'
-_NEW_INITIAL_MESSAGES = '''initial_path = os.environ.get("INITIAL_MESSAGES_PATH", "")
-        initial = (
-            json.loads(Path(initial_path).read_text(encoding="utf8"))
-            if initial_path
-            else json.loads(os.environ.get("INITIAL_MESSAGES", "[]"))
-        )'''
-if _OLD_INITIAL_MESSAGES not in PROGRAM_SOURCE:
-    raise RuntimeError("The pinned Verifiers initial-message loader changed; update the maze resume patch.")
-PROGRAM_SOURCE = PROGRAM_SOURCE.replace("import os\n", "import os\nfrom pathlib import Path\n").replace(
-    _OLD_INITIAL_MESSAGES, _NEW_INITIAL_MESSAGES
-)
 
 
-class MazeBenchHarness(DefaultHarness):
-    """Prime chat-completions harness with bounded transport/blank retries."""
+class MazeBenchHarness(NullHarness):
+    """Prime model/user loop without a shell or evaluator filesystem access."""
 
     async def setup(self, runtime: Runtime) -> None:
-        await runtime.prepare_uv_script(PROGRAM_SOURCE, self.config.env)
+        await runtime.prepare_uv_script(PROGRAM_SOURCE, self.config.resolved_env)
 
     async def launch(
         self,
-        ctx: RolloutContext,
+        ctx: ModelContext,
         trace: Trace,
         runtime: Runtime,
         endpoint: str,
         secret: str,
         mcp_urls: dict[str, str],
     ) -> ProgramResult:
-        system_prompt, prompt = self.resolve_prompt(trace.task)
-        env = {**self.config.env}
-        for name in (
-            "MAZEBENCH_LIVE_USAGE_PATH",
-            "MAZEBENCH_LIVE_REASONING_PATH",
-        ):
-            if value := os.environ.get(name):
-                env[name] = value
+        system_prompt, prompt = self.resolve_prompt(trace.task.data)
         args = [
             f"--base-url={endpoint}",
             f"--api-key={secret}",
@@ -134,22 +113,18 @@ class MazeBenchHarness(DefaultHarness):
         if isinstance(prompt, str):
             args.append(f"--prompt={prompt}")
         elif prompt is not None:
-            initial_messages = json.dumps(
-                [message_to_wire(message) for message in prompt]
+            path = f".vf-initial-messages-{trace.id}.json"
+            await runtime.write(
+                path,
+                json.dumps([message_to_wire(message) for message in prompt]).encode(),
             )
-            checkpoint_path = str(
-                getattr(trace.task, "resume_checkpoint_path", "") or ""
-            )
-            if checkpoint_path:
-                messages_path = Path(checkpoint_path).with_name(
-                    "prime-resume-messages.json"
-                )
-                messages_path.write_text(initial_messages, encoding="utf8")
-                env["INITIAL_MESSAGES_PATH"] = str(messages_path)
-            else:
-                env["INITIAL_MESSAGES"] = initial_messages
-        program = await runtime.prepare_uv_script(PROGRAM_SOURCE, self.config.env)
-        return await runtime.run_program([*program, *args], env)
+            args.append(f"--initial-messages-file={path}")
+        program = await runtime.prepare_uv_script(
+            PROGRAM_SOURCE, self.config.resolved_env
+        )
+        return await runtime.run_program(
+            [*program, *args], self.config.resolved_env
+        )
 
 
-__all__ = ["MazeBenchHarness"]
+__all__ = ["MazeBenchHarness", "PROGRAM_SOURCE"]

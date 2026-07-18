@@ -4579,8 +4579,19 @@ html.has-run-world-map {
 }
 
 .custom-harness-panel__fields select,
-.custom-harness-panel__fields input {
+.custom-harness-panel__fields input,
+.custom-harness-panel__fields textarea {
   width: 100%;
+}
+
+.custom-harness-config-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.custom-harness-config-fields textarea {
+  min-height: 54px;
+  resize: vertical;
 }
 
 .custom-harness-panel__status {

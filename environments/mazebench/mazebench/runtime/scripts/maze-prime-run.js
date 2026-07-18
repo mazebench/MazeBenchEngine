@@ -11,7 +11,7 @@
 //
 // Usage:
 //   node maze-prime-run.js --env-dir <dir> --out <runDir> [--model <id>]
-//     --harness <none|default|bash|kimi_code> (--max-turns <n> | --unlimited)
+//     --harness <none|prime-harness-id> (--max-turns <n> | --unlimited)
 //     [--observation-mode <ascii|json|vision>] [--no-video]
 
 const fs = require("node:fs");
@@ -25,17 +25,31 @@ const LIVE_EVAL = path.join(ROOT_DIR, "scripts", "maze-prime-live-eval.py");
 const TERMINAL = path.join(ROOT_DIR, "scripts", "maze-terminal.js");
 const HOSTED_STATE_FILE = "prime-evaluation.json";
 const HOSTED_SAMPLES_FILE = "prime-evaluation-samples.json";
+const HARNESS_CATALOG_FILE = path.join(ROOT_DIR, "environments", "mazebench", "prime-harness-catalog.json");
+const HARNESS_CATALOG = JSON.parse(fs.readFileSync(HARNESS_CATALOG_FILE, "utf8"));
+const HARNESS_CERTIFICATION_FILE = path.join(ROOT_DIR, "environments", "mazebench", "prime-harness-certification.json");
+const HARNESS_CERTIFICATION = JSON.parse(fs.readFileSync(HARNESS_CERTIFICATION_FILE, "utf8"));
+if (HARNESS_CERTIFICATION.catalog_fingerprint !== HARNESS_CATALOG.catalog_fingerprint) {
+  throw new Error("Prime harness catalog does not match its safety certification.");
+}
+const CERTIFIED_HARNESSES = new Set(
+  HARNESS_CERTIFICATION.harnesses.filter((entry) => entry.status === "certified").map((entry) => entry.id)
+);
+const PRIME_HARNESSES = new Map(HARNESS_CATALOG.harnesses.map((entry) => [entry.id, entry]));
 const TEXT_RUNTIME_IMAGE = "node:24-bookworm-slim";
 const VISION_RUNTIME_IMAGE = "mcr.microsoft.com/playwright:v1.60.0-noble";
 const PRIME_REASONING_LEVELS = new Set(["low", "medium", "high"]);
-const ISOLATED_MCP_HARNESSES = new Set(["default", "bash", "kimi_code"]);
-const BLOCKED_HARNESS_REASONS = new Map([
-  ["codex", "The pinned Verifiers Codex harness does not support MCP tools yet."],
-  ["claude-code", "Claude Code is not included in MazeBench's pinned Verifiers revision."],
-  ["mini_swe_agent", "The pinned mini-swe-agent harness does not support MCP tools."],
-  ["rlm", "The pinned RLM harness does not support MCP tools."],
-  ["terminus_2", "The pinned Terminus 2 harness does not support MCP tools."]
-]);
+
+function harnessDefinition(harnessId) {
+  return harnessId === "none" ? null : PRIME_HARNESSES.get(harnessId);
+}
+
+function harnessCliValue(value) {
+  if (typeof value === "boolean") return value ? "True" : "False";
+  if (value === null) return "None";
+  if (Array.isArray(value) || (value && typeof value === "object")) return JSON.stringify(value);
+  return String(value);
+}
 
 function positiveTurnBudget(value, fallback = 20) {
   const number = Number(value);
@@ -80,11 +94,13 @@ function parseArgs(argv) {
     const arg = argv[index];
     const next = () => argv[(index += 1)];
 
-    if (arg === "--env-dir") opts.envDir = next();
+    if (arg === "--env-dir") opts.envDir = path.resolve(next());
     else if (arg === "--harness") {
       const harness = String(next() || "none").trim().toLowerCase();
       const aliases = {
-        claude: "claude-code",
+        claude: "claude_code",
+        "claude-code": "claude_code",
+        default: "null",
         "kimi-code": "kimi_code",
         "mini-swe-agent": "mini_swe_agent",
         "terminus-2": "terminus_2"
@@ -144,24 +160,28 @@ function parseArgs(argv) {
   if (!opts.outDir || (!opts.hosted && !opts.envDir)) {
     throw new Error("maze-prime-run.js requires --out and, for local evaluations, --env-dir");
   }
-  if (opts.harness !== "none" && !ISOLATED_MCP_HARNESSES.has(opts.harness) && !BLOCKED_HARNESS_REASONS.has(opts.harness)) {
+  const definition = harnessDefinition(opts.harness);
+  if (opts.harness !== "none" && !definition) {
     throw new Error(`Unknown Prime harness "${opts.harness}".`);
   }
-  if (BLOCKED_HARNESS_REASONS.has(opts.harness)) throw new Error(BLOCKED_HARNESS_REASONS.get(opts.harness));
+  if (definition && !definition.launchable) {
+    throw new Error(definition.reason || `Prime harness "${opts.harness}" failed catalog validation.`);
+  }
+  if (definition && !CERTIFIED_HARNESSES.has(opts.harness)) {
+    throw new Error(`Prime harness "${opts.harness}" has not passed MazeBench compatibility certification.`);
+  }
   if (opts.hosted && opts.harness !== "none") {
     throw new Error("Custom harnesses run through the local trusted evaluator with only their harness program in a Prime sandbox.");
   }
-  if (ISOLATED_MCP_HARNESSES.has(opts.harness) && opts.vision) {
+  if (definition && opts.vision) {
     throw new Error(`${opts.harness} currently supports only text and JSON through MazeBench's isolated MCP controls.`);
   }
-  const allowedHarnessConfig = opts.harness === "kimi_code" ? new Set(["version"]) : new Set();
+  const allowedHarnessConfig = new Set(definition?.configurable || []);
   const unknownHarnessConfig = Object.keys(opts.harnessConfig).filter((key) => !allowedHarnessConfig.has(key));
   if (unknownHarnessConfig.length) {
     throw new Error(`Unsupported ${opts.harness} harness configuration: ${unknownHarnessConfig.join(", ")}.`);
   }
-  if (Object.hasOwn(opts.harnessConfig, "version") && !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(String(opts.harnessConfig.version))) {
-    throw new Error("Kimi Code version must be an exact semantic version.");
-  }
+  opts.harnessConfig = { ...(definition?.default_config || {}), ...opts.harnessConfig };
   if (opts.resumeCheckpoint && !fs.existsSync(opts.resumeCheckpoint)) {
     throw new Error(`Prime resume checkpoint does not exist: ${opts.resumeCheckpoint}`);
   }
@@ -639,10 +659,11 @@ function runEval(opts) {
   }
 
   if (agentic) {
+    const definition = harnessDefinition(opts.harness);
     const runtimeImage = opts.vision ? VISION_RUNTIME_IMAGE : TEXT_RUNTIME_IMAGE;
     argv.push(
       "--harness.id",
-      opts.harness,
+      definition.runtime_harness_id,
       "--harness.runtime.type",
       "prime",
       "--harness.runtime.image",
@@ -657,13 +678,20 @@ function runEval(opts) {
       "8",
       "--taskset.tools.colocated",
       "False",
-      "--taskset.tools.shared",
-      "False",
       "--push",
       "False"
     );
-    for (const [key, value] of Object.entries(opts.harnessConfig)) {
-      argv.push(`--harness.${key.replace(/_/g, "-")}`, String(value));
+    if (definition.adapter === "cli_gateway") {
+      argv.push(
+        "--harness.upstream-id",
+        definition.upstream_id || opts.harness,
+        "--harness.upstream-config-json",
+        JSON.stringify(opts.harnessConfig)
+      );
+    } else {
+      for (const [key, value] of Object.entries(opts.harnessConfig)) {
+        argv.push(`--harness.${key.replace(/_/g, "-")}`, harnessCliValue(value));
+      }
     }
   }
 
@@ -710,6 +738,8 @@ function runEval(opts) {
       env: {
         ...process.env,
         MAZEBENCH_PRIME_HARNESS: opts.harness,
+        MAZEBENCH_PRIME_HARNESS_ADAPTER: harnessDefinition(opts.harness)?.adapter || "user_simulator",
+        MAZEBENCH_PRIME_HARNESS_CATALOG: HARNESS_CATALOG.catalog_fingerprint,
         MAZEBENCH_LIVE_USAGE_PATH: liveUsagePath,
         MAZEBENCH_LIVE_ACTIONS_PATH: liveActionsPath,
         MAZEBENCH_LIVE_REASONING_PATH: liveReasoningPath,

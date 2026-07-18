@@ -47,17 +47,20 @@ matches mazebench.com):
   video when the run finishes. Run artifacts land under
   `outputs/maze-local/site/<run-id>/`.
 
-For Prime agent harnesses, choose **Custom** and then select a reviewed built-in
-harness. The pinned Verifiers revision currently enables Default MCP, Bash, and
-Kimi Code; built-ins without MCP support remain visible but unavailable. The
-harness program runs in a Prime sandbox while the maze session, checkpoint,
-source, and scoring stay in the local trusted evaluator. Only sanitized
-`game_start`, `game_observe`, and `game_action` controls cross that boundary.
+For Prime agent harnesses, choose **Custom** and select any built-in discovered
+from the exact pinned Verifiers package. Codex and Claude Code can also be sent
+through Prime from their dedicated cards. Native MCP harnesses connect directly;
+Codex receives the same MCP server through generated CLI config; command-only
+harnesses such as mini-swe-agent and Terminus 2 receive a capability-scoped
+`mazebench-game` CLI. The harness program runs in a disposable Prime sandbox
+while maze state, checkpoint, source, and scoring stay in the trusted evaluator.
+Only sanitized `start`, `observe`, and `action` operations cross that boundary.
 
 The Agent page does not need an `example.toml`. Launch choices, including the
 harness id and any exact harness version, are saved in each run's `run.json`
 and restored by Continue. TOML is an optional Verifiers CLI configuration
-format, not MazeBench's run persistence format.
+format, not MazeBench's run persistence format. A documented optional example
+lives at `environments/mazebench/example.toml`.
 
 ### World editor source of truth
 
@@ -431,11 +434,9 @@ before the rollout stops), `-n` the number of examples, `-r` the rollouts per
 example. Results save under `environments/mazebench/outputs/`. Agent Mode on the
 website launches exactly this command for a Prime run.
 
-> **Note (verifiers is unpinned):** the environment depends on
-> `verifiers @ git+…@main`. Prime Intellect's Verifiers v1 is being finalized on
-> the `feat/nano-as-v1` branch; if a `main` snapshot ever breaks the env, pin
-> `verifiers` to that branch (or the v1 release tag once it lands) in
-> `environments/mazebench/pyproject.toml`.
+The environment uses a full 40-character Verifiers Git revision. A scheduled
+compatibility workflow proposes exact-pin updates only after rediscovering every
+built-in harness and passing the adapter and trust-boundary certification.
 
 Use your own configured model after `-m`, or omit `-m` to use your Prime
 default. The terminal prints the run summary. MazeBench v1 stores replay
@@ -456,25 +457,26 @@ npm run maze:replay -- environments/mazebench/outputs/evals/<model>/<run-id>
 
 ## 4. Run Codex through Verifiers v1
 
-MazeBench includes a `mazebench_codex` v1 plugin. It uses your local `codex`
-CLI as the harness, routes Codex model calls through the Verifiers v1
-interception server, and writes replay artifacts under `outputs/maze-codex-v1/`.
+MazeBench keeps the `mazebench_codex` v1 taskset id as a compatibility alias.
+It now uses the external `mazebench-tools` task and the Prime-sandboxed Codex
+MCP adapter, so Codex never receives the checkout or evaluator paths.
 
 ```bash
 cd environments/mazebench
 uv run eval mazebench_codex \
-  -m openai/gpt-5-codex \
+  --harness.id mazebench_codex_harness \
+  --harness.runtime.type prime \
+  --harness.runtime.image node:24-bookworm-slim \
+  -m openai/gpt-5 \
   -n 1 -r 1 \
   --taskset.max-actions 100 \
   --max-turns 40 \
   --rich false
 ```
 
-`--taskset.max-actions` is the maze action budget. `--max-turns` is still useful
-because Verifiers counts Codex's internal model/tool-call turns while the CLI is
-working. The harness strips the `openai/` prefix before invoking `codex exec` so
-Codex can use its local model metadata, while Verifiers still routes/bills the
-Prime model.
+`--taskset.max-actions` is the maze action budget. `--max-turns` is the
+framework-enforced model-turn budget. Prime provides both the disposable runtime
+and inference interception; MazeBench retains authoritative state and scoring.
 
 Export the saved v1 trace to scorecard files and video the same way as normal
 MazeBench evals:

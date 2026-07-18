@@ -60,12 +60,9 @@ try {
     path.join(__dirname, "..", "environments", "mazebench", "mazebench", "harness.py"),
     "utf8"
   );
-  assert.match(mazeHarnessSource, /client\.chat\.completions\.create\(/);
+  assert.match(mazeHarnessSource, /from verifiers\.v1\.harnesses\.null\.harness import/);
+  assert.match(mazeHarnessSource, /PROGRAM_SOURCE/);
   assert.doesNotMatch(mazeHarnessSource, /client\.responses\.create\(/);
-  assert.doesNotMatch(mazeHarnessSource, /reasoning=\{"summary": "auto"\}/);
-  assert.match(mazeHarnessSource, /empty_attempts >= 3/);
-  assert.match(mazeHarnessSource, /the turn was not sent to the environment/);
-  assert.match(mazeHarnessSource, /INITIAL_MESSAGES_PATH/);
   const retryProbe = execFileSync(
     "uv",
     [

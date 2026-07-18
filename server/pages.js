@@ -858,15 +858,12 @@ function createPageRenderer({
                   <span>Prime harness</span>
                   <select id="custom-harness-id" aria-describedby="custom-harness-note"></select>
                 </label>
-                <label id="custom-harness-version-field" class="field" hidden>
-                  <span>Exact harness version</span>
-                  <input id="custom-harness-version" type="text" inputmode="text" autocomplete="off" spellcheck="false">
-                </label>
+                <div id="custom-harness-config-fields" class="custom-harness-config-fields"></div>
               </div>
               <div class="custom-harness-panel__status">
                 <strong id="custom-harness-status">Loading harnesses…</strong>
                 <p id="custom-harness-note" class="muted"></p>
-                <p class="custom-harness-panel__security">The harness program runs in a Prime sandbox. Game state, source, checkpoints, and scoring remain on the trusted evaluator behind three sanitized MCP controls.</p>
+                <p class="custom-harness-panel__security">The harness program runs in a disposable Prime sandbox. Game source, state, checkpoints, and scoring remain on the trusted evaluator. Native clients receive three sanitized MCP controls; command harnesses receive an equivalent capability-scoped CLI.</p>
               </div>
             </div>
             <div id="harness-execution" class="harness-execution" hidden>

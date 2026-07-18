@@ -108,30 +108,14 @@ try {
   });
   assert.equal(replayMessageForCommandText("not a command"), null);
 
-  assert.throws(
-    () => service.launchRuns({
-      kind: "prime",
-      harness: "codex",
-      model_name: "openai/gpt-5.6-luna",
-      max_turns: 10
-    }),
-    /pinned Verifiers Codex harness does not support MCP tools/
-  );
-  assert.throws(
-    () => service.launchRuns({
-      kind: "prime",
-      harness: "claude-code",
-      model_name: "anthropic\/claude-sonnet-5",
-      max_turns: 10
-    }),
-    /Claude Code is not included/
-  );
-
   const harnessRegistry = service.listPrimeHarnesses();
   assert.deepEqual(
     harnessRegistry.harnesses.filter((harness) => harness.launchable).map((harness) => harness.id),
-    ["default", "bash", "kimi_code"]
+    ["bash", "claude_code", "codex", "kimi_code", "mini_swe_agent", "null", "pi", "rlm", "terminus_2"]
   );
+  assert.equal(harnessRegistry.harnesses.find((harness) => harness.id === "codex").adapter, "codex_mcp");
+  assert.equal(harnessRegistry.harnesses.find((harness) => harness.id === "claude_code").adapter, "native_mcp");
+  assert.equal(harnessRegistry.harnesses.find((harness) => harness.id === "mini_swe_agent").adapter, "cli_gateway");
   const [customPrime] = service.launchRuns({
     kind: "prime",
     harness: "kimi_code",
@@ -146,10 +130,14 @@ try {
   );
   assert.equal(customPrimeMeta.harness, "kimi_code");
   assert.equal(customPrimeMeta.harness_label, "Kimi Code");
+  assert.equal(customPrimeMeta.harness_version, "0.15.0");
+  assert.equal(customPrimeMeta.harness_source, "pinned-prime-verifiers");
   assert.deepEqual(customPrimeMeta.harness_config, { version: "0.15.0" });
-  assert.equal(customPrimeMeta.harness_boundary, "isolated-mcp");
+  assert.equal(customPrimeMeta.harness_boundary, "isolated-game-gateway");
+  assert.equal(customPrimeMeta.harness_adapter, "native_mcp");
   assert.equal(customPrimeMeta.harness_taskset, "mazebench-tools");
-  assert.equal(customPrimeMeta.verifiers_revision, "18740ec9ea7418cbd55cd1e9fbf051080059be15");
+  assert.equal(customPrimeMeta.verifiers_revision, "653bb14003b87e39588bde308fa8626d1038ce15");
+  assert.match(customPrimeMeta.harness_catalog_fingerprint, /^[0-9a-f]{64}$/);
   assert.deepEqual(customPrimeMeta.launch_params.harness_config, { version: "0.15.0" });
   assert.match(customPrimeMeta.command, /--harness kimi_code/);
   assert.match(customPrimeMeta.command, /--harness-config \{"version":"0\.15\.0"\}/);
@@ -183,7 +171,7 @@ try {
   const continuedCustomPrime = service.continueRun(customPrime.id, 1);
   launchedIds.push(continuedCustomPrime.id);
   assert.deepEqual(continuedCustomPrime.harness_config, { version: "0.15.0" });
-  assert.equal(continuedCustomPrime.harness_boundary, "isolated-mcp");
+  assert.equal(continuedCustomPrime.harness_boundary, "isolated-game-gateway");
   assert.equal(service.stopRun(continuedCustomPrime.id).status, "stopped");
   service.deleteRun(continuedCustomPrime.id);
   service.deleteRun(customPrime.id);

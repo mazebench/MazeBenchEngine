@@ -21,7 +21,9 @@ from pydantic import Field
 from mazebench.mazebench import (
     MazeBenchConfig,
     MazeBenchState,
-    MazeBenchTask,
+    MazeBenchTaskBehavior,
+    MazeBenchTaskConfig,
+    MazeBenchTaskData,
     MazeBenchTaskset,
     MazeSession,
     apply_quit_policy,
@@ -96,7 +98,7 @@ def _public_observation(status: dict[str, Any], mode: str) -> dict[str, Any]:
     return common
 
 
-def _tool_prompt(task: MazeBenchTask) -> str:
+def _tool_prompt(task: MazeBenchTaskData) -> str:
     budget = (
         "There is no action limit; continue until the game is won or the run is stopped."
         if task.max_actions is None
@@ -122,12 +124,38 @@ The game implementation, session, checkpoints, and scoring are evaluator-only. D
 locate or access them. Do not claim moves or scores that were not returned by the game controls."""
 
 
+def _tool_prompt_with_resume(task: MazeBenchTaskData) -> str:
+    instructions = _tool_prompt(task)
+    if not isinstance(task.prompt, list):
+        return instructions
+    turns: list[str] = []
+    for message in task.prompt[-20:]:
+        role = str(getattr(message, "role", None) or message.get("role", "message"))
+        content = getattr(message, "content", None)
+        if content is None and isinstance(message, dict):
+            content = message.get("content", "")
+        text = content if isinstance(content, str) else json.dumps(content, default=str)
+        turns.append(f"[{role}]\n{text}")
+    context = "\n\n".join(turns)
+    if len(context) > 40_000:
+        context = context[-40_000:]
+    return f"""This is a continued run. The evaluator has replayed and verified the saved game
+checkpoint. Here is the tail of the prior model conversation for context:
+
+{context}
+
+Continue using the isolated controls below. `game_start` returns the restored state and must
+still be called exactly once by this new harness process.
+
+{instructions}"""
+
+
 class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
     """Three narrow controls backed by evaluator-owned MazeBench state."""
 
     TOOL_PREFIX = "game"
 
-    async def setup_task(self, task: MazeBenchTask) -> None:
+    async def setup_task(self, task: MazeBenchTaskData) -> None:
         self.task = task
         self._lock = asyncio.Lock()
         self._closed = False
@@ -381,60 +409,18 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
             return self._result(error=error)
 
 
-class MazeBenchToolTaskset(
-    MazeBenchTaskset,
-    vf.Taskset[MazeBenchTask, MazeBenchToolConfig, MazeBenchToolTraceState],
+class MazeBenchToolTaskConfig(MazeBenchTaskConfig):
+    tools: MazeBenchToolsetConfig = Field(default_factory=MazeBenchToolsetConfig)
+
+
+class MazeBenchToolTask(
+    MazeBenchTaskBehavior,
+    vf.Task[MazeBenchTaskData, MazeBenchToolTraceState, MazeBenchToolTaskConfig],
 ):
-    """MazeBench scoring with no user simulator and a trusted MCP tool server."""
+    """A task whose only game access is the evaluator-owned MCP server."""
 
-    # Verifiers checks method identity when deciding whether a taskset defines a
-    # user simulator. Rebind the base no-op exactly; inheriting MazeBenchUser here
-    # would make CLI harness pairings invalid and would duplicate game state.
-    user = vf.Taskset.user
-
-    def __init__(self, config: MazeBenchToolConfig) -> None:
-        super().__init__(config)
-        self._snapshot_paths: dict[int, str] = {}
-
-    def load_tasks(self) -> list[MazeBenchTask]:
-        tasks = super().load_tasks()
-        live_actions_path = os.environ.get("MAZEBENCH_LIVE_ACTIONS_PATH", "").strip()
-        if live_actions_path and len(tasks) == 1:
-            base = Path(live_actions_path).resolve().parent
-        else:
-            base = Path(tempfile.mkdtemp(prefix="mazebench-tools-"))
-        base.mkdir(parents=True, exist_ok=True)
-
-        sanitized: list[MazeBenchTask] = []
-        for task in tasks:
-            self._snapshot_paths[int(task.idx)] = str(base / f"trusted-tool-state-{task.idx}.json")
-            sanitized.append(
-                task.model_copy(
-                    update={
-                        # These evaluator paths must not be serialized through the
-                        # task channel that the harness can authenticate to.
-                        "repo_root": "",
-                        "resume_checkpoint_path": "",
-                        "observation": "",
-                        "prompt": _tool_prompt(task),
-                        "system_prompt": "Use only the supplied game controls for game interaction. Treat their results as authoritative.",
-                    }
-                )
-            )
-        return sanitized
-
-    def tools(self, task: MazeBenchTask) -> list[vf.Toolset]:
-        config = self.config.tools.model_copy(
-            update={
-                "snapshot_path": self._snapshot_paths[int(task.idx)],
-                "resume_checkpoint_path": str(self.config.resume_checkpoint_path or ""),
-                # Never upload this server beside an untrusted harness.
-                "colocated": False,
-                "shared": False,
-                "fork": False,
-            }
-        )
-        return [MazeBenchToolset(config)]
+    tools = (MazeBenchToolset,)
+    user = None
 
     @vf.stop
     async def game_over(self, trace: vf.Trace) -> bool:
@@ -446,8 +432,8 @@ class MazeBenchToolTaskset(
         del trace
         return False
 
-    async def finalize(self, task: MazeBenchTask, trace: vf.Trace, runtime: vf.Runtime) -> None:
-        path = self._snapshot_paths.get(int(task.idx), "")
+    async def finalize(self, trace: vf.Trace, runtime: vf.Runtime) -> None:
+        path = self.config.tools.snapshot_path
         try:
             payload = json.loads(Path(path).read_text(encoding="utf-8"))
             trusted_state = MazeBenchState.model_validate(payload["state"])
@@ -460,7 +446,57 @@ class MazeBenchToolTaskset(
         # The harness knows the interception bearer and could forge /state.
         # Replace it unconditionally with evaluator-owned data before scoring.
         trace.state = trusted_state
-        await super().finalize(task, trace, runtime)
+        await MazeBenchTaskBehavior.finalize(self, trace, runtime)
+
+
+class MazeBenchToolTaskset(vf.Taskset[MazeBenchToolTask, MazeBenchToolConfig]):
+    """MazeBench scoring with no user simulator and a trusted MCP tool server."""
+
+    def load(self) -> list[MazeBenchToolTask]:
+        tasks = MazeBenchTaskset(self.config).load()
+        live_actions_path = os.environ.get("MAZEBENCH_LIVE_ACTIONS_PATH", "").strip()
+        if live_actions_path and len(tasks) == 1:
+            base = Path(live_actions_path).resolve().parent
+        else:
+            base = Path(tempfile.mkdtemp(prefix="mazebench-tools-"))
+        base.mkdir(parents=True, exist_ok=True)
+
+        self._snapshot_paths: dict[int, str] = {}
+        sanitized: list[MazeBenchToolTask] = []
+        for task in tasks:
+            data = task.data
+            snapshot_path = str(base / f"trusted-tool-state-{data.idx}.json")
+            self._snapshot_paths[int(data.idx)] = snapshot_path
+            tool_config = self.config.tools.model_copy(
+                update={
+                    "snapshot_path": snapshot_path,
+                    "resume_checkpoint_path": str(
+                        self.config.resume_checkpoint_path or ""
+                    ),
+                    # Never upload this server beside an untrusted harness.
+                    "colocated": False,
+                }
+            )
+            task_config = MazeBenchToolTaskConfig.model_validate(
+                {**task.config.model_dump(), "tools": tool_config.model_dump()}
+            )
+            sanitized.append(
+                MazeBenchToolTask(
+                    data.model_copy(
+                        update={
+                            # These evaluator paths must not be serialized through the
+                            # task channel that the harness can authenticate to.
+                            "repo_root": "",
+                            "resume_checkpoint_path": "",
+                            "observation": "",
+                            "prompt": _tool_prompt_with_resume(data),
+                            "system_prompt": "Use only the supplied game controls for game interaction. Treat their results as authoritative.",
+                        }
+                    ),
+                    task_config,
+                )
+            )
+        return sanitized
 
 
 def load_taskset(config: MazeBenchToolConfig) -> MazeBenchToolTaskset:

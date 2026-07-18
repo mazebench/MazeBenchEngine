@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+"""Certify every harness route generated from the pinned Verifiers package."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import subprocess
+import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from types import SimpleNamespace
+
+import verifiers.v1 as vf
+from verifiers.v1.loaders import harness_class, harness_config_type
+from verifiers.v1.runtimes import ProgramResult
+
+from mazebench_harnesses.cli import MazeBenchCLIHarness, MazeBenchCLIHarnessConfig
+from mazebench_harnesses.common import cli_source
+from mazebench_harnesses.codex import MazeBenchCodexHarness
+from mazebench_tools import MazeBenchToolConfig, MazeBenchToolTaskset
+
+
+ROOT = Path(__file__).resolve().parents[1]
+CATALOG_PATH = ROOT / "environments" / "mazebench" / "prime-harness-catalog.json"
+RUNTIME = {
+    "type": "prime",
+    "image": "node:24-bookworm-slim",
+    "workdir": "/app",
+    "cpu": 2,
+    "memory": 4,
+    "disk": 8,
+}
+
+
+class RecordingRuntime:
+    type = "prime"
+
+    def __init__(self) -> None:
+        self.argv: list[str] = []
+        self.env: dict[str, str] = {}
+
+    async def write(self, path: str, data: bytes) -> None:
+        del path, data
+
+    async def run(self, argv: list[str], env: dict[str, str]) -> ProgramResult:
+        del argv, env
+        return ProgramResult(0, "", "")
+
+    async def run_program(
+        self, argv: list[str], env: dict[str, str]
+    ) -> ProgramResult:
+        self.argv = list(argv)
+        self.env = dict(env)
+        return ProgramResult(0, "", "")
+
+
+def certify_cli_protocol() -> None:
+    calls: list[tuple[str, str, str]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802 - stdlib callback name
+            body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+            calls.append(
+                (
+                    self.path,
+                    str(body.get("method") or ""),
+                    str(self.headers.get("mcp-session-id") or ""),
+                )
+            )
+            if self.path != "/mcp/capability-token":
+                self.send_error(404)
+                return
+            if body.get("method") == "notifications/initialized":
+                self.send_response(202)
+                self.end_headers()
+                return
+            if body.get("method") == "initialize":
+                result = {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "certification", "version": "1"},
+                }
+            elif body.get("method") == "tools/call":
+                assert self.headers.get("mcp-session-id") == "certified-session"
+                assert body.get("params", {}).get("name") == "start"
+                result = {
+                    "content": [{"type": "text", "text": '{"ok":true}'}],
+                    "structuredContent": {"ok": True},
+                }
+            else:
+                self.send_error(400)
+                return
+            encoded = json.dumps(
+                {"jsonrpc": "2.0", "id": body.get("id"), "result": result}
+            ).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(encoded)))
+            self.send_header("mcp-session-id", "certified-session")
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def log_message(self, format: str, *args) -> None:
+            del format, args
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/mcp/capability-token"
+        with tempfile.TemporaryDirectory(prefix="mazebench-cli-cert-") as directory:
+            helper = Path(directory) / "mazebench-game.js"
+            helper.write_bytes(cli_source(url))
+            result = subprocess.run(
+                ["node", str(helper), "start"],
+                text=True,
+                capture_output=True,
+                timeout=15,
+            )
+            assert result.returncode == 0, result.stderr
+            assert json.loads(result.stdout) == {"ok": True}
+        assert [method for _, method, _ in calls] == [
+            "initialize",
+            "notifications/initialized",
+            "tools/call",
+        ]
+        assert all(path == "/mcp/capability-token" for path, _, _ in calls)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+def effective_harness(entry: dict) -> vf.Harness:
+    route = entry["adapter"]
+    if route == "native_mcp":
+        config = harness_config_type(entry["id"]).model_validate(
+            {"id": entry["id"], "runtime": RUNTIME, **entry["default_config"]}
+        )
+        return harness_class(entry["id"])(config)
+    if route == "codex_mcp":
+        config = harness_config_type(entry["runtime_harness_id"]).model_validate(
+            {
+                "id": entry["runtime_harness_id"],
+                "runtime": RUNTIME,
+                **entry["default_config"],
+            }
+        )
+        return MazeBenchCodexHarness(config)
+    if route == "cli_gateway":
+        config = MazeBenchCLIHarnessConfig.model_validate(
+            {
+                "id": entry["runtime_harness_id"],
+                "runtime": RUNTIME,
+                "upstream_id": entry.get("upstream_id") or entry["id"],
+                "upstream_config_json": json.dumps(entry["default_config"]),
+            }
+        )
+        wrapper = MazeBenchCLIHarness(config)
+        delegate = wrapper._load_delegate()
+        assert isinstance(delegate, harness_class(entry["id"]))
+        return wrapper
+    raise AssertionError(f"unknown adapter route {route!r}")
+
+
+async def certify() -> dict:
+    certify_cli_protocol()
+    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    task = MazeBenchToolTaskset(
+        MazeBenchToolConfig(num_examples=1, max_actions=1)
+    ).load()[0]
+    serialized = task.data.model_dump_json()
+    assert task.user is None
+    assert len(task.tool_servers()) == 1
+    assert task.data.repo_root == ""
+    assert task.data.resume_checkpoint_path == ""
+    assert task.data.observation == ""
+    assert str(ROOT) not in serialized
+
+    results: list[dict] = []
+    for entry in catalog["harnesses"]:
+        harness = effective_harness(entry)
+        assert harness.SUPPORTS_MCP is True
+        results.append(
+            {
+                "id": entry["id"],
+                "adapter": entry["adapter"],
+                "runtime_harness_id": entry["runtime_harness_id"],
+                "checks": [
+                    "upstream-load",
+                    "effective-mcp-pairing",
+                    "external-task-boundary",
+                    "config-validation",
+                    *(["capability-cli-protocol"] if entry["adapter"] == "cli_gateway" else []),
+                    *(["codex-mcp-argv"] if entry["adapter"] == "codex_mcp" else []),
+                ],
+                "status": "certified",
+            }
+        )
+
+    codex = effective_harness(next(h for h in catalog["harnesses"] if h["id"] == "codex"))
+    runtime = RecordingRuntime()
+    trace = vf.Trace(task=vf.TraceTask(type="MazeBenchToolTask", data=task.data))
+    await codex.launch(
+        SimpleNamespace(model="openai/gpt-5"),
+        trace,
+        runtime,
+        "https://interception.invalid/v1",
+        "test-secret",
+        {"mazebench": "https://capability.invalid/mcp/token"},
+    )
+    command = "\n".join(runtime.argv)
+    assert "mcp_servers.mazebench.url" in command
+    assert 'enabled_tools=["start","observe","action"]' in command
+    assert "--disable\napps\n--disable\nplugins" in command
+    assert str(ROOT) not in command
+
+    return {
+        "schema_version": 1,
+        "catalog_fingerprint": catalog["catalog_fingerprint"],
+        "verifiers_version": catalog["verifiers_version"],
+        "verifiers_revision": catalog["verifiers_revision"],
+        "boundary": {
+            "harness_runtime": "disposable-prime-sandbox",
+            "game_runtime": "evaluator-owned-external-tool-server",
+            "allowed_controls": ["start", "observe", "action"],
+            "forbidden_task_fields": [
+                "repo_root",
+                "resume_checkpoint_path",
+                "raw_observation",
+                "scorecard",
+            ],
+        },
+        "harnesses": results,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--write", type=Path)
+    parser.add_argument("--self-test", action="store_true")
+    args = parser.parse_args()
+    payload = asyncio.run(certify())
+    if args.write:
+        args.write.resolve().write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    if args.self_test:
+        print(
+            f"Prime harness certification ready: {len(payload['harnesses'])} harnesses"
+        )
+    elif not args.write:
+        print(json.dumps(payload, indent=2))
+
+
+if __name__ == "__main__":
+    main()

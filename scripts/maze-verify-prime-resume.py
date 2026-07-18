@@ -51,10 +51,12 @@ def config_for_checkpoint(path: Path) -> MazeBenchConfig:
 async def verify(path: Path) -> dict:
     checkpoint = load_prime_resume_checkpoint(str(path))
     taskset = MazeBenchTaskset(config=config_for_checkpoint(path))
-    task = taskset.load_tasks()[0]
-    user = taskset.user(task)
+    task = taskset.load()[0]
+    user = task.user_server()
+    if user is None:
+        raise AssertionError("MazeBench task did not declare its user simulator")
     try:
-        await user.setup_task(task)
+        await user.setup_task(task.data)
         actual_hash = str((user._resume_status or {}).get("board_state_hash") or "")
         expected_hash = str(checkpoint.get("final_board_state_hash") or "")
         if actual_hash != expected_hash:

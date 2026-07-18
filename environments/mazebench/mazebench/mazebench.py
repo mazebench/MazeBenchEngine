@@ -16,7 +16,7 @@ from pathlib import Path
 from string import Template
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 import verifiers.v1 as vf
 
@@ -620,7 +620,7 @@ def valid_action_commands(actions: list[dict[str, Any]]) -> list[str]:
 def render_vision_frame_data_url(
     *,
     actions: list[str],
-    task: "MazeBenchTask",
+    task: "MazeBenchTaskData",
 ) -> str:
     payload = {
         "actions": actions,
@@ -854,7 +854,7 @@ class VisionSession:
     """Persistent maze-render-frame.js --serve session: one server + headless
     browser per rollout, with actions applied incrementally between frames."""
 
-    def __init__(self, *, task: "MazeBenchTask") -> None:
+    def __init__(self, *, task: "MazeBenchTaskData") -> None:
         self.repo_root = Path(task.repo_root or find_repo_root())
         self.timeout_seconds = max(30, int(task.timeout_seconds))
         self.init_payload = {
@@ -1329,7 +1329,7 @@ def set_maze_scorecard(state: vf.State, scorecard: dict[str, Any] | None) -> Non
             state.maze_replay = replay
 
 
-class MazeBenchTask(vf.Task):
+class MazeBenchTaskData(vf.TaskData):
     example_id: int
     allow_quit: bool = env_bool("MAZEBENCH_ALLOW_QUIT", True)
     auto_quit: bool = env_bool("MAZEBENCH_AUTO_QUIT", False)
@@ -1358,6 +1358,13 @@ class MazeBenchTask(vf.Task):
     yaw: int = DEFAULT_YAW
 
 
+class MazeBenchTaskConfig(vf.TaskConfig):
+    gem_reward_weight: float = Field(DEFAULT_GEM_REWARD_WEIGHT, ge=0)
+    room_reward_weight: float = Field(DEFAULT_ROOM_REWARD_WEIGHT, ge=0)
+    push_reward_weight: float = Field(DEFAULT_PUSH_REWARD_WEIGHT, ge=0)
+    user: vf.UserConfig = Field(default_factory=vf.UserConfig)
+
+
 # verifiers renamed the env-id type from `EnvId` to `ID` on main (both are the
 # same Annotated[str, id-validator]); use whichever the installed version has.
 _EnvId = getattr(vf, "EnvId", None) or getattr(vf, "ID", str)
@@ -1365,6 +1372,7 @@ _EnvId = getattr(vf, "EnvId", None) or getattr(vf, "ID", str)
 
 class MazeBenchConfig(vf.TasksetConfig):
     id: _EnvId = "mazebench"
+    task: MazeBenchTaskConfig = Field(default_factory=MazeBenchTaskConfig)
     num_examples: int = 1
     allow_quit: bool = env_bool("MAZEBENCH_ALLOW_QUIT", True)
     auto_quit: bool = env_bool("MAZEBENCH_AUTO_QUIT", False)
@@ -1421,7 +1429,17 @@ class MazeBenchEnvConfig(vf.EnvConfig):
     """Typed v1 environment config with usable local/Hub defaults."""
 
     taskset: MazeBenchConfig = Field(default_factory=MazeBenchConfig)
+    harness: vf.HarnessConfig = Field(
+        default_factory=lambda: vf.HarnessConfig(id="null")
+    )
     max_turns: int | None = DEFAULT_MAX_TURNS
+
+    @model_validator(mode="before")
+    @classmethod
+    def _safe_default_harness(cls, value: Any) -> Any:
+        data = dict(value or {})
+        data.setdefault("harness", {"id": "mazebench"})
+        return data
 
 
 class MazeBenchState(vf.State):
@@ -1437,7 +1455,7 @@ class MazeBenchState(vf.State):
 
 
 class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
-    async def setup_task(self, task: MazeBenchTask) -> None:
+    async def setup_task(self, task: MazeBenchTaskData) -> None:
         self.task = task
         self.vision_session = None
         self.vision_session_failed = False
@@ -1791,108 +1809,9 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
         return await self.build_user_message(status, result_text)
 
 
-class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState]):
-    def load_tasks(self) -> list[MazeBenchTask]:
-        resolved_repo_root = find_bridge_root(self.config.repo_root)
-        normalized_level_ids = parse_level_ids(
-            self.config.level_ids,
-            self.config.start_level_id,
-        )
-        rows = build_rows(
-            count=self.config.num_examples,
-            game_won_gem_count=int(self.config.game_won_gem_count),
-            level_ids=normalized_level_ids,
-            node_bin=self.config.node_bin,
-            repo_root=resolved_repo_root,
-            target_gems=int(self.config.target_gems),
-            timeout_seconds=int(self.config.timeout_seconds),
-            view=self.config.view,
-            yaw=int(self.config.yaw),
-        )
-        checkpoint = (
-            load_prime_resume_checkpoint(self.config.resume_checkpoint_path)
-            if self.config.resume_checkpoint_path
-            else None
-        )
-        if checkpoint and len(rows) != 1:
-            raise ValueError("Prime checkpoint resume supports exactly one rollout")
-        tasks: list[MazeBenchTask] = []
-        for index, row in enumerate(rows):
-            checkpoint_task = checkpoint.get("task") if checkpoint else {}
-            if checkpoint:
-                expected = {
-                    "level_id": str(row["level_id"]),
-                    "game_won_gem_count": int(row["game_won_gem_count"]),
-                    "observation_mode": self.config.observation_mode,
-                    "omniscient": bool(self.config.omniscient),
-                    "hide_names": bool(self.config.hide_names),
-                    "hide_names_seed": str(self.config.hide_names_seed).strip()[:128] or "1",
-                    "allow_quit": bool(self.config.allow_quit),
-                    "auto_quit": bool(self.config.auto_quit),
-                    "auto_quit_threshold": float(self.config.auto_quit_threshold),
-                    "auto_quit_mode": self.config.auto_quit_mode,
-                    "auto_quit_window": int(self.config.auto_quit_window),
-                    "auto_quit_warning_moves": int(self.config.auto_quit_warning_moves),
-                }
-                for key, value in expected.items():
-                    if checkpoint_task.get(key) != value:
-                        raise ValueError(
-                            f"Prime checkpoint {key} does not match the requested run configuration"
-                        )
-            tasks.append(MazeBenchTask(
-                idx=index,
-                name=f"{row['game_id']}:{row['level_id']}#{index}",
-                prompt=prime_resume_prompt(checkpoint) if checkpoint else None,
-                system_prompt=(
-                    str(checkpoint.get("system_prompt") or self.config.system_prompt)
-                    if checkpoint
-                    else self.config.system_prompt
-                ),
-                example_id=int(row["example_id"]),
-                allow_quit=bool(self.config.allow_quit),
-                auto_quit=bool(self.config.auto_quit),
-                auto_quit_threshold=float(self.config.auto_quit_threshold),
-                auto_quit_mode=self.config.auto_quit_mode,
-                auto_quit_window=int(self.config.auto_quit_window),
-                auto_quit_warning_moves=int(self.config.auto_quit_warning_moves),
-                game_id=str(row["game_id"]),
-                game_won_gem_count=int(row["game_won_gem_count"]),
-                level_id=str(row["level_id"]),
-                max_actions=(
-                    None
-                    if self.config.max_actions is None
-                    else int(self.config.max_actions)
-                ),
-                node_bin=str(row["node_bin"]),
-                observation=str(row["observation"]),
-                observation_mode=self.config.observation_mode,
-                omniscient=bool(self.config.omniscient),
-                hide_names=bool(self.config.hide_names),
-                hide_names_seed=str(self.config.hide_names_seed).strip()[:128] or "1",
-                repo_root=str(row["repo_root"]),
-                resume_checkpoint_path=(
-                    str(checkpoint.get("_path") or "") if checkpoint else ""
-                ),
-                target_gems=int(row["target_gems"]),
-                timeout_seconds=int(row["timeout_seconds"]),
-                view=str(row["view"]),
-                vision_height=int(self.config.vision_height),
-                vision_view=str(self.config.vision_view),
-                vision_width=int(self.config.vision_width),
-                yaw=int(row["yaw"]),
-            ))
-        return tasks
-
-    def user(self, task: MazeBenchTask) -> vf.User:
-        return MazeBenchUser(self.config.user)
-
-    async def finalize(
-        self,
-        task: MazeBenchTask,
-        trace: vf.Trace,
-        runtime: vf.Runtime,
-    ) -> None:
-        del task, runtime
+class MazeBenchTaskBehavior:
+    async def finalize(self, trace: vf.Trace, runtime: vf.Runtime) -> None:
+        del runtime
         trace.info["maze_actions"] = trace.state.maze_actions
         if trace.state.maze_auto_quit:
             trace.info["maze_auto_quit"] = trace.state.maze_auto_quit
@@ -1906,8 +1825,8 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
             trace.state.game_lost
             or trace.state.game_won
             or (
-                trace.task.max_actions is not None
-                and len(trace.state.maze_actions) >= int(trace.task.max_actions)
+                self.data.max_actions is not None
+                and len(trace.state.maze_actions) >= int(self.data.max_actions)
             )
         )
 
@@ -1918,10 +1837,10 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
         evaluation = evaluate_auto_quit(
             trace.state.maze_initial_board_state_hash,
             trace.state.maze_actions,
-            enabled=trace.task.auto_quit,
-            threshold=trace.task.auto_quit_threshold,
-            mode=trace.task.auto_quit_mode,
-            window=trace.task.auto_quit_window,
+            enabled=self.data.auto_quit,
+            threshold=self.data.auto_quit_threshold,
+            mode=self.data.auto_quit_mode,
+            window=self.data.auto_quit_window,
         )
         if evaluation is None:
             return False
@@ -1929,10 +1848,10 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
         return True
 
     @vf.reward
-    async def gem_score(self, task: MazeBenchTask, trace: vf.Trace) -> float:
+    async def gem_score(self, trace: vf.Trace) -> float:
         status = trace.state.maze_status or {}
         gem_count = int(status.get("gem_count") or 0)
-        target = int(task.target_gems or 0)
+        target = int(self.data.target_gems or 0)
         if target <= 0:
             raw_score = float(gem_count)
         else:
@@ -1975,6 +1894,115 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
     async def novel_block_positions(self, trace: vf.Trace) -> float:
         status = trace.state.maze_status or {}
         return float(status.get("novel_push_count") or 0)
+
+
+class MazeBenchTask(
+    MazeBenchTaskBehavior,
+    vf.Task[MazeBenchTaskData, MazeBenchState, MazeBenchTaskConfig],
+):
+    user = MazeBenchUser
+
+
+class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig]):
+    def load(self) -> list[MazeBenchTask]:
+        resolved_repo_root = find_bridge_root(self.config.repo_root)
+        normalized_level_ids = parse_level_ids(
+            self.config.level_ids,
+            self.config.start_level_id,
+        )
+        rows = build_rows(
+            count=self.config.num_examples,
+            game_won_gem_count=int(self.config.game_won_gem_count),
+            level_ids=normalized_level_ids,
+            node_bin=self.config.node_bin,
+            repo_root=resolved_repo_root,
+            target_gems=int(self.config.target_gems),
+            timeout_seconds=int(self.config.timeout_seconds),
+            view=self.config.view,
+            yaw=int(self.config.yaw),
+        )
+        checkpoint = (
+            load_prime_resume_checkpoint(self.config.resume_checkpoint_path)
+            if self.config.resume_checkpoint_path
+            else None
+        )
+        if checkpoint and len(rows) != 1:
+            raise ValueError("Prime checkpoint resume supports exactly one rollout")
+        task_config = self.config.task.model_copy(
+            update={
+                "gem_reward_weight": self.config.gem_reward_weight,
+                "room_reward_weight": self.config.room_reward_weight,
+                "push_reward_weight": self.config.push_reward_weight,
+                "user": self.config.user,
+            }
+        )
+        tasks: list[MazeBenchTask] = []
+        for index, row in enumerate(rows):
+            checkpoint_task = checkpoint.get("task") if checkpoint else {}
+            if checkpoint:
+                expected = {
+                    "level_id": str(row["level_id"]),
+                    "game_won_gem_count": int(row["game_won_gem_count"]),
+                    "observation_mode": self.config.observation_mode,
+                    "omniscient": bool(self.config.omniscient),
+                    "hide_names": bool(self.config.hide_names),
+                    "hide_names_seed": str(self.config.hide_names_seed).strip()[:128] or "1",
+                    "allow_quit": bool(self.config.allow_quit),
+                    "auto_quit": bool(self.config.auto_quit),
+                    "auto_quit_threshold": float(self.config.auto_quit_threshold),
+                    "auto_quit_mode": self.config.auto_quit_mode,
+                    "auto_quit_window": int(self.config.auto_quit_window),
+                    "auto_quit_warning_moves": int(self.config.auto_quit_warning_moves),
+                }
+                for key, value in expected.items():
+                    if checkpoint_task.get(key) != value:
+                        raise ValueError(
+                            f"Prime checkpoint {key} does not match the requested run configuration"
+                        )
+            data = MazeBenchTaskData(
+                idx=index,
+                name=f"{row['game_id']}:{row['level_id']}#{index}",
+                prompt=prime_resume_prompt(checkpoint) if checkpoint else None,
+                system_prompt=(
+                    str(checkpoint.get("system_prompt") or self.config.system_prompt)
+                    if checkpoint
+                    else self.config.system_prompt
+                ),
+                example_id=int(row["example_id"]),
+                allow_quit=bool(self.config.allow_quit),
+                auto_quit=bool(self.config.auto_quit),
+                auto_quit_threshold=float(self.config.auto_quit_threshold),
+                auto_quit_mode=self.config.auto_quit_mode,
+                auto_quit_window=int(self.config.auto_quit_window),
+                auto_quit_warning_moves=int(self.config.auto_quit_warning_moves),
+                game_id=str(row["game_id"]),
+                game_won_gem_count=int(row["game_won_gem_count"]),
+                level_id=str(row["level_id"]),
+                max_actions=(
+                    None
+                    if self.config.max_actions is None
+                    else int(self.config.max_actions)
+                ),
+                node_bin=str(row["node_bin"]),
+                observation=str(row["observation"]),
+                observation_mode=self.config.observation_mode,
+                omniscient=bool(self.config.omniscient),
+                hide_names=bool(self.config.hide_names),
+                hide_names_seed=str(self.config.hide_names_seed).strip()[:128] or "1",
+                repo_root=str(row["repo_root"]),
+                resume_checkpoint_path=(
+                    str(checkpoint.get("_path") or "") if checkpoint else ""
+                ),
+                target_gems=int(row["target_gems"]),
+                timeout_seconds=int(row["timeout_seconds"]),
+                view=str(row["view"]),
+                vision_height=int(self.config.vision_height),
+                vision_view=str(self.config.vision_view),
+                vision_width=int(self.config.vision_width),
+                yaw=int(row["yaw"]),
+            )
+            tasks.append(MazeBenchTask(data, task_config))
+        return tasks
 
 
 def load_taskset(config: MazeBenchConfig) -> MazeBenchTaskset:

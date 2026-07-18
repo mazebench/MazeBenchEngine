@@ -53,18 +53,18 @@ async def verify_boundary() -> None:
                 max_actions=1,
             )
             taskset = MazeBenchToolTaskset(config=config)
-            tasks = taskset.load_tasks()
+            tasks = taskset.load()
             assert len(tasks) == 1
             task = tasks[0]
 
             # /task is authenticated with a token the harness itself knows.
             # Therefore no evaluator path or initial raw observation may be in it.
-            serialized_task = task.model_dump_json()
-            assert task.repo_root == ""
-            assert task.resume_checkpoint_path == ""
-            assert task.observation == ""
+            serialized_task = task.data.model_dump_json()
+            assert task.data.repo_root == ""
+            assert task.data.resume_checkpoint_path == ""
+            assert task.data.observation == ""
             assert str(Path(__file__).resolve().parents[1]) not in serialized_task
-            assert type(taskset).user is vf.Taskset.user
+            assert task.user is None
 
             # /state uses the same bearer. Its schema must reject any attempted
             # evaluator-owned maze fields while the harness is alive.
@@ -77,13 +77,11 @@ async def verify_boundary() -> None:
             else:
                 raise AssertionError("harness-facing state accepted forged maze data")
 
-            toolsets = taskset.tools(task)
+            toolsets = task.tool_servers()
             assert len(toolsets) == 1
             toolset = toolsets[0]
             assert toolset.config.colocated is False
-            assert toolset.config.shared is False
-            assert toolset.config.fork is False
-            await toolset.setup_task(task)
+            await toolset.setup_task(task.data)
 
             opening = await toolset.start()
             assert opening["actions_used"] == 0
@@ -95,15 +93,18 @@ async def verify_boundary() -> None:
             assert not FORBIDDEN_TOOL_FIELDS.intersection(nested_keys(moved))
             assert toolset._session is None
 
-            snapshot_path = Path(taskset._snapshot_paths[int(task.idx)])
+            snapshot_path = Path(taskset._snapshot_paths[int(task.data.idx)])
             snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
             assert len(snapshot["state"]["maze_actions"]) == 1
             assert live_actions_path.exists()
 
             # Finalization occurs after the untrusted harness is done. It must
             # replace the empty harness-facing state with the trusted snapshot.
-            trace = vf.Trace(task=task, state=MazeBenchToolTraceState())
-            await taskset.finalize(task, trace, None)
+            trace = vf.Trace(
+                task=vf.TraceTask(type="MazeBenchToolTask", data=task.data),
+                state=MazeBenchToolTraceState(),
+            )
+            await task.finalize(trace, None)
             assert isinstance(trace.state, MazeBenchState)
             assert len(trace.info["maze_actions"]) == 1
             assert trace.info["maze_status"]
