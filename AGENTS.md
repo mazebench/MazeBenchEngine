@@ -2,6 +2,19 @@
 
 These instructions apply to the entire MazeBenchEngine repository.
 
+## Absolute isolation for benchmark agent runs
+
+Benchmark agents must never be able to inspect MazeBenchEngine or any other repository. Treat repository or host-file access by the evaluated agent as cheating and as a run-launch failure, not as a supported tools mode.
+
+- This rule applies to every agent run and every launch variant, including local, subscription, container, host, vision, text, tools-on, tools-off, offline, omniscient, hidden-name, swarm, worker, clone, continuation, and branch runs. Do not add mode-specific exceptions.
+- Keep the trusted runner and game-control server separate from the evaluated agent. The runner may load the environment, but the evaluated model and every process or tool it can invoke must receive only the intended game observations and game-control interfaces.
+- Never give the evaluated agent a repository working directory, repository mount, `--add-dir`, readable or writable repository root, host shell, general command execution, filesystem search/read tool, coding tool, repository MCP resource, or repository path in its prompt or environment.
+- A tools-enabled benchmark may expose only explicitly approved game-control tools. `offline`, `mode=vision`, `omniscient=false`, or a workspace-write sandbox do not provide repository isolation and must never be treated as if they do.
+- Block access to source code, level definitions, world maps, solver code, tests, fixtures, hidden-state assets, scorecards, session files, run outputs, logs, prior-run artifacts, and sibling repositories. Do not allow indirect access through child processes, workers, clones, inherited file descriptors, symlinks, environment variables, or helper services.
+- Give each evaluated agent a fresh, empty, run-scoped workspace containing no copied or linked repository content. Keep any agent-created notes or artifacts there only when the benchmark explicitly permits them.
+- Launchers must fail closed before starting a run if the requested configuration, sandbox, tool set, working directory, mount set, or environment would expose repository or host files. Never silently launch with broader access.
+- When changing agent launch code, preserve this boundary with automated tests that assert the evaluated agent cannot read repository files or invoke general shell/file tools. A run that crosses this boundary is invalid even if it never changes game state.
+
 ## Branch-first development
 
 - Do not commit or push ordinary work directly to `main` unless the user explicitly overrides this rule.
