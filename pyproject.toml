@@ -1,6 +1,6 @@
 [project]
 name = "mazebench"
-version = "0.2.7"
+version = "0.2.8"
 description = "MazeBench: ice-maze puzzle site, world editor, and coding-agent benchmark runner. `mazebench launch` serves the website locally."
 readme = "README.md"
 license = "MIT"
