@@ -145,8 +145,8 @@ try {
   assert.equal(livePrimeMeta.allow_quit, false);
   assert.doesNotMatch(livePrimeMeta.command, /--hosted/);
   assert.match(livePrimeMeta.command, /--model Qwen\/Qwen3\.5-0\.8B/);
-  assert.doesNotMatch(livePrimeMeta.command, /--reasoning/);
-  assert.equal(livePrimeMeta.reasoning, "");
+  assert.match(livePrimeMeta.command, /--reasoning low/);
+  assert.equal(livePrimeMeta.reasoning, "low");
   assert.match(livePrimeMeta.command, /--max-turns 750/);
   assert.match(livePrimeMeta.note, /every model turn/);
   const livePrimeRunDir = path.join(rootDir, "outputs", "maze-local", "site", livePrime.id);

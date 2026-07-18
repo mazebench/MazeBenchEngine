@@ -107,13 +107,11 @@ function claudeReasoningLevels(modelId) {
   ];
 }
 
-// Prime documents reasoning_effort for GPT-OSS models. Do not infer support
-// from another provider's native API: unsupported knobs can produce a
-// reasoning-only response with no game command.
-function primeReasoningLevels(modelId) {
-  return /^openai\/gpt-oss-(?:20b|120b)(?:-|$)/i.test(String(modelId || "").trim())
-    ? [...PRIME_REASONING_LEVELS]
-    : [];
+// Keep Prime's runner contract provider-neutral. Provider-specific extensions
+// are intentionally excluded, but every Prime model gets the stable
+// off/low/medium/high choice exposed by the runner.
+function primeReasoningLevels(_modelId) {
+  return [...PRIME_REASONING_LEVELS];
 }
 
 function primeHarnessModelCompatible(modelId, harnessId) {
@@ -3393,7 +3391,7 @@ function createAgentRunService({
         checked_at: modelCatalogCheckedAt(),
         default_model_id: models[0]?.id || "",
         note: models.length
-          ? `${models.length} live models. Prices are USD per million tokens; image support is inferred from the model id and reasoning controls appear only where Prime documents support.`
+          ? `${models.length} live models. Prices are USD per million tokens; image support is inferred from the model id and Prime reasoning is limited to off, low, medium, or high.`
           : "The Prime catalog came back empty — type a model id instead."
       };
     } catch (error) {
@@ -3627,8 +3625,8 @@ function createAgentRunService({
     const wantVideo = !(params.video === false || params.video === "false");
     const allowQuit = !(params.allow_quit === false || params.allow_quit === "false");
     const autoQuit = normalizeAutoQuitConfig(params);
-    // Reasoning effort → --sampling.reasoning-effort for documented models.
-    // "" omits the override and preserves the provider default.
+    // Reasoning effort → --sampling.reasoning-effort. Prime's stable contract
+    // is off/low/medium/high. "" omits the override and preserves the default.
     const requestedReasoning = String(params.reasoning || "").toLowerCase();
     const reasoning = primeReasoningLevels(model).includes(requestedReasoning)
       ? requestedReasoning
