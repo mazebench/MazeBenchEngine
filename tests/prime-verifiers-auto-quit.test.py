@@ -182,6 +182,40 @@ class AutoQuitParityTests(unittest.TestCase):
             },
         )
 
+    def test_camera_rotations_do_not_fill_or_lower_novelty_window(self) -> None:
+        camera_neutral_actions = [
+            {"command_text": "up", "status": {"board_state_hash": "A"}},
+            {"command_text": "rotate camera left", "status": {"board_state_hash": "A"}},
+            {"status": {"action": "rotate_camera", "board_state_hash": "A"}},
+            {"command_text": "down", "status": {"board_state_hash": "A"}},
+            {"command_text": "no move", "status": {"board_state_hash": "A"}},
+        ]
+        self.assertTrue(auto_quit.is_camera_rotation_action(camera_neutral_actions[1]))
+        self.assertTrue(auto_quit.is_camera_rotation_action(camera_neutral_actions[2]))
+        self.assertFalse(auto_quit.is_camera_rotation_action(camera_neutral_actions[4]))
+        self.assertIsNone(
+            auto_quit.evaluate_auto_quit(
+                "A",
+                camera_neutral_actions[:4],
+                enabled=True,
+                threshold=0,
+                mode="rolling",
+                window=3,
+            )
+        )
+        result = auto_quit.evaluate_auto_quit(
+            "A",
+            camera_neutral_actions,
+            enabled=True,
+            threshold=0,
+            mode="rolling",
+            window=3,
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["observed_states"], 3)
+        self.assertEqual(result["action_count"], 5)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -51,6 +51,16 @@ function boardStateHash(action) {
   return String(action?.board_state_hash || action?.status?.board_state_hash || "").trim();
 }
 
+function isCameraRotationAction(action) {
+  const rawCommand = action?.command_text ?? action?.command ?? action?.action ?? action?.status?.action ?? action?.message?.command;
+  const command = String(rawCommand || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll("_", " ")
+    .replace(/\s+/g, " ");
+  return command === "rotate camera" || /^rotate camera (?:up|down|left|right)$/.test(command);
+}
+
 // This intentionally matches the novelty chart on the run page. A state is
 // novel only on its first appearance in the entire run. Cumulative mode also
 // includes the initial observation; rolling mode measures action observations
@@ -60,7 +70,11 @@ function evaluateAutoQuit(initialStateHash, actions, sourceConfig = {}) {
   if (!config.enabled) return null;
 
   const initialHash = String(initialStateHash || "").trim();
-  const hashes = (Array.isArray(actions) ? actions : []).map(boardStateHash).filter(Boolean);
+  const actionList = Array.isArray(actions) ? actions : [];
+  const hashes = actionList
+    .filter((action) => !isCameraRotationAction(action))
+    .map(boardStateHash)
+    .filter(Boolean);
   if (!hashes.length) return null;
 
   const seen = new Set(initialHash ? [initialHash] : []);
@@ -94,7 +108,7 @@ function evaluateAutoQuit(initialStateHash, actions, sourceConfig = {}) {
     percentage,
     novel_states: novelStates,
     observed_states: observedStates,
-    action_count: hashes.length
+    action_count: actionList.length
   };
 }
 
@@ -115,5 +129,6 @@ module.exports = {
   AUTO_QUIT_MAX_WINDOW,
   autoQuitLaunchParams,
   evaluateAutoQuit,
+  isCameraRotationAction,
   normalizeAutoQuitConfig
 };

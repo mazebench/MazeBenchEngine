@@ -33,6 +33,8 @@ assert.match(runScript, /function playerWorldPositionKey\(player, roomValue\)/);
 assert.match(runScript, /columnIndex \* 16 \+ position\.x/);
 assert.match(runScript, /rowIndex \* 16 \+ position\.y/);
 assert.match(runScript, /function boardStateNoveltyPoints\(\)/);
+assert.match(runScript, /function isCameraRotationCommand\(value\)/);
+assert.match(runScript, /if \(isCameraRotationCommand\(move\.action\)\) return/);
 assert.match(runScript, /seen\.add\(initialKey\)/);
 assert.match(runScript, /cumulativeNovel \/ cumulativeTotal \* 100/);
 assert.match(runScript, /novelInWindow \/ windowSize \* 100/);

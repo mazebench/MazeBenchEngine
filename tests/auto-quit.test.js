@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const {
   autoQuitLaunchParams,
   evaluateAutoQuit,
+  isCameraRotationAction,
   normalizeAutoQuitConfig
 } = require("../shared/auto-quit");
 
@@ -72,5 +73,30 @@ assert.equal(
   "rolling auto-quit must wait for a full window"
 );
 assert.equal(evaluateAutoQuit("A", actions("A"), { auto_quit: false }), null);
+
+assert.equal(isCameraRotationAction({ command_text: "rotate camera left" }), true);
+assert.equal(isCameraRotationAction({ status: { action: "rotate_camera" } }), true);
+assert.equal(isCameraRotationAction({ command_text: "no move" }), false);
+const cameraNeutralActions = [
+  { command_text: "up", board_state_hash: "A" },
+  { command_text: "rotate camera left", board_state_hash: "A" },
+  { command_text: "rotate camera right", board_state_hash: "A" },
+  { command_text: "down", board_state_hash: "A" },
+  { command_text: "no move", board_state_hash: "A" }
+];
+assert.deepEqual(evaluateAutoQuit("A", cameraNeutralActions, rollingConfig), {
+  mode: "rolling",
+  threshold: 0,
+  window: 3,
+  percentage: 0,
+  novel_states: 0,
+  observed_states: 3,
+  action_count: 5
+});
+assert.equal(
+  evaluateAutoQuit("A", cameraNeutralActions.slice(0, 4), rollingConfig),
+  null,
+  "camera rotations must not fill or lower the novelty window"
+);
 
 console.log("auto-quit: OK — cumulative and full-window rolling novelty thresholds are deterministic.");

@@ -1417,12 +1417,22 @@
       : `${roomId}:${position.x},${position.y},${elevation}`;
   }
 
+  function isCameraRotationCommand(value) {
+    const command = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replaceAll("_", " ")
+      .replace(/\s+/g, " ");
+    return command === "rotate camera" || /^rotate camera (?:up|down|left|right)$/.test(command);
+  }
+
   function boardStateNoveltyPoints() {
     const settings = boardStateMetricSettings();
     const timeline = [];
     [...state.moves.entries()]
       .sort(([left], [right]) => Number(left) - Number(right))
       .forEach(([action, move]) => {
+        if (isCameraRotationCommand(move.action)) return;
         const key = settings.basis === "position"
           ? playerWorldPositionKey(move.player, move.roomId || move.room)
           : move.boardStateHash;
