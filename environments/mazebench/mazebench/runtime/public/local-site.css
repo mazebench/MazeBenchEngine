@@ -767,6 +767,7 @@
   font-size: 11px;
   line-height: 1.4;
   max-height: 300px;
+  overflow-anchor: none;
   white-space: pre-wrap;
 }
 
@@ -1226,9 +1227,7 @@ body.play-body {
 /* ---- flyover controls / vector presentation ---- */
 
 .flyover-body .flyover-stage::after {
-  background: radial-gradient(circle at 50% 45%, rgba(84, 240, 255, 0.08), rgba(3, 5, 14, 0.16) 62%, rgba(3, 5, 14, 0.48));
-  mix-blend-mode: normal;
-  opacity: 1;
+  content: none;
 }
 
 .flyover-body .flyover-frame,

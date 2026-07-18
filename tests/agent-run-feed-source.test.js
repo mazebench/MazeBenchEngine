@@ -9,6 +9,7 @@ const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "
 
 assert.match(pages, /id="run-feed-search" type="search"/);
 assert.match(pages, /id="run-feed-export"[^>]+title="Export every move and its reasoning as JSON"/);
+assert.match(pages, /id="run-feed-export-txt"[^>]+title="Export every move and its reasoning as plain text"/);
 assert.equal((pages.match(/\$\{movesSection\}/g) || []).length, 2);
 assert.match(runScript, /function feedSearchTerms\(query\)/);
 assert.match(runScript, /return terms\.every\(\(term\) => text\.includes\(term\)\)/);
@@ -17,6 +18,10 @@ assert.match(runScript, /<mark>\$\{escapeText\(part\)\}<\/mark>/);
 assert.match(runScript, /export_scope: "all_moves"/);
 assert.match(runScript, /new Blob\(\[.*JSON\.stringify\(payload, null, 2\)/s);
 assert.match(runScript, /reasoning: state\.reasoning\.get\(turn\) \|\| null/);
+assert.match(runScript, /function feedTextExport\(payload\)/);
+assert.match(runScript, /Maze Bench Agent Reasoning Log/);
+assert.match(runScript, /-reasoning\.txt/);
+assert.match(runScript, /feedTextExportButton\?\.addEventListener\("click", exportFeedText\)/);
 assert.match(runScript, /data-feed-expand=/);
 assert.match(runScript, /function isMultiAgentRun\(\)/);
 assert.match(runScript, /Invalid: \$\{invalidReason\}/);
@@ -27,6 +32,7 @@ assert.match(siteTheme, /\.run-feed-toolbar \{/);
 assert.match(siteTheme, /\.agent-feed__jump \{/);
 assert.match(siteTheme, /\.agent-feed__reasoning\.is-collapsible:not\(\.is-expanded\) p \{/);
 assert.match(siteTheme, /\.agent-feed mark \{/);
+assert.match(siteTheme, /\.agent-log \{[\s\S]*?overflow-anchor: none/);
 assert.doesNotMatch(siteTheme, /box-shadow: inset 3px 0 0/);
 
 console.log("agent-run-feed-source: OK — move logs are searchable, exportable, and clean in single-agent mode.");

@@ -1256,7 +1256,7 @@ function createPageRenderer({
           <div class="run-moves__head">
             <div>
               <h2>Moves &amp; reasoning</h2>
-              <p class="muted">Search actions, rooms, status, and reasoning. JSON export always includes the complete log.</p>
+              <p class="muted">Search actions, rooms, status, and reasoning. Exports always include the complete log.</p>
             </div>
             <span id="run-feed-result" class="run-moves__count" aria-live="polite">Waiting for moves</span>
           </div>
@@ -1270,6 +1270,7 @@ function createPageRenderer({
               </button>
             </div>
             <button id="run-feed-export" class="button run-feed-export" type="button" title="Export every move and its reasoning as JSON" disabled>${VIDEO_ICONS.download}<span>Export JSON</span></button>
+            <button id="run-feed-export-txt" class="button run-feed-export" type="button" title="Export every move and its reasoning as plain text" disabled>${VIDEO_ICONS.download}<span>Export TXT</span></button>
           </div>
           <div id="run-feed" class="agent-feed" aria-label="Moves and reasoning log"></div>
         </section>`;
@@ -1366,7 +1367,7 @@ function createPageRenderer({
         </section>
         ${replayExportSection}
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260717-auto-quit-1" defer></script>`
+        <script src="/agent-run.js?v=20260717-runner-log-export-1" defer></script>`
     });
   }
 

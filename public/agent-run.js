@@ -17,6 +17,7 @@
   const feedSearchClear = document.getElementById("run-feed-search-clear");
   const feedResult = document.getElementById("run-feed-result");
   const feedExportButton = document.getElementById("run-feed-export");
+  const feedTextExportButton = document.getElementById("run-feed-export-txt");
   const logEl = document.getElementById("run-log");
   const stopButton = document.getElementById("stop-run");
   const primeEvaluationLink = document.getElementById("open-prime-evaluation");
@@ -2738,6 +2739,49 @@
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function feedTextExport(payload) {
+    const lines = [
+      "Maze Bench Agent Reasoning Log",
+      `Run ID: ${payload.run.id || "—"}`,
+      `Exported: ${payload.exported_at}`,
+      `Status: ${payload.run.status || "—"}`,
+      `Provider: ${payload.run.provider || "—"}`,
+      `Model: ${payload.run.model || "—"}`,
+      `Observation mode: ${payload.run.observation_mode || "—"}`,
+      `Moves: ${payload.move_count}`,
+      ""
+    ];
+
+    payload.moves.forEach((move) => {
+      lines.push(`Action ${move.turn}: ${move.action || "Unknown action"}`);
+      if (move.timestamp) lines.push(`Timestamp: ${move.timestamp}`);
+      lines.push(`Room: ${move.room || "—"}`);
+      if (move.player) lines.push(`Position: ${move.player.x}, ${move.player.y}`);
+      lines.push(`Gems: ${move.gem_count}`);
+      if (move.flags.length) lines.push(`Flags: ${move.flags.join(", ")}`);
+      lines.push(`Active agents: ${move.active_agents}`);
+      if (Number.isFinite(move.tokens)) lines.push(`Tokens: ${move.tokens}`);
+      lines.push("Reasoning:");
+      lines.push(move.reasoning || "(No reasoning recorded.)");
+      lines.push("", "---", "");
+    });
+
+    return `${lines.join("\n").trimEnd()}\n`;
+  }
+
+  function exportFeedText() {
+    const payload = feedExportPayload();
+    const blob = new Blob([feedTextExport(payload)], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `agent-run-${String(runId).replace(/[^a-z0-9_-]+/gi, "-")}-reasoning.txt`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   function renderFeed({ resetScroll = false } = {}) {
     const query = state.feedQuery.trim();
     if (state.renderedFeedVersion === state.feedVersion && state.renderedFeedQuery === query) return;
@@ -2759,6 +2803,7 @@
     const hiddenMoveCount = Math.max(0, moveNums.length - state.feedRenderLimit);
     const renderedMoveNums = hiddenMoveCount > 0 ? moveNums.slice(-state.feedRenderLimit) : moveNums;
     if (feedExportButton) feedExportButton.disabled = allMoveNums.length === 0;
+    if (feedTextExportButton) feedTextExportButton.disabled = allMoveNums.length === 0;
     if (feedResult) {
       feedResult.textContent = terms.length
         ? hiddenMoveCount
@@ -2918,6 +2963,7 @@
     renderFeed({ resetScroll: true });
   });
   feedExportButton?.addEventListener("click", exportFeedJson);
+  feedTextExportButton?.addEventListener("click", exportFeedText);
   feedEl?.addEventListener("click", (event) => {
     const loadMore = event.target.closest("[data-feed-load-more]");
     if (loadMore) {
@@ -3221,8 +3267,11 @@
       }
 
       if (progress.log_chunk) {
-        logEl.textContent += progress.log_chunk;
-        logEl.scrollTop = logEl.scrollHeight;
+        const previousLogScrollTop = logEl.scrollTop;
+        const previousLogScrollLeft = logEl.scrollLeft;
+        logEl.append(document.createTextNode(progress.log_chunk));
+        logEl.scrollTop = previousLogScrollTop;
+        logEl.scrollLeft = previousLogScrollLeft;
       }
       state.logOffset = progress.log_offset;
 
