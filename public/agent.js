@@ -2,6 +2,7 @@
   const data = window.__AGENT_DATA__ || {
     worlds: [],
     apiUrl: "/api/agent/runs",
+    harnessesApiUrl: "/api/agent/harnesses",
     modelsApiBase: "/api/agent/models",
     environment: {},
     remote: {}
@@ -26,6 +27,11 @@
       id: "claude-code",
       name: "Claude Code",
       logo: '<img src="/logos/claude.png" alt="" width="128" height="128" loading="eager" decoding="sync" fetchpriority="high">'
+    },
+    {
+      id: "custom",
+      name: "Custom",
+      logo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9 5 12l3 3"></path><path d="m16 9 3 3-3 3"></path><path d="m14 5-4 14"></path></svg>'
     }
   ];
   const LOCAL_SETUP = {
@@ -85,6 +91,10 @@
   const state = {
     execution: "prime",
     harness: null,
+    customHarnesses: [],
+    customHarnessId: "",
+    customHarnessConfig: {},
+    customHarnessesLoaded: false,
     modelId: null,
     customModel: "",
     reasoning: null,
@@ -341,6 +351,7 @@
   function composerSettingsReady() {
     return Boolean(
       state.harness &&
+      (state.harness !== "custom" || customHarnessConfigReady()) &&
       state.modelId &&
       state.reasoningChosen &&
       (state.execution === "prime" || state.worldId)
@@ -391,6 +402,25 @@
 
   // ---- harness picker -----------------------------------------------------
 
+  function selectedCustomHarness() {
+    return state.customHarnesses.find((entry) => entry.id === state.customHarnessId) || null;
+  }
+
+  function customHarnessConfigReady() {
+    const selected = selectedCustomHarness();
+    if (!selected?.launchable) return false;
+    if (!selected.configurable?.includes("version")) return true;
+    return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(String(state.customHarnessConfig.version || ""));
+  }
+
+  function effectiveHarnessId(harnessId = state.harness) {
+    return harnessId === "custom" ? state.customHarnessId : harnessId;
+  }
+
+  function primeHarnessLaunchable() {
+    return state.harness === "none" || (state.harness === "custom" && Boolean(selectedCustomHarness()?.launchable));
+  }
+
   function localProviderId(harnessId = state.harness) {
     if (harnessId === "codex") return "codex";
     if (harnessId === "claude-code") return "claude";
@@ -398,7 +428,7 @@
   }
 
   function catalogKey(harnessId = state.harness, execution = state.execution) {
-    return `${execution}:${harnessId || "none"}`;
+    return `${execution}:${effectiveHarnessId(harnessId) || "none"}`;
   }
 
   function renderExecutionPicker() {
@@ -407,14 +437,14 @@
     const supportsLocal = Boolean(localProviderId());
     if (wrapper) tweenVisibility(wrapper, supportsLocal, 420);
     picker?.querySelectorAll("[data-execution]").forEach((option) => {
-      const blockedPrimeAgentHarness = option.dataset.execution === "prime" && state.harness !== "none";
+      const blockedPrimeAgentHarness = option.dataset.execution === "prime" && !primeHarnessLaunchable();
       const selected = option.dataset.execution === state.execution;
       option.classList.toggle("is-selected", selected);
       option.setAttribute("aria-pressed", String(selected));
       option.disabled = blockedPrimeAgentHarness;
       option.classList.toggle("is-disabled", blockedPrimeAgentHarness);
       option.title = blockedPrimeAgentHarness
-        ? "Disabled: Prime's built-in coding-agent harness exposes hidden benchmark files."
+        ? (selectedCustomHarness()?.reason || "This harness has not passed the isolated game-control compatibility gate.")
         : "";
     });
 
@@ -430,8 +460,10 @@
 
     const note = document.getElementById("execution-note");
     if (note) {
-      note.textContent = state.harness !== "none"
-        ? "Codex and Claude Code via Prime are disabled until they can be isolated to game controls only. Local No Tools runs remain sandboxed."
+      note.textContent = state.harness === "custom"
+        ? "Custom harnesses run in a Prime sandbox with game state and scoring retained by the trusted evaluator."
+        : state.harness !== "none"
+        ? "Codex and Claude Code via Prime remain disabled until their pinned Verifiers harnesses support the isolated game controls."
         : state.execution === "prime"
           ? "Prime supplies inference through the isolated Verifiers environment."
           : "This run uses the signed-in CLI and your local subscription limits.";
@@ -440,8 +472,8 @@
 
   function setExecution(value) {
     const next = value === "local" ? "local" : "prime";
-    if (next === "prime" && state.harness !== "none") {
-      setStatus("Codex and Claude Code via Prime are disabled until the hidden benchmark runtime is isolated.", true);
+    if (next === "prime" && !primeHarnessLaunchable()) {
+      setStatus(selectedCustomHarness()?.reason || "This harness is not compatible with the isolated Prime game controls.", true);
       return;
     }
     if (next === "local" && !localProviderId()) return;
@@ -484,6 +516,91 @@
       card.addEventListener("click", () => selectHarness(card.dataset.harness));
     });
     renderSelectionSlider(host, ".provider-card.is-selected", selectionFrom, "provider");
+  }
+
+  function renderCustomHarnessPicker() {
+    const panel = document.getElementById("custom-harness-panel");
+    const select = document.getElementById("custom-harness-id");
+    const status = document.getElementById("custom-harness-status");
+    const note = document.getElementById("custom-harness-note");
+    const versionField = document.getElementById("custom-harness-version-field");
+    const versionInput = document.getElementById("custom-harness-version");
+    if (!panel || !select || !status || !note || !versionField || !versionInput) return;
+
+    panel.hidden = state.harness !== "custom";
+    if (panel.hidden) return;
+    if (!state.customHarnessesLoaded) {
+      select.innerHTML = '<option value="">Loading…</option>';
+      select.disabled = true;
+      status.textContent = "Loading reviewed harnesses…";
+      note.textContent = "";
+      versionField.hidden = true;
+      return;
+    }
+
+    select.disabled = false;
+    select.innerHTML = state.customHarnesses.map((entry) => (
+      `<option value="${escapeText(entry.id)}"${entry.id === state.customHarnessId ? " selected" : ""}${entry.launchable ? "" : " disabled"}>${escapeText(entry.label)}${entry.launchable ? "" : " — unavailable"}</option>`
+    )).join("");
+    const selected = selectedCustomHarness();
+    if (!selected) {
+      status.textContent = "No compatible harness is selected";
+      status.classList.add("is-blocked");
+      note.textContent = "MazeBench did not receive a launchable reviewed harness from the server.";
+      versionField.hidden = true;
+      return;
+    }
+
+    status.textContent = selected.launchable ? `${selected.label} · isolated MCP` : `${selected.label} · unavailable`;
+    status.classList.toggle("is-blocked", !selected.launchable);
+    note.textContent = selected.launchable ? selected.description : selected.reason;
+    const hasVersion = selected.configurable?.includes("version");
+    versionField.hidden = !hasVersion;
+    if (hasVersion) versionInput.value = state.customHarnessConfig.version || selected.default_config?.version || "";
+  }
+
+  async function loadCustomHarnesses() {
+    if (state.customHarnessesLoaded) return;
+    renderCustomHarnessPicker();
+    try {
+      const payload = await api(data.harnessesApiUrl || "/api/agent/harnesses");
+      state.customHarnesses = Array.isArray(payload.harnesses) ? payload.harnesses : [];
+      state.customHarnessesLoaded = true;
+      const firstLaunchable = state.customHarnesses.find((entry) => entry.launchable);
+      if (!state.customHarnessId || !state.customHarnesses.some((entry) => entry.id === state.customHarnessId)) {
+        state.customHarnessId = firstLaunchable?.id || state.customHarnesses[0]?.id || "";
+      }
+      const selected = selectedCustomHarness();
+      state.customHarnessConfig = { ...(selected?.default_config || {}) };
+      renderCustomHarnessPicker();
+      renderExecutionPicker();
+      syncComposerSteps();
+      if (state.harness === "custom" && selected?.launchable) {
+        loadModels("custom", { fresh: !state.catalogs[catalogKey("custom")] });
+      }
+    } catch (error) {
+      state.customHarnessesLoaded = true;
+      state.customHarnesses = [];
+      renderCustomHarnessPicker();
+      setStatus(error.message, true);
+    }
+  }
+
+  function selectCustomHarness(harnessId) {
+    const selected = state.customHarnesses.find((entry) => entry.id === harnessId);
+    if (!selected) return;
+    state.customHarnessId = selected.id;
+    state.customHarnessConfig = { ...(selected.default_config || {}) };
+    state.modelId = null;
+    state.customModel = "";
+    state.reasoning = null;
+    state.reasoningChosen = false;
+    resetRunOptions();
+    renderCustomHarnessPicker();
+    renderExecutionPicker();
+    renderModels();
+    syncComposerSteps();
+    if (selected.launchable) loadModels("custom", { fresh: !state.catalogs[catalogKey("custom")] });
   }
 
   function localRunAvailability(harnessId = state.harness, env = data.environment || {}) {
@@ -667,7 +784,7 @@
     const providerHost = document.getElementById("provider-picker");
     const providerSelectionFrom = selectedRect(providerHost, ".provider-card.is-selected");
     localAvailabilityRequest += 1;
-    state.execution = harnessId === "none" ? "prime" : "local";
+    state.execution = harnessId === "none" || harnessId === "custom" ? "prime" : "local";
     state.localAvailability = "idle";
     state.harness = harnessId;
     state.modelId = null;
@@ -690,6 +807,7 @@
       card.setAttribute("aria-checked", String(selected));
     });
     renderSelectionSlider(providerHost, ".provider-card.is-selected", providerSelectionFrom, "provider");
+    renderCustomHarnessPicker();
     renderExecutionPicker();
 
     tweenResize(document.querySelector(".settings-stage"), () => {
@@ -698,7 +816,11 @@
     }, 440);
     tweenResize(document.querySelector(".model-browser"), renderModels, 440);
     syncComposerSteps();
-    loadModels(harnessId, { fresh: !state.catalogs[catalogKey(harnessId)] });
+    if (harnessId === "custom" && !state.customHarnessesLoaded) {
+      void loadCustomHarnesses();
+    } else if (harnessId !== "custom" || selectedCustomHarness()?.launchable) {
+      loadModels(harnessId, { fresh: !state.catalogs[catalogKey(harnessId)] });
+    }
     if (state.execution === "prime") void checkPrimeAvailability();
     if (localProviderId(harnessId)) checkLocalAvailability(harnessId);
   }
@@ -707,6 +829,8 @@
 
   async function loadModels(harnessId, { fresh = false } = {}) {
     const execution = state.execution;
+    const resolvedHarnessId = effectiveHarnessId(harnessId);
+    if (!resolvedHarnessId) return;
     const key = catalogKey(harnessId, execution);
     const existing = state.catalogs[key];
     if (existing?.models?.length && !fresh) {
@@ -729,7 +853,7 @@
     try {
       const provider = execution === "prime" ? "prime" : localProviderId(harnessId);
       const query = new URLSearchParams();
-      if (execution === "prime") query.set("harness", harnessId);
+      if (execution === "prime") query.set("harness", resolvedHarnessId);
       if (fresh) {
         query.set("refresh", "1");
         query.set("t", String(Date.now()));
@@ -861,7 +985,7 @@
     metaEl.textContent = [catalog.source, catalogTime(catalog)].filter(Boolean).join(" · ");
 
     const customChip = { id: "__custom__", label: "Custom…", description: "type any model id" };
-    const allowCustomModel = state.execution === "local" || state.harness === "none";
+    const allowCustomModel = state.execution === "local" || state.harness === "none" || state.harness === "custom";
     const customMarkup = allowCustomModel
       ? `<div class="model-custom-row">${modelChip(customChip)}</div>`
       : "";
@@ -1258,6 +1382,7 @@
   // are available only when no coding-agent harness is selected.
   function primeModelAcceptsImages() {
     if (state.execution === "local") return true;
+    if (state.harness === "custom" && !selectedCustomHarness()?.observation_modes?.includes("vision")) return false;
     if (state.modelId === "__custom__") return true;
     const model = selectedModel();
     return model ? Boolean(model.vision) : true;
@@ -1286,7 +1411,9 @@
       const model = selectedModel();
       note.textContent = canVision
         ? ""
-        : `${model ? model.label : "This model"} is text-only — Vision (image inputs) is unavailable.`;
+        : state.harness === "custom"
+          ? `${selectedCustomHarness()?.label || "This harness"} currently supports only the isolated Text and JSON controls.`
+          : `${model ? model.label : "This model"} is text-only — Vision (image inputs) is unavailable.`;
       note.hidden = canVision;
     }
   }
@@ -1444,7 +1571,8 @@
     const body = state.execution === "prime"
       ? {
           kind: "prime",
-          harness: state.harness,
+          harness: effectiveHarnessId(),
+          harness_config: state.harness === "custom" ? { ...state.customHarnessConfig } : {},
           model_name: resolvedModelName(),
           max_turns: moveBudget(),
           unlimited: state.unlimited,
@@ -1555,7 +1683,7 @@
             : "ended"
           : run.status;
     const modelName = run.model_name || run.model;
-    const harnessName = HARNESSES.find((harness) => harness.id === (run.harness || "none"))?.name || run.harness;
+    const harnessName = run.harness_label || HARNESSES.find((harness) => harness.id === (run.harness || "none"))?.name || run.harness;
     const providerName = run.provider === "prime"
       ? (run.harness || "none") === "none"
         ? "Prime Intellect"
@@ -1814,6 +1942,18 @@
     });
   }
 
+  function wireCustomHarnessPicker() {
+    document.getElementById("custom-harness-id")?.addEventListener("change", (event) => {
+      selectCustomHarness(event.target.value);
+    });
+    document.getElementById("custom-harness-version")?.addEventListener("input", (event) => {
+      state.customHarnessConfig.version = event.target.value.trim();
+      const valid = customHarnessConfigReady();
+      event.target.setAttribute("aria-invalid", String(!valid));
+      syncComposerSteps();
+    });
+  }
+
   function wireConfigurationSummary() {
     ["run-moves", "run-prime-turns"].forEach((id) => {
       document.getElementById(id)?.addEventListener("input", () => {
@@ -1884,12 +2024,13 @@
 
   renderExecutionPicker();
   renderHarnesses();
+  renderCustomHarnessPicker();
   renderWorlds();
   renderLevelSummary();
   document.querySelectorAll("[data-execution]").forEach((option) => {
     option.addEventListener("click", () => {
       if (option.disabled) {
-        setStatus("Codex and Claude Code via Prime are disabled until the hidden benchmark runtime is isolated.", true);
+        setStatus(option.title || "This harness is not compatible with the isolated Prime game controls.", true);
         return;
       }
       if (option.dataset.execution === "local") selectLocalRun();
@@ -1907,6 +2048,7 @@
   });
   syncRunSettingCards();
   wireModelCatalog();
+  wireCustomHarnessPicker();
   wireConfigurationSummary();
   wireSelectionResize();
   wireRunsToolbar();

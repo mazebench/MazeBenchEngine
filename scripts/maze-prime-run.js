@@ -11,7 +11,7 @@
 //
 // Usage:
 //   node maze-prime-run.js --env-dir <dir> --out <runDir> [--model <id>]
-//     --harness <none|codex|claude-code> (--max-turns <n> | --unlimited)
+//     --harness <none|default|bash|kimi_code> (--max-turns <n> | --unlimited)
 //     [--observation-mode <ascii|json|vision>] [--no-video]
 
 const fs = require("node:fs");
@@ -28,8 +28,14 @@ const HOSTED_SAMPLES_FILE = "prime-evaluation-samples.json";
 const TEXT_RUNTIME_IMAGE = "node:24-bookworm-slim";
 const VISION_RUNTIME_IMAGE = "mcr.microsoft.com/playwright:v1.60.0-noble";
 const PRIME_REASONING_LEVELS = new Set(["low", "medium", "high"]);
-const UNSAFE_AGENT_HARNESS_MESSAGE =
-  "Codex and Claude Code via Prime are disabled: the built-in coding-agent harness exposes the benchmark runtime and hidden state. Use the isolated Prime Intellect harness instead.";
+const ISOLATED_MCP_HARNESSES = new Set(["default", "bash", "kimi_code"]);
+const BLOCKED_HARNESS_REASONS = new Map([
+  ["codex", "The pinned Verifiers Codex harness does not support MCP tools yet."],
+  ["claude-code", "Claude Code is not included in MazeBench's pinned Verifiers revision."],
+  ["mini_swe_agent", "The pinned mini-swe-agent harness does not support MCP tools."],
+  ["rlm", "The pinned RLM harness does not support MCP tools."],
+  ["terminus_2", "The pinned Terminus 2 harness does not support MCP tools."]
+]);
 
 function positiveTurnBudget(value, fallback = 20) {
   const number = Number(value);
@@ -46,6 +52,7 @@ function parseArgs(argv) {
     environment: "mazebench/mazebench",
     gameWonGemCount: 69,
     harness: "none",
+    harnessConfig: {},
     hosted: false,
     levelId: "level_HxI",
     maxTurns: 20,
@@ -76,7 +83,21 @@ function parseArgs(argv) {
     if (arg === "--env-dir") opts.envDir = next();
     else if (arg === "--harness") {
       const harness = String(next() || "none").trim().toLowerCase();
-      opts.harness = harness === "claude" ? "claude-code" : harness;
+      const aliases = {
+        claude: "claude-code",
+        "kimi-code": "kimi_code",
+        "mini-swe-agent": "mini_swe_agent",
+        "terminus-2": "terminus_2"
+      };
+      opts.harness = aliases[harness] || harness;
+    }
+    else if (arg === "--harness-config-json") {
+      try {
+        const value = JSON.parse(String(next() || "{}"));
+        opts.harnessConfig = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+      } catch (_error) {
+        throw new Error("Prime harness configuration must be valid JSON.");
+      }
     }
     else if (arg === "--environment") opts.environment = String(next() || opts.environment);
     else if (arg === "--out") opts.outDir = next();
@@ -123,14 +144,23 @@ function parseArgs(argv) {
   if (!opts.outDir || (!opts.hosted && !opts.envDir)) {
     throw new Error("maze-prime-run.js requires --out and, for local evaluations, --env-dir");
   }
-  if (!["none", "codex", "claude-code"].includes(opts.harness)) {
+  if (opts.harness !== "none" && !ISOLATED_MCP_HARNESSES.has(opts.harness) && !BLOCKED_HARNESS_REASONS.has(opts.harness)) {
     throw new Error(`Unknown Prime harness "${opts.harness}".`);
   }
-  if (opts.harness !== "none") {
-    throw new Error(UNSAFE_AGENT_HARNESS_MESSAGE);
-  }
+  if (BLOCKED_HARNESS_REASONS.has(opts.harness)) throw new Error(BLOCKED_HARNESS_REASONS.get(opts.harness));
   if (opts.hosted && opts.harness !== "none") {
-    throw new Error("Prime coding-agent harnesses currently run through the local evaluator with a Prime sandbox.");
+    throw new Error("Custom harnesses run through the local trusted evaluator with only their harness program in a Prime sandbox.");
+  }
+  if (ISOLATED_MCP_HARNESSES.has(opts.harness) && opts.vision) {
+    throw new Error(`${opts.harness} currently supports only text and JSON through MazeBench's isolated MCP controls.`);
+  }
+  const allowedHarnessConfig = opts.harness === "kimi_code" ? new Set(["version"]) : new Set();
+  const unknownHarnessConfig = Object.keys(opts.harnessConfig).filter((key) => !allowedHarnessConfig.has(key));
+  if (unknownHarnessConfig.length) {
+    throw new Error(`Unsupported ${opts.harness} harness configuration: ${unknownHarnessConfig.join(", ")}.`);
+  }
+  if (Object.hasOwn(opts.harnessConfig, "version") && !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(String(opts.harnessConfig.version))) {
+    throw new Error("Kimi Code version must be an exact semantic version.");
   }
   if (opts.resumeCheckpoint && !fs.existsSync(opts.resumeCheckpoint)) {
     throw new Error(`Prime resume checkpoint does not exist: ${opts.resumeCheckpoint}`);
@@ -569,7 +599,7 @@ function runEval(opts) {
   const liveActionsPath = path.join(opts.outDir, "actions.jsonl");
   const liveReasoningPath = path.join(opts.outDir, "prime-reasoning.jsonl");
   const agentic = opts.harness !== "none";
-  const taskset = agentic ? "mazebench-agent" : "mazebench";
+  const taskset = agentic ? "mazebench-tools" : "mazebench";
   const argv = ["run", "--project", opts.envDir, "python", LIVE_EVAL, taskset];
 
   let resumeActionCount = 0;
@@ -625,9 +655,16 @@ function runEval(opts) {
       "4",
       "--harness.runtime.disk",
       "8",
+      "--taskset.tools.colocated",
+      "False",
+      "--taskset.tools.shared",
+      "False",
       "--push",
       "False"
     );
+    for (const [key, value] of Object.entries(opts.harnessConfig)) {
+      argv.push(`--harness.${key.replace(/_/g, "-")}`, String(value));
+    }
   }
 
   if (opts.vision) {
@@ -644,7 +681,7 @@ function runEval(opts) {
   if (!opts.allowQuit) {
     argv.push("--taskset.allow-quit", "False");
   }
-  if (opts.autoQuit && !agentic) {
+  if (opts.autoQuit) {
     argv.push(
       "--taskset.auto-quit",
       "True",
@@ -810,6 +847,7 @@ function agenticConversationTurns(row) {
   const nodes = Array.isArray(row.nodes) ? row.nodes : [];
   const turns = [];
   let assistant = null;
+  const pendingGameActions = new Map();
 
   for (const node of nodes) {
     const message = node && node.message;
@@ -820,9 +858,31 @@ function agenticConversationTurns(row) {
         reasoning: normalizedReasoning || providerReasoningText(message.provider_state),
         action: String(messageText(message.content) || "").trim()
       };
+      for (const call of message.tool_calls || []) {
+        if (!/(?:^|__)game_action$/.test(String(call?.name || ""))) continue;
+        try {
+          const args = JSON.parse(String(call.arguments || "{}"));
+          pendingGameActions.set(String(call.id || ""), {
+            action: String(args.action || "").trim(),
+            reasoning: assistant.reasoning
+          });
+        } catch (_error) {
+          /* malformed tool arguments are retained by Verifiers but are not a move */
+        }
+      }
       continue;
     }
     if (message.role !== "tool") continue;
+    const pending = pendingGameActions.get(String(message.tool_call_id || ""));
+    if (pending) {
+      turns.push({
+        turn: turns.length + 1,
+        board: "",
+        reasoning: pending.reasoning || "",
+        action: pending.action
+      });
+      pendingGameActions.delete(String(message.tool_call_id || ""));
+    }
     const markers = String(messageText(message.content) || "").matchAll(/MAZEBENCH_EVENT_V1:([A-Za-z0-9_-]+)/g);
     for (const marker of markers) {
       try {

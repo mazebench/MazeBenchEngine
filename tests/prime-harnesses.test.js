@@ -11,9 +11,11 @@ const {
 const {
   createAgentRunService,
   filterPrimeCatalogForHarness,
+  normalizePrimeHarnessConfig,
   primeReasoningLevels,
   primeHarnessModelCompatible,
-  primeSandboxIdsFromText
+  primeSandboxIdsFromText,
+  publicPrimeHarnesses
 } = require("../server/agent-runs");
 const { findPrimeResultsFile } = require("../server/token-usage");
 
@@ -29,7 +31,11 @@ try {
     path.join(root, "environments", "mazebench_agent", "mazebench_agent", "__init__.py"),
     "utf8"
   );
-  const project = fs.readFileSync(path.join(root, "environments", "mazebench_agent", "pyproject.toml"), "utf8");
+  const toolsTasksetSource = fs.readFileSync(
+    path.join(root, "environments", "mazebench", "mazebench_tools", "__init__.py"),
+    "utf8"
+  );
+  const project = fs.readFileSync(path.join(root, "environments", "mazebench", "pyproject.toml"), "utf8");
   const appSource = fs.readFileSync(path.join(root, "server", "app.js"), "utf8");
   const runsSource = fs.readFileSync(path.join(root, "server", "agent-runs.js"), "utf8");
   const pagesSource = fs.readFileSync(path.join(root, "server", "pages.js"), "utf8");
@@ -39,15 +45,20 @@ try {
   assert.doesNotMatch(agentSource, /<circle cx=\"24\" cy=\"24\" r=\"17\.5\"><\/circle><path d=\"M12\.5 35\.5 35\.5 12\.5\"><\/path>/);
   assert.match(agentSource, /id: "codex",\s*name: "Codex"/);
   assert.match(agentSource, /id: "claude-code",\s*name: "Claude Code"/);
-  assert.match(agentSource, /harness: state\.harness/);
+  assert.match(agentSource, /id: "custom",\s*name: "Custom"/);
+  assert.match(agentSource, /harness: effectiveHarnessId\(\)/);
+  assert.match(agentSource, /harness_config: state\.harness === "custom"/);
   assert.match(agentSource, /kind: "local",\s*subscription: true/);
-  assert.match(agentSource, /query\.set\("harness", harnessId\)/);
-  assert.match(agentSource, /const allowCustomModel = state\.execution === "local" \|\| state\.harness === "none"/);
-  assert.doesNotMatch(agentSource, /harnessSupportsVision/);
+  assert.match(agentSource, /query\.set\("harness", resolvedHarnessId\)/);
+  assert.match(agentSource, /const allowCustomModel = state\.execution === "local" \|\| state\.harness === "none" \|\| state\.harness === "custom"/);
+  assert.match(agentSource, /selectedCustomHarness\(\)\?\.observation_modes\?\.includes\("vision"\)/);
   assert.match(agentSource, /function setExecution\(value\)/);
   assert.match(agentSource, /blockedPrimeAgentHarness/);
-  assert.match(agentSource, /Codex and Claude Code via Prime are disabled/);
-  assert.match(agentSource, /state\.execution = harnessId === "none" \? "prime" : "local"/);
+  assert.match(agentSource, /Codex and Claude Code via Prime remain disabled/);
+  assert.match(agentSource, /state\.execution = harnessId === "none" \|\| harnessId === "custom" \? "prime" : "local"/);
+  assert.match(agentSource, /async function loadCustomHarnesses\(\)/);
+  assert.match(agentSource, /api\(data\.harnessesApiUrl \|\| "\/api\/agent\/harnesses"\)/);
+  assert.match(agentSource, /entry\.launchable \? "" : " disabled"/);
   assert.match(agentSource, /async function checkLocalAvailability\(harnessId = state\.harness\)/);
   assert.match(agentSource, /state\.localAvailability = "checking";[\s\S]*?await refreshEnvironment\(\)/);
   assert.match(agentSource, /state\.localAvailability = "active"/);
@@ -73,17 +84,21 @@ try {
   assert.match(appSource, /claude.*\["auth", "status", "--json"\]/s);
   assert.match(appSource, /logged in using chatgpt/i);
   assert.match(runsSource, /Subscription-backed local Codex and Claude Code launches are disabled/);
-  assert.match(runsSource, /built-in coding-agent harness exposes benchmark internals/);
+  assert.match(runsSource, /pinned Verifiers Codex harness does not support MCP tools/);
+  assert.match(runsSource, /Only reviewed built-in harnesses execute/);
+  assert.match(runsSource, /boundary: "isolated-mcp"/);
   assert.match(runsSource, /localLaunchEnvironment/);
   assert.match(runsSource, /delete environment\[key\]/);
   assert.doesNotMatch(runsSource, /const shouldWait = model === "claude"/);
 
   assert.match(runSource, /"--harness\.runtime\.type",\s*"prime"/);
-  assert.match(runSource, /built-in coding-agent harness exposes the benchmark runtime and hidden state/);
+  assert.match(runSource, /ISOLATED_MCP_HARNESSES = new Set\(\["default", "bash", "kimi_code"\]\)/);
   assert.match(runSource, /TEXT_RUNTIME_IMAGE = "node:24-bookworm-slim"/);
   assert.match(runSource, /VISION_RUNTIME_IMAGE = "mcr\.microsoft\.com\/playwright:v1\.60\.0-noble"/);
   assert.match(runSource, /opts\.vision \? VISION_RUNTIME_IMAGE : TEXT_RUNTIME_IMAGE/);
-  assert.match(runSource, /const taskset = agentic \? "mazebench-agent" : "mazebench"/);
+  assert.match(runSource, /const taskset = agentic \? "mazebench-tools" : "mazebench"/);
+  assert.match(runSource, /"--taskset\.tools\.colocated",\s*"False"/);
+  assert.match(runSource, /"--taskset\.tools\.shared",\s*"False"/);
   assert.doesNotMatch(runSource, /Math\.min\(500/);
   assert.doesNotMatch(runsSource, /Math\.min\(500/);
   assert.match(liveSource, /MAZEBENCH_EVENT_V1/);
@@ -94,7 +109,7 @@ try {
   assert.match(liveSource, /_patch_prime_usage_schema/);
   assert.match(liveSource, /cache_write_tokens/);
 
-  assert.match(project, /verifiers @ git\+https:\/\/github\.com\/PrimeIntellect-ai\/verifiers\.git@df9c5aa58c28db717cfeb1150c1d0c751f4570a6/);
+  assert.match(project, /verifiers @ git\+https:\/\/github\.com\/PrimeIntellect-ai\/verifiers\.git@18740ec9ea7418cbd55cd1e9fbf051080059be15/);
   assert.match(tasksetSource, /__all__ = \["MazeBenchAgentTaskset"\]/);
   assert.match(tasksetSource, /raise RuntimeError\(UNSAFE_HARNESS_MESSAGE\)/);
   assert.doesNotMatch(tasksetSource, /class \w*Harness/);
@@ -106,6 +121,14 @@ try {
   assert.match(runSource, /\["--taskset\.max-actions", "None", "--max-turns", "None"\]/);
   assert.doesNotMatch(tasksetSource, /node \{HELPER\} scorecard/);
   assert.match(tasksetSource, /Scoring is evaluator-only/);
+  assert.match(toolsTasksetSource, /class MazeBenchToolTraceState\(vf\.State\)/);
+  assert.match(toolsTasksetSource, /repo_root": ""/);
+  assert.match(toolsTasksetSource, /resume_checkpoint_path": ""/);
+  assert.match(toolsTasksetSource, /"observation": ""/);
+  assert.match(toolsTasksetSource, /"colocated": False/);
+  assert.match(toolsTasksetSource, /"shared": False/);
+  assert.match(toolsTasksetSource, /trace\.state = trusted_state/);
+  assert.match(toolsTasksetSource, /__all__ = \["MazeBenchToolTaskset"\]/);
 
   assert.equal(primeHarnessModelCompatible("openai/gpt-5-codex", "codex"), true);
   assert.equal(primeHarnessModelCompatible("openai/gpt-4.1", "codex"), true);
@@ -113,6 +136,18 @@ try {
   assert.equal(primeHarnessModelCompatible("anthropic/claude-sonnet-5", "codex"), false);
   assert.equal(primeHarnessModelCompatible("anthropic/claude-sonnet-5", "claude-code"), true);
   assert.equal(primeHarnessModelCompatible("openai/gpt-5.4", "claude-code"), false);
+  assert.equal(primeHarnessModelCompatible("google/gemini-3.5-flash", "default"), true);
+  assert.equal(primeHarnessModelCompatible("anthropic/claude-sonnet-5", "bash"), true);
+  assert.equal(primeHarnessModelCompatible("openai/gpt-5.4", "kimi_code"), true);
+  const publicHarnesses = publicPrimeHarnesses();
+  assert.deepEqual(
+    publicHarnesses.filter((harness) => harness.launchable).map((harness) => harness.id),
+    ["default", "bash", "kimi_code"]
+  );
+  assert.equal(publicHarnesses.every((harness) => harness.verifiers_revision === "18740ec9ea7418cbd55cd1e9fbf051080059be15"), true);
+  assert.deepEqual(normalizePrimeHarnessConfig({}, "kimi_code"), { version: "0.14.3" });
+  assert.deepEqual(normalizePrimeHarnessConfig({ version: "0.15.0" }, "kimi-code"), { version: "0.15.0" });
+  assert.throws(() => normalizePrimeHarnessConfig({ package: "untrusted" }, "bash"), /Unsupported Bash configuration/);
   assert.deepEqual(
     primeSandboxIdsFromText([
       "PrimeRuntime: sandbox azquf017rdi59jhwqoiu43z0 up",
@@ -130,11 +165,15 @@ try {
   };
   assert.deepEqual(
     filterPrimeCatalogForHarness(sampleCatalog, "codex").models.map((model) => model.id),
-    ["openai/gpt-5-codex"]
+    []
   );
   assert.deepEqual(
     filterPrimeCatalogForHarness(sampleCatalog, "claude-code").models.map((model) => model.id),
-    ["anthropic/claude-sonnet-5"]
+    []
+  );
+  assert.deepEqual(
+    filterPrimeCatalogForHarness(sampleCatalog, "default").models.map((model) => model.id),
+    ["openai/gpt-5-codex", "anthropic/claude-sonnet-5", "google/gemini-3.5-flash"]
   );
   for (const modelId of [
     "openai/gpt-oss-20b",
@@ -184,7 +223,7 @@ try {
       "--out", runDir,
       "--harness", "codex"
     ]),
-    /built-in coding-agent harness exposes the benchmark runtime/
+    /pinned Verifiers Codex harness does not support MCP tools/
   );
   assert.throws(
     () => parseArgs([
@@ -192,7 +231,7 @@ try {
       "--out", runDir,
       "--harness", "claude"
     ]),
-    /built-in coding-agent harness exposes the benchmark runtime/
+    /Claude Code is not included/
   );
   assert.throws(
     () => parseArgs(["--env-dir", root, "--out", runDir, "--harness", "unknown"]),
@@ -205,7 +244,41 @@ try {
       "--harness", "codex",
       "--vision"
     ]),
-    /built-in coding-agent harness exposes the benchmark runtime/
+    /pinned Verifiers Codex harness does not support MCP tools/
+  );
+  const parsedDefault = parseArgs([
+    "--env-dir", path.join(root, "environments", "mazebench"),
+    "--out", runDir,
+    "--harness", "default",
+    "--model", "google/gemini-3.5-flash"
+  ]);
+  assert.equal(parsedDefault.harness, "default");
+  assert.deepEqual(parsedDefault.harnessConfig, {});
+  const parsedKimi = parseArgs([
+    "--env-dir", path.join(root, "environments", "mazebench"),
+    "--out", runDir,
+    "--harness", "kimi-code",
+    "--harness-config-json", JSON.stringify({ version: "0.15.0" })
+  ]);
+  assert.equal(parsedKimi.harness, "kimi_code");
+  assert.deepEqual(parsedKimi.harnessConfig, { version: "0.15.0" });
+  assert.throws(
+    () => parseArgs([
+      "--env-dir", path.join(root, "environments", "mazebench"),
+      "--out", runDir,
+      "--harness", "bash",
+      "--harness-config-json", JSON.stringify({ package: "anything" })
+    ]),
+    /Unsupported bash harness configuration/
+  );
+  assert.throws(
+    () => parseArgs([
+      "--env-dir", path.join(root, "environments", "mazebench"),
+      "--out", runDir,
+      "--harness", "default",
+      "--vision"
+    ]),
+    /supports only text and JSON/
   );
 
   const start = spawnSync(

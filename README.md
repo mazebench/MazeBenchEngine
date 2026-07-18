@@ -47,6 +47,18 @@ matches mazebench.com):
   video when the run finishes. Run artifacts land under
   `outputs/maze-local/site/<run-id>/`.
 
+For Prime agent harnesses, choose **Custom** and then select a reviewed built-in
+harness. The pinned Verifiers revision currently enables Default MCP, Bash, and
+Kimi Code; built-ins without MCP support remain visible but unavailable. The
+harness program runs in a Prime sandbox while the maze session, checkpoint,
+source, and scoring stay in the local trusted evaluator. Only sanitized
+`game_start`, `game_observe`, and `game_action` controls cross that boundary.
+
+The Agent page does not need an `example.toml`. Launch choices, including the
+harness id and any exact harness version, are saved in each run's `run.json`
+and restored by Continue. TOML is an optional Verifiers CLI configuration
+format, not MazeBench's run persistence format.
+
 ### World editor source of truth
 
 MazeBench owns the complete world-editor frontend and shared site design

@@ -115,7 +115,7 @@ try {
       model_name: "openai/gpt-5.6-luna",
       max_turns: 10
     }),
-    /built-in coding-agent harness exposes benchmark internals/
+    /pinned Verifiers Codex harness does not support MCP tools/
   );
   assert.throws(
     () => service.launchRuns({
@@ -124,8 +124,69 @@ try {
       model_name: "anthropic\/claude-sonnet-5",
       max_turns: 10
     }),
-    /built-in coding-agent harness exposes benchmark internals/
+    /Claude Code is not included/
   );
+
+  const harnessRegistry = service.listPrimeHarnesses();
+  assert.deepEqual(
+    harnessRegistry.harnesses.filter((harness) => harness.launchable).map((harness) => harness.id),
+    ["default", "bash", "kimi_code"]
+  );
+  const [customPrime] = service.launchRuns({
+    kind: "prime",
+    harness: "kimi_code",
+    harness_config: { version: "0.15.0" },
+    model_name: "openai/gpt-5.6-luna",
+    max_turns: 2,
+    video: false
+  });
+  launchedIds.push(customPrime.id);
+  const customPrimeMeta = loadJson(
+    path.join(rootDir, "outputs", "maze-local", "site", customPrime.id, "run.json")
+  );
+  assert.equal(customPrimeMeta.harness, "kimi_code");
+  assert.equal(customPrimeMeta.harness_label, "Kimi Code");
+  assert.deepEqual(customPrimeMeta.harness_config, { version: "0.15.0" });
+  assert.equal(customPrimeMeta.harness_boundary, "isolated-mcp");
+  assert.equal(customPrimeMeta.harness_taskset, "mazebench-tools");
+  assert.equal(customPrimeMeta.verifiers_revision, "18740ec9ea7418cbd55cd1e9fbf051080059be15");
+  assert.deepEqual(customPrimeMeta.launch_params.harness_config, { version: "0.15.0" });
+  assert.match(customPrimeMeta.command, /--harness kimi_code/);
+  assert.match(customPrimeMeta.command, /--harness-config \{"version":"0\.15\.0"\}/);
+  const customPrimeDir = path.join(rootDir, "outputs", "maze-local", "site", customPrime.id);
+  fs.writeFileSync(
+    path.join(customPrimeDir, "initial-status.json"),
+    `${JSON.stringify({ board_state_hash: "custom-state-0", current_room: "level_HxI" })}\n`
+  );
+  fs.writeFileSync(
+    path.join(customPrimeDir, "actions.jsonl"),
+    `${JSON.stringify({
+      turn: 1,
+      command_text: "right",
+      valid: true,
+      status: { board_state_hash: "custom-state-1", current_room: "level_HxI" }
+    })}\n`
+  );
+  fs.mkdirSync(path.join(customPrimeDir, "eval-output"), { recursive: true });
+  fs.writeFileSync(
+    path.join(customPrimeDir, "eval-output", "results.jsonl"),
+    `${JSON.stringify({
+      task: { system_prompt: "system", level_id: "level_HxI", game_won_gem_count: 1 },
+      nodes: [
+        { parent: null, message: { role: "system", content: "system" }, sampled: false },
+        { parent: 0, message: { role: "user", content: "opening" }, sampled: false },
+        { parent: 1, message: { role: "assistant", content: "right" }, sampled: true }
+      ]
+    })}\n`
+  );
+  assert.equal(service.stopRun(customPrime.id).status, "stopped");
+  const continuedCustomPrime = service.continueRun(customPrime.id, 1);
+  launchedIds.push(continuedCustomPrime.id);
+  assert.deepEqual(continuedCustomPrime.harness_config, { version: "0.15.0" });
+  assert.equal(continuedCustomPrime.harness_boundary, "isolated-mcp");
+  assert.equal(service.stopRun(continuedCustomPrime.id).status, "stopped");
+  service.deleteRun(continuedCustomPrime.id);
+  service.deleteRun(customPrime.id);
 
   const [livePrime] = service.launchRuns({
     kind: "prime",

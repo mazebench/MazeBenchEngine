@@ -166,6 +166,17 @@ function createRequestRouter({
       return;
     }
 
+    if (segments.length === 3 && segments[0] === "api" && segments[1] === "agent" && segments[2] === "harnesses") {
+      if (request.method !== "GET") {
+        response.writeHead(405, { Allow: "GET" });
+        response.end();
+        return;
+      }
+
+      sendJson(response, 200, agentRuns.listPrimeHarnesses());
+      return;
+    }
+
     if (segments.length === 3 && segments[0] === "api" && segments[1] === "agent" && segments[2] === "environment") {
       if (request.method !== "GET") {
         response.writeHead(405, { Allow: "GET" });

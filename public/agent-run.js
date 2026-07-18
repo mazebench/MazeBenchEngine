@@ -808,7 +808,7 @@
 
   function titleCase(value) {
     return String(value || "")
-      .replaceAll("-", " ")
+      .replace(/[-_]/g, " ")
       .replace(/\b\w/g, (letter) => letter.toUpperCase());
   }
 
@@ -840,8 +840,11 @@
     const autoQuitMode = String(configuredValue(params, "auto_quit_mode", run.auto_quit_mode || "rolling"));
     const autoQuitWindow = Number(configuredValue(params, "auto_quit_window", run.auto_quit_window || 100));
     const reasoning = configuredValue(params, "reasoning", run.reasoning || "");
+    const harnessConfig = configuredValue(params, "harness_config", run.harness_config || {});
     const items = [
       ["Provider", prime ? "Prime" : titleCase(run.model)],
+      ...(prime ? [["Harness", run.harness_label || titleCase(run.harness || "Prime Intellect")]] : []),
+      ...(prime && harnessConfig?.version ? [["Harness version", String(harnessConfig.version)]] : []),
       ["Model", configuredValue(params, "model_name", run.model_name || run.model)],
       ["World", run.game_title || run.game_id],
       ["Start room", levelLabel(configuredValue(params, "level_id", run.level_id))],

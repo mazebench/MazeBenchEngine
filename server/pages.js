@@ -825,6 +825,7 @@ function createPageRenderer({
     ];
     const agentData = {
       apiUrl: "/api/agent/runs",
+      harnessesApiUrl: "/api/agent/harnesses",
       modelsApiBase: "/api/agent/models",
       worlds,
       environment: agentEnvironment({ cachedOnly: true }),
@@ -851,6 +852,23 @@ function createPageRenderer({
               <div><h3>Harness</h3><p id="execution-note" class="muted">Choose a harness. Prime supplies inference by default.</p></div>
             </div>
             <div id="provider-picker" class="provider-grid" role="radiogroup" aria-label="Agent harness"></div>
+            <div id="custom-harness-panel" class="custom-harness-panel" hidden>
+              <div class="custom-harness-panel__fields">
+                <label class="field">
+                  <span>Prime harness</span>
+                  <select id="custom-harness-id" aria-describedby="custom-harness-note"></select>
+                </label>
+                <label id="custom-harness-version-field" class="field" hidden>
+                  <span>Exact harness version</span>
+                  <input id="custom-harness-version" type="text" inputmode="text" autocomplete="off" spellcheck="false">
+                </label>
+              </div>
+              <div class="custom-harness-panel__status">
+                <strong id="custom-harness-status">Loading harnesses…</strong>
+                <p id="custom-harness-note" class="muted"></p>
+                <p class="custom-harness-panel__security">The harness program runs in a Prime sandbox. Game state, source, checkpoints, and scoring remain on the trusted evaluator behind three sanitized MCP controls.</p>
+              </div>
+            </div>
             <div id="harness-execution" class="harness-execution" hidden>
               <span class="harness-execution__label">Run through</span>
               <div id="execution-picker" class="execution-picker" role="radiogroup" aria-label="Execution provider">
