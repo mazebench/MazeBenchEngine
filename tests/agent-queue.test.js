@@ -156,7 +156,28 @@ try {
       turn: 1,
       command_text: "up",
       valid: true,
-      status: { current_room: "level_HxI" }
+      status: { board_state_hash: "state-1", current_room: "level_HxI" }
+    })}\n`
+  );
+  fs.writeFileSync(
+    path.join(livePrimeRunDir, "initial-status.json"),
+    `${JSON.stringify({ board_state_hash: "state-0", current_room: "level_HxI" })}\n`
+  );
+  fs.mkdirSync(path.join(livePrimeRunDir, "eval-output"), { recursive: true });
+  fs.writeFileSync(
+    path.join(livePrimeRunDir, "eval-output", "results.jsonl"),
+    `${JSON.stringify({
+      task: {
+        system_prompt: "system",
+        level_id: "level_HxI",
+        game_won_gem_count: 1,
+        observation_mode: "ascii"
+      },
+      nodes: [
+        { parent: null, message: { role: "system", content: "system" }, sampled: false },
+        { parent: 0, message: { role: "user", content: "opening" }, sampled: false },
+        { parent: 1, message: { role: "assistant", content: "up" }, sampled: true }
+      ]
     })}\n`
   );
   fs.writeFileSync(

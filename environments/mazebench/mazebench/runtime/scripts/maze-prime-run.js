@@ -17,6 +17,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFile, spawn, spawnSync } = require("node:child_process");
+const { writePrimeResumeCheckpoint } = require("../server/prime-resume");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const EXPORT_REPLAY = path.join(ROOT_DIR, "scripts", "maze-export-replay.js");
@@ -55,6 +56,7 @@ function parseArgs(argv) {
     hideNamesSeed: "1",
     outDir: "",
     reasoning: "",
+    resumeCheckpoint: "",
     runId: "",
     unlimited: false,
     vision: false,
@@ -98,6 +100,7 @@ function parseArgs(argv) {
     else if (arg === "--hide-names") opts.hideNames = true;
     else if (arg === "--hide-names-seed") opts.hideNamesSeed = String(next() || "").trim().slice(0, 128);
     else if (arg === "--reasoning") opts.reasoning = String(next() || "").trim();
+    else if (arg === "--resume-checkpoint") opts.resumeCheckpoint = path.resolve(String(next() || ""));
     else if (arg === "--no-quit") opts.allowQuit = false;
     else if (arg === "--auto-quit") opts.autoQuit = true;
     else if (arg === "--auto-quit-threshold") {
@@ -128,6 +131,9 @@ function parseArgs(argv) {
   }
   if (opts.hosted && opts.harness !== "none") {
     throw new Error("Prime coding-agent harnesses currently run through the local evaluator with a Prime sandbox.");
+  }
+  if (opts.resumeCheckpoint && !fs.existsSync(opts.resumeCheckpoint)) {
+    throw new Error(`Prime resume checkpoint does not exist: ${opts.resumeCheckpoint}`);
   }
   opts.reasoning = primeModelSupportsReasoning(opts.model) &&
     PRIME_REASONING_LEVELS.has(String(opts.reasoning).toLowerCase())
@@ -566,11 +572,17 @@ function runEval(opts) {
   const taskset = agentic ? "mazebench-agent" : "mazebench";
   const argv = ["run", "--project", opts.envDir, "python", LIVE_EVAL, taskset];
 
-  // The live exporter appends after every model turn. Start each run clean so
-  // polling clients never mix usage from an earlier attempt.
-  fs.writeFileSync(liveUsagePath, "");
-  fs.writeFileSync(liveActionsPath, "");
-  fs.writeFileSync(liveReasoningPath, "");
+  let resumeActionCount = 0;
+  if (opts.resumeCheckpoint) {
+    const checkpoint = JSON.parse(fs.readFileSync(opts.resumeCheckpoint, "utf8"));
+    resumeActionCount = Math.max(0, Math.floor(Number(checkpoint.action_count) || 0));
+  } else {
+    // The live exporter appends after every model turn. Start each fresh run
+    // clean so polling clients never mix usage from an earlier attempt.
+    fs.writeFileSync(liveUsagePath, "");
+    fs.writeFileSync(liveActionsPath, "");
+    fs.writeFileSync(liveReasoningPath, "");
+  }
 
   if (opts.model) {
     argv.push("-m", opts.model);
@@ -591,6 +603,10 @@ function runEval(opts) {
     "-o",
     evalOutDir
   );
+
+  if (opts.resumeCheckpoint) {
+    argv.push("--taskset.resume-checkpoint-path", opts.resumeCheckpoint);
+  }
 
   if (agentic) {
     const runtimeImage = opts.vision ? VISION_RUNTIME_IMAGE : TEXT_RUNTIME_IMAGE;
@@ -659,7 +675,8 @@ function runEval(opts) {
         MAZEBENCH_PRIME_HARNESS: opts.harness,
         MAZEBENCH_LIVE_USAGE_PATH: liveUsagePath,
         MAZEBENCH_LIVE_ACTIONS_PATH: liveActionsPath,
-        MAZEBENCH_LIVE_REASONING_PATH: liveReasoningPath
+        MAZEBENCH_LIVE_REASONING_PATH: liveReasoningPath,
+        MAZEBENCH_RESUME_ACTION_COUNT: String(resumeActionCount)
       },
       stdio: ["ignore", "inherit", "inherit"]
     });
@@ -776,7 +793,7 @@ function conversationTurns(row) {
 
     if (message.role === "user") {
       lastObservation = messageText(message.content);
-    } else if (message.role === "assistant") {
+    } else if (message.role === "assistant" && node.sampled !== false) {
       const normalizedReasoning = String(messageText(message.reasoning_content) || "").trim();
       turns.push({
         board: extractBoard(lastObservation),
@@ -846,12 +863,33 @@ function writeMoveArtifacts(resultsPath, outDir) {
   );
   const agenticTurns = agenticConversationTurns(row);
   const turns = agenticTurns.length ? agenticTurns : conversationTurns(row);
+  const turnOffset = Math.max(0, mazeActions.length - turns.length);
 
   const actionLines = [];
-  const reasoning = [];
+  let reasoning = [];
+  for (const priorPath of [
+    path.join(outDir, "reasoning.json"),
+    path.join(outDir, "prime-reasoning.jsonl")
+  ]) {
+    if (!fs.existsSync(priorPath)) continue;
+    try {
+      const prior = priorPath.endsWith(".jsonl")
+        ? fs.readFileSync(priorPath, "utf8")
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .map((line) => JSON.parse(line))
+        : JSON.parse(fs.readFileSync(priorPath, "utf8"));
+      reasoning = [...reasoning, ...(Array.isArray(prior) ? prior : [])]
+        .filter((entry) => Number(entry?.move) > 0 && Number(entry.move) <= turnOffset);
+    } catch (_error) {
+      /* optional historical reasoning must not prevent final artifact export */
+    }
+  }
+  reasoning = [...new Map(reasoning.map((entry) => [Number(entry.move), entry])).values()]
+    .sort((left, right) => Number(left.move) - Number(right.move));
 
   mazeActions.forEach((action, index) => {
-    const detail = turns[index] || {};
+    const detail = index >= turnOffset ? (turns[index - turnOffset] || {}) : {};
     const status = { ...(action.status || {}) };
 
     // Surface the board the model saw as status.level (what the run page reads
@@ -931,18 +969,32 @@ function runReplayExport(resultsPath, outDir, opts) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  writeInitialStatus(opts);
   const code = await runEval(opts);
-
-  if (code !== 0) {
-    console.error(`[mazebench] eval exited with status ${code}; skipping replay.`);
-    process.exit(code);
-  }
 
   const resultsPath = findResults(path.join(opts.outDir, "eval-output"));
 
   if (!resultsPath) {
-    console.error("[mazebench] eval finished but no rollout JSONL was found; skipping replay.");
-    process.exit(0);
+    console.error("[mazebench] eval finished but no rollout JSONL was found; no resume checkpoint can be created.");
+    process.exit(code || 1);
+  }
+
+  try {
+    const initialStatus = JSON.parse(
+      fs.readFileSync(path.join(opts.outDir, "initial-status.json"), "utf8")
+    );
+    const { checkpoint } = writePrimeResumeCheckpoint(opts.outDir, {
+      initialStatus,
+      sourceRunId: opts.runId || path.basename(opts.outDir)
+    });
+    console.log(`[mazebench] saved a verified resume checkpoint at action ${checkpoint.action_count}`);
+  } catch (error) {
+    console.error(`[mazebench] could not create a safe resume checkpoint: ${error.message}`);
+  }
+
+  if (code !== 0) {
+    console.error(`[mazebench] eval exited with status ${code}; skipping replay.`);
+    process.exit(code);
   }
 
   const rolloutError = localRolloutError(resultsPath);

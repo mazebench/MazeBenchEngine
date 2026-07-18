@@ -38,6 +38,10 @@ const {
   evaluateAutoQuit,
   normalizeAutoQuitConfig
 } = require("../shared/auto-quit");
+const {
+  CHECKPOINT_FILE: PRIME_RESUME_CHECKPOINT_FILE,
+  writePrimeResumeCheckpoint
+} = require("./prime-resume");
 
 // GUI-launched servers (editors, preview harnesses) often get a minimal PATH
 // that misses the dirs where codex/claude/docker/prime live. Enrich the PATH
@@ -1117,6 +1121,78 @@ function createAgentRunService({
     return String(status?.board_state_hash || "");
   }
 
+  function primeResumeCheckpointPath(runId) {
+    return path.join(runDirFor(runId), PRIME_RESUME_CHECKPOINT_FILE);
+  }
+
+  function primeInitialStatus(meta) {
+    const argv = [
+      path.join(rootDir, "scripts", "maze-terminal.js"),
+      "--json",
+      "--once",
+      "--level",
+      String(meta.level_id || "level_HxI"),
+      "--game-won-gem-count",
+      String(Math.max(1, Number(meta.gem_total) || 69))
+    ];
+    if (meta.hide_names) {
+      argv.push("--hide-names", "--hide-names-seed", String(meta.hide_names_seed || "1"));
+    }
+    const result = spawnSync(process.execPath, argv, {
+      cwd: rootDir,
+      encoding: "utf8",
+      timeout: 30_000,
+      maxBuffer: 16 * 1024 * 1024
+    });
+    if (result.status !== 0) {
+      throw new Error(String(result.stderr || "Could not reconstruct Prime move zero.").trim());
+    }
+    const payload = JSON.parse(result.stdout);
+    return {
+      allowed_commands: payload.allowedCommands || [],
+      board_state_hash: payload.boardStateHash || null,
+      current_room: payload.levelId || meta.level_id || "level_HxI",
+      current_view: payload.view || "top-diagonal",
+      gem_count: 0,
+      level: payload.observation || "",
+      player: payload.player || null,
+      player_dead: Boolean(payload.playerDead),
+      solved: Boolean(payload.solved),
+      visited_levels: [payload.levelId || meta.level_id || "level_HxI"],
+      yaw: Number(payload.yaw) || 0
+    };
+  }
+
+  function ensurePrimeResumeCheckpoint(runId) {
+    const meta = readRunMeta(runId);
+    if (!meta || meta.kind !== "prime") {
+      throw new Error("Only Prime Intellect runs use Verifiers checkpoints.");
+    }
+    if (meta.prime_execution === "hosted") {
+      throw new Error("Prime Hosted Evaluations cannot resume a local Verifiers checkpoint.");
+    }
+    const existing = primeResumeCheckpointPath(runId);
+    if (fileHasContent(existing)) return existing;
+    const initialStatus = loadJson(path.join(runDirFor(runId), "initial-status.json"), null) || primeInitialStatus(meta);
+    if (!fileHasContent(path.join(runDirFor(runId), "initial-status.json"))) {
+      fs.writeFileSync(
+        path.join(runDirFor(runId), "initial-status.json"),
+        `${JSON.stringify(initialStatus, null, 2)}\n`,
+        "utf8"
+      );
+    }
+    const { checkpoint, path: checkpointPath } = writePrimeResumeCheckpoint(runDirFor(runId), {
+      initialStatus,
+      sourceRunId: runId
+    });
+    writeRunMeta(runId, {
+      ...meta,
+      resume_checkpoint_ready: true,
+      resume_action_count: checkpoint.action_count
+    });
+    return checkpointPath;
+  }
+
   function autoQuitConfigForMeta(meta) {
     const params = meta?.launch_params && typeof meta.launch_params === "object"
       ? { ...meta.launch_params }
@@ -1577,8 +1653,15 @@ function createAgentRunService({
         meta.status === "running" &&
         meta.kind !== "prime" &&
         (meta.container === false || Boolean(runContainerId(runId))),
-      resumable: meta.status === "paused",
-      continuable: !meta.auto_quit_triggered && (meta.status === "finished" || meta.status === "stopped"),
+      resumable:
+        (meta.status === "paused" && (meta.kind !== "prime" || meta.prime_execution !== "hosted")) ||
+        (meta.kind === "prime" &&
+          meta.prime_execution !== "hosted" &&
+          meta.status === "failed" &&
+          fileHasContent(primeResumeCheckpointPath(runId))),
+      continuable:
+        !meta.auto_quit_triggered &&
+        (meta.status === "finished" || meta.status === "stopped"),
       branchable:
         meta.kind !== "prime" &&
         ["codex", "claude"].includes(meta.model) &&
@@ -3702,6 +3785,9 @@ function createAgentRunService({
     if (!wantVideo) {
       argv.push("--no-video");
     }
+    if (params.resume_checkpoint) {
+      argv.push("--resume-checkpoint", String(params.resume_checkpoint));
+    }
 
     // A readable command string for the run page / logs (not the resolved path).
     const display = ["node", "scripts/maze-prime-run.js"]
@@ -3726,6 +3812,7 @@ function createAgentRunService({
             String(autoQuit.window)
           ]
         : [])
+      .concat(params.resume_checkpoint ? ["--resume-checkpoint", "<run>/prime-resume.json"] : [])
       .join(" ");
 
     return {
@@ -3767,8 +3854,29 @@ function createAgentRunService({
 
     try {
       if (kind === "prime") {
+        let effectiveParams = params;
+        if (params.resume_checkpoint) {
+          const sourceCheckpoint = path.resolve(String(params.resume_checkpoint));
+          if (!fileHasContent(sourceCheckpoint)) {
+            throw new Error("The Prime resume checkpoint is missing or empty.");
+          }
+          const sourceDir = path.dirname(sourceCheckpoint);
+          const targetCheckpoint = path.join(runDir, PRIME_RESUME_CHECKPOINT_FILE);
+          fs.copyFileSync(sourceCheckpoint, targetCheckpoint);
+          for (const name of [
+            "actions.jsonl",
+            "initial-status.json",
+            "prime-reasoning.jsonl",
+            "prime-usage.jsonl",
+            "reasoning.json"
+          ]) {
+            const source = path.join(sourceDir, name);
+            if (fs.existsSync(source)) fs.copyFileSync(source, path.join(runDir, name));
+          }
+          effectiveParams = { ...params, resume_checkpoint: targetCheckpoint };
+        }
         const game = normalizedGameForRun("maze");
-        const command = buildPrimeCommand(params, runDir, runId, game);
+        const command = buildPrimeCommand(effectiveParams, runDir, runId, game);
 
         child = spawn(command.bin, command.argv, {
           cwd: rootDir,
@@ -3803,13 +3911,18 @@ function createAgentRunService({
           ...autoQuitLaunchParams(command.autoQuit),
           video: command.video,
           launch_params: {
-            ...launchParamsOf(params),
+            ...launchParamsOf(effectiveParams),
             ...autoQuitLaunchParams(command.autoQuit),
             unlimited: command.unlimited,
             harness: command.harness,
             ...(command.hideNames ? { hide_names_seed: command.hideNamesSeed } : {})
           },
           continue_of: params.continue_of || null,
+          resumed_from: params.resume_source_run || null,
+          resume_checkpoint_ready: Boolean(params.resume_checkpoint),
+          resume_action_count: params.resume_checkpoint
+            ? Math.max(0, Number(loadJson(path.join(runDir, PRIME_RESUME_CHECKPOINT_FILE), {})?.action_count) || 0)
+            : 0,
           prime_execution: command.hosted ? "hosted" : "local",
           note: command.hosted
             ? "Prime Hosted Evaluation. Sample artifacts sync as Prime publishes them; per-turn streaming requires local Agent execution."
@@ -4017,6 +4130,8 @@ function createAgentRunService({
       branch_of,
       branch_turn,
       resume_id,
+      resume_checkpoint,
+      resume_source_run,
       fork_session,
       session_id,
       ...rest
@@ -4101,6 +4216,28 @@ function createAgentRunService({
       throw new Error(`Unknown run "${runId}".`);
     }
     if (meta.kind !== "prime") requireLegacyLocalLaunch();
+
+    if (meta.kind === "prime" && ["paused", "failed"].includes(meta.status)) {
+      const checkpoint = ensurePrimeResumeCheckpoint(runId);
+      const base = {
+        ...(meta.launch_params || reconstructParams(meta)),
+        kind: "prime",
+        continue_of: runId,
+        resume_checkpoint: checkpoint,
+        resume_source_run: runId
+      };
+      if (meta.unlimited) {
+        base.unlimited = true;
+        delete base.max_turns;
+      } else {
+        base.unlimited = false;
+        base.max_turns = Math.max(
+          summarizeRun(runId)?.turns || 0,
+          Math.floor(Number(meta.moves) || 20)
+        );
+      }
+      return launchRun(base);
+    }
 
     if (meta.status !== "paused") {
       return summarizeRun(runId);
@@ -4517,10 +4654,17 @@ function createAgentRunService({
       : Math.min(MAX_LOCAL_MOVE_BUDGET, requestedAdd);
 
     if (meta.kind === "prime") {
-      // Verifiers plays one fresh rollout per run, so "continue" gives the model
-      // a bigger total budget on the same maze rather than resuming mid-state.
-      const base = { ...(meta.launch_params || reconstructParams(meta)), continue_of: runId, kind: "prime" };
-      base.max_turns = Math.max(0, Math.floor(Number(meta.moves) || 0)) + add;
+      const checkpoint = ensurePrimeResumeCheckpoint(runId);
+      const currentTurns = summarizeRun(runId)?.turns || 0;
+      const base = {
+        ...(meta.launch_params || reconstructParams(meta)),
+        continue_of: runId,
+        kind: "prime",
+        resume_checkpoint: checkpoint,
+        resume_source_run: runId,
+        unlimited: false,
+        max_turns: Math.max(currentTurns, Math.floor(Number(meta.moves) || 0)) + add
+      };
       return launchRun(base);
     }
     requireLegacyLocalLaunch();

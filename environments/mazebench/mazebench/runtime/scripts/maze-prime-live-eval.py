@@ -27,6 +27,7 @@ LIVE_USAGE_PATH = os.environ.get("MAZEBENCH_LIVE_USAGE_PATH", "").strip()
 LIVE_ACTIONS_PATH = os.environ.get("MAZEBENCH_LIVE_ACTIONS_PATH", "").strip()
 LIVE_REASONING_PATH = os.environ.get("MAZEBENCH_LIVE_REASONING_PATH", "").strip()
 PRIME_HARNESS = os.environ.get("MAZEBENCH_PRIME_HARNESS", "").strip().lower()
+RESUME_ACTION_COUNT = max(0, int(os.environ.get("MAZEBENCH_RESUME_ACTION_COUNT", "0") or 0))
 _write_lock = threading.Lock()
 _original_commit = PendingTurn.commit
 _exported_action_counts: dict[str, int] = {}
@@ -93,7 +94,7 @@ def _export_synchronized_actions(trace) -> None:
 
     state = trace.state
     actions = state.get("maze_actions", []) if isinstance(state, dict) else getattr(state, "maze_actions", [])
-    start = _exported_action_counts.get(trace.id, 0)
+    start = _exported_action_counts.get(trace.id, RESUME_ACTION_COUNT)
     for action in list(actions or [])[start:]:
         _append_jsonl(
             LIVE_ACTIONS_PATH,
@@ -238,7 +239,7 @@ def _commit_with_live_usage(self: PendingTurn, response, *args, **kwargs) -> Non
             _append_jsonl(
                 LIVE_REASONING_PATH,
                 {
-                    "move": self.trace.num_turns,
+                    "move": RESUME_ACTION_COUNT + self.trace.num_turns,
                     "action": _content_text(getattr(message, "content", "")).strip(),
                     "reasoning": reasoning,
                     "recorded_at": time.time(),
@@ -250,7 +251,7 @@ def _commit_with_live_usage(self: PendingTurn, response, *args, **kwargs) -> Non
 
         record = {
             "trace_id": self.trace.id,
-            "turn": self.trace.num_turns,
+            "turn": RESUME_ACTION_COUNT + self.trace.num_turns,
             "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
             "cached_input_tokens": int(getattr(usage, "cached_input_tokens", 0) or 0),
             "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),

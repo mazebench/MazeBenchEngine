@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 from verifiers.v1.clients import RolloutContext
 from verifiers.v1.dialects.chat import message_to_wire
@@ -75,6 +76,18 @@ if _OLD_IMPORT not in DEFAULT_PROGRAM_SOURCE or _OLD_CHAT not in DEFAULT_PROGRAM
 PROGRAM_SOURCE = DEFAULT_PROGRAM_SOURCE.replace(_OLD_IMPORT, _NEW_IMPORT).replace(
     _OLD_CHAT, _NEW_CHAT
 )
+_OLD_INITIAL_MESSAGES = 'initial = json.loads(os.environ.get("INITIAL_MESSAGES", "[]"))'
+_NEW_INITIAL_MESSAGES = '''initial_path = os.environ.get("INITIAL_MESSAGES_PATH", "")
+        initial = (
+            json.loads(Path(initial_path).read_text(encoding="utf8"))
+            if initial_path
+            else json.loads(os.environ.get("INITIAL_MESSAGES", "[]"))
+        )'''
+if _OLD_INITIAL_MESSAGES not in PROGRAM_SOURCE:
+    raise RuntimeError("The pinned Verifiers initial-message loader changed; update the maze resume patch.")
+PROGRAM_SOURCE = PROGRAM_SOURCE.replace("import os\n", "import os\nfrom pathlib import Path\n").replace(
+    _OLD_INITIAL_MESSAGES, _NEW_INITIAL_MESSAGES
+)
 
 
 class MazeBenchHarness(DefaultHarness):
@@ -121,9 +134,20 @@ class MazeBenchHarness(DefaultHarness):
         if isinstance(prompt, str):
             args.append(f"--prompt={prompt}")
         elif prompt is not None:
-            env["INITIAL_MESSAGES"] = json.dumps(
+            initial_messages = json.dumps(
                 [message_to_wire(message) for message in prompt]
             )
+            checkpoint_path = str(
+                getattr(trace.task, "resume_checkpoint_path", "") or ""
+            )
+            if checkpoint_path:
+                messages_path = Path(checkpoint_path).with_name(
+                    "prime-resume-messages.json"
+                )
+                messages_path.write_text(initial_messages, encoding="utf8")
+                env["INITIAL_MESSAGES_PATH"] = str(messages_path)
+            else:
+                env["INITIAL_MESSAGES"] = initial_messages
         program = await runtime.prepare_uv_script(PROGRAM_SOURCE, self.config.env)
         return await runtime.run_program([*program, *args], env)
 

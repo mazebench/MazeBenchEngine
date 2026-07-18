@@ -86,6 +86,7 @@ DEFAULT_PUSH_REWARD_WEIGHT = env_float("MAZEBENCH_PUSH_REWARD_WEIGHT", 0.05)
 REPO_ROOT_ENV = "MAZEBENCH_REPO_ROOT"
 INFO_KEY = "mazebench"
 LIVE_ACTIONS_PATH_ENV = "MAZEBENCH_LIVE_ACTIONS_PATH"
+PRIME_RESUME_CHECKPOINT_VERSION = 1
 
 
 def write_live_actions(actions: list[dict[str, Any]]) -> None:
@@ -1158,6 +1159,75 @@ def action_result_text(
     return " ".join(details)
 
 
+def load_prime_resume_checkpoint(file_path: str) -> dict[str, Any]:
+    path = Path(file_path).expanduser().resolve()
+    try:
+        checkpoint = json.loads(path.read_text(encoding="utf8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"could not read Prime resume checkpoint {path}: {error}") from error
+    if checkpoint.get("version") != PRIME_RESUME_CHECKPOINT_VERSION:
+        raise ValueError("unsupported Prime resume checkpoint version")
+    actions = checkpoint.get("actions")
+    messages = checkpoint.get("messages")
+    if not isinstance(actions, list) or not actions:
+        raise ValueError("Prime resume checkpoint has no actions")
+    if not isinstance(messages, list) or not messages:
+        raise ValueError("Prime resume checkpoint has no model transcript")
+    if checkpoint.get("task", {}).get("observation_mode") == "vision":
+        raise ValueError("Prime vision checkpoints cannot resume without saved image pixels")
+    checkpoint["_path"] = str(path)
+    return checkpoint
+
+
+def prime_resume_prompt(checkpoint: dict[str, Any]) -> vf.Messages:
+    task = checkpoint.get("task") or {}
+    actions = checkpoint.get("actions") or []
+    latest = actions[-1]
+    status = latest.get("status") or {}
+    if str(status.get("board_state_hash") or "") != str(
+        checkpoint.get("final_board_state_hash") or ""
+    ):
+        raise ValueError("Prime resume checkpoint final board hash does not match its last action")
+    if latest.get("valid", True) is False or latest.get("error"):
+        result_text = action_result_text(error=str(latest.get("error") or "invalid response"))
+    else:
+        result_text = action_result_text(
+            command=str(latest.get("command_text") or ""),
+            status=status,
+        )
+    warning = auto_quit_warning_text(
+        str(checkpoint.get("initial_board_state_hash") or ""),
+        actions,
+        enabled=bool(task.get("auto_quit")),
+        threshold=float(task.get("auto_quit_threshold") or 0),
+        mode="rolling" if task.get("auto_quit_mode") == "rolling" else "cumulative",
+        window=max(1, int(task.get("auto_quit_window") or 100)),
+        warning_moves=max(0, int(task.get("auto_quit_warning_moves") or 0)),
+    )
+    if warning:
+        result_text = f"{result_text}\n\n{warning}"
+    target_text = target_text_for_row(
+        {
+            "game_won_gem_count": int(task.get("game_won_gem_count") or GAME_WON_GEM_COUNT),
+            "target_gems": int(task.get("target_gems") or 0),
+        }
+    )
+    mode = str(task.get("observation_mode") or "ascii")
+    if mode == "json":
+        content: Any = render_json_user_prompt(
+            status=status,
+            target_text=target_text,
+            result_text=result_text,
+        )
+    else:
+        content = render_multiturn_user_prompt(
+            status=status,
+            target_text=target_text,
+            result_text=result_text,
+        )
+    return [*(checkpoint.get("messages") or []), {"role": "user", "content": content}]
+
+
 def canonical_command_text(command: str, args: dict[str, Any]) -> str:
     if command == "move":
         return str(args.get("direction") or "")
@@ -1278,6 +1348,7 @@ class MazeBenchTask(vf.Task):
     hide_names: bool = False
     hide_names_seed: str = "1"
     repo_root: str = ""
+    resume_checkpoint_path: str = ""
     target_gems: int = DEFAULT_TARGET_GEMS
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     view: str = DEFAULT_VIEW
@@ -1336,6 +1407,7 @@ class MazeBenchConfig(vf.TasksetConfig):
     hide_names: bool = False
     hide_names_seed: str = "1"
     repo_root: str | None = None
+    resume_checkpoint_path: str | None = None
     target_gems: int = DEFAULT_TARGET_GEMS
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     vision_height: int = DEFAULT_VISION_HEIGHT
@@ -1382,6 +1454,65 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
             view=task.view,
             yaw=task.yaw,
         )
+        self._resume_initial_status = None
+        self._resume_status = None
+        self._resume_actions = None
+        if task.resume_checkpoint_path:
+            checkpoint = load_prime_resume_checkpoint(task.resume_checkpoint_path)
+            initial_status = apply_quit_policy(
+                await run_blocking(self.session.request, "observe"),
+                task.allow_quit,
+            )
+            expected_initial_hash = str(
+                checkpoint.get("initial_board_state_hash") or ""
+            )
+            actual_initial_hash = str(initial_status.get("board_state_hash") or "")
+            if not expected_initial_hash or actual_initial_hash != expected_initial_hash:
+                raise ValueError(
+                    "Prime checkpoint initial state does not match this MazeBench runtime"
+                )
+            replay_state: dict[str, Any] = {"maze_actions": []}
+            status = initial_status
+            for index, saved in enumerate(checkpoint.get("actions") or [], start=1):
+                if int(saved.get("turn") or 0) != index:
+                    raise ValueError(f"Prime checkpoint is missing action {index}")
+                raw_response = str(saved.get("command_text") or "")
+                if saved.get("valid", True) is False or saved.get("error"):
+                    status = apply_quit_policy(
+                        await run_blocking(self.session.request, "observe"),
+                        task.allow_quit,
+                    )
+                    record_maze_action(
+                        replay_state,
+                        error=str(saved.get("error") or "invalid response"),
+                        raw_response=raw_response,
+                        status=status,
+                    )
+                else:
+                    command, action_args = parse_text_action(raw_response)
+                    status = apply_quit_policy(
+                        await run_blocking(self.session.request, command, **action_args),
+                        task.allow_quit,
+                    )
+                    record_maze_action(
+                        replay_state,
+                        action_args=action_args,
+                        command=command,
+                        raw_response=raw_response,
+                        status=status,
+                    )
+                expected_hash = str(saved.get("status", {}).get("board_state_hash") or "")
+                actual_hash = str(status.get("board_state_hash") or "")
+                if not expected_hash or actual_hash != expected_hash:
+                    raise ValueError(
+                        f"Prime checkpoint diverged while replaying action {index}"
+                    )
+            final_hash = str(checkpoint.get("final_board_state_hash") or "")
+            if str(status.get("board_state_hash") or "") != final_hash:
+                raise ValueError("Prime checkpoint replay did not reach its saved final state")
+            self._resume_initial_status = initial_status
+            self._resume_status = status
+            self._resume_actions = list(replay_state["maze_actions"])
         self._atexit_callback = self.close_session
         atexit.register(self._atexit_callback)
 
@@ -1551,6 +1682,21 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
             self.state.game_lost = True
             return [{"role": "user", "content": "Maze session is not available."}]
 
+        if self._resume_actions is not None:
+            initial_status = self._resume_initial_status or {}
+            restored_status = self._resume_status or initial_status
+            restored_actions = list(self._resume_actions)
+            self.initialize_state(initial_status)
+            self.state.maze_actions = restored_actions
+            self.state.maze_status = restored_status
+            replay = dict(self.state.maze_replay or {})
+            replay["actions"] = restored_actions
+            self.state.maze_replay = replay
+            self.update_terminal_flags(restored_status)
+            self._resume_initial_status = None
+            self._resume_status = None
+            self._resume_actions = None
+
         if not self.state.maze_status:
             status = apply_quit_policy(
                 await run_blocking(session.request, "observe"),
@@ -1663,12 +1809,45 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
             view=self.config.view,
             yaw=int(self.config.yaw),
         )
-        return [
-            MazeBenchTask(
+        checkpoint = (
+            load_prime_resume_checkpoint(self.config.resume_checkpoint_path)
+            if self.config.resume_checkpoint_path
+            else None
+        )
+        if checkpoint and len(rows) != 1:
+            raise ValueError("Prime checkpoint resume supports exactly one rollout")
+        tasks: list[MazeBenchTask] = []
+        for index, row in enumerate(rows):
+            checkpoint_task = checkpoint.get("task") if checkpoint else {}
+            if checkpoint:
+                expected = {
+                    "level_id": str(row["level_id"]),
+                    "game_won_gem_count": int(row["game_won_gem_count"]),
+                    "observation_mode": self.config.observation_mode,
+                    "omniscient": bool(self.config.omniscient),
+                    "hide_names": bool(self.config.hide_names),
+                    "hide_names_seed": str(self.config.hide_names_seed).strip()[:128] or "1",
+                    "allow_quit": bool(self.config.allow_quit),
+                    "auto_quit": bool(self.config.auto_quit),
+                    "auto_quit_threshold": float(self.config.auto_quit_threshold),
+                    "auto_quit_mode": self.config.auto_quit_mode,
+                    "auto_quit_window": int(self.config.auto_quit_window),
+                    "auto_quit_warning_moves": int(self.config.auto_quit_warning_moves),
+                }
+                for key, value in expected.items():
+                    if checkpoint_task.get(key) != value:
+                        raise ValueError(
+                            f"Prime checkpoint {key} does not match the requested run configuration"
+                        )
+            tasks.append(MazeBenchTask(
                 idx=index,
                 name=f"{row['game_id']}:{row['level_id']}#{index}",
-                prompt=None,
-                system_prompt=self.config.system_prompt,
+                prompt=prime_resume_prompt(checkpoint) if checkpoint else None,
+                system_prompt=(
+                    str(checkpoint.get("system_prompt") or self.config.system_prompt)
+                    if checkpoint
+                    else self.config.system_prompt
+                ),
                 example_id=int(row["example_id"]),
                 allow_quit=bool(self.config.allow_quit),
                 auto_quit=bool(self.config.auto_quit),
@@ -1691,6 +1870,9 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
                 hide_names=bool(self.config.hide_names),
                 hide_names_seed=str(self.config.hide_names_seed).strip()[:128] or "1",
                 repo_root=str(row["repo_root"]),
+                resume_checkpoint_path=(
+                    str(checkpoint.get("_path") or "") if checkpoint else ""
+                ),
                 target_gems=int(row["target_gems"]),
                 timeout_seconds=int(row["timeout_seconds"]),
                 view=str(row["view"]),
@@ -1698,9 +1880,8 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig, MazeBenchState
                 vision_view=str(self.config.vision_view),
                 vision_width=int(self.config.vision_width),
                 yaw=int(row["yaw"]),
-            )
-            for index, row in enumerate(rows)
-        ]
+            ))
+        return tasks
 
     def user(self, task: MazeBenchTask) -> vf.User:
         return MazeBenchUser(self.config.user)

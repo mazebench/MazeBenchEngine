@@ -65,6 +65,7 @@ try {
   assert.doesNotMatch(mazeHarnessSource, /reasoning=\{"summary": "auto"\}/);
   assert.match(mazeHarnessSource, /empty_attempts >= 3/);
   assert.match(mazeHarnessSource, /the turn was not sent to the environment/);
+  assert.match(mazeHarnessSource, /INITIAL_MESSAGES_PATH/);
   const retryProbe = execFileSync(
     "uv",
     [
@@ -149,6 +150,15 @@ print("chat blank retry ready")`
   assert.equal(options.unlimited, false);
   assert.equal(options.allowQuit, false);
   assert.equal(options.video, false);
+
+  const checkpointPath = path.join(outDir, "prime-resume.json");
+  fs.writeFileSync(checkpointPath, JSON.stringify({ action_count: 12 }));
+  const resumeOptions = parseArgs([
+    "--env-dir", path.join(__dirname, "..", "environments", "mazebench"),
+    "--out", outDir,
+    "--resume-checkpoint", checkpointPath
+  ]);
+  assert.equal(resumeOptions.resumeCheckpoint, checkpointPath);
 
   const legacyReasoningOptions = parseArgs([
     "--hosted",
