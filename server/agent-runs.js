@@ -339,6 +339,7 @@ const PROVIDER_RETRY_MAX_MS = 15 * 60_000;
 const PAUSE_REQUEST_FILE = "pause-request.json";
 const PAUSE_BOUNDARY_FILE = "pause-boundary.json";
 const PAUSE_CAPABILITY_FILE = "cold-pause-capability.json";
+const RUN_FAVORITE_FILE = "favorite.json";
 const RUN_REVIEW_FILE = "run-review.json";
 const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9-]{4,80}$/i;
 const SERVABLE_RUN_FILES = new Set([
@@ -636,6 +637,48 @@ function createAgentRunService({
 
   function runMetaPath(runId) {
     return path.join(runDirFor(runId), "run.json");
+  }
+
+  function runFavoritePath(runId) {
+    return path.join(runDirFor(runId), RUN_FAVORITE_FILE);
+  }
+
+  function isRunFavorite(runId) {
+    const markerPath = runFavoritePath(runId);
+    if (!fs.existsSync(markerPath)) return fs.existsSync(path.join(runDirFor(runId), "favorite"));
+    const marker = loadJson(markerPath, null);
+    return marker === null || marker.favorite === true || marker.favorited === true || marker.is_favorite === true;
+  }
+
+  function setRunFavorite(runId, favorite) {
+    if (typeof favorite !== "boolean") {
+      throw new Error("Favorite must be true or false.");
+    }
+
+    const meta = readRunMeta(runId);
+    if (!meta) {
+      throw new Error(`Unknown run "${runId}".`);
+    }
+
+    const markerPath = runFavoritePath(runId);
+    if (favorite) {
+      const previous = loadJson(markerPath, null);
+      const now = new Date().toISOString();
+      const marker = {
+        schema_version: 1,
+        favorite: true,
+        favorited_at: previous?.favorited_at || now,
+        updated_at: now
+      };
+      const temporary = `${markerPath}.${process.pid}.${crypto.randomBytes(3).toString("hex")}.tmp`;
+      fs.writeFileSync(temporary, `${JSON.stringify(marker, null, 2)}\n`, "utf8");
+      fs.renameSync(temporary, markerPath);
+    } else {
+      fs.rmSync(markerPath, { force: true });
+      fs.rmSync(path.join(runDirFor(runId), "favorite"), { force: true });
+    }
+
+    return summarizeRun(runId);
   }
 
   function clearColdPauseMarkers(runId) {
@@ -2239,6 +2282,7 @@ function createAgentRunService({
       has_video: hasVideo,
       video_status: videoStatus,
       has_reasoning: fs.existsSync(path.join(runDir, "reasoning.json")),
+      favorited: isRunFavorite(runId),
       review_status: String(review?.status || "idle"),
       review_provider: String(review?.provider || ""),
       review_model: String(review?.model || ""),
@@ -5866,6 +5910,7 @@ function createAgentRunService({
     regenerateRunVideo,
     resolveRunFilePath,
     resumeRun,
+    setRunFavorite,
     setRunMoveTarget,
     syncPrimeEvaluation,
     startDocker,

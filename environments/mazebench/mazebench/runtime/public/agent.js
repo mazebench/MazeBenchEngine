@@ -82,7 +82,8 @@
     gems: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M10.5 3 8 9l4 13 4-13-2.5-6"></path><path d="M17 3a2 2 0 0 1 1.6.8l3 4a2 2 0 0 1 .013 2.382l-7.99 10.986a2 2 0 0 1-3.247 0l-7.99-10.986A2 2 0 0 1 2.4 7.8l2.998-3.997A2 2 0 0 1 7 3z"></path><path d="M2 9h20"></path></svg>',
     rooms: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M11 20H2"></path><path d="M11 4.562v16.157a1 1 0 0 0 1.242.97L19 20V5.562a2 2 0 0 0-1.515-1.94l-4-1A2 2 0 0 0 11 4.561z"></path><path d="M11 4H8a2 2 0 0 0-2 2v14"></path><path d="M14 12h.01"></path><path d="M22 20h-3"></path></svg>'
   };
-  // Trash 2 from Lucide Icons (ISC License).
+  // Star and Trash 2 from Lucide Icons (ISC License).
+  const FAVORITE_ICON = '<svg class="favorite-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.12 2.12 0 0 0 1.595 1.16l5.164.75a.53.53 0 0 1 .294.904l-3.737 3.643a2.12 2.12 0 0 0-.609 1.873l.882 5.143a.53.53 0 0 1-.77.559l-4.618-2.428a2.12 2.12 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.882-5.143a2.12 2.12 0 0 0-.61-1.873L2.163 9.79a.53.53 0 0 1 .294-.906l5.165-.75a2.12 2.12 0 0 0 1.595-1.16z"></path></svg>';
   const TRASH_ICON = '<svg class="trash-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
   const resizeAnimations = new WeakMap();
   const visibilityAnimations = new WeakMap();
@@ -1730,6 +1731,7 @@
     if (!showProgress) runProgressCache.delete(run.id);
 
     const actions = [
+      `<button class="button--ghost run-favorite" type="button" data-action="favorite" title="${run.favorited ? "Remove from" : "Add to"} MazeJam AI leaderboard" aria-label="${run.favorited ? "Remove run from" : "Add run to"} MazeJam AI leaderboard favorites" aria-pressed="${run.favorited ? "true" : "false"}">${FAVORITE_ICON}</button>`,
       run.pausable ? '<button class="button" type="button" data-action="pause">Pause</button>' : "",
       run.resumable ? '<button class="button--primary" type="button" data-action="resume">Resume</button>' : "",
       run.continuable ? '<button class="button" type="button" data-action="continue">Continue</button>' : "",
@@ -1819,6 +1821,14 @@
             if (!window.confirm("Delete this run and its artifacts? This can't be undone.")) return;
             await api(`${data.apiUrl}/${encodeURIComponent(runId)}`, { method: "DELETE" });
             setStatus(`Deleted ${runId}.`);
+          } else if (action === "favorite") {
+            const favorite = button.getAttribute("aria-pressed") !== "true";
+            button.disabled = true;
+            const payload = await api(`${data.apiUrl}/${encodeURIComponent(runId)}/favorite`, {
+              method: "POST",
+              body: JSON.stringify({ favorite })
+            });
+            setStatus(payload.message);
           } else if (action === "continue") {
             const answer = window.prompt("How many more moves should it run?", "10");
             if (answer === null) return;

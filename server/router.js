@@ -311,6 +311,18 @@ function createRequestRouter({
         return;
       }
 
+      if (segments[4] === "favorite" && request.method === "POST") {
+        const payload = await readJsonBody(request);
+        const run = agentRuns.setRunFavorite(runId, payload?.favorite);
+        sendJson(response, 200, {
+          run,
+          message: run.favorited
+            ? "Run added to MazeJam AI leaderboard favorites."
+            : "Run removed from MazeJam AI leaderboard favorites."
+        });
+        return;
+      }
+
       if (segments[4] === "branch" && request.method === "POST") {
         const payload = await readJsonBody(request);
         const run = agentRuns.branchRun(runId, payload?.turn);

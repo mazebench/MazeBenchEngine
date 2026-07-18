@@ -85,7 +85,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css?v=20260710-card-parity-1">
-    <link rel="stylesheet" href="/local-site.css?v=20260718-run-review-1">
+    <link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-1">
     ${extraHeadHtml}`
     })}
   </head>
@@ -248,7 +248,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css?v=${PLAY_ASSET_VERSION}">
-    <link rel="stylesheet" href="/local-site.css?v=20260718-run-review-1">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-1">`;
   }
 
   function renderPlayPage(game, level) {
@@ -458,7 +458,7 @@ function createPageRenderer({
     ${includeRuntimeStyles ? '<link rel="stylesheet" href="/styles.css">' : ""}
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260718-run-review-1">' : ""}`;
+    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-1">' : ""}`;
   }
 
   function renderAuthorPage(game, level) {
@@ -1117,7 +1117,7 @@ function createPageRenderer({
           </div>
         </div>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
-        <script src="/agent.js?v=20260717-auto-quit-1" defer></script>`
+        <script src="/agent.js?v=20260718-run-favorites-1" defer></script>`
     });
   }
 

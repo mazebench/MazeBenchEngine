@@ -6132,6 +6132,31 @@ html.has-run-world-map {
   padding: 5px 10px;
 }
 
+.run-card__actions .run-favorite,
+.run-card__actions .run-trash {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  padding: 5px;
+  width: 32px;
+}
+
+.run-favorite .favorite-icon,
+.run-trash .trash-icon {
+  height: 16px;
+  width: 16px;
+}
+
+.run-favorite[aria-pressed="true"] {
+  background: rgba(250, 204, 21, 0.12);
+  border-color: rgba(250, 204, 21, 0.46);
+  color: #facc15;
+}
+
+.run-favorite[aria-pressed="true"] .favorite-icon {
+  fill: currentColor;
+}
+
 @media (max-width: 940px) {
   .model-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
