@@ -3968,9 +3968,24 @@ html.has-run-world-map {
     linear-gradient(135deg, rgba(101, 243, 212, 0.055), transparent 34%),
     rgba(7, 12, 29, 0.92);
   border: 1px solid rgba(101, 243, 212, 0.25);
-  border-radius: 14px;
-  margin: 0 0 14px;
-  padding: 18px 20px;
+  position: relative;
+  transition: border-color 180ms ease, background 180ms ease;
+}
+
+.run-review-result[hidden] { display: none; }
+
+.run-review-result.is-running {
+  background:
+    linear-gradient(135deg, rgba(52, 231, 240, 0.075), transparent 42%),
+    rgba(7, 12, 29, 0.94);
+  border-color: rgba(52, 231, 240, 0.38);
+}
+
+.run-review-result.is-failed {
+  background:
+    linear-gradient(135deg, rgba(255, 103, 135, 0.07), transparent 42%),
+    rgba(7, 12, 29, 0.94);
+  border-color: rgba(255, 103, 135, 0.34);
 }
 
 .run-review-result__head,
@@ -3987,6 +4002,10 @@ html.has-run-world-map {
   gap: 4px;
 }
 
+.run-review-result__head h2 {
+  margin: 0;
+}
+
 .run-review-result__head span {
   color: #65f3d4;
   font: 800 9px var(--font-mono, ui-monospace, monospace);
@@ -3997,6 +4016,55 @@ html.has-run-world-map {
 .run-review-result__head strong {
   color: #cbd2f4;
   font: 600 11px var(--font-mono, ui-monospace, monospace);
+}
+
+.run-review-result__actions {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.run-review-status {
+  align-items: center;
+  background: rgba(101, 243, 212, 0.08);
+  border: 1px solid rgba(101, 243, 212, 0.24);
+  border-radius: 999px;
+  color: #b9fff0;
+  display: inline-flex;
+  font: 800 10px var(--font-mono, ui-monospace, monospace);
+  gap: 7px;
+  letter-spacing: 0.08em;
+  min-height: 28px;
+  padding: 5px 10px;
+  text-transform: uppercase;
+}
+
+.run-review-status i {
+  background: currentColor;
+  border-radius: 50%;
+  display: block;
+  height: 7px;
+  width: 7px;
+}
+
+.run-review-result.is-running .run-review-status i {
+  animation: run-review-pulse 1.15s ease-in-out infinite;
+  box-shadow: 0 0 0 0 rgba(52, 231, 240, 0.45);
+}
+
+.run-review-result.is-failed .run-review-status {
+  background: rgba(255, 103, 135, 0.08);
+  border-color: rgba(255, 103, 135, 0.28);
+  color: #ff9bb0;
+}
+
+@keyframes run-review-pulse {
+  50% { box-shadow: 0 0 0 6px rgba(52, 231, 240, 0); opacity: 0.58; }
+}
+
+.run-review-message {
+  margin: 18px 0 0;
+  max-width: 880px;
 }
 
 .run-review-content {
@@ -4450,6 +4518,11 @@ html.has-run-world-map {
   .run-review-result__head {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .run-review-result__actions {
+    justify-content: space-between;
+    width: 100%;
   }
 
   .agent-feed {

@@ -30,6 +30,9 @@
   const reviewPickerNote = document.getElementById("run-review-picker-note");
   const reviewResult = document.getElementById("run-review-result");
   const reviewByline = document.getElementById("run-review-byline");
+  const reviewStatus = document.getElementById("run-review-status");
+  const reviewStatusText = document.getElementById("run-review-status-text");
+  const reviewMessage = document.getElementById("run-review-message");
   const reviewContent = document.getElementById("run-review-content");
   const logEl = document.getElementById("run-log");
   const stopButton = document.getElementById("stop-run");
@@ -2864,14 +2867,48 @@
   function renderRunReview(review) {
     state.review = review || null;
     if (!review) return;
-    state.run.review_status = review.status || "idle";
+    const status = review.status || "idle";
+    state.run.review_status = status;
     state.run.review_error = review.error || "";
     renderControls(state.run);
-    if (review.status === "completed" && review.review) {
-      reviewResult.hidden = false;
-      reviewByline.textContent = `${review.provider === "claude" ? "Claude Code" : "Codex"} · ${review.model}${review.reasoning ? ` · ${review.reasoning} reasoning` : ""}`;
+    if (!reviewResult) return;
+
+    reviewResult.hidden = status === "idle";
+    reviewResult.classList.toggle("is-running", status === "running");
+    reviewResult.classList.toggle("is-completed", status === "completed");
+    reviewResult.classList.toggle("is-failed", status === "failed");
+    if (reviewByline) {
+      reviewByline.textContent = review.provider && review.model
+        ? `${review.provider === "claude" ? "Claude Code" : "Codex"} · ${review.model}${review.reasoning ? ` · ${review.reasoning} reasoning` : ""}`
+        : "";
+    }
+    if (reviewStatus) reviewStatus.hidden = status === "idle";
+    if (reviewStatusText) {
+      reviewStatusText.textContent = status === "running"
+        ? "Analyzing"
+        : status === "completed"
+          ? "Complete"
+          : status === "failed"
+            ? "Failed"
+            : "";
+    }
+    if (reviewAgainButton) reviewAgainButton.hidden = status === "running";
+    if (reviewMessage) {
+      reviewMessage.hidden = status === "completed";
+      reviewMessage.textContent = status === "running"
+        ? "Reading the complete run, actions, reasoning, scorecard, and saved artifacts. This can take several minutes; the result is saved with the run."
+        : status === "failed"
+          ? review.error || "The reviewer returned no report."
+          : "";
+    }
+    if (reviewContent) {
+      reviewContent.hidden = status !== "completed" || !review.review;
+      reviewContent.replaceChildren();
+    }
+
+    if (status === "completed" && review.review) {
       reviewContent.innerHTML = reviewMarkdown(review.review);
-    } else if (review.status === "failed") {
+    } else if (status === "failed") {
       setStatus(`Run review failed — ${review.error || "the reviewer returned no report."}`, true);
     }
   }
@@ -3688,6 +3725,7 @@
       closeReviewDialog();
       renderRunReview(payload.review);
       setStatus(`${reviewProvider.value === "claude" ? "Claude Code" : "Codex"} is reviewing the complete run…`);
+      reviewResult?.scrollIntoView({ behavior: "smooth", block: "start" });
       state.reviewPollTimer = setTimeout(refreshRunReview, 1000);
     } catch (error) {
       setStatus(error.message, true);

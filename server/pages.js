@@ -1288,13 +1288,6 @@ function createPageRenderer({
             <button id="run-feed-export" class="button run-feed-export" type="button" title="Export every move and its reasoning as JSON" disabled>${VIDEO_ICONS.download}<span>Export JSON</span></button>
             <button id="run-feed-export-txt" class="button run-feed-export" type="button" title="Export every move and its reasoning as plain text" disabled>${VIDEO_ICONS.download}<span>Export TXT</span></button>
           </div>
-          <section id="run-review-result" class="run-review-result" hidden>
-            <div class="run-review-result__head">
-              <div><span>Post-run analysis</span><strong id="run-review-byline"></strong></div>
-              <button id="run-review-again" class="button--ghost" type="button">Review again</button>
-            </div>
-            <div id="run-review-content" class="run-review-content"></div>
-          </section>
           <div id="run-feed" class="agent-feed" aria-label="Moves and reasoning log"></div>
           <div id="run-review-dialog" class="run-review-dialog" role="dialog" aria-modal="true" aria-labelledby="run-review-title" hidden>
             <div class="run-review-dialog__card">
@@ -1315,6 +1308,21 @@ function createPageRenderer({
               </div>
             </div>
           </div>
+        </section>`;
+    const reviewSection = `<section id="run-review-result" class="panel run-review-result" aria-labelledby="run-review-heading" aria-live="polite" hidden>
+          <div class="run-review-result__head">
+            <div>
+              <span>Post-run analysis</span>
+              <h2 id="run-review-heading">Run summary</h2>
+              <strong id="run-review-byline"></strong>
+            </div>
+            <div class="run-review-result__actions">
+              <span id="run-review-status" class="run-review-status"><i aria-hidden="true"></i><span id="run-review-status-text"></span></span>
+              <button id="run-review-again" class="button--ghost" type="button">Review again</button>
+            </div>
+          </div>
+          <p id="run-review-message" class="run-review-message muted"></p>
+          <div id="run-review-content" class="run-review-content" hidden></div>
         </section>`;
     // Agent Runner's default Prime path evaluates locally against Prime
     // inference, so its board and move artifacts arrive after every turn.
@@ -1404,13 +1412,15 @@ function createPageRenderer({
 
         ${mazeSections}
 
+        ${reviewSection}
+
         <section class="panel">
           <h2>Runner log</h2>
           <pre id="run-log" class="agent-log"></pre>
         </section>
         ${replayExportSection}
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260718-run-review-1" defer></script>`
+        <script src="/agent-run.js?v=20260718-run-review-2" defer></script>`
     });
   }
 
