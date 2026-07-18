@@ -285,6 +285,11 @@ function printStatus(response) {
 }
 
 function emitTelemetry(record, mode = "text") {
+  // MCP children return their observation on stdout, where the MCP server
+  // expects exactly one JSON document so it can attach vision frames. The
+  // server records MCP actions separately, so appending the provider-facing
+  // telemetry marker here is both redundant and breaks that JSON boundary.
+  if (process.env.MAZEBENCH_MCP_CHILD === "1") return;
   const telemetryRecord = redactAgentStatus(record, { mode });
   const payload = Buffer.from(JSON.stringify(telemetryRecord), "utf8").toString("base64url");
   console.log(`MAZEBENCH_EVENT_V1:${payload}`);
