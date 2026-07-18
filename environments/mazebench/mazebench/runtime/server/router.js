@@ -166,6 +166,17 @@ function createRequestRouter({
       return;
     }
 
+    if (segments.length === 3 && segments[0] === "api" && segments[1] === "agent" && segments[2] === "harnesses") {
+      if (request.method !== "GET") {
+        response.writeHead(405, { Allow: "GET" });
+        response.end();
+        return;
+      }
+
+      sendJson(response, 200, agentRuns.listPrimeHarnesses());
+      return;
+    }
+
     if (segments.length === 3 && segments[0] === "api" && segments[1] === "agent" && segments[2] === "environment") {
       if (request.method !== "GET") {
         response.writeHead(405, { Allow: "GET" });
@@ -251,6 +262,18 @@ function createRequestRouter({
     ) {
       const runId = decodeURIComponent(segments[3]);
 
+      if (segments[4] === "summary" && request.method === "GET") {
+        sendJson(response, 200, { review: agentRuns.getRunReview(runId) });
+        return;
+      }
+
+      if (segments[4] === "summary" && request.method === "POST") {
+        const payload = await readJsonBody(request);
+        const review = agentRuns.generateRunReview(runId, payload || {});
+        sendJson(response, 202, { review, message: "Run review started." });
+        return;
+      }
+
       if (segments[4] === "progress" && request.method === "GET") {
         const progress = agentRuns.getRunProgress(runId, {
           afterTurn: Number(url.searchParams.get("after_turn")) || 0,
@@ -288,6 +311,18 @@ function createRequestRouter({
         return;
       }
 
+      if (segments[4] === "favorite" && request.method === "POST") {
+        const payload = await readJsonBody(request);
+        const run = agentRuns.setRunFavorite(runId, payload?.favorite);
+        sendJson(response, 200, {
+          run,
+          message: run.favorited
+            ? "Run added to MazeJam AI leaderboard favorites."
+            : "Run removed from MazeJam AI leaderboard favorites."
+        });
+        return;
+      }
+
       if (segments[4] === "branch" && request.method === "POST") {
         const payload = await readJsonBody(request);
         const run = agentRuns.branchRun(runId, payload?.turn);
@@ -302,6 +337,12 @@ function createRequestRouter({
         const payload = await readJsonBody(request);
         const run = agentRuns.setRunMoveTarget(runId, payload?.moves);
         sendJson(response, 200, { run, message: `Move target updated to ${run.moves}.` });
+        return;
+      }
+
+      if (segments[4] === "prime-sync" && request.method === "POST") {
+        const run = agentRuns.syncPrimeEvaluation(runId);
+        sendJson(response, 202, { run, message: "Prime evaluation sync started." });
         return;
       }
 

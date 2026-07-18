@@ -23,15 +23,20 @@ const MIRRORED_DIRECTORIES = [
   "games/maze/assets_3d",
   "games/maze/images",
   "games/maze/levels",
+  "public/logos",
   "server"
 ];
 
 const MIRRORED_FILES = [
+  "environments/mazebench/prime-harness-catalog.json",
+  "environments/mazebench/prime-harness-certification.json",
   "games/maze/level_parsing.json",
   "games/maze/toolbox.json",
   "games/maze/world_map.json",
   "games/maze/world_parsing.json",
   "public/author-play-data.js",
+  "public/agent-run.js",
+  "public/agent.js",
   "public/maze-token-patterns.js",
   "public/author-shell.js",
   "public/author-solver-worker.js",
@@ -71,6 +76,7 @@ const MIRRORED_FILES = [
   "scripts/maze-mcp-server.js",
   "scripts/maze-prime-live-eval.py",
   "scripts/maze-prime-run.js",
+  "scripts/prime-create-evaluation.js",
   "scripts/maze-export-replay.js",
   "scripts/maze-export-solution.js",
   "scripts/playwright-process.js",

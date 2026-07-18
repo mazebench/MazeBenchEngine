@@ -108,24 +108,73 @@ try {
   });
   assert.equal(replayMessageForCommandText("not a command"), null);
 
-  assert.throws(
-    () => service.launchRuns({
-      kind: "prime",
-      harness: "codex",
-      model_name: "openai/gpt-5.6-luna",
-      max_turns: 10
-    }),
-    /built-in coding-agent harness exposes benchmark internals/
+  const harnessRegistry = service.listPrimeHarnesses();
+  assert.deepEqual(
+    harnessRegistry.harnesses.filter((harness) => harness.launchable).map((harness) => harness.id),
+    ["bash", "claude_code", "codex", "kimi_code", "mini_swe_agent", "null", "pi", "rlm", "terminus_2"]
   );
-  assert.throws(
-    () => service.launchRuns({
-      kind: "prime",
-      harness: "claude-code",
-      model_name: "anthropic\/claude-sonnet-5",
-      max_turns: 10
-    }),
-    /built-in coding-agent harness exposes benchmark internals/
+  assert.equal(harnessRegistry.harnesses.find((harness) => harness.id === "codex").adapter, "codex_mcp");
+  assert.equal(harnessRegistry.harnesses.find((harness) => harness.id === "claude_code").adapter, "native_mcp");
+  assert.equal(harnessRegistry.harnesses.find((harness) => harness.id === "mini_swe_agent").adapter, "cli_gateway");
+  const [customPrime] = service.launchRuns({
+    kind: "prime",
+    harness: "kimi_code",
+    harness_config: { version: "0.15.0" },
+    model_name: "openai/gpt-5.6-luna",
+    max_turns: 2,
+    video: false
+  });
+  launchedIds.push(customPrime.id);
+  const customPrimeMeta = loadJson(
+    path.join(rootDir, "outputs", "maze-local", "site", customPrime.id, "run.json")
   );
+  assert.equal(customPrimeMeta.harness, "kimi_code");
+  assert.equal(customPrimeMeta.harness_label, "Kimi Code");
+  assert.equal(customPrimeMeta.harness_version, "0.15.0");
+  assert.equal(customPrimeMeta.harness_source, "pinned-prime-verifiers");
+  assert.deepEqual(customPrimeMeta.harness_config, { version: "0.15.0" });
+  assert.equal(customPrimeMeta.harness_boundary, "isolated-game-gateway");
+  assert.equal(customPrimeMeta.harness_adapter, "native_mcp");
+  assert.equal(customPrimeMeta.harness_taskset, "mazebench-tools");
+  assert.equal(customPrimeMeta.verifiers_revision, "653bb14003b87e39588bde308fa8626d1038ce15");
+  assert.match(customPrimeMeta.harness_catalog_fingerprint, /^[0-9a-f]{64}$/);
+  assert.deepEqual(customPrimeMeta.launch_params.harness_config, { version: "0.15.0" });
+  assert.match(customPrimeMeta.command, /--harness kimi_code/);
+  assert.match(customPrimeMeta.command, /--harness-config \{"version":"0\.15\.0"\}/);
+  const customPrimeDir = path.join(rootDir, "outputs", "maze-local", "site", customPrime.id);
+  fs.writeFileSync(
+    path.join(customPrimeDir, "initial-status.json"),
+    `${JSON.stringify({ board_state_hash: "custom-state-0", current_room: "level_HxI" })}\n`
+  );
+  fs.writeFileSync(
+    path.join(customPrimeDir, "actions.jsonl"),
+    `${JSON.stringify({
+      turn: 1,
+      command_text: "right",
+      valid: true,
+      status: { board_state_hash: "custom-state-1", current_room: "level_HxI" }
+    })}\n`
+  );
+  fs.mkdirSync(path.join(customPrimeDir, "eval-output"), { recursive: true });
+  fs.writeFileSync(
+    path.join(customPrimeDir, "eval-output", "results.jsonl"),
+    `${JSON.stringify({
+      task: { system_prompt: "system", level_id: "level_HxI", game_won_gem_count: 1 },
+      nodes: [
+        { parent: null, message: { role: "system", content: "system" }, sampled: false },
+        { parent: 0, message: { role: "user", content: "opening" }, sampled: false },
+        { parent: 1, message: { role: "assistant", content: "right" }, sampled: true }
+      ]
+    })}\n`
+  );
+  assert.equal(service.stopRun(customPrime.id).status, "stopped");
+  const continuedCustomPrime = service.continueRun(customPrime.id, 1);
+  launchedIds.push(continuedCustomPrime.id);
+  assert.deepEqual(continuedCustomPrime.harness_config, { version: "0.15.0" });
+  assert.equal(continuedCustomPrime.harness_boundary, "isolated-game-gateway");
+  assert.equal(service.stopRun(continuedCustomPrime.id).status, "stopped");
+  service.deleteRun(continuedCustomPrime.id);
+  service.deleteRun(customPrime.id);
 
   const [livePrime] = service.launchRuns({
     kind: "prime",
@@ -358,7 +407,7 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   const primeVideoArgs = loadJson(path.join(primeVideoDir, "video-args.json"), []);
-  assert.equal(primeVideoArgs[0], primeVideoResults);
+  assert.equal(primeVideoArgs[0], path.join(primeVideoDir, "actions.jsonl"));
   service.cancelRunVideo(primeVideoId);
   service.deleteRun(primeVideoId);
 

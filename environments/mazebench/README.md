@@ -21,7 +21,8 @@ Models navigate a real JavaScript maze world one action at a time, preserve stat
 | State-novelty auto-quit with advance warnings | Supported | Supported |
 | Replay state and per-action metadata | Supported | Supported |
 | Perspective image observations | Not yet self-contained | Experimental |
-| Local Codex CLI harness | Not supported | Experimental |
+| All built-in harnesses in the pinned Verifiers revision | Not part of Hosted Training | Discovered and routed through isolated MCP or CLI controls |
+| Codex and Claude Code hosted by Prime | Not part of Hosted Training | Supported |
 | Claude Code, Docker/full-access, tools, and swarm modes | Not part of this environment | Available through the separate local Agent runner |
 
 The package brings its own Node runtime for the JavaScript maze engine. Perspective vision additionally needs `playwright-core` and a compatible Chromium binary, which Prime's current Hosted Training image does not provide. Until that renderer is self-contained and tested, use ASCII mode for Hosted Training.
@@ -76,7 +77,7 @@ prime env install mazebench/mazebench
 Install a specific version for reproducibility:
 
 ```bash
-prime env install mazebench/mazebench@0.1.7
+prime env install mazebench/mazebench@0.1.8
 ```
 
 ## Evaluate locally
@@ -278,6 +279,16 @@ Do not select vision for Hosted Training until the environment publishes a self-
 
 The repository also contains a `mazebench_codex` plugin and a much broader local Agent runner supporting Codex, Claude Code, Docker access, tools, orchestration, live views, pause/resume, and replay controls. Those capabilities are separate from the `mazebench/mazebench` Hosted Training environment.
 
+The local `/agent` page discovers every built-in shipped by the exact pinned
+Verifiers package. Native MCP harnesses use the external `mazebench-tools`
+server, Codex receives generated MCP configuration, and non-MCP command
+harnesses receive an equivalent capability-scoped CLI. The task sent through
+the harness channel contains no repository or checkpoint path, the live trace
+state is an empty strict schema, and final scoring replaces it with an
+evaluator-owned snapshot after the harness exits. New built-ins follow the
+native-MCP or generic CLI route automatically when the scheduled exact-pin
+update passes certification.
+
 In these coding-agent paths, scoring is finalized after the agent exits. The
 agent-facing helper exposes start, observe, and action operations, but no
 scorecard operation.
@@ -286,7 +297,10 @@ The local Codex v1 harness can be exercised from a full checkout with:
 
 ```bash
 uv run --project environments/mazebench eval mazebench_codex \
-  -m openai/gpt-5-codex \
+  --harness.id mazebench_codex_harness \
+  --harness.runtime.type prime \
+  --harness.runtime.image node:24-bookworm-slim \
+  -m openai/gpt-5 \
   -n 1 \
   -r 1 \
   --taskset.max-actions 100 \

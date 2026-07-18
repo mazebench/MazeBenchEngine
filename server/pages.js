@@ -85,7 +85,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css?v=20260710-card-parity-1">
-    <link rel="stylesheet" href="/local-site.css?v=20260717-auto-quit-2">
+    <link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-1">
     ${extraHeadHtml}`
     })}
   </head>
@@ -248,7 +248,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css?v=${PLAY_ASSET_VERSION}">
-    <link rel="stylesheet" href="/local-site.css?v=20260717-auto-quit-2">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-1">`;
   }
 
   function renderPlayPage(game, level) {
@@ -458,7 +458,7 @@ function createPageRenderer({
     ${includeRuntimeStyles ? '<link rel="stylesheet" href="/styles.css">' : ""}
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260717-auto-quit-2">' : ""}`;
+    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-1">' : ""}`;
   }
 
   function renderAuthorPage(game, level) {
@@ -825,6 +825,7 @@ function createPageRenderer({
     ];
     const agentData = {
       apiUrl: "/api/agent/runs",
+      harnessesApiUrl: "/api/agent/harnesses",
       modelsApiBase: "/api/agent/models",
       worlds,
       environment: agentEnvironment({ cachedOnly: true }),
@@ -851,6 +852,20 @@ function createPageRenderer({
               <div><h3>Harness</h3><p id="execution-note" class="muted">Choose a harness. Prime supplies inference by default.</p></div>
             </div>
             <div id="provider-picker" class="provider-grid" role="radiogroup" aria-label="Agent harness"></div>
+            <div id="custom-harness-panel" class="custom-harness-panel" hidden>
+              <div class="custom-harness-panel__fields">
+                <label class="field">
+                  <span>Prime harness</span>
+                  <select id="custom-harness-id" aria-describedby="custom-harness-note"></select>
+                </label>
+                <div id="custom-harness-config-fields" class="custom-harness-config-fields"></div>
+              </div>
+              <div class="custom-harness-panel__status">
+                <strong id="custom-harness-status">Loading harnesses…</strong>
+                <p id="custom-harness-note" class="muted"></p>
+                <p class="custom-harness-panel__security">The harness program runs in a disposable Prime sandbox. Game source, state, checkpoints, and scoring remain on the trusted evaluator. Native clients receive three sanitized MCP controls; command harnesses receive an equivalent capability-scoped CLI.</p>
+              </div>
+            </div>
             <div id="harness-execution" class="harness-execution" hidden>
               <span class="harness-execution__label">Run through</span>
               <div id="execution-picker" class="execution-picker" role="radiogroup" aria-label="Execution provider">
@@ -1102,7 +1117,7 @@ function createPageRenderer({
           </div>
         </div>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
-        <script src="/agent.js?v=20260717-auto-quit-1" defer></script>`
+        <script src="/agent.js?v=20260718-run-favorites-1" defer></script>`
     });
   }
 
@@ -1269,10 +1284,37 @@ function createPageRenderer({
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10"></path><path d="m17 7-10 10"></path></svg>
               </button>
             </div>
+            <button id="run-summarize" class="button run-feed-export run-summarize" type="button" title="Ask Codex or Claude Code for a full review of this play" aria-haspopup="dialog" disabled><span>Summarize</span></button>
             <button id="run-feed-export" class="button run-feed-export" type="button" title="Export every move and its reasoning as JSON" disabled>${VIDEO_ICONS.download}<span>Export JSON</span></button>
             <button id="run-feed-export-txt" class="button run-feed-export" type="button" title="Export every move and its reasoning as plain text" disabled>${VIDEO_ICONS.download}<span>Export TXT</span></button>
           </div>
+          <section id="run-review-result" class="run-review-result" hidden>
+            <div class="run-review-result__head">
+              <div><span>Post-run analysis</span><strong id="run-review-byline"></strong></div>
+              <button id="run-review-again" class="button--ghost" type="button">Review again</button>
+            </div>
+            <div id="run-review-content" class="run-review-content"></div>
+          </section>
           <div id="run-feed" class="agent-feed" aria-label="Moves and reasoning log"></div>
+          <div id="run-review-dialog" class="run-review-dialog" role="dialog" aria-modal="true" aria-labelledby="run-review-title" hidden>
+            <div class="run-review-dialog__card">
+              <div class="run-review-dialog__head">
+                <div><span class="run-world-map__eyebrow">Post-run analyst</span><h2 id="run-review-title">Summarize this play</h2></div>
+                <button id="run-review-close" class="run-world-map__close" type="button" aria-label="Close reviewer picker">×</button>
+              </div>
+              <p class="muted">The reviewer gets read-only access to the game, the complete reasoning log, actions, scorecard, and saved run artifacts.</p>
+              <div class="run-review-dialog__fields">
+                <label><span>Reviewer</span><select id="run-review-provider"><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label>
+                <label><span>Model</span><select id="run-review-model"><option value="">Loading models…</option></select></label>
+                <label><span>Reasoning effort</span><select id="run-review-reasoning"><option value="">Default</option></select></label>
+              </div>
+              <p id="run-review-picker-note" class="muted"></p>
+              <div class="run-review-dialog__actions">
+                <button id="run-review-cancel" class="button--ghost" type="button">Cancel</button>
+                <button id="run-review-start" class="button--primary" type="button" disabled>Generate full review</button>
+              </div>
+            </div>
+          </div>
         </section>`;
     // Agent Runner's default Prime path evaluates locally against Prime
     // inference, so its board and move artifacts arrive after every turn.
@@ -1341,6 +1383,7 @@ function createPageRenderer({
             <button id="resume-run" class="button--primary" type="button" hidden>Resume</button>
             <button id="continue-run" class="button" type="button" hidden>Continue</button>
             ${isPrime ? '<a id="open-prime-evaluation" class="button" href="#" target="_blank" rel="noreferrer" hidden>Open in Prime ↗</a>' : ""}
+            ${isPrime ? '<button id="sync-prime-evaluation" class="button" type="button" hidden>Sync to Prime</button>' : ""}
             ${isPrime ? '<button id="stop-run" class="button--coral" type="button" hidden>Cancel Run</button>' : ""}
             <button id="delete-run" class="button--ghost delete-button" type="button" title="Delete run">${TRASH_ICON}<span>Delete</span></button>
           </div>
@@ -1367,7 +1410,7 @@ function createPageRenderer({
         </section>
         ${replayExportSection}
         <script>window.__AGENT_RUN__ = ${serializeForScript(run)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260717-runner-log-export-1" defer></script>`
+        <script src="/agent-run.js?v=20260718-run-review-1" defer></script>`
     });
   }
 

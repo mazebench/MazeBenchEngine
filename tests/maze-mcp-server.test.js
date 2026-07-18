@@ -339,6 +339,56 @@ try {
   assert.equal(imageResult.content[1].type, "image");
   assert.equal(imageResult.content[1].mimeType, "image/png");
 
+  const visionDir = path.join(runDir, "restricted-vision");
+  fs.mkdirSync(visionDir, { recursive: true });
+  const visionSession = path.join(visionDir, "session.json");
+  const visionRequests = [
+    { jsonrpc: "2.0", id: 50, method: "initialize", params: { protocolVersion: "2024-11-05" } },
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+    { jsonrpc: "2.0", id: 51, method: "tools/call", params: { name: "game_start", arguments: {} } },
+    { jsonrpc: "2.0", id: 52, method: "tools/call", params: { name: "game_action", arguments: { action: "right" } } }
+  ];
+  const visionResult = spawnSync(process.execPath, [path.join(rootDir, "scripts", "maze-mcp-server.js")], {
+    cwd: rootDir,
+    encoding: "utf8",
+    input: `${visionRequests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+    env: {
+      ...process.env,
+      MAZEBENCH_REPO_ROOT: rootDir,
+      MAZEBENCH_RUN_DIR: visionDir,
+      MAZEBENCH_SESSION_FILE: visionSession,
+      MAZEBENCH_RESTRICTED_MODE: "1",
+      MAZEBENCH_MODE: "vision",
+      MAZEBENCH_MOVE_BUDGET: "1"
+    },
+    timeout: 240000
+  });
+  assert.equal(visionResult.status, 0, visionResult.stderr);
+  const visionResponses = visionResult.stdout.trim().split("\n").map((line) => JSON.parse(line));
+  for (const id of [51, 52]) {
+    const toolResult = visionResponses.find((response) => response.id === id)?.result;
+    assert.equal(toolResult?.structuredContent?.observation_mode, "vision");
+    assert.equal(toolResult?.structuredContent?.frame_image, "attached:image/png");
+    assert.equal(toolResult?.content?.[1]?.type, "image", `vision tool call ${id} must attach its rendered frame`);
+    assert.equal(toolResult?.content?.[1]?.mimeType, "image/png");
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "level"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "json_observation"), false);
+    assert.doesNotMatch(toolResult?.content?.[0]?.text || "", new RegExp(rootDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert(fs.existsSync(path.join(visionDir, "frames", "frame-000.png")));
+  assert(fs.existsSync(path.join(visionDir, "frames", "frame-001.png")));
+  const finalizeVision = spawnSync(
+    process.execPath,
+    [path.join(rootDir, "scripts", "codex-play.js"), "finalize", "--state", visionSession],
+    {
+      cwd: rootDir,
+      encoding: "utf8",
+      env: { ...process.env, MAZEBENCH_TRUSTED_FINALIZE: "1" },
+      timeout: 240000
+    }
+  );
+  assert.equal(finalizeVision.status, 0, finalizeVision.stderr);
+
   const httpDir = path.join(runDir, "http");
   const portFile = path.join(httpDir, "mcp-http.json");
   fs.mkdirSync(httpDir, { recursive: true });

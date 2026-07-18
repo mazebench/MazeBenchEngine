@@ -85,13 +85,41 @@ function fileHasContent(filePath) {
 // — no state beyond run.json survives a server restart, and none is needed.
 
 const VIEW_NAMES = ["top", "top-diagonal", "diagonal", "side-diagonal", "side"];
+const PRIME_HARNESS_CATALOG = require("../environments/mazebench/prime-harness-catalog.json");
+const PRIME_HARNESS_CERTIFICATION = require("../environments/mazebench/prime-harness-certification.json");
+if (PRIME_HARNESS_CERTIFICATION.catalog_fingerprint !== PRIME_HARNESS_CATALOG.catalog_fingerprint) {
+  throw new Error("Prime harness catalog does not match its safety certification.");
+}
+const CERTIFIED_PRIME_HARNESSES = new Set(
+  PRIME_HARNESS_CERTIFICATION.harnesses
+    .filter((entry) => entry.status === "certified")
+    .map((entry) => entry.id)
+);
+const VERIFIED_VERIFIERS_REVISION = PRIME_HARNESS_CATALOG.verifiers_revision;
 const PRIME_HARNESSES = new Map([
-  ["none", { id: "none", label: "Prime Intellect", taskset: "mazebench", protocol: "Prime model API" }],
-  ["codex", { id: "codex", label: "Codex", taskset: "mazebench-agent", protocol: "OpenAI Responses" }],
-  ["claude-code", { id: "claude-code", label: "Claude Code", taskset: "mazebench-agent", protocol: "Anthropic Messages" }]
+  ["none", {
+    id: "none",
+    label: "Prime Intellect",
+    taskset: "mazebench",
+    protocol: "Prime model API",
+    launchable: true,
+    boundary: "trusted-user-simulator",
+    observation_modes: ["text", "json", "vision"]
+  }],
+  ...PRIME_HARNESS_CATALOG.harnesses.map((definition) => [definition.id, {
+    ...definition,
+    launchable: Boolean(definition.launchable) && CERTIFIED_PRIME_HARNESSES.has(definition.id),
+    status: CERTIFIED_PRIME_HARNESSES.has(definition.id) ? "certified" : "uncertified",
+    reason: CERTIFIED_PRIME_HARNESSES.has(definition.id)
+      ? definition.reason
+      : "This generated harness route has not passed the checked-in compatibility certification.",
+    taskset: "mazebench-tools",
+    protocol: definition.adapter,
+    custom: true
+  }])
 ]);
 const UNSAFE_PRIME_AGENT_HARNESS_MESSAGE =
-  "Codex and Claude Code via Prime are disabled because the built-in coding-agent harness exposes benchmark internals. Choose Prime Intellect for an isolated run, or use the separately sandboxed Local Run path.";
+  "This Prime harness is not approved for MazeBench's isolated game-control boundary.";
 
 const STANDARD_REASONING_LEVELS = ["low", "medium", "high"];
 const PRIME_REASONING_LEVELS = ["low", "medium", "high"];
@@ -120,18 +148,14 @@ function primeReasoningLevels(_modelId) {
 
 function primeHarnessModelCompatible(modelId, harnessId) {
   const harness = normalizePrimeHarness(harnessId);
-  const id = String(modelId || "").trim().toLowerCase();
+  const id = String(modelId || "").trim();
   if (!id) return false;
-  if (harness === "none") return true;
-
-  // Prime's /models response currently publishes ids and prices, but no wire-
-  // protocol capability bit. Stay on the strict native boundary instead of
-  // guessing whether Prime translates another vendor's payload: Codex speaks
-  // Responses and Claude Code speaks Anthropic Messages.
-  if (harness === "codex") {
-    return /^openai\/gpt-(?:4o|4\.1|5(?:[.-]|$))/i.test(id);
-  }
-  return /^anthropic\/claude-/i.test(id);
+  // Prime's interception endpoint is the compatibility layer between a
+  // harness protocol and the selected model. The live /models response does
+  // not expose a provider-name rule that can safely predict that pairing, so
+  // do not hide Codex, Claude Code, or future harnesses based on model ids.
+  // The compatibility certificate records actual launch results instead.
+  return true;
 }
 
 function primeSandboxIdsFromText(value) {
@@ -151,12 +175,21 @@ function filterPrimeCatalogForHarness(catalog, harnessId) {
   if (harness === "none") return { ...catalog, harness };
   const definition = PRIME_HARNESSES.get(harness);
   const allModels = Array.isArray(catalog?.models) ? catalog.models : [];
+  if (!definition?.launchable) {
+    return {
+      ...catalog,
+      harness,
+      models: [],
+      default_model_id: "",
+      note: definition.reason || UNSAFE_PRIME_AGENT_HARNESS_MESSAGE
+    };
+  }
   const models = allModels
     .filter((model) => primeHarnessModelCompatible(model.id, harness))
     .map((model) => ({
       ...model,
       harness_compatible: true,
-      compatibility: definition.protocol
+      compatibility: definition.adapter || definition.protocol
     }));
   return {
     ...catalog,
@@ -164,14 +197,98 @@ function filterPrimeCatalogForHarness(catalog, harnessId) {
     models,
     default_model_id: models[0]?.id || "",
     note: models.length
-      ? `${models.length} known-compatible ${definition.label} model${models.length === 1 ? "" : "s"} from ${allModels.length} live Prime models. Filtered by native ${definition.protocol} support; Prime's model list does not publish harness capability flags.`
-      : catalog?.note || `No known-compatible ${definition.label} models are currently in Prime's live catalog.`
+      ? `${models.length} live Prime model${models.length === 1 ? "" : "s"}. ${definition.label} is connected through MazeBench's ${definition.adapter || "native"} compatibility route; launch certification is recorded separately because Prime's model list has no harness capability flags.`
+      : catalog?.note || `Prime's live model catalog is currently empty.`
   };
+}
+
+function publicPrimeHarnesses() {
+  return [...PRIME_HARNESSES.values()]
+    .filter((definition) => definition.custom)
+    .map((definition) => ({
+      id: definition.id,
+      label: definition.label,
+      description: definition.description || "",
+      launchable: Boolean(definition.launchable),
+      reason: definition.reason || "",
+      protocol: definition.protocol || "",
+      boundary: definition.boundary || "",
+      observation_modes: [...(definition.observation_modes || [])],
+      default_config: { ...(definition.default_config || {}) },
+      configurable: [...(definition.configurable || [])],
+      config_schema: definition.config_schema || { properties: {} },
+      adapter: definition.adapter || "native_mcp",
+      runtime_harness_id: definition.runtime_harness_id || definition.id,
+      upstream_id: definition.upstream_id || null,
+      supports_mcp: Boolean(definition.supports_mcp),
+      status: definition.status || (definition.launchable ? "compatible" : "catalog_error"),
+      catalog_fingerprint: PRIME_HARNESS_CATALOG.catalog_fingerprint,
+      certification_schema_version: PRIME_HARNESS_CERTIFICATION.schema_version,
+      verifiers_version: PRIME_HARNESS_CATALOG.verifiers_version,
+      verifiers_revision: VERIFIED_VERIFIERS_REVISION
+    }));
+}
+
+function primeHarnessConfigValueValid(value, schema = {}) {
+  if (Array.isArray(schema.anyOf)) {
+    return schema.anyOf.some((option) => primeHarnessConfigValueValid(value, option));
+  }
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) return false;
+  if (schema.type === "null") return value === null;
+  if (schema.type === "boolean") return typeof value === "boolean";
+  if (schema.type === "integer") return Number.isInteger(value);
+  if (schema.type === "number") return typeof value === "number" && Number.isFinite(value);
+  if (schema.type === "string") {
+    if (typeof value !== "string") return false;
+    if (schema.pattern && !(new RegExp(schema.pattern)).test(value)) return false;
+    return true;
+  }
+  if (schema.type === "array") {
+    if (!Array.isArray(value)) return false;
+    if (Number.isInteger(schema.minItems) && value.length < schema.minItems) return false;
+    if (Number.isInteger(schema.maxItems) && value.length > schema.maxItems) return false;
+    if (Array.isArray(schema.prefixItems)) {
+      return schema.prefixItems.every((item, index) => primeHarnessConfigValueValid(value[index], item));
+    }
+    return !schema.items || value.every((item) => primeHarnessConfigValueValid(item, schema.items));
+  }
+  if (schema.type === "object") return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  return value === null || ["string", "number", "boolean"].includes(typeof value) || Array.isArray(value);
+}
+
+function normalizePrimeHarnessConfig(value, harnessId) {
+  const definition = PRIME_HARNESSES.get(normalizePrimeHarness(harnessId));
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  if (Buffer.byteLength(JSON.stringify(raw), "utf8") > 16_384) {
+    throw new Error(`${definition.label} configuration is too large.`);
+  }
+  const allowed = new Set(definition.configurable || []);
+  const unknown = Object.keys(raw).filter((key) => !allowed.has(key));
+  if (unknown.length) {
+    throw new Error(`Unsupported ${definition.label} configuration: ${unknown.join(", ")}.`);
+  }
+  const config = { ...(definition.default_config || {}) };
+  for (const [key, value] of Object.entries(raw)) {
+    const schema = definition.config_schema?.properties?.[key] || {};
+    if (!primeHarnessConfigValueValid(value, schema)) {
+      throw new Error(`${definition.label} configuration field "${key}" does not match its pinned Verifiers schema.`);
+    }
+    config[key] = value;
+  }
+  return config;
 }
 
 function normalizePrimeHarness(value) {
   const requested = String(value || "none").trim().toLowerCase();
-  const normalized = requested === "claude" ? "claude-code" : requested;
+  const aliases = {
+    claude: "claude_code",
+    "claude-code": "claude_code",
+    default: "null",
+    "kimi-code": "kimi_code",
+    "mini-swe-agent": "mini_swe_agent",
+    "terminus-2": "terminus_2"
+  };
+  const normalized = aliases[requested] || requested;
   if (!PRIME_HARNESSES.has(normalized)) {
     throw new Error(
       `Unknown Prime harness "${value}". Supported harnesses: ${[...PRIME_HARNESSES.keys()].join(", ")}.`
@@ -222,6 +339,8 @@ const PROVIDER_RETRY_MAX_MS = 15 * 60_000;
 const PAUSE_REQUEST_FILE = "pause-request.json";
 const PAUSE_BOUNDARY_FILE = "pause-boundary.json";
 const PAUSE_CAPABILITY_FILE = "cold-pause-capability.json";
+const RUN_FAVORITE_FILE = "favorite.json";
+const RUN_REVIEW_FILE = "run-review.json";
 const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9-]{4,80}$/i;
 const SERVABLE_RUN_FILES = new Set([
   "run.json",
@@ -233,11 +352,80 @@ const SERVABLE_RUN_FILES = new Set([
   "agent-events.jsonl",
   "prime-evaluation.json",
   "prime-evaluation-samples.json",
+  RUN_REVIEW_FILE,
+  "run-review.log",
   "scorecard.json",
   "maze_scorecard.json",
   "maze_actions.txt",
   "maze_replay.mp4"
 ]);
+
+function runReviewPrompt(runId, runDir, rootDir) {
+  return `You are the post-run analyst for MazeBench agent run ${runId}. Produce a candid, detailed review of how the agent played and reasoned.
+
+You have read-only access to the complete run directory at ${runDir} and the MazeBench game implementation at ${rootDir}. Do not modify any file. Read the game source only when it helps explain mechanics; the recorded evaluator artifacts are authoritative about what actually happened.
+
+Inspect the full run, not only the last few turns. Prioritize run.json, maze_scorecard.json, actions.jsonl, reasoning.json, prime-reasoning.jsonl, agent-events.jsonl, launcher.log, and eval-output/results.jsonl when present. Correlate reasoning with actions and outcomes. Treat valid:false actions and their errors as rejected attempts that did not change game state. Do not attempt to decode binary video files.
+
+Write a standalone Markdown report with these sections:
+1. Overall verdict and concise scorecard.
+2. Strategy and thought-process narrative across the run.
+3. What it understood and did well, with specific action numbers.
+4. Bad ideas, mistakes, invalid actions, repeated confusion, and wasted effort, with specific action numbers.
+5. How well its beliefs matched the actual game state and mechanics.
+6. Important turning points and interesting anecdotes from the reasoning logs.
+7. Efficiency, exploration, recovery behavior, and use of memory/tools/other agents when applicable.
+8. A better strategy it should have followed.
+9. Final lessons and concrete recommendations for the next attempt.
+
+Distinguish evidence from inference. Quote only short phrases from the reasoning logs and otherwise summarize. Be thorough, specific, readable, and honest.`;
+}
+
+function runReviewCommand({ provider, model, reasoning, runDir, rootDir, outputPath, prompt }) {
+  if (provider === "codex") {
+    const argv = [
+      "exec",
+      "--ephemeral",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "--skip-git-repo-check",
+      "-C", runDir,
+      "--sandbox", "read-only",
+      "-c", 'approval_policy="never"',
+      "-c", 'web_search="disabled"',
+      "-c", "tools.web_search=false",
+      "--disable", "multi_agent",
+      "--disable", "apps",
+      "--disable", "plugins",
+      "--output-last-message", outputPath
+    ];
+    if (model) argv.push("--model", model);
+    if (reasoning) argv.push("-c", `model_reasoning_effort=${JSON.stringify(reasoning)}`);
+    argv.push(prompt);
+    return { bin: "codex", argv };
+  }
+
+  if (provider === "claude") {
+    const argv = [
+      "-p", prompt,
+      "--output-format", "text",
+      "--no-session-persistence",
+      "--safe-mode",
+      "--disable-slash-commands",
+      "--no-chrome",
+      "--permission-mode", "dontAsk",
+      "--tools", "Read,Glob,Grep",
+      "--allowedTools", "Read,Glob,Grep",
+      "--disallowedTools", "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,Agent",
+      "--add-dir", rootDir
+    ];
+    if (model) argv.push("--model", model);
+    if (reasoning) argv.push("--effort", reasoning);
+    return { bin: "claude", argv };
+  }
+
+  throw new Error('Review provider must be "codex" or "claude".');
+}
 
 function branchLaunchParams(meta, sourceParams, runId, turn) {
   const params = { ...(sourceParams || {}) };
@@ -266,10 +454,26 @@ function collectedAllWorldGems(gemCount, gemTotal) {
   return Number.isFinite(collected) && Number.isFinite(total) && total >= 0 && collected >= total;
 }
 
+function primeEvaluationReward(sample, scorecard = null) {
+  const scalar = Number(sample?.reward);
+  if (Number.isFinite(scalar)) return scalar;
+  const components = Object.values(sample?.rewards || {})
+    .map(Number)
+    .filter(Number.isFinite);
+  if (components.length) return components.reduce((sum, value) => sum + value, 0);
+  const metricReward = Number(sample?.metrics?.reward);
+  if (Number.isFinite(metricReward)) return metricReward;
+  const percent = Number(scorecard?.result?.percent);
+  return Number.isFinite(percent) ? percent / 100 : 0;
+}
+
 function createAgentRunService({
   agentEnvironment,
   agentEnvironmentAsync,
   allowLegacyLocalLaunch = true,
+  primeEvaluationCreator = {},
+  reviewBins = {},
+  syncPrimeEvaluations = false,
   ensureDirectory,
   getGame,
   buildWorlds,
@@ -282,8 +486,11 @@ function createAgentRunService({
   const primeRunnerScript = path.join(rootDir, "scripts", "maze-prime-run.js");
   const renderFrameScript = path.join(rootDir, "scripts", "maze-render-frame.js");
   const replayScript = path.join(rootDir, "scripts", "maze-export-replay.js");
+  const primeEvaluationCreatorScript = path.join(rootDir, "scripts", "prime-create-evaluation.js");
   const liveChildren = new Map();
   const videoChildren = new Map();
+  const primeSyncChildren = new Map();
+  const reviewChildren = new Map();
   const liveFrameLocks = new Map();
   const resolvedRunModels = new Map();
   const legacyClaudeSnapshotTimers = new Map();
@@ -430,6 +637,48 @@ function createAgentRunService({
 
   function runMetaPath(runId) {
     return path.join(runDirFor(runId), "run.json");
+  }
+
+  function runFavoritePath(runId) {
+    return path.join(runDirFor(runId), RUN_FAVORITE_FILE);
+  }
+
+  function isRunFavorite(runId) {
+    const markerPath = runFavoritePath(runId);
+    if (!fs.existsSync(markerPath)) return fs.existsSync(path.join(runDirFor(runId), "favorite"));
+    const marker = loadJson(markerPath, null);
+    return marker === null || marker.favorite === true || marker.favorited === true || marker.is_favorite === true;
+  }
+
+  function setRunFavorite(runId, favorite) {
+    if (typeof favorite !== "boolean") {
+      throw new Error("Favorite must be true or false.");
+    }
+
+    const meta = readRunMeta(runId);
+    if (!meta) {
+      throw new Error(`Unknown run "${runId}".`);
+    }
+
+    const markerPath = runFavoritePath(runId);
+    if (favorite) {
+      const previous = loadJson(markerPath, null);
+      const now = new Date().toISOString();
+      const marker = {
+        schema_version: 1,
+        favorite: true,
+        favorited_at: previous?.favorited_at || now,
+        updated_at: now
+      };
+      const temporary = `${markerPath}.${process.pid}.${crypto.randomBytes(3).toString("hex")}.tmp`;
+      fs.writeFileSync(temporary, `${JSON.stringify(marker, null, 2)}\n`, "utf8");
+      fs.renameSync(temporary, markerPath);
+    } else {
+      fs.rmSync(markerPath, { force: true });
+      fs.rmSync(path.join(runDirFor(runId), "favorite"), { force: true });
+    }
+
+    return summarizeRun(runId);
   }
 
   function clearColdPauseMarkers(runId) {
@@ -624,6 +873,391 @@ function createAgentRunService({
 
   function readPrimeEvaluation(runId) {
     return loadJson(path.join(runDirFor(runId), "prime-evaluation.json"), null);
+  }
+
+  function writePrimeEvaluation(runId, value) {
+    const target = path.join(runDirFor(runId), "prime-evaluation.json");
+    const temporary = `${target}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    fs.renameSync(temporary, target);
+    return value;
+  }
+
+  function primePushEvaluationId(value) {
+    const text = String(value || "").replace(/\u001b\[[0-9;]*m/g, "");
+    const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      try {
+        const payload = JSON.parse(lines[index]);
+        const id = String(payload?.evaluation_id || payload?.eval_id || "");
+        if (id) return id;
+      } catch (_error) {
+        /* Prime also prints human-readable progress before its final JSON. */
+      }
+    }
+    const jsonMatch = text.match(/"evaluation_id"\s*:\s*"([a-z0-9]+)"/i);
+    if (jsonMatch) return jsonMatch[1];
+    return text.match(/Evaluation ID:\s*([a-z0-9]+)/i)?.[1] || "";
+  }
+
+  function primeEnvironmentForRun(meta) {
+    return String(
+      meta.prime_environment ||
+      process.env.MAZEBENCH_PRIME_ENVIRONMENT ||
+      "mazebench/mazebench"
+    );
+  }
+
+  function primeEvalMetadata(runId, meta, environment, existing = {}) {
+    return {
+      ...existing,
+      env_id: environment,
+      model: String(meta.model_name || meta.model || "prime"),
+      framework: existing.framework || "verifiers",
+      task_type: existing.task_type || "agent-evaluation",
+      mazebench_run_id: runId,
+      mazebench_harness: String(meta.harness || "none"),
+      mazebench_harness_label: String(meta.harness_label || "Prime Intellect"),
+      mazebench_observation_mode: String(meta.mode || "text"),
+      mazebench_execution: "local",
+      mazebench_run_status: String(meta.status || ""),
+      num_examples: Number(existing.num_examples) || 1,
+      rollouts_per_example: Number(existing.rollouts_per_example) || 1
+    };
+  }
+
+  function syncPrimeEvaluation(runId) {
+    const meta = readRunMeta(runId);
+    if (!meta) throw new Error(`Unknown run "${runId}".`);
+    if (meta.kind !== "prime") throw new Error("Only Prime-backed runs can sync to Prime Evals.");
+    if (meta.prime_execution === "hosted") return summarizeRun(runId);
+    if (!["paused", "finished", "stopped", "failed"].includes(meta.status)) {
+      throw new Error("Finish, stop, or pause the run before syncing it to Prime Evals.");
+    }
+
+    const resultsPath = findPrimeResultsFile(runDirFor(runId));
+    if (!fileHasContent(resultsPath)) {
+      throw new Error("This run does not have a completed results.jsonl to sync yet.");
+    }
+    const existingState = readPrimeEvaluation(runId) || {};
+    // Never create a duplicate for a fully synced run. A failed upload can
+    // safely resume against its already-created evaluation id with --eval.
+    if (existingState.evaluation_id && existingState.sync_status === "synced") {
+      return summarizeRun(runId);
+    }
+    if (primeSyncChildren.has(runId)) return summarizeRun(runId);
+
+    const runDir = runDirFor(runId);
+    const resultsDir = path.join(runDir, ".prime-eval-sync");
+    fs.mkdirSync(resultsDir, { recursive: true });
+    const scorecard = loadJson(path.join(runDir, "maze_scorecard.json"), null);
+    const normalizedResults = fs.readFileSync(resultsPath, "utf8")
+      .split(/\r?\n/)
+      .filter((line) => line.trim())
+      .map((line) => {
+        const sample = JSON.parse(line);
+        return JSON.stringify({ ...sample, reward: primeEvaluationReward(sample, scorecard) });
+      });
+    if (!normalizedResults.length) {
+      throw new Error("This run does not have a valid result sample to sync yet.");
+    }
+    fs.writeFileSync(path.join(resultsDir, "results.jsonl"), `${normalizedResults.join("\n")}\n`, "utf8");
+    const metadataPath = path.join(resultsDir, "metadata.json");
+    const environment = primeEnvironmentForRun(meta);
+    const existingMetadata = {
+      ...(loadJson(path.join(path.dirname(resultsPath), "metadata.json"), {}) || {}),
+      ...(loadJson(metadataPath, {}) || {})
+    };
+    fs.writeFileSync(
+      metadataPath,
+      `${JSON.stringify(primeEvalMetadata(runId, meta, environment, existingMetadata), null, 2)}\n`,
+      "utf8"
+    );
+
+    const evalName = `MazeBench Agent ${runId}`;
+    const startedAt = new Date().toISOString();
+    writePrimeEvaluation(runId, {
+      ...existingState,
+      evaluation_id: existingState.evaluation_id || "",
+      environment,
+      model: String(meta.model_name || meta.model || "prime"),
+      name: evalName,
+      status: "UPLOADING",
+      sync_status: "syncing",
+      sync_started_at: startedAt,
+      sync_error: null,
+      updated_at: startedAt
+    });
+
+    let settled = false;
+    const fail = (detailValue) => {
+      if (settled) return;
+      settled = true;
+      primeSyncChildren.delete(runId);
+      const current = readPrimeEvaluation(runId) || {};
+      const completedAt = new Date().toISOString();
+      const detail = String(detailValue || "Prime evaluation sync failed.")
+        .replace(/\u001b\[[0-9;]*m/g, "")
+        .trim()
+        .slice(-2000);
+      writePrimeEvaluation(runId, {
+        ...current,
+        status: "SYNC_FAILED",
+        sync_status: "failed",
+        sync_completed_at: completedAt,
+        sync_error: detail || "Prime evaluation sync failed.",
+        updated_at: completedAt
+      });
+    };
+
+    const pushEvaluation = (evaluationId) => {
+      if (settled) return;
+      const evaluationStartedAt = new Date().toISOString();
+      writePrimeEvaluation(runId, {
+        ...(readPrimeEvaluation(runId) || {}),
+        evaluation_id: evaluationId,
+        status: "UPLOADING",
+        sync_status: "syncing",
+        sync_error: null,
+        updated_at: evaluationStartedAt
+      });
+      const child = spawn(
+        "prime",
+        [
+          "eval", "push", resultsDir,
+          "--eval", evaluationId,
+          "--name", evalName,
+          "--output", "json",
+          "--plain"
+        ],
+        { cwd: rootDir, env: enrichedPathEnv(), stdio: ["ignore", "pipe", "pipe"] }
+      );
+      child.unref();
+      primeSyncChildren.set(runId, child);
+      let output = "";
+      const consume = (chunk) => {
+        output = `${output}${chunk.toString()}`.slice(-2 * 1024 * 1024);
+      };
+      child.stdout.on("data", consume);
+      child.stderr.on("data", consume);
+      child.on("error", (error) => fail(error.message));
+      child.on("close", (code) => {
+        if (settled) return;
+        if (code !== 0) {
+          fail(output || `prime eval push exited with status ${code ?? "unknown"}.`);
+          return;
+        }
+        settled = true;
+        primeSyncChildren.delete(runId);
+        const completedAt = new Date().toISOString();
+        writePrimeEvaluation(runId, {
+          ...(readPrimeEvaluation(runId) || {}),
+          evaluation_id: evaluationId,
+          status: "COMPLETED",
+          sync_status: "synced",
+          sync_completed_at: completedAt,
+          sync_error: null,
+          updated_at: completedAt,
+          viewer_url: `https://app.primeintellect.ai/dashboard/evaluations/${evaluationId}`
+        });
+      });
+    };
+
+    if (existingState.evaluation_id) {
+      pushEvaluation(existingState.evaluation_id);
+      return summarizeRun(runId);
+    }
+
+    // prime-evals 0.2.3 incorrectly treats every owner-qualified environment
+    // as team-owned. Resolve the Hub environment to its database id first so
+    // personal, team, and public environments all upload through the same path.
+    const creatorArgs = [
+      ...(Array.isArray(primeEvaluationCreator.args)
+        ? primeEvaluationCreator.args
+        : [primeEvaluationCreatorScript]),
+      "--environment", environment,
+      "--name", evalName,
+      "--model", String(meta.model_name || meta.model || "prime"),
+      "--metadata", metadataPath
+    ];
+    const creator = spawn(
+      String(primeEvaluationCreator.bin || process.execPath),
+      creatorArgs,
+      { cwd: rootDir, env: enrichedPathEnv(), stdio: ["ignore", "pipe", "pipe"] }
+    );
+    creator.unref();
+    primeSyncChildren.set(runId, creator);
+    let creatorOutput = "";
+    const consumeCreator = (chunk) => {
+      creatorOutput = `${creatorOutput}${chunk.toString()}`.slice(-2 * 1024 * 1024);
+    };
+    creator.stdout.on("data", consumeCreator);
+    creator.stderr.on("data", consumeCreator);
+    creator.on("error", (error) => fail(error.message));
+    creator.on("close", (code) => {
+      if (settled) return;
+      const evaluationId = code === 0 ? primePushEvaluationId(creatorOutput) : "";
+      if (!evaluationId) {
+        fail(creatorOutput || `Prime evaluation creation exited with status ${code ?? "unknown"}.`);
+        return;
+      }
+      pushEvaluation(evaluationId);
+    });
+    return summarizeRun(runId);
+  }
+
+  function maybeSyncPrimeEvaluation(runId, meta = readRunMeta(runId)) {
+    if (!syncPrimeEvaluations || meta?.kind !== "prime" || meta.prime_execution === "hosted") return false;
+    if (!["paused", "finished", "stopped", "failed"].includes(meta.status)) return false;
+    const state = readPrimeEvaluation(runId);
+    if (state?.sync_status === "synced" || primeSyncChildren.has(runId)) return false;
+    if (!fileHasContent(findPrimeResultsFile(runDirFor(runId)))) return false;
+    try {
+      syncPrimeEvaluation(runId);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function getRunReview(runId) {
+    const meta = readRunMeta(runId);
+    if (!meta) throw new Error(`Unknown run "${runId}".`);
+    const review = loadJson(path.join(runDirFor(runId), RUN_REVIEW_FILE), {
+      status: "idle",
+      provider: "",
+      model: "",
+      reasoning: "",
+      review: "",
+      error: ""
+    });
+    if (review.status === "running" && !reviewChildren.has(runId)) {
+      return writeRunReview(runId, {
+        ...review,
+        status: "failed",
+        completed_at: new Date().toISOString(),
+        review: "",
+        error: "The MazeBench server restarted while this review was running. Start the review again."
+      });
+    }
+    return review;
+  }
+
+  function writeRunReview(runId, value) {
+    const target = path.join(runDirFor(runId), RUN_REVIEW_FILE);
+    const temporary = `${target}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    fs.renameSync(temporary, target);
+    return value;
+  }
+
+  function generateRunReview(runId, params = {}) {
+    const meta = readRunMeta(runId);
+    if (!meta) throw new Error(`Unknown run "${runId}".`);
+    if (!["paused", "finished", "stopped", "failed"].includes(meta.status)) {
+      throw new Error("Pause or finish the run before asking another model to review it.");
+    }
+    if (!fileHasContent(path.join(runDirFor(runId), "actions.jsonl"))) {
+      throw new Error("This run has no recorded actions to review.");
+    }
+
+    const provider = String(params.provider || "codex").trim().toLowerCase();
+    if (!["codex", "claude"].includes(provider)) {
+      throw new Error('Review provider must be "codex" or "claude".');
+    }
+    const model = String(params.model || "").trim();
+    if (!model || model.length > 200 || /[\r\n\0]/.test(model)) {
+      throw new Error("Choose a valid reviewer model.");
+    }
+    const reasoning = String(params.reasoning || "").trim().toLowerCase();
+    if (reasoning && !["low", "medium", "high", "xhigh", "max", "ultra"].includes(reasoning)) {
+      throw new Error("Choose a supported reviewer reasoning effort.");
+    }
+    const environment = getEnvironment({ fresh: true });
+    if (!environment[provider]) {
+      const label = provider === "claude" ? "Claude Code" : "Codex";
+      const login = provider === "claude" ? "claude auth login" : "codex login";
+      throw new Error(`${label} is not signed in. Run \`${login}\`, then try again.`);
+    }
+    if (reviewChildren.has(runId)) return getRunReview(runId);
+
+    const runDir = runDirFor(runId);
+    const generationId = crypto.randomUUID();
+    const outputPath = path.join(runDir, `.run-review-${generationId}.md`);
+    const logPath = path.join(runDir, "run-review.log");
+    const prompt = runReviewPrompt(runId, runDir, rootDir);
+    const command = runReviewCommand({ provider, model, reasoning, runDir, rootDir, outputPath, prompt });
+    const startedAt = new Date().toISOString();
+    writeRunReview(runId, {
+      schema_version: 1,
+      generation_id: generationId,
+      status: "running",
+      provider,
+      model,
+      reasoning,
+      started_at: startedAt,
+      completed_at: null,
+      review: "",
+      error: ""
+    });
+
+    const child = spawn(String(reviewBins[provider] || command.bin), command.argv, {
+      cwd: runDir,
+      env: enrichedPathEnv(),
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    child.unref();
+    reviewChildren.set(runId, child);
+    let stdout = "";
+    let log = "";
+    let settled = false;
+    const append = (chunk, isStdout) => {
+      const text = chunk.toString();
+      log = `${log}${text}`.slice(-8 * 1024 * 1024);
+      if (isStdout) stdout = `${stdout}${text}`.slice(-8 * 1024 * 1024);
+      try {
+        fs.appendFileSync(logPath, text, "utf8");
+      } catch (_error) {
+        /* the final state still reports provider errors */
+      }
+    };
+    child.stdout.on("data", (chunk) => append(chunk, true));
+    child.stderr.on("data", (chunk) => append(chunk, false));
+    const finish = (code, spawnError = null) => {
+      if (settled) return;
+      settled = true;
+      reviewChildren.delete(runId);
+      const current = loadJson(path.join(runDir, RUN_REVIEW_FILE), {});
+      if (current.generation_id !== generationId) return;
+      let review = provider === "codex" && fileHasContent(outputPath)
+        ? fs.readFileSync(outputPath, "utf8").trim()
+        : stdout.trim();
+      fs.rmSync(outputPath, { force: true });
+      const completedAt = new Date().toISOString();
+      if (code === 0 && review) {
+        writeRunReview(runId, {
+          ...current,
+          status: "completed",
+          completed_at: completedAt,
+          review,
+          error: ""
+        });
+        return;
+      }
+      const error = String(spawnError?.message || log || `Reviewer exited with status ${code ?? "unknown"}.`)
+        .trim()
+        .slice(-4000);
+      writeRunReview(runId, {
+        ...current,
+        status: "failed",
+        completed_at: completedAt,
+        review: "",
+        error: error || "The reviewer did not return a report."
+      });
+    };
+    child.on("error", (error) => finish(null, error));
+    child.on("close", (code) => finish(code));
+    return getRunReview(runId);
   }
 
   function readPrimeRolloutFailure(runId) {
@@ -1571,9 +2205,20 @@ function createAgentRunService({
 
     const actions = readActions(runId);
     const last = actions[actions.length - 1] || null;
-    const primeEvaluation = meta.kind === "prime" ? readPrimeEvaluation(runId) : null;
+    let primeEvaluation = meta.kind === "prime" ? readPrimeEvaluation(runId) : null;
+    if (primeEvaluation?.sync_status === "syncing" && !primeSyncChildren.has(runId)) {
+      primeEvaluation = writePrimeEvaluation(runId, {
+        ...primeEvaluation,
+        status: "SYNC_FAILED",
+        sync_status: "failed",
+        sync_completed_at: new Date().toISOString(),
+        sync_error: "The MazeBench server restarted while this Prime upload was running. Retry the sync.",
+        updated_at: new Date().toISOString()
+      });
+    }
     const modelName = resolvedRunModelName(runId, meta);
     const scorecard = loadJson(path.join(runDir, "maze_scorecard.json"), null);
+    const review = loadJson(path.join(runDir, RUN_REVIEW_FILE), null);
     const observedRooms = new Set(
       [meta.level_id, ...actions.map((action) => action.current_room)].filter(Boolean)
     );
@@ -1637,8 +2282,25 @@ function createAgentRunService({
       has_video: hasVideo,
       video_status: videoStatus,
       has_reasoning: fs.existsSync(path.join(runDir, "reasoning.json")),
+      favorited: isRunFavorite(runId),
+      review_status: String(review?.status || "idle"),
+      review_provider: String(review?.provider || ""),
+      review_model: String(review?.model || ""),
+      review_reasoning: String(review?.reasoning || ""),
+      review_error: String(review?.error || ""),
+      review_ready: Boolean(review?.status === "completed" && review?.review),
+      reviewable:
+        ["paused", "finished", "stopped", "failed"].includes(meta.status) &&
+        fileHasContent(path.join(runDir, "actions.jsonl")),
       prime_evaluation_id: String(primeEvaluation?.evaluation_id || primeEvaluation?.id || ""),
       prime_evaluation_status: String(primeRolloutFailure ? "FAILED" : primeEvaluation?.status || ""),
+      prime_evaluation_sync_status: String(primeEvaluation?.sync_status || ""),
+      prime_evaluation_sync_error: String(primeEvaluation?.sync_error || ""),
+      prime_evaluation_syncable:
+        meta.kind === "prime" &&
+        meta.prime_execution !== "hosted" &&
+        ["paused", "finished", "stopped", "failed"].includes(meta.status) &&
+        fileHasContent(findPrimeResultsFile(runDir)),
       prime_evaluation_url: String(
         primeEvaluation?.viewer_url ||
         (primeEvaluation?.evaluation_id
@@ -3515,6 +4177,17 @@ function createAgentRunService({
     return normalized === "prime" ? filterPrimeCatalogForHarness(value, harness) : value;
   }
 
+  function listPrimeHarnesses() {
+    return {
+      harnesses: publicPrimeHarnesses(),
+      verifiers_revision: VERIFIED_VERIFIERS_REVISION,
+      verifiers_version: PRIME_HARNESS_CATALOG.verifiers_version,
+      catalog_fingerprint: PRIME_HARNESS_CATALOG.catalog_fingerprint,
+      certification: PRIME_HARNESS_CERTIFICATION.boundary,
+      policy: PRIME_HARNESS_CATALOG.policy
+    };
+  }
+
   function normalizedGameForRun(gameId) {
     const game = getGame(String(gameId || "maze"));
 
@@ -3685,9 +4358,9 @@ function createAgentRunService({
   // Keep hosted execution as an API-level opt-in for evaluation workflows.
   function buildPrimeCommand(params, runDir, runId, game) {
     const harness = normalizePrimeHarness(params.harness);
-    if (harness !== "none") {
-      throw new Error(UNSAFE_PRIME_AGENT_HARNESS_MESSAGE);
-    }
+    const definition = PRIME_HARNESSES.get(harness);
+    if (!definition.launchable) throw new Error(definition.reason || UNSAFE_PRIME_AGENT_HARNESS_MESSAGE);
+    const harnessConfig = normalizePrimeHarnessConfig(params.harness_config, harness);
     const model = String(params.model_name || params.model || "").trim();
     if (harness !== "none" && !primeHarnessModelCompatible(model, harness)) {
       const definition = PRIME_HARNESSES.get(harness);
@@ -3701,6 +4374,9 @@ function createAgentRunService({
       params.mode || (params.vision === true || params.vision === "true" ? "vision" : "text")
     );
     const vision = mode === "vision";
+    if (!(definition.observation_modes || []).includes(mode)) {
+      throw new Error(`${definition.label} does not support MazeBench ${mode} observations through its approved boundary.`);
+    }
     const omniscient = mode === "json" && (params.omniscient === true || params.omniscient === "true");
     const hideNames = mode !== "vision" && (params.hide_names === true || params.hide_names === "true");
     const hideNamesSeed = resolvedHideNamesSeed(hideNames, params.hide_names_seed);
@@ -3714,11 +4390,7 @@ function createAgentRunService({
     const reasoning = primeReasoningLevels(model).includes(requestedReasoning)
       ? requestedReasoning
       : "";
-    const envDir = path.join(
-      rootDir,
-      "environments",
-      harness === "none" ? "mazebench" : "mazebench_agent"
-    );
+    const envDir = path.join(rootDir, "environments", "mazebench");
     const levelId = String(params.level_id || "level_HxI");
     const gemTotal = buildWorlds.countWorldGems(game);
 
@@ -3732,6 +4404,8 @@ function createAgentRunService({
       runId,
       "--harness",
       harness,
+      "--harness-config-json",
+      JSON.stringify(harnessConfig),
       "--level",
       levelId,
       "--game-won-gem-count",
@@ -3793,6 +4467,7 @@ function createAgentRunService({
     const display = ["node", "scripts/maze-prime-run.js"]
       .concat(hosted ? ["--hosted"] : [])
       .concat(["--out", "<run>", "--harness", harness])
+      .concat(Object.keys(harnessConfig).length ? ["--harness-config", JSON.stringify(harnessConfig)] : [])
       .concat(unlimited ? ["--unlimited"] : ["--max-turns", String(maxTurns)])
       .concat(model ? ["--model", model] : [])
       .concat(vision ? ["--vision"] : [])
@@ -3820,6 +4495,16 @@ function createAgentRunService({
       argv,
       display,
       harness,
+      harnessConfig,
+      harnessLabel: definition.label,
+      harnessBoundary: definition.boundary,
+      harnessAdapter: definition.adapter || "user_simulator",
+      runtimeHarnessId: definition.runtime_harness_id || definition.id,
+      upstreamHarnessId: definition.upstream_id || null,
+      harnessCatalogFingerprint: PRIME_HARNESS_CATALOG.catalog_fingerprint,
+      verifiersVersion: PRIME_HARNESS_CATALOG.verifiers_version,
+      runtimeImage: harness === "none" ? null : (vision ? "mcr.microsoft.com/playwright:v1.60.0-noble" : "node:24-bookworm-slim"),
+      taskset: definition.taskset,
       model,
       maxTurns,
       unlimited,
@@ -3894,6 +4579,19 @@ function createAgentRunService({
           model: "prime",
           model_name: command.model || "(prime default)",
           harness: command.harness,
+          harness_label: command.harnessLabel,
+          harness_version: command.harnessConfig.version || null,
+          harness_source: "pinned-prime-verifiers",
+          harness_config: command.harnessConfig,
+          harness_boundary: command.harnessBoundary,
+          harness_adapter: command.harnessAdapter,
+          harness_runtime_id: command.runtimeHarnessId,
+          harness_upstream_id: command.upstreamHarnessId,
+          harness_catalog_fingerprint: command.harnessCatalogFingerprint,
+          harness_runtime_image: command.runtimeImage,
+          harness_taskset: command.taskset,
+          verifiers_version: command.verifiersVersion,
+          verifiers_revision: VERIFIED_VERIFIERS_REVISION,
           game_id: "maze",
           game_title: "Maze Bench Environment",
           level_id: command.levelId,
@@ -3915,6 +4613,12 @@ function createAgentRunService({
             ...autoQuitLaunchParams(command.autoQuit),
             unlimited: command.unlimited,
             harness: command.harness,
+            harness_version: command.harnessConfig.version || null,
+            harness_config: command.harnessConfig,
+            harness_adapter: command.harnessAdapter,
+            harness_runtime_id: command.runtimeHarnessId,
+            harness_catalog_fingerprint: command.harnessCatalogFingerprint,
+            verifiers_revision: VERIFIED_VERIFIERS_REVISION,
             ...(command.hideNames ? { hide_names_seed: command.hideNamesSeed } : {})
           },
           continue_of: params.continue_of || null,
@@ -3928,7 +4632,7 @@ function createAgentRunService({
             ? "Prime Hosted Evaluation. Sample artifacts sync as Prime publishes them; per-turn streaming requires local Agent execution."
             : command.harness === "none"
               ? "Local Prime Verifiers evaluation using Prime inference. Moves, boards, reasoning, and usage stream into this page after every model turn."
-              : `${PRIME_HARNESSES.get(command.harness).label} runs as a built-in Verifiers harness in a Prime sandbox; inference, moves, and usage stream through Prime.`
+              : `${command.harnessLabel} runs in a Prime sandbox and receives only MazeBench's isolated MCP game controls; the trusted evaluator retains game state and scoring.`
         };
       } else {
         let effectiveParams = params;
@@ -4045,12 +4749,14 @@ function createAgentRunService({
       }
 
       if (current.status === "stopped") {
+        maybeSyncPrimeEvaluation(runId, current);
         return;
       }
 
       // A manual pause SIGSTOPs the process without killing it; ignore any exit
       // that races with that (the resume path drives the status instead).
       if (current.status === "paused") {
+        maybeSyncPrimeEvaluation(runId, current);
         return;
       }
 
@@ -4098,6 +4804,7 @@ function createAgentRunService({
           : terminalRunMeta(current, "failed", { exit_code: code, finished_at: now });
       }
       writeRunMeta(runId, updated);
+      maybeSyncPrimeEvaluation(runId, updated);
       if (current.model === "claude") startNextWaitingClaudeRun();
     });
     child.on("error", (error) => {
@@ -4116,6 +4823,7 @@ function createAgentRunService({
         runId,
         terminalRunMeta(current, "failed", { launch_error: error instanceof Error ? error.message : String(error) })
       );
+      maybeSyncPrimeEvaluation(runId, readRunMeta(runId));
       if (current.model === "claude") startNextWaitingClaudeRun();
     });
   }
@@ -4296,6 +5004,7 @@ function createAgentRunService({
       return {
         kind: "prime",
         harness: meta.harness || "none",
+        harness_config: meta.harness_config || {},
         model_name: model,
         mode: normalizeObservationMode(meta.mode),
         vision: meta.mode === "vision",
@@ -4743,12 +5452,16 @@ function createAgentRunService({
     const sessionPath = path.join(runDir, "session.json");
     const resultsPath = findPrimeResultsFile(runDir);
     const actionsPath = path.join(runDir, "actions.jsonl");
-    const replayInputPath = fileHasContent(resultsPath)
-      ? resultsPath
+    // actions.jsonl is the trusted evaluator's authoritative record. It also
+    // marks rejected attempts, which must remain visual no-ops; replaying raw
+    // model completions from results.jsonl can otherwise switch to a room the
+    // agent was never allowed to visit.
+    const replayInputPath = fileHasContent(actionsPath)
+      ? actionsPath
       : fs.existsSync(sessionPath)
         ? sessionPath
-        : fileHasContent(actionsPath)
-          ? actionsPath
+        : fileHasContent(resultsPath)
+          ? resultsPath
           : "";
     if (!replayInputPath) {
       throw new Error("This run has no completed eval result, saved session, or action log to render.");
@@ -4988,6 +5701,25 @@ function createAgentRunService({
     const meta = readRunMeta(runId);
     const runDir = runDirFor(runId);
 
+    const primeSync = primeSyncChildren.get(runId);
+    if (primeSync?.pid) {
+      try {
+        primeSync.kill("SIGTERM");
+      } catch (_error) {
+        /* sync process already exited */
+      }
+      primeSyncChildren.delete(runId);
+    }
+    const reviewer = reviewChildren.get(runId);
+    if (reviewer?.pid) {
+      try {
+        reviewer.kill("SIGTERM");
+      } catch (_error) {
+        /* reviewer already exited */
+      }
+      reviewChildren.delete(runId);
+    }
+
     if (meta?.kind === "prime" && ["running", "stopping"].includes(meta.status)) {
       cancelPrimeEvaluation(runId);
       stopPrimeAgentSandboxes(runId);
@@ -5127,6 +5859,7 @@ function createAgentRunService({
     stopAutoQuitMonitor(runId);
     const stopped = terminalRunMeta(readRunMeta(runId), "stopped", { exit_code: meta.exit_code ?? null });
     writeRunMeta(runId, stopped);
+    maybeSyncPrimeEvaluation(runId, stopped);
     if (meta.model === "claude") startNextWaitingClaudeRun();
 
     return summarizeRun(runId);
@@ -5161,12 +5894,15 @@ function createAgentRunService({
     continueRun,
     deleteRun,
     generateRunVideo,
+    generateRunReview,
     getEnvironment,
     getEnvironmentAsync,
+    getRunReview,
     getRunObservation,
     getRunProgress,
     launchRun,
     launchRuns,
+    listPrimeHarnesses,
     listProviderModels,
     listRuns,
     pauseRun,
@@ -5174,7 +5910,9 @@ function createAgentRunService({
     regenerateRunVideo,
     resolveRunFilePath,
     resumeRun,
+    setRunFavorite,
     setRunMoveTarget,
+    syncPrimeEvaluation,
     startDocker,
     stopRun,
     summarizeRun
@@ -5187,8 +5925,13 @@ module.exports = {
   createAgentRunService,
   enrichedPathEnv,
   filterPrimeCatalogForHarness,
+  normalizePrimeHarnessConfig,
   primeReasoningLevels,
   primeHarnessModelCompatible,
+  primeEvaluationReward,
   primeSandboxIdsFromText,
-  replayMessageForCommandText
+  publicPrimeHarnesses,
+  replayMessageForCommandText,
+  runReviewCommand,
+  runReviewPrompt
 };

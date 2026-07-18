@@ -1,0 +1,362 @@
+{
+  "schema_version": 1,
+  "source": "pinned-prime-verifiers",
+  "verifiers_version": "0.2.1.dev62",
+  "verifiers_revision": "653bb14003b87e39588bde308fa8626d1038ce15",
+  "policy": "Prime-provided harnesses execute in disposable Prime sandboxes. MazeBench state, source, checkpoints, and scoring remain behind an evaluator-owned capability URL.",
+  "harnesses": [
+    {
+      "id": "bash",
+      "label": "Bash",
+      "description": "Prime-provided bash harness.",
+      "launchable": true,
+      "status": "compatible",
+      "reason": "",
+      "boundary": "isolated-game-gateway",
+      "observation_modes": [
+        "text",
+        "json"
+      ],
+      "supports_mcp": true,
+      "supports_message_prompt": true,
+      "supports_user_sim": true,
+      "configurable": [
+        "edit",
+        "search"
+      ],
+      "default_config": {
+        "edit": true,
+        "search": false
+      },
+      "config_schema": {
+        "properties": {
+          "edit": {
+            "default": true,
+            "title": "Edit",
+            "type": "boolean"
+          },
+          "search": {
+            "default": false,
+            "title": "Search",
+            "type": "boolean"
+          }
+        }
+      },
+      "adapter": "native_mcp",
+      "runtime_harness_id": "bash"
+    },
+    {
+      "id": "claude_code",
+      "label": "Claude Code",
+      "description": "Prime-provided claude code harness.",
+      "launchable": true,
+      "status": "compatible",
+      "reason": "",
+      "boundary": "isolated-game-gateway",
+      "observation_modes": [
+        "text",
+        "json"
+      ],
+      "supports_mcp": true,
+      "supports_message_prompt": false,
+      "supports_user_sim": false,
+      "configurable": [
+        "version"
+      ],
+      "default_config": {
+        "version": "2.1.214"
+      },
+      "config_schema": {
+        "properties": {
+          "version": {
+            "default": "2.1.214",
+            "pattern": "^[A-Za-z0-9._+-]+$",
+            "title": "Version",
+            "type": "string"
+          }
+        }
+      },
+      "adapter": "native_mcp",
+      "runtime_harness_id": "claude_code"
+    },
+    {
+      "id": "codex",
+      "label": "Codex",
+      "description": "Prime-provided codex harness.",
+      "launchable": true,
+      "status": "compatible",
+      "reason": "",
+      "boundary": "isolated-game-gateway",
+      "observation_modes": [
+        "text",
+        "json"
+      ],
+      "supports_mcp": false,
+      "supports_message_prompt": true,
+      "supports_user_sim": false,
+      "configurable": [
+        "multi_agent",
+        "version"
+      ],
+      "default_config": {
+        "version": "0.144.5",
+        "multi_agent": false
+      },
+      "config_schema": {
+        "properties": {
+          "multi_agent": {
+            "default": false,
+            "title": "Multi Agent",
+            "type": "boolean"
+          },
+          "version": {
+            "default": "0.144.5",
+            "title": "Version",
+            "type": "string"
+          }
+        }
+      },
+      "adapter": "codex_mcp",
+      "runtime_harness_id": "mazebench_codex_harness"
+    },
+    {
+      "id": "kimi_code",
+      "label": "Kimi Code",
+      "description": "Prime-provided kimi code harness.",
+      "launchable": true,
+      "status": "compatible",
+      "reason": "",
+      "boundary": "isolated-game-gateway",
+      "observation_modes": [
+        "text",
+        "json"
+      ],
+      "supports_mcp": true,
+      "supports_message_prompt": false,
+      "supports_user_sim": false,
+      "configurable": [
+        "version"
+      ],
+      "default_config": {
+        "version": "0.27.0"
+      },
+      "config_schema": {
+        "properties": {
+          "version": {
+            "default": "0.27.0",
+            "title": "Version",
+            "type": "string"
+          }
+        }
+      },
+      "adapter": "native_mcp",
+      "runtime_harness_id": "kimi_code"
+    },
+    {
+      "id": "mini_swe_agent",
+      "label": "mini-swe-agent",
+      "description": "Prime-provided mini swe agent harness.",
+      "launchable": true,
+      "status": "compatible",
+      "reason": "",
+      "boundary": "isolated-game-gateway",
+      "observation_modes": [
+        "text",
+        "json"
+      ],
+      "supports_mcp": false,
+      "supports_message_prompt": false,
+      "supports_user_sim": false,
+      "configurable": [
+        "version"
+      ],
+      "default_config": {
+        "version": "2.4.5"
+      },
+      "config_schema": {
+        "properties": {
+          "version": {
+            "default": "2.4.5",
+            "title": "Version",
+            "type": "string"
+          }
+        }
+      },
+      "adapter": "cli_gateway",
+      "runtime_harness_id": "mazebench_cli_harness",
+      "upstream_id": "mini_swe_agent"
+    },
+    {
+      "id": "null",
+      "label": "Default MCP",
+      "description": "Prime-provided null harness.",
+      "launchable": true,
+      "status": "compatible",
+      "reason": "",
+      "boundary": "isolated-game-gateway",
+      "observation_modes": [
+        "text",
+        "json"
+      ],
+      "supports_mcp": true,
+      "supports_message_prompt": true,
+      "supports_user_sim": true,
+      "configurable": [],
+      "default_config": {},
+      "config_schema": {
+        "properties": {}
+      },
+      "adapter": "native_mcp",
+      "runtime_harness_id": "null"
+    },
+    {
+      "id": "pi",
+      "label": "Pi",
+      "description": "Prime-provided pi harness.",
+      "launchable": true,
+      "status": "compatible",
+      "reason": "",
+      "boundary": "isolated-game-gateway",
+      "observation_modes": [
+        "text",
+        "json"
+      ],
+      "supports_mcp": true,
+      "supports_message_prompt": true,
+      "supports_user_sim": false,
+      "configurable": [
+        "version"
+      ],
+      "default_config": {
+        "version": "0.80.10"
+      },
+      "config_schema": {
+        "properties": {
+          "version": {
+            "default": "0.80.10",
+            "title": "Version",
+            "type": "string"
+          }
+        }
+      },
+      "adapter": "native_mcp",
+      "runtime_harness_id": "pi"
+    },
+    {
+      "id": "rlm",
+      "label": "RLM",
+      "description": "Prime-provided rlm harness.",
+      "launchable": true,
+      "status": "compatible",
+      "reason": "",
+      "boundary": "isolated-game-gateway",
+      "observation_modes": [
+        "text",
+        "json"
+      ],
+      "supports_mcp": true,
+      "supports_message_prompt": false,
+      "supports_user_sim": false,
+      "configurable": [
+        "max_depth",
+        "skills",
+        "summarize_at_tokens",
+        "version"
+      ],
+      "default_config": {
+        "version": "main",
+        "max_depth": 0,
+        "skills": [],
+        "summarize_at_tokens": null
+      },
+      "config_schema": {
+        "properties": {
+          "max_depth": {
+            "default": 0,
+            "title": "Max Depth",
+            "type": "integer"
+          },
+          "skills": {
+            "default": [],
+            "items": {
+              "enum": [
+                "edit",
+                "search"
+              ],
+              "type": "string"
+            },
+            "title": "Skills",
+            "type": "array"
+          },
+          "summarize_at_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Summarize At Tokens"
+          },
+          "version": {
+            "default": "main",
+            "title": "Version",
+            "type": "string"
+          }
+        }
+      },
+      "adapter": "native_mcp",
+      "runtime_harness_id": "rlm"
+    },
+    {
+      "id": "terminus_2",
+      "label": "Terminus 2",
+      "description": "Prime-provided terminus 2 harness.",
+      "launchable": true,
+      "status": "compatible",
+      "reason": "",
+      "boundary": "isolated-game-gateway",
+      "observation_modes": [
+        "text",
+        "json"
+      ],
+      "supports_mcp": false,
+      "supports_message_prompt": false,
+      "supports_user_sim": false,
+      "configurable": [
+        "version"
+      ],
+      "default_config": {
+        "version": "0.14.0"
+      },
+      "config_schema": {
+        "properties": {
+          "version": {
+            "default": "0.14.0",
+            "title": "Version",
+            "type": "string"
+          }
+        }
+      },
+      "adapter": "cli_gateway",
+      "runtime_harness_id": "mazebench_cli_harness",
+      "upstream_id": "terminus_2"
+    }
+  ],
+  "catalog_fingerprint": "b0c66721c79d49eda5519dd1171140c33bc496a39b2f28585dbfb6baa4769263"
+}

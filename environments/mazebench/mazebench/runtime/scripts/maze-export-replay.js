@@ -424,14 +424,26 @@ function rowFromSession(session) {
 // runs can therefore be replayable even when no final rollout row exists.
 function rowFromActionLog(actionRecords, runMeta = {}, initialStatus = null) {
   const replayEntries = (Array.isArray(actionRecords) ? actionRecords : [])
-    .filter((action) => action && action.valid !== false)
-    .map((action) => ({
-      command: String(action.command_text || action.command || "").trim(),
-      status: action.status || null,
-      valid: true
-    }))
-    .filter((action) => action.command);
-  const actions = replayEntries.map(({ command, valid }) => ({ command, valid }));
+    .filter(Boolean)
+    .map((action) => {
+      const valid = action.valid !== false && !action.error;
+      return {
+        command: String(action.command_text || action.command || "").trim(),
+        status: valid
+          ? action.status || null
+          : {
+              ...(action.status || {}),
+              replay_action_valid: false,
+              replay_action_error: action.error || null
+            },
+        valid
+      };
+    })
+    // Keep parseable rejected attempts in the timeline as visual no-ops. That
+    // preserves exact action/observation alignment without trying to replay
+    // malformed prose as a game command.
+    .filter((action) => action.command && (action.valid || parseCommandLine(action.command)));
+  const actions = replayEntries.map(({ command }) => ({ command, valid: true }));
   const firstStatus = replayEntries.find((entry) => entry.status)?.status || {};
   const initialLevel = String(initialStatus?.level || firstStatus.level || "");
   const view = String(
@@ -2569,6 +2581,7 @@ async function renderReplayVideo(
       const parsed = entry.parsed;
       const frameStart = frameIndex;
       const expectedState = expectedVisualStates[entry.sourceIndex];
+      const replayActionValid = expectedState?.replay_action_valid !== false;
       await setAsciiObservation(asciiFrames[entry.sourceIndex + 1], entry.sourceIndex + 1);
       if (options.accelerated) {
         // Every recorded action begins from a settled state. Re-anchor the
@@ -2578,7 +2591,12 @@ async function renderReplayVideo(
         await page.evaluate(() => window.__syncMazeReplayClock__?.());
       }
 
-      if (parsed.command === "move") {
+      if (!replayActionValid) {
+        // The trusted evaluator rejected this attempt (for example, a goto to
+        // an unvisited room). Hold the authoritative visual state for one
+        // action instead of calling the browser's unrestricted room switcher.
+        await captureFrame();
+      } else if (parsed.command === "move") {
         const key = {
           down: "ArrowDown",
           left: "ArrowLeft",

@@ -33,6 +33,8 @@ const COPY_DIRECTORIES = [
 const COPY_FILES = [
   "server.js",
   "package.json",
+  "environments/mazebench/prime-harness-catalog.json",
+  "environments/mazebench/prime-harness-certification.json",
   "games/maze/config.json",
   "games/maze/level_parsing.json",
   "games/maze/toolbox.json",

@@ -130,6 +130,25 @@ const mazeEngine = loadMazeEngine();
   assert.equal(row.maze_replay.start_level_id, "level_AB");
   assert.equal(row.maze_replay.game_won_gem_count, 70);
   assert.deepEqual(row.maze_replay.initial, { view: "diagonal", yaw: 0 });
+
+  const rejectedGoto = rowFromActionLog(
+    [
+      {
+        command_text: "go to level G I",
+        valid: false,
+        error: "cannot goto unvisited level: level_GxI",
+        status: { level: "SAME-ROOM", current_room: "level_HxI" }
+      }
+    ],
+    { game_id: "maze", level_id: "level_HxI", gem_total: 70 },
+    { level: "INITIAL", current_view: "top", yaw: 0 }
+  );
+  assert.deepEqual(rejectedGoto.maze_actions, [
+    { command: "go to level G I", valid: true }
+  ]);
+  assert.equal(rejectedGoto.maze_replay.action_statuses[0].replay_action_valid, false);
+  assert.match(rejectedGoto.maze_replay.action_statuses[0].replay_action_error, /unvisited/);
+  assert.deepEqual(rejectedGoto.maze_ascii_frames, ["INITIAL", "SAME-ROOM"]);
   fs.rmSync(actionLogDir, { recursive: true, force: true });
 }
 

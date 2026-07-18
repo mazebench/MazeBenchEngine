@@ -8,7 +8,8 @@ const {
   buildMcpPrompt,
   claudeSandboxSettings,
   codexMcpConfigArgs,
-  migrateSeedSessionObservation
+  migrateSeedSessionObservation,
+  needsPrivateMcpServer
 } = require("../scripts/maze-agent-local");
 
 const root = path.resolve(__dirname, "..");
@@ -114,7 +115,10 @@ assert.deepEqual(
 const claudeConfig = { ...baseConfig, model: "claude", modelName: "claude-test" };
 const claude = agentCommand(claudeConfig, buildMcpPrompt(claudeConfig));
 const valueAfter = (flag) => claude.argv[claude.argv.indexOf(flag) + 1];
-assert.equal(valueAfter("--tools"), "");
+assert.equal(valueAfter("--tools"), "default", "Claude needs its default registry enabled to discover MCP tools");
+assert.equal(claude.argv.includes("--setting-sources"), false, "overriding setting sources races Claude MCP startup");
+assert.equal(claude.argv.includes("--system-prompt"), false, "replacing Claude's base prompt races MCP startup");
+assert.equal(valueAfter("--append-system-prompt").includes("only the explicitly configured game controls"), true);
 assert.deepEqual(
   new Set(valueAfter("--allowedTools").split(",")),
   new Set([
@@ -123,12 +127,27 @@ assert.deepEqual(
     "mcp__game__game_action"
   ])
 );
-for (const denied of ["Bash", "Read", "Glob", "Grep", "WebFetch", "WebSearch", "Task", "Agent", "ToolSearch"]) {
+for (const denied of [
+  "Bash", "Read", "Glob", "Grep", "WebFetch", "WebSearch", "Task", "Agent", "ToolSearch",
+  "CronCreate", "DesignSync", "EnterWorktree", "Monitor", "PushNotification", "RemoteTrigger",
+  "ReportFindings", "ScheduleWakeup", "SendMessage", "TaskCreate", "TaskUpdate", "Workflow"
+]) {
   assert(valueAfter("--disallowedTools").split(",").includes(denied), `${denied} must be denied`);
 }
 const claudeSettings = JSON.parse(claudeSandboxSettings(claudeConfig));
 assert.deepEqual(claudeSettings.sandbox.network.allowedDomains, []);
 assert.equal(claudeSettings.sandbox.failIfUnavailable, true);
+assert.deepEqual(
+  new Set(claudeSettings.permissions.allow),
+  new Set([
+    "mcp__game__game_start",
+    "mcp__game__game_observe",
+    "mcp__game__game_action"
+  ])
+);
+assert.equal(needsPrivateMcpServer(claudeConfig), true, "host Claude runs need a prestarted MCP service");
+assert.equal(needsPrivateMcpServer(codexConfig), false, "host Codex can use its synchronous stdio MCP startup");
+assert.equal(needsPrivateMcpServer({ ...codexConfig, inContainer: true }), true);
 
 const guard = path.join(root, "scripts", "maze-codex-tool-guard.js");
 const blocked = spawnSync(process.execPath, [guard], {

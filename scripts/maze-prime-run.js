@@ -11,7 +11,7 @@
 //
 // Usage:
 //   node maze-prime-run.js --env-dir <dir> --out <runDir> [--model <id>]
-//     --harness <none|codex|claude-code> (--max-turns <n> | --unlimited)
+//     --harness <none|prime-harness-id> (--max-turns <n> | --unlimited)
 //     [--observation-mode <ascii|json|vision>] [--no-video]
 
 const fs = require("node:fs");
@@ -25,11 +25,31 @@ const LIVE_EVAL = path.join(ROOT_DIR, "scripts", "maze-prime-live-eval.py");
 const TERMINAL = path.join(ROOT_DIR, "scripts", "maze-terminal.js");
 const HOSTED_STATE_FILE = "prime-evaluation.json";
 const HOSTED_SAMPLES_FILE = "prime-evaluation-samples.json";
+const HARNESS_CATALOG_FILE = path.join(ROOT_DIR, "environments", "mazebench", "prime-harness-catalog.json");
+const HARNESS_CATALOG = JSON.parse(fs.readFileSync(HARNESS_CATALOG_FILE, "utf8"));
+const HARNESS_CERTIFICATION_FILE = path.join(ROOT_DIR, "environments", "mazebench", "prime-harness-certification.json");
+const HARNESS_CERTIFICATION = JSON.parse(fs.readFileSync(HARNESS_CERTIFICATION_FILE, "utf8"));
+if (HARNESS_CERTIFICATION.catalog_fingerprint !== HARNESS_CATALOG.catalog_fingerprint) {
+  throw new Error("Prime harness catalog does not match its safety certification.");
+}
+const CERTIFIED_HARNESSES = new Set(
+  HARNESS_CERTIFICATION.harnesses.filter((entry) => entry.status === "certified").map((entry) => entry.id)
+);
+const PRIME_HARNESSES = new Map(HARNESS_CATALOG.harnesses.map((entry) => [entry.id, entry]));
 const TEXT_RUNTIME_IMAGE = "node:24-bookworm-slim";
 const VISION_RUNTIME_IMAGE = "mcr.microsoft.com/playwright:v1.60.0-noble";
 const PRIME_REASONING_LEVELS = new Set(["low", "medium", "high"]);
-const UNSAFE_AGENT_HARNESS_MESSAGE =
-  "Codex and Claude Code via Prime are disabled: the built-in coding-agent harness exposes the benchmark runtime and hidden state. Use the isolated Prime Intellect harness instead.";
+
+function harnessDefinition(harnessId) {
+  return harnessId === "none" ? null : PRIME_HARNESSES.get(harnessId);
+}
+
+function harnessCliValue(value) {
+  if (typeof value === "boolean") return value ? "True" : "False";
+  if (value === null) return "None";
+  if (Array.isArray(value) || (value && typeof value === "object")) return JSON.stringify(value);
+  return String(value);
+}
 
 function positiveTurnBudget(value, fallback = 20) {
   const number = Number(value);
@@ -46,6 +66,7 @@ function parseArgs(argv) {
     environment: "mazebench/mazebench",
     gameWonGemCount: 69,
     harness: "none",
+    harnessConfig: {},
     hosted: false,
     levelId: "level_HxI",
     maxTurns: 20,
@@ -73,10 +94,26 @@ function parseArgs(argv) {
     const arg = argv[index];
     const next = () => argv[(index += 1)];
 
-    if (arg === "--env-dir") opts.envDir = next();
+    if (arg === "--env-dir") opts.envDir = path.resolve(next());
     else if (arg === "--harness") {
       const harness = String(next() || "none").trim().toLowerCase();
-      opts.harness = harness === "claude" ? "claude-code" : harness;
+      const aliases = {
+        claude: "claude_code",
+        "claude-code": "claude_code",
+        default: "null",
+        "kimi-code": "kimi_code",
+        "mini-swe-agent": "mini_swe_agent",
+        "terminus-2": "terminus_2"
+      };
+      opts.harness = aliases[harness] || harness;
+    }
+    else if (arg === "--harness-config-json") {
+      try {
+        const value = JSON.parse(String(next() || "{}"));
+        opts.harnessConfig = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+      } catch (_error) {
+        throw new Error("Prime harness configuration must be valid JSON.");
+      }
     }
     else if (arg === "--environment") opts.environment = String(next() || opts.environment);
     else if (arg === "--out") opts.outDir = next();
@@ -123,15 +160,28 @@ function parseArgs(argv) {
   if (!opts.outDir || (!opts.hosted && !opts.envDir)) {
     throw new Error("maze-prime-run.js requires --out and, for local evaluations, --env-dir");
   }
-  if (!["none", "codex", "claude-code"].includes(opts.harness)) {
+  const definition = harnessDefinition(opts.harness);
+  if (opts.harness !== "none" && !definition) {
     throw new Error(`Unknown Prime harness "${opts.harness}".`);
   }
-  if (opts.harness !== "none") {
-    throw new Error(UNSAFE_AGENT_HARNESS_MESSAGE);
+  if (definition && !definition.launchable) {
+    throw new Error(definition.reason || `Prime harness "${opts.harness}" failed catalog validation.`);
+  }
+  if (definition && !CERTIFIED_HARNESSES.has(opts.harness)) {
+    throw new Error(`Prime harness "${opts.harness}" has not passed MazeBench compatibility certification.`);
   }
   if (opts.hosted && opts.harness !== "none") {
-    throw new Error("Prime coding-agent harnesses currently run through the local evaluator with a Prime sandbox.");
+    throw new Error("Custom harnesses run through the local trusted evaluator with only their harness program in a Prime sandbox.");
   }
+  if (definition && opts.vision) {
+    throw new Error(`${opts.harness} currently supports only text and JSON through MazeBench's isolated MCP controls.`);
+  }
+  const allowedHarnessConfig = new Set(definition?.configurable || []);
+  const unknownHarnessConfig = Object.keys(opts.harnessConfig).filter((key) => !allowedHarnessConfig.has(key));
+  if (unknownHarnessConfig.length) {
+    throw new Error(`Unsupported ${opts.harness} harness configuration: ${unknownHarnessConfig.join(", ")}.`);
+  }
+  opts.harnessConfig = { ...(definition?.default_config || {}), ...opts.harnessConfig };
   if (opts.resumeCheckpoint && !fs.existsSync(opts.resumeCheckpoint)) {
     throw new Error(`Prime resume checkpoint does not exist: ${opts.resumeCheckpoint}`);
   }
@@ -569,7 +619,7 @@ function runEval(opts) {
   const liveActionsPath = path.join(opts.outDir, "actions.jsonl");
   const liveReasoningPath = path.join(opts.outDir, "prime-reasoning.jsonl");
   const agentic = opts.harness !== "none";
-  const taskset = agentic ? "mazebench-agent" : "mazebench";
+  const taskset = agentic ? "mazebench-tools" : "mazebench";
   const argv = ["run", "--project", opts.envDir, "python", LIVE_EVAL, taskset];
 
   let resumeActionCount = 0;
@@ -609,10 +659,11 @@ function runEval(opts) {
   }
 
   if (agentic) {
+    const definition = harnessDefinition(opts.harness);
     const runtimeImage = opts.vision ? VISION_RUNTIME_IMAGE : TEXT_RUNTIME_IMAGE;
     argv.push(
       "--harness.id",
-      opts.harness,
+      definition.runtime_harness_id,
       "--harness.runtime.type",
       "prime",
       "--harness.runtime.image",
@@ -625,9 +676,23 @@ function runEval(opts) {
       "4",
       "--harness.runtime.disk",
       "8",
+      "--taskset.tools.colocated",
+      "False",
       "--push",
       "False"
     );
+    if (definition.adapter === "cli_gateway") {
+      argv.push(
+        "--harness.upstream-id",
+        definition.upstream_id || opts.harness,
+        "--harness.upstream-config-json",
+        JSON.stringify(opts.harnessConfig)
+      );
+    } else {
+      for (const [key, value] of Object.entries(opts.harnessConfig)) {
+        argv.push(`--harness.${key.replace(/_/g, "-")}`, harnessCliValue(value));
+      }
+    }
   }
 
   if (opts.vision) {
@@ -644,7 +709,7 @@ function runEval(opts) {
   if (!opts.allowQuit) {
     argv.push("--taskset.allow-quit", "False");
   }
-  if (opts.autoQuit && !agentic) {
+  if (opts.autoQuit) {
     argv.push(
       "--taskset.auto-quit",
       "True",
@@ -673,6 +738,8 @@ function runEval(opts) {
       env: {
         ...process.env,
         MAZEBENCH_PRIME_HARNESS: opts.harness,
+        MAZEBENCH_PRIME_HARNESS_ADAPTER: harnessDefinition(opts.harness)?.adapter || "user_simulator",
+        MAZEBENCH_PRIME_HARNESS_CATALOG: HARNESS_CATALOG.catalog_fingerprint,
         MAZEBENCH_LIVE_USAGE_PATH: liveUsagePath,
         MAZEBENCH_LIVE_ACTIONS_PATH: liveActionsPath,
         MAZEBENCH_LIVE_REASONING_PATH: liveReasoningPath,
@@ -810,6 +877,7 @@ function agenticConversationTurns(row) {
   const nodes = Array.isArray(row.nodes) ? row.nodes : [];
   const turns = [];
   let assistant = null;
+  const pendingGameActions = new Map();
 
   for (const node of nodes) {
     const message = node && node.message;
@@ -820,9 +888,31 @@ function agenticConversationTurns(row) {
         reasoning: normalizedReasoning || providerReasoningText(message.provider_state),
         action: String(messageText(message.content) || "").trim()
       };
+      for (const call of message.tool_calls || []) {
+        if (!/(?:^|__)game_action$/.test(String(call?.name || ""))) continue;
+        try {
+          const args = JSON.parse(String(call.arguments || "{}"));
+          pendingGameActions.set(String(call.id || ""), {
+            action: String(args.action || "").trim(),
+            reasoning: assistant.reasoning
+          });
+        } catch (_error) {
+          /* malformed tool arguments are retained by Verifiers but are not a move */
+        }
+      }
       continue;
     }
     if (message.role !== "tool") continue;
+    const pending = pendingGameActions.get(String(message.tool_call_id || ""));
+    if (pending) {
+      turns.push({
+        turn: turns.length + 1,
+        board: "",
+        reasoning: pending.reasoning || "",
+        action: pending.action
+      });
+      pendingGameActions.delete(String(message.tool_call_id || ""));
+    }
     const markers = String(messageText(message.content) || "").matchAll(/MAZEBENCH_EVENT_V1:([A-Za-z0-9_-]+)/g);
     for (const marker of markers) {
       try {
@@ -937,7 +1027,11 @@ function writeMoveArtifacts(resultsPath, outDir) {
 }
 
 function replayExportArgs(resultsPath, outDir, opts) {
-  const argv = [EXPORT_REPLAY, resultsPath, "--out-dir", outDir, "--draft"];
+  const actionLogPath = path.join(outDir, "actions.jsonl");
+  const replayInputPath = fs.existsSync(actionLogPath) && fs.statSync(actionLogPath).size > 0
+    ? actionLogPath
+    : resultsPath;
+  const argv = [EXPORT_REPLAY, replayInputPath, "--out-dir", outDir, "--draft"];
 
   if (opts.observationMode === "ascii") {
     argv.push("--width", "1280", "--height", "720", "--ascii-side-by-side");

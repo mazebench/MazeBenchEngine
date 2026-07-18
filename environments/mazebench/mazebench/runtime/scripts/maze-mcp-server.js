@@ -604,7 +604,15 @@ function publicToolValue(value) {
     const level = status && typeof status === "object"
       ? status.level || status.observation
       : "";
-    if (typeof level === "string" && level.length > 0) return { level };
+    if (typeof level === "string" && level.length > 0) {
+      const printable = { level };
+      if (status.user_pause_requested === true) {
+        printable.user_pause_requested = true;
+        printable.pause_message = String(status.pause_message || "");
+        printable.allowed_commands = [];
+      }
+      return printable;
+    }
   }
   if (Array.isArray(value)) return value.map(publicToolValue);
   if (!value || typeof value !== "object") return value;

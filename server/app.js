@@ -230,6 +230,7 @@ const agentRuns = createAgentRunService({
   agentEnvironment,
   agentEnvironmentAsync,
   allowLegacyLocalLaunch: true,
+  syncPrimeEvaluations: true,
   buildWorlds,
   ensureDirectory,
   getGame,
