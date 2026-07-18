@@ -51,6 +51,7 @@ assert.match(theme, /\.flyover-controls/);
 assert.match(theme, /\.flyover-loading__spinner/);
 assert.match(theme, /\.flyover-zoom-controls/);
 assert.match(theme, /border-color: var\(--cyan/);
+assert.match(theme, /\.flyover-body \.flyover-stage::after \{\s*content: none;/);
 assert.doesNotMatch(theme, /\.flyover-pad-button::before/);
 const selectionStart = runtimeTheme.indexOf(".flyover-selection-panel {");
 const selectionEnd = runtimeTheme.indexOf(".flyover-minimap__cell", selectionStart);
