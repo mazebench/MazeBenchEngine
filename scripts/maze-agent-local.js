@@ -57,6 +57,45 @@ const readline = require("node:readline");
 const { spawn, spawnSync } = require("node:child_process");
 const { redactAgentStatus } = require("./codex-play");
 
+// Claude Code discovers MCP tools only when its default tool registry is
+// enabled. Keep that registry on, then explicitly remove every non-game tool
+// from restricted runs. This list includes the workflow/scheduling tools added
+// by newer Claude Code releases, not just the traditional coding tools.
+const CLAUDE_RESTRICTED_BUILTIN_TOOLS = [
+  "Agent",
+  "Bash",
+  "CronCreate",
+  "CronDelete",
+  "CronList",
+  "DesignSync",
+  "Edit",
+  "EnterWorktree",
+  "ExitWorktree",
+  "Glob",
+  "Grep",
+  "Monitor",
+  "NotebookEdit",
+  "PushNotification",
+  "Read",
+  "RemoteTrigger",
+  "ReportFindings",
+  "ScheduleWakeup",
+  "SendMessage",
+  "Skill",
+  "Task",
+  "TaskCreate",
+  "TaskGet",
+  "TaskList",
+  "TaskOutput",
+  "TaskStop",
+  "TaskUpdate",
+  "ToolSearch",
+  "WebFetch",
+  "WebSearch",
+  "Workflow",
+  "Write"
+];
+
 const ROOT_DIR = path.resolve(__dirname, "..");
 const HELPER = path.join(ROOT_DIR, "scripts", "codex-play.js");
 const MAZE_MCP_SERVER = path.join(ROOT_DIR, "scripts", "maze-mcp-server.js");
@@ -560,6 +599,13 @@ function claudeMcpConfig(config) {
 
 function claudeSandboxSettings(config) {
   const offline = config.toolUse === "offline";
+  const leadAllow = offline
+    ? []
+    : [
+        "mcp__game__game_start",
+        "mcp__game__game_observe",
+        "mcp__game__game_action"
+      ];
   const workerAllow = config.swarm
     ? [
         ...(offline ? ["Bash(*)", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "Skill"] : ["Read", "Glob", "Grep"]),
@@ -604,12 +650,12 @@ function claudeSandboxSettings(config) {
       // Custom-agent `tools` controls what the worker can see. Under dontAsk,
       // these names must also be pre-approved or Claude silently denies them.
       // The provider sandbox still confines writes to the selected access roots.
-      allow: workerAllow,
+      allow: [...leadAllow, ...workerAllow],
       deny: [
         "WebFetch", "WebSearch",
         ...(offline
           ? []
-          : ["Bash", "Edit", "Glob", "Grep", "NotebookEdit", "Read", "Skill", "Task", "Agent", "TaskOutput", "TaskStop", "ToolSearch", "Write"]),
+          : CLAUDE_RESTRICTED_BUILTIN_TOOLS),
         ...denyRead.map((entry) => `Read(${entry}/**)`)
       ]
     }
@@ -706,6 +752,10 @@ async function startPrivateMcpServer(config) {
       fs.rmSync(portFile, { force: true });
     }
   };
+}
+
+function needsPrivateMcpServer(config) {
+  return Boolean(config.mcpEnabled && (config.inContainer || config.model === "claude"));
 }
 
 function isolatedDockerAgentCommand(config, command) {
@@ -906,7 +956,10 @@ function agentCommand(config, prompt) {
       // releases. Permit both names so the lead can delegate, while the
       // worker definition itself deliberately omits either tool.
       if (config.swarm) localTools.push("Task", "Agent");
-      const enabledTools = config.toolUse === "offline" ? "default" : "";
+      // Current Claude Code releases require the default registry for dynamic
+      // MCP discovery. Restricted mode still exposes only game controls because
+      // every built-in tool is denied below and in the sandbox settings.
+      const enabledTools = "default";
 
       argv.push(
         "--mcp-config", claudeMcpConfig(config),
@@ -917,12 +970,10 @@ function agentCommand(config, prompt) {
         "--allowedTools", [...localTools, ...mcpTools].join(","),
         "--disallowedTools", [
           "WebFetch", "WebSearch",
-          ...(restricted
-            ? ["Bash", "Edit", "Glob", "Grep", "NotebookEdit", "Read", "Skill", "Task", "Agent", "TaskOutput", "TaskStop", "ToolSearch", "Write"]
-            : []),
+          ...(restricted ? CLAUDE_RESTRICTED_BUILTIN_TOOLS : []),
           ...(config.swarm ? [] : ["Task", "Agent"])
         ].join(","),
-        ...(restricted ? ["--setting-sources", "", "--system-prompt", "You are solving the current grid-game task. Use only the explicitly configured game controls and your current conversation memory."] : ["--add-dir", config.agentSwarmWorkspaceDir])
+        ...(restricted ? ["--append-system-prompt", "You are solving the current grid-game task. Use only the explicitly configured game controls and your current conversation memory."] : ["--add-dir", config.agentSwarmWorkspaceDir])
       );
       if (config.hostAccess && !restricted) argv.push("--add-dir", ROOT_DIR);
       const agents = claudeAgents(config);
@@ -2070,7 +2121,14 @@ async function main() {
   fs.mkdirSync(config.swarmDir, { recursive: true });
   fs.mkdirSync(config.swarmWorkspaceDir, { recursive: true });
   migrateSeedSessionObservation(config);
-  const privateMcp = config.inContainer ? await startPrivateMcpServer(config) : null;
+  // Claude Code 2.1.214 connects CLI-supplied stdio MCP servers asynchronously.
+  // In the intentionally empty restricted workspace its first model request can
+  // outrun that connection and receive no game tools. Start the existing
+  // authenticated localhost transport before launching Claude so its tools are
+  // ready immediately. Containers already require the same transport.
+  const privateMcp = needsPrivateMcpServer(config)
+    ? await startPrivateMcpServer(config)
+    : null;
   prepareAgentRuntime(config);
 
   const prompt = buildPrompt(config);
@@ -2157,6 +2215,7 @@ module.exports = {
   distillCodexEvents,
   loadCodexModels,
   migrateSeedSessionObservation,
+  needsPrivateMcpServer,
   providerFailureFromEvents,
   resultFromOutput,
   resultsFromOutput
