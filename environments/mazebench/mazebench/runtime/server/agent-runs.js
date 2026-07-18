@@ -2418,7 +2418,8 @@ function createAgentRunService({
           model: meta.model || "",
           model_name: meta.model_name || meta.model || "",
           provider: meta.kind === "prime" ? "prime" : meta.model,
-          status: meta.status || ""
+          status: meta.status || "",
+          favorited: isRunFavorite(entry.name)
         }];
       })
       .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
@@ -2432,6 +2433,7 @@ function createAgentRunService({
     const provider = String(options.provider || "").trim();
     const model = String(options.model || "").trim();
     const status = String(options.status || "").trim();
+    const starred = options.starred === true || String(options.starred || "") === "1";
     const query = String(options.query || "").trim().toLowerCase();
     const sort = String(options.sort || "newest");
     const metricSort = ["actions", "rooms", "gems"].includes(sort);
@@ -2457,6 +2459,10 @@ function createAgentRunService({
 
     if (status) {
       filtered = filtered.filter((run) => run.status === status);
+    }
+
+    if (starred) {
+      filtered = filtered.filter((run) => run.favorited);
     }
 
     if (query) {

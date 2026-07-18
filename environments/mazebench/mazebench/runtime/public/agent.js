@@ -1660,7 +1660,7 @@
 
   // ---- runs list (unchanged behavior) ---------------------------------------
 
-  const runsView = { page: 1, pageSize: 5, provider: "", model: "", status: "", query: "", sort: "newest" };
+  const runsView = { page: 1, pageSize: 5, provider: "", model: "", status: "", starred: false, query: "", sort: "newest" };
   const runProgressCache = new Map();
 
   function formatRunDuration(value) {
@@ -1804,6 +1804,7 @@
     if (runsView.provider) params.set("provider", runsView.provider);
     if (runsView.model) params.set("model", runsView.model);
     if (runsView.status) params.set("status", runsView.status);
+    if (runsView.starred) params.set("starred", "1");
     if (runsView.query) params.set("q", runsView.query);
     return params.toString();
   }
@@ -1951,6 +1952,7 @@
     onFilter("runs-provider", "provider");
     onFilter("runs-model", "model");
     onFilter("runs-status", "status");
+    onFilter("runs-starred", "starred", (value) => value === "1");
     onFilter("runs-sort", "sort");
     onFilter("runs-page-size", "pageSize", (value) => Number(value) || 5);
 

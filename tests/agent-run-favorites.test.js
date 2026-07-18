@@ -6,13 +6,17 @@ const { createAgentRunService } = require("../server/agent-runs");
 
 const root = path.join(__dirname, "..");
 const agentSource = fs.readFileSync(path.join(root, "public", "agent.js"), "utf8");
+const pagesSource = fs.readFileSync(path.join(root, "server", "pages.js"), "utf8");
 const routerSource = fs.readFileSync(path.join(root, "server", "router.js"), "utf8");
 const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "utf8");
 
 assert.match(agentSource, /data-action="favorite"/);
 assert.match(agentSource, /aria-pressed="\$\{run\.favorited \? "true" : "false"\}"/);
 assert.match(agentSource, /JSON\.stringify\(\{ favorite \}\)/);
+assert.match(agentSource, /params\.set\("starred", "1"\)/);
+assert.match(pagesSource, /id="runs-starred" aria-label="Filter by starred runs"/);
 assert.match(routerSource, /segments\[4\] === "favorite"/);
+assert.match(routerSource, /starred: url\.searchParams\.get\("starred"\) === "1"/);
 assert.match(routerSource, /segments\[4\] === "notes"/);
 assert.match(siteTheme, /\.run-favorite\[aria-pressed="true"\]/);
 
@@ -55,6 +59,7 @@ const service = createAgentRunService({
 
 try {
   assert.equal(service.summarizeRun(runId).favorited, false);
+  assert.equal(service.listRuns({ starred: true }).total, 0);
   assert.deepEqual(service.getRunNotes(runId), {
     schema_version: 1,
     notes: "",
@@ -77,6 +82,7 @@ try {
   assert.equal(marker.favorite, true);
   assert.match(marker.favorited_at, /^2026-|^20\d\d-/);
   assert.equal(service.listRuns({ pageSize: 10 }).runs[0].favorited, true);
+  assert.deepEqual(service.listRuns({ starred: true }).runs.map((run) => run.id), [runId]);
 
   const originalFavoritedAt = marker.favorited_at;
   service.setRunFavorite(runId, true);
@@ -84,6 +90,7 @@ try {
 
   const unfavorite = service.setRunFavorite(runId, false);
   assert.equal(unfavorite.favorited, false);
+  assert.equal(service.listRuns({ starred: true }).total, 0);
   assert.equal(fs.existsSync(markerPath), false);
   assert.equal(fs.existsSync(notesPath), true);
   assert.equal(service.getRunNotes(runId).notes, savedNotes.notes);

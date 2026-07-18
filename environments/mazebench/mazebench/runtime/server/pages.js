@@ -85,7 +85,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css?v=20260710-card-parity-1">
-    <link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-1">
+    <link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-2">
     ${extraHeadHtml}`
     })}
   </head>
@@ -248,7 +248,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css?v=${PLAY_ASSET_VERSION}">
-    <link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-1">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-2">`;
   }
 
   function renderPlayPage(game, level) {
@@ -458,7 +458,7 @@ function createPageRenderer({
     ${includeRuntimeStyles ? '<link rel="stylesheet" href="/styles.css">' : ""}
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-1">' : ""}`;
+    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-2">' : ""}`;
   }
 
   function renderAuthorPage(game, level) {
@@ -1078,6 +1078,7 @@ function createPageRenderer({
               <label class="runs-filter"><span>Company</span><select id="runs-provider" aria-label="Filter by company"><option value="">All</option></select></label>
               <label class="runs-filter"><span>Model</span><select id="runs-model" aria-label="Filter by model"><option value="">All</option></select></label>
               <label class="runs-filter"><span>Status</span><select id="runs-status" aria-label="Filter by status"><option value="">All</option></select></label>
+              <label class="runs-filter"><span>Starred</span><select id="runs-starred" aria-label="Filter by starred runs"><option value="">All</option><option value="1">Starred</option></select></label>
               <label class="runs-filter"><span>Sort</span><select id="runs-sort" aria-label="Sort">
                 <option value="newest">Newest</option>
                 <option value="oldest">Oldest</option>
@@ -1117,7 +1118,7 @@ function createPageRenderer({
           </div>
         </div>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
-        <script src="/agent.js?v=20260718-run-favorites-1" defer></script>`
+        <script src="/agent.js?v=20260718-run-favorites-2" defer></script>`
     });
   }
 

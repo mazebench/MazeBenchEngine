@@ -210,6 +210,7 @@ function createRequestRouter({
             provider: url.searchParams.get("provider") || "",
             model: url.searchParams.get("model") || "",
             status: url.searchParams.get("status") || "",
+            starred: url.searchParams.get("starred") === "1",
             query: url.searchParams.get("q") || "",
             sort: url.searchParams.get("sort") || "newest"
           })
