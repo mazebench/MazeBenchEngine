@@ -767,6 +767,7 @@
   font-size: 11px;
   line-height: 1.4;
   max-height: 300px;
+  overflow-anchor: none;
   white-space: pre-wrap;
 }
 

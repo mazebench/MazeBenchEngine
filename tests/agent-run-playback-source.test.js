@@ -74,6 +74,9 @@ assert.match(
   /id="run-replay-export"[\s\S]*?id="generate-video" class="run-heatmap__export run-replay-export__button"[\s\S]*?>Generate replay<[\s\S]*?id="run-replay-progress"[\s\S]*?id="run-replay-section"/
 );
 assert.match(pages, /<h2>Runner log<\/h2>[\s\S]*?\$\{replayExportSection\}/);
+assert.match(runScript, /const previousLogScrollTop = logEl\.scrollTop/);
+assert.match(runScript, /logEl\.scrollTop = previousLogScrollTop/);
+assert.doesNotMatch(runScript, /logEl\.scrollTop = logEl\.scrollHeight/);
 assert.doesNotMatch(pages, /id="generate-video" class="button run-video-action"/);
 assert.match(runScript, /generateLabel\.textContent = renderingVideo \? "Generating…" : "Generate replay"/);
 assert.match(siteTheme, /\.run-video \{[\s\S]*?max-height: min\(62vh, 540px\);[\s\S]*?width: min\(100%, 760px\);/);
