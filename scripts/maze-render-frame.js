@@ -387,6 +387,14 @@ async function createRenderSession(payload) {
       const app = window.__PIXEL_GAME_APP__;
       return Boolean(app?.movement && app?.threeRenderer && app?.render);
     });
+    await page.evaluate(() => {
+      const app = window.__PIXEL_GAME_APP__;
+      // Agent sessions keep deaths terminal until the model explicitly
+      // chooses undo, reset, or a room change. The interactive play page
+      // auto-undoes falls, which otherwise advances only the vision replay
+      // and makes later frames diverge from the authoritative run state.
+      app.autoUndoPlayerFalls = false;
+    });
     await page.addStyleTag({
       content: `
         html, body {

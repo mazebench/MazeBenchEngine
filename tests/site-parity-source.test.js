@@ -16,6 +16,7 @@ const playScript = fs.readFileSync(path.join(root, "public", "play.js"), "utf8")
 const playTheme = fs.readFileSync(path.join(root, "public", "play-theme.css"), "utf8");
 const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "utf8");
 const replayExporter = fs.readFileSync(path.join(root, "scripts", "maze-export-replay.js"), "utf8");
+const visionRenderer = fs.readFileSync(path.join(root, "scripts", "maze-render-frame.js"), "utf8");
 const favicon = fs.readFileSync(path.join(root, "public", "favicon.svg"), "utf8");
 const router = fs.readFileSync(path.join(root, "server", "router.js"), "utf8");
 const { nativeFrameCountIsAcceptable } = require(path.join(root, "scripts", "maze-export-replay.js"));
@@ -228,6 +229,7 @@ assert.match(replayExporter, /const terminalColumns = 64/);
 assert.match(replayExporter, /const terminalRows = 64/);
 assert.match(replayExporter, /What the model sees:/);
 assert.match(replayExporter, /app\.autoUndoPlayerFalls = false/);
+assert.match(visionRenderer, /app\.autoUndoPlayerFalls = false/);
 assert.match(replayExporter, /--use-angle=swiftshader/);
 assert.match(replayExporter, /function startRawVideoEncoder/);
 assert.match(replayExporter, /__advanceMazeReplayFrame__/);

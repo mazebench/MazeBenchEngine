@@ -7,6 +7,11 @@ const {
   playwrightBrowserProcess,
   signalProcessGroup
 } = require("../scripts/playwright-process");
+const {
+  applySessionAction,
+  closeRenderSession,
+  createRenderSession
+} = require("../scripts/maze-render-frame");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const RENDERER = path.join(ROOT_DIR, "scripts", "maze-render-frame.js");
@@ -118,6 +123,66 @@ async function runCase(stop) {
   }
 }
 
+async function activePlayer(page) {
+  return page.evaluate(() => {
+    const app = window.__PIXEL_GAME_APP__;
+    const player = app.state.actors.find(
+      (actor) => !actor.removed && (actor.type === "player" || actor.type === "circle_player")
+    );
+    return player
+      ? { elevation: player.elevation || 0, x: player.x, y: player.y }
+      : null;
+  });
+}
+
+async function verifyTerminalStateParity() {
+  const session = await createRenderSession({
+    actions: [],
+    draft: true,
+    fast: true,
+    gameId: "maze",
+    height: 128,
+    levelId: "level_HxI",
+    view: 1,
+    width: 128,
+    yaw: 0
+  });
+
+  try {
+    assert.equal(
+      await session.page.evaluate(() => window.__PIXEL_GAME_APP__.autoUndoPlayerFalls),
+      false,
+      "vision rendering must not auto-undo terminal player falls"
+    );
+
+    for (let index = 0; index < 10; index += 1) {
+      await applySessionAction(session, "right");
+    }
+    for (let index = 0; index < 3; index += 1) {
+      await applySessionAction(session, "up");
+    }
+    assert.deepEqual(await activePlayer(session.page), { elevation: 0, x: 14, y: 9 });
+
+    await applySessionAction(session, "up");
+    assert.equal(await activePlayer(session.page), null, "the fatal frame must retain the terminal state");
+
+    await applySessionAction(session, "undo");
+    assert.deepEqual(await activePlayer(session.page), { elevation: 0, x: 14, y: 9 });
+
+    await applySessionAction(session, "rotate camera right");
+    assert.deepEqual(await activePlayer(session.page), { elevation: 0, x: 14, y: 9 });
+
+    await applySessionAction(session, "up");
+    assert.deepEqual(
+      await activePlayer(session.page),
+      { elevation: 0, x: 13, y: 9 },
+      "camera-relative movement must stay aligned after a terminal fall and explicit undo"
+    );
+  } finally {
+    await closeRenderSession(session);
+  }
+}
+
 async function main() {
   if (!fs.existsSync(path.join(ROOT_DIR, "node_modules", "playwright-core"))) {
     console.log("renderer-lifecycle: skipped (playwright-core is not installed)");
@@ -138,7 +203,8 @@ async function main() {
   await runCase(async (renderer) => {
     renderer.child.kill("SIGTERM");
   });
-  console.log("renderer-lifecycle: browser and profile cleanup verified");
+  await verifyTerminalStateParity();
+  console.log("renderer-lifecycle: cleanup and terminal-state parity verified");
 }
 
 main().catch((error) => {

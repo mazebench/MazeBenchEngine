@@ -10,6 +10,7 @@ const bridgeScript = path.join(ROOT_DIR, "scripts", "maze-bridge.js");
 const codexPlayScript = path.join(ROOT_DIR, "scripts", "codex-play.js");
 const modelReplScript = path.join(ROOT_DIR, "scripts", "maze-model-repl.js");
 const {
+  expectedReplayPlayerState,
   extractAsciiFrames,
   resolveInput,
   rowFromActionLog
@@ -39,6 +40,22 @@ const {
   undoMove
 } = require(terminalScript);
 const mazeEngine = loadMazeEngine();
+
+assert.deepEqual(expectedReplayPlayerState({ player_dead: false }), {
+  known: false,
+  player: null
+});
+assert.deepEqual(expectedReplayPlayerState({ player_dead: true }), {
+  known: true,
+  player: null
+});
+assert.deepEqual(expectedReplayPlayerState({
+  player: { elevation: 0, x: 4, y: 12 },
+  player_dead: false
+}), {
+  known: true,
+  player: { elevation: 0, x: 4, y: 12 }
+});
 
 {
   const board = (name) => `maze level_HxI | view=top-diagonal yaw=0\n${name}`;

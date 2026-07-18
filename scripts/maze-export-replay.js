@@ -580,6 +580,16 @@ function extractExpectedVisualStates(row) {
   return Array.isArray(statuses) ? statuses : [];
 }
 
+function expectedReplayPlayerState(status) {
+  const hasExplicitPlayer = Boolean(
+    status && Object.prototype.hasOwnProperty.call(status, "player")
+  );
+  return {
+    known: hasExplicitPlayer || status?.player_dead === true,
+    player: hasExplicitPlayer ? status.player || null : null
+  };
+}
+
 function readJsonl(filePath) {
   const text = fs.readFileSync(filePath, "utf8");
   return text
@@ -2726,17 +2736,20 @@ async function renderReplayVideo(
             `room ${visualState.level_id || "(none)"} != ${expectedState.current_room}`
           );
         }
-        const expectedPlayer = expectedState.player || null;
-        if (!expectedPlayer && visualState.player) {
-          mismatches.push("player should be absent");
-        } else if (expectedPlayer && !visualState.player) {
-          mismatches.push("player should be present");
-        } else if (expectedPlayer && visualState.player) {
-          for (const key of ["x", "y", "elevation"]) {
-            if (Number(expectedPlayer[key] || 0) !== Number(visualState.player[key] || 0)) {
-              mismatches.push(
-                `player ${key} ${visualState.player[key]} != ${expectedPlayer[key]}`
-              );
+        const expectedPlayerState = expectedReplayPlayerState(expectedState);
+        if (expectedPlayerState.known) {
+          const expectedPlayer = expectedPlayerState.player;
+          if (!expectedPlayer && visualState.player) {
+            mismatches.push("player should be absent");
+          } else if (expectedPlayer && !visualState.player) {
+            mismatches.push("player should be present");
+          } else if (expectedPlayer && visualState.player) {
+            for (const key of ["x", "y", "elevation"]) {
+              if (Number(expectedPlayer[key] || 0) !== Number(visualState.player[key] || 0)) {
+                mismatches.push(
+                  `player ${key} ${visualState.player[key]} != ${expectedPlayer[key]}`
+                );
+              }
             }
           }
         }
@@ -3089,6 +3102,7 @@ if (require.main === module) {
 
 module.exports = {
   defaultReplayOptions,
+  expectedReplayPlayerState,
   extractAsciiFrames,
   humanSize,
   nativeFrameCountIsAcceptable,
