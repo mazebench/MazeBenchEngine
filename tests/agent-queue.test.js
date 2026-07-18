@@ -106,6 +106,7 @@ try {
     x: "H",
     y: "I"
   });
+  assert.deepEqual(replayMessageForCommandText("no move"), { command: "no_move" });
   assert.equal(replayMessageForCommandText("not a command"), null);
 
   const harnessRegistry = service.listPrimeHarnesses();

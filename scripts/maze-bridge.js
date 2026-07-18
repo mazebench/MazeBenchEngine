@@ -342,8 +342,9 @@ function sessionScorecard(session) {
   const actions = scorecard.actions || {};
   const extraActions = session.extraActionCounts || {};
   actions.go_to_level = extraActions.goto_level || 0;
+  actions.no_move = extraActions.no_move || 0;
   actions.quit = extraActions.quit || 0;
-  actions.total = (actions.total || 0) + actions.go_to_level + actions.quit;
+  actions.total = (actions.total || 0) + actions.go_to_level + actions.no_move + actions.quit;
   scorecard.actions = actions;
   scorecard.blocks = {
     pushes: session.pushCount,
@@ -493,6 +494,7 @@ function createSession(options) {
     context,
     extraActionCounts: {
       goto_level: 0,
+      no_move: 0,
       quit: 0
     },
     initialOptions: { ...options },
@@ -578,6 +580,7 @@ function restoreCheckpoint(session, checkpoint) {
   session.novelPushStates = countedSet("checkpoint-push:", checkpoint.novel_push_count);
   session.extraActionCounts = {
     goto_level: Math.max(0, finiteInteger(checkpoint.extra_action_counts?.goto_level)),
+    no_move: Math.max(0, finiteInteger(checkpoint.extra_action_counts?.no_move)),
     quit: Math.max(0, finiteInteger(checkpoint.extra_action_counts?.quit))
   };
 
@@ -638,6 +641,16 @@ function handleCommand(session, message) {
 
   if (command === "observe") {
     return sessionSnapshot(session, { action: "observe" });
+  }
+
+  if (command === "no_move") {
+    session.extraActionCounts.no_move += 1;
+    session.actionCount += 1;
+    return sessionSnapshot(session, {
+      action: "no_move",
+      moved: false,
+      synthetic: true
+    });
   }
 
   if (isPlayerDead(session.context) && !DEAD_INTERNAL_COMMANDS.has(command)) {

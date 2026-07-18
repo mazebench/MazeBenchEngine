@@ -378,6 +378,10 @@ function canonicalFromBridgeMessage(message) {
     return "reset";
   }
 
+  if (message.command === "no_move") {
+    return "no move";
+  }
+
   return String(message.command || "");
 }
 
@@ -698,6 +702,10 @@ function parseCommandLine(line) {
         return { command };
       }
 
+      if (command === "no_move") {
+        return { command: "no_move" };
+      }
+
       if (command === "reset" || command === "reset_level") {
         return { command: "reset_level" };
       }
@@ -714,6 +722,10 @@ function parseCommandLine(line) {
 
   if (lower === "undo" || lower === "quit") {
     return { command: lower };
+  }
+
+  if (lower === "no move" || lower === "no_move") {
+    return { command: "no_move" };
   }
 
   if (lower === "reset" || lower === "reset level" || lower === "reset_level") {
@@ -2595,6 +2607,8 @@ async function renderReplayVideo(
         // The trusted evaluator rejected this attempt (for example, a goto to
         // an unvisited room). Hold the authoritative visual state for one
         // action instead of calling the browser's unrestricted room switcher.
+        await captureFrame();
+      } else if (parsed.command === "no_move") {
         await captureFrame();
       } else if (parsed.command === "move") {
         const key = {

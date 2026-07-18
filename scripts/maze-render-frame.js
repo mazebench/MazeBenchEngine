@@ -106,6 +106,9 @@ function parseCommandLine(line) {
       if (command === "undo" || command === "quit") {
         return { command };
       }
+      if (command === "no_move") {
+        return { command: "no_move" };
+      }
       if (command === "goto_level" || command === "go_to_level" || command === "goto") {
         const level = normalizeLevelToken(payload.level);
         const x = String(payload.x || level[0] || "").toUpperCase();
@@ -127,6 +130,9 @@ function parseCommandLine(line) {
   }
   if (lower === "undo" || lower === "quit") {
     return { command: lower };
+  }
+  if (lower === "no move" || lower === "no_move") {
+    return { command: "no_move" };
   }
   if (lower === "reset" || lower === "reset level" || lower === "reset_level") {
     return { command: "reset_level" };

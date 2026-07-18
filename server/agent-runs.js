@@ -325,6 +325,7 @@ function replayMessageForCommandText(value) {
   if (rotation) return { command: "rotate_camera", direction: rotation[1] };
   if (command === "undo") return { command: "undo" };
   if (command === "reset") return { command: "reset_level" };
+  if (command === "no move" || command === "no_move") return { command: "no_move" };
   if (command === "quit") return { command: "quit" };
   const level = command.match(/^go to level (?:level_)?([a-z])(?:x|\s+)([a-z])$/i);
   if (level) return { command: "goto_level", x: level[1].toUpperCase(), y: level[2].toUpperCase() };
@@ -3184,6 +3185,7 @@ function createAgentRunService({
     if (message.command === "rotate_camera") return `rotate camera ${message.direction}`;
     if (message.command === "goto_level") return `go to level ${message.x} ${message.y}`;
     if (message.command === "reset_level") return "reset";
+    if (message.command === "no_move") return "no move";
     return String(message.command || "");
   }
 

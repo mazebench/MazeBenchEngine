@@ -19,6 +19,8 @@ const {
   redactVisionStatus,
   requiredActionsRemaining
 } = require(codexPlayScript);
+const { recordNoMoveIfIdle } = require(path.join(ROOT_DIR, "scripts", "maze-agent-local.js"));
+const { evaluateAutoQuit } = require(path.join(ROOT_DIR, "shared", "auto-quit.js"));
 const {
   applyMove,
   boardStateHash,
@@ -1476,6 +1478,67 @@ function syntheticFloor(width, height) {
     const continued = JSON.parse(fs.readFileSync(stateFile, "utf8"));
     assert.equal(continued.actions.length, 101, "unlimited helper sessions must permit action 101");
     assert.equal(continued.maxActions, null);
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
+}
+
+{
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "maze-no-response-action-"));
+  const stateFile = path.join(outDir, "session.json");
+
+  try {
+    runCodexPlay([
+      "start",
+      "--repo-root", ROOT_DIR,
+      "--state", stateFile,
+      "--level", "level_HxI",
+      "--max-actions", "2",
+      "--no-quit"
+    ]);
+    const initial = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    assert.equal(recordNoMoveIfIdle({ sessionFile: stateFile }, 0), true);
+    assert.equal(recordNoMoveIfIdle({ sessionFile: stateFile }, 0), false);
+
+    const session = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    assert.equal(session.actions.length, 1);
+    assert.equal(session.actions[0].command_text, "no move");
+    assert.deepEqual(session.actions[0].message, { command: "no_move" });
+    assert.equal(session.actions[0].synthetic, true);
+    assert.equal(session.actions[0].source, "model_no_response");
+    assert.equal(session.actions[0].status.moved, false);
+    assert.equal(session.actions[0].status.board_state_hash, initial.initial.board_state_hash);
+    assert.deepEqual(
+      evaluateAutoQuit(initial.initial.board_state_hash, session.actions, {
+        enabled: true,
+        mode: "rolling",
+        threshold: 10,
+        window: 1
+      }),
+      {
+        mode: "rolling",
+        threshold: 10,
+        window: 1,
+        percentage: 0,
+        novel_states: 0,
+        observed_states: 1,
+        action_count: 1
+      }
+    );
+
+    const finalized = execFileSync(
+      process.execPath,
+      [codexPlayScript, "finalize", "--state", stateFile],
+      {
+        cwd: ROOT_DIR,
+        encoding: "utf8",
+        env: { ...process.env, MAZEBENCH_TRUSTED_FINALIZE: "1" }
+      }
+    );
+    assert.deepEqual(JSON.parse(finalized), { ok: true, finalized: true });
+    const scorecard = JSON.parse(fs.readFileSync(path.join(outDir, "scorecard.json"), "utf8"));
+    assert.equal(scorecard.actions.no_move, 1);
+    assert.equal(scorecard.actions.total, 1);
   } finally {
     fs.rmSync(outDir, { recursive: true, force: true });
   }

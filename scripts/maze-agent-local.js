@@ -1380,6 +1380,45 @@ function providerFailureFromEvents(raw, provider) {
   return null;
 }
 
+function sessionActionCount(sessionFile) {
+  try {
+    const session = JSON.parse(fs.readFileSync(sessionFile, "utf8"));
+    return Array.isArray(session.actions) ? session.actions.length : 0;
+  } catch (_error) {
+    return 0;
+  }
+}
+
+function recordNoMoveIfIdle(config, actionCountBefore) {
+  const actionCountAfter = sessionActionCount(config.sessionFile);
+  if (actionCountAfter !== actionCountBefore || !fs.existsSync(config.sessionFile)) return false;
+
+  const result = spawnSync(
+    process.execPath,
+    [HELPER, "record-no-move", "--state", config.sessionFile],
+    {
+      cwd: ROOT_DIR,
+      encoding: "utf8",
+      env: { ...process.env, MAZEBENCH_TRUSTED_NO_MOVE: "1" }
+    }
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error((result.stderr || result.stdout || "").trim() || "Could not record a no-move action.");
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(String(result.stdout || "").trim());
+  } catch (_error) {
+    throw new Error("The no-move recorder returned an invalid response.");
+  }
+  if (payload.recorded) {
+    console.log("\nNo game action was emitted; recorded a synthetic no move for novelty tracking.");
+  }
+  return Boolean(payload.recorded);
+}
+
 function runAgent(config, prompt) {
   const { bin, argv } = isolatedDockerAgentCommand(config, agentCommand(config, prompt));
   ensureAgentAvailable(bin);
@@ -2145,6 +2184,7 @@ async function main() {
   }
 
   try {
+    const actionCountBefore = sessionActionCount(config.sessionFile);
     const agentResult = await runAgent(config, prompt);
     if (agentResult?.failure || agentResult?.code !== 0) {
       const failure = agentResult.failure || {
@@ -2160,6 +2200,7 @@ async function main() {
       process.exitCode = 75;
       return;
     }
+    recordNoMoveIfIdle(config, actionCountBefore);
   } finally {
     privateMcp?.stop();
   }
@@ -2217,6 +2258,7 @@ module.exports = {
   migrateSeedSessionObservation,
   needsPrivateMcpServer,
   providerFailureFromEvents,
+  recordNoMoveIfIdle,
   resultFromOutput,
   resultsFromOutput
 };

@@ -167,6 +167,16 @@ function requiredActionsRemaining(session) {
   return Math.max(0, required - completed);
 }
 
+function terminalStatus(status) {
+  return Boolean(
+    status?.game_won ||
+    status?.game_lost ||
+    status?.player_dead ||
+    status?.quit ||
+    status?.solved
+  );
+}
+
 function usage() {
   console.log(`Usage:
   node codex-play.js start --repo-root <path> --state <session.json> [options]
@@ -678,6 +688,44 @@ async function main() {
 
   const session = readJson(options.state, null);
   if (!session) throw new Error(`No session found at ${options.state}`);
+
+  if (command === "record-no-move") {
+    if (process.env.MAZEBENCH_TRUSTED_NO_MOVE !== "1") {
+      throw new Error("Unknown command: record-no-move");
+    }
+    const maxActions = sessionMaxActions(session);
+    if (maxActions != null && session.actions.length >= maxActions) {
+      console.log(JSON.stringify({ ok: true, recorded: false, reason: "budget_exhausted" }));
+      return;
+    }
+    if (terminalStatus(session.lastStatus || session.initial)) {
+      console.log(JSON.stringify({ ok: true, recorded: false, reason: "terminal" }));
+      return;
+    }
+    const message = { command: "no_move" };
+    const response = applyQuitPolicy(
+      consumeRenderState(runBridge(session, message), options.state),
+      session
+    );
+    const persistedStatus = storedStatus(session, response.status || response);
+    const record = {
+      turn: session.actions.length + 1,
+      timestamp: new Date().toISOString(),
+      command_text: "no move",
+      valid: true,
+      error: null,
+      synthetic: true,
+      source: "model_no_response",
+      message,
+      status: persistedStatus
+    };
+    session.actions.push(record);
+    session.lastStatus = persistedStatus;
+    writeJson(options.state, session);
+    fs.appendFileSync(path.join(path.dirname(options.state), "actions.jsonl"), `${JSON.stringify(record)}\n`);
+    console.log(JSON.stringify({ ok: true, recorded: true, action_count: session.actions.length }));
+    return;
+  }
 
   if (command === "observe") {
     const response = applyQuitPolicy(consumeRenderState(
