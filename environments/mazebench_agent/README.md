@@ -1,4 +1,10 @@
-# MazeBench Agent
+# MazeBench Agent (disabled)
+
+> **Security hold:** this taskset is intentionally disabled. Verifiers' built-in
+> Codex and Claude Code harnesses run in the same sandbox as the task runtime,
+> which lets the coding agent inspect hidden level, engine, and session files.
+> Use the `mazebench` taskset until the game is moved behind a separate tool
+> boundary and only sanitized observations/actions are exposed.
 
 Harness-neutral Verifiers v1 taskset for running MazeBench through a coding-agent
 harness. The taskset supplies the maze runtime and a shell command contract; the

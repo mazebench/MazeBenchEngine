@@ -1,21 +1,10 @@
-$result_text
+$notice_text
 
 Objective: $target_text
 
-Current room: `$current_room`
-Current view: $current_view
-Yaw: $yaw
-Gems collected: $gem_count
-Visited rooms: $visited_rooms
-$death_text
-
 ```text
-maze $current_room | view=$current_view yaw=$yaw
 $level
 ```
-
-Allowed commands:
-$allowed_commands
 
 $terminal_note
 $response_instruction

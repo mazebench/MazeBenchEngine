@@ -22,6 +22,10 @@ SESSION_FILE = f"{ARTIFACT_ROOT}/session.json"
 HELPER = f"{RUNTIME_ROOT}/scripts/maze-play.js"
 TELEMETRY_PREFIX = "MAZEBENCH_EVENT_V1:"
 PLAYWRIGHT_CORE_VERSION = "1.60.0"
+UNSAFE_HARNESS_MESSAGE = (
+    "mazebench-agent is disabled because a coding-agent sandbox can inspect the "
+    "bundled benchmark runtime and hidden state. Use the isolated mazebench taskset."
+)
 
 
 def _runtime_source() -> Path:
@@ -344,6 +348,7 @@ class MazeBenchAgentTaskset(
     vf.Taskset[MazeBenchAgentTask, MazeBenchAgentConfig]
 ):
     def load(self) -> list[MazeBenchAgentTask]:
+        raise RuntimeError(UNSAFE_HARNESS_MESSAGE)
         tasks: list[MazeBenchAgentTask] = []
         count = max(1, int(self.config.num_examples))
         target = int(self.config.target_gems or self.config.game_won_gem_count)

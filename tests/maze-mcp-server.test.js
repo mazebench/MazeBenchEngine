@@ -43,7 +43,8 @@ try {
   assert.equal(result.status, 0, result.stderr);
   const responses = result.stdout.trim().split("\n").map((line) => JSON.parse(line));
   const firstObservation = responses.find((response) => response.id === 2)?.result?.structuredContent;
-  assert(firstObservation?.current_room);
+  assert.deepEqual(Object.keys(firstObservation || {}), ["level"]);
+  assert.match(firstObservation.level, /P|p/);
   assert.equal(Object.prototype.hasOwnProperty.call(firstObservation, "player"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(firstObservation, "scorecard"), false);
   const listedTools = responses.find((response) => response.id === 10)?.result?.tools || [];
@@ -128,7 +129,9 @@ try {
     ["game_start", "game_observe", "game_action"]
   );
   assert.doesNotMatch(JSON.stringify(restrictedTools), /MazeBench|clone_id|worker/i);
-  assert(restrictedResponses.find((response) => response.id === 92)?.result?.structuredContent?.current_room);
+  const restrictedObservation = restrictedResponses.find((response) => response.id === 92)?.result?.structuredContent;
+  assert.deepEqual(Object.keys(restrictedObservation || {}), ["level"]);
+  assert.match(restrictedObservation.level, /P|p/);
   for (const id of [93, 94, 95, 96]) {
     assert(restrictedResponses.find((response) => response.id === id)?.error, `restricted request ${id} must fail closed`);
   }

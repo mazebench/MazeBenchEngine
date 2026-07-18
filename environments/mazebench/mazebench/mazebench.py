@@ -403,21 +403,22 @@ def render_multiturn_user_prompt(
     target_text: str,
     result_text: str,
 ) -> str:
-    visited_rooms = status.get("visited_levels") or []
+    notice_parts: list[str] = []
+    if result_text.startswith("Previous response was invalid:"):
+        notice_parts.append(result_text)
+    warning_start = result_text.find("AUTO-QUIT WARNING:")
+    if warning_start >= 0:
+        notice_parts.append(result_text[warning_start:])
+    death = death_text(status)
+    if death:
+        notice_parts.append(death)
     return render_prompt_file(
         MULTITURN_USER_PROMPT_FILE,
-        allowed_commands=allowed_commands_text(status),
-        current_room=status.get("current_room") or status.get("level_id") or "?",
-        current_view=status.get("current_view") or status.get("view") or "?",
-        death_text=death_text(status),
-        gem_count=status.get("gem_count", 0),
         level=status.get("level") or status.get("observation") or "",
+        notice_text="\n\n".join(dict.fromkeys(notice_parts)),
         response_instruction=response_instruction(status),
-        result_text=result_text,
         target_text=target_text,
         terminal_note=terminal_note_text(status),
-        visited_rooms=", ".join(str(room) for room in visited_rooms) or "(none)",
-        yaw=status.get("yaw", 0),
     )
 
 

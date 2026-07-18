@@ -12,7 +12,8 @@ const {
   createAgentRunService,
   filterPrimeCatalogForHarness,
   primeReasoningLevels,
-  primeHarnessModelCompatible
+  primeHarnessModelCompatible,
+  primeSandboxIdsFromText
 } = require("../server/agent-runs");
 const { findPrimeResultsFile } = require("../server/token-usage");
 
@@ -44,6 +45,9 @@ try {
   assert.match(agentSource, /const allowCustomModel = state\.execution === "local" \|\| state\.harness === "none"/);
   assert.doesNotMatch(agentSource, /harnessSupportsVision/);
   assert.match(agentSource, /function setExecution\(value\)/);
+  assert.match(agentSource, /blockedPrimeAgentHarness/);
+  assert.match(agentSource, /Codex and Claude Code via Prime are disabled/);
+  assert.match(agentSource, /state\.execution = harnessId === "none" \? "prime" : "local"/);
   assert.match(agentSource, /async function checkLocalAvailability\(harnessId = state\.harness\)/);
   assert.match(agentSource, /state\.localAvailability = "checking";[\s\S]*?await refreshEnvironment\(\)/);
   assert.match(agentSource, /state\.localAvailability = "active"/);
@@ -69,11 +73,13 @@ try {
   assert.match(appSource, /claude.*\["auth", "status", "--json"\]/s);
   assert.match(appSource, /logged in using chatgpt/i);
   assert.match(runsSource, /Subscription-backed local Codex and Claude Code launches are disabled/);
+  assert.match(runsSource, /built-in coding-agent harness exposes benchmark internals/);
   assert.match(runsSource, /localLaunchEnvironment/);
   assert.match(runsSource, /delete environment\[key\]/);
   assert.doesNotMatch(runsSource, /const shouldWait = model === "claude"/);
 
   assert.match(runSource, /"--harness\.runtime\.type",\s*"prime"/);
+  assert.match(runSource, /built-in coding-agent harness exposes the benchmark runtime and hidden state/);
   assert.match(runSource, /TEXT_RUNTIME_IMAGE = "node:24-bookworm-slim"/);
   assert.match(runSource, /VISION_RUNTIME_IMAGE = "mcr\.microsoft\.com\/playwright:v1\.60\.0-noble"/);
   assert.match(runSource, /opts\.vision \? VISION_RUNTIME_IMAGE : TEXT_RUNTIME_IMAGE/);
@@ -90,6 +96,7 @@ try {
 
   assert.match(project, /verifiers @ git\+https:\/\/github\.com\/PrimeIntellect-ai\/verifiers\.git@df9c5aa58c28db717cfeb1150c1d0c751f4570a6/);
   assert.match(tasksetSource, /__all__ = \["MazeBenchAgentTaskset"\]/);
+  assert.match(tasksetSource, /raise RuntimeError\(UNSAFE_HARNESS_MESSAGE\)/);
   assert.doesNotMatch(tasksetSource, /class \w*Harness/);
   assert.match(tasksetSource, /extra_instructions: str = ""/);
   assert.match(tasksetSource, /`view_image` in\s+Codex; `Read` in Claude Code/);
@@ -106,6 +113,14 @@ try {
   assert.equal(primeHarnessModelCompatible("anthropic/claude-sonnet-5", "codex"), false);
   assert.equal(primeHarnessModelCompatible("anthropic/claude-sonnet-5", "claude-code"), true);
   assert.equal(primeHarnessModelCompatible("openai/gpt-5.4", "claude-code"), false);
+  assert.deepEqual(
+    primeSandboxIdsFromText([
+      "PrimeRuntime: sandbox azquf017rdi59jhwqoiu43z0 up",
+      "pod sandbox-job-azquf017rdi59jhwqoiu43z0",
+      "PrimeRuntime: sandbox bbcdef2345678901 up"
+    ].join("\n")),
+    ["azquf017rdi59jhwqoiu43z0", "bbcdef2345678901"]
+  );
   const sampleCatalog = {
     models: [
       { id: "openai/gpt-5-codex" },
@@ -121,34 +136,17 @@ try {
     filterPrimeCatalogForHarness(sampleCatalog, "claude-code").models.map((model) => model.id),
     ["anthropic/claude-sonnet-5"]
   );
-  assert.deepEqual(primeReasoningLevels("openai/gpt-5.6-sol"), [
-    "low", "medium", "high", "xhigh", "max", "ultra"
-  ]);
-  assert.deepEqual(primeReasoningLevels("openai/gpt-5.6-luna"), [
-    "low", "medium", "high", "xhigh", "max"
-  ]);
-  assert.deepEqual(primeReasoningLevels("openai/gpt-5.2"), [
-    "none", "low", "medium", "high", "xhigh"
-  ]);
-  assert.deepEqual(primeReasoningLevels("openai/gpt-5-chat"), []);
-  assert.deepEqual(primeReasoningLevels("anthropic/claude-fable-5"), [
-    "low", "medium", "high", "xhigh", "max"
-  ]);
-  assert.deepEqual(primeReasoningLevels("anthropic/claude-opus-4.6"), [
-    "low", "medium", "high", "max"
-  ]);
-  assert.deepEqual(primeReasoningLevels("anthropic/claude-opus-4.1"), []);
-  assert.deepEqual(primeReasoningLevels("google/gemini-3.5-flash"), [
-    "minimal", "low", "medium", "high"
-  ]);
-  assert.deepEqual(primeReasoningLevels("google/gemini-3.1-pro-preview"), [
-    "low", "medium", "high"
-  ]);
-  assert.deepEqual(primeReasoningLevels("x-ai/grok-4.20-multi-agent"), [
-    "low", "medium", "high", "xhigh"
-  ]);
-  assert.deepEqual(primeReasoningLevels("Qwen/Qwen3.5-0.8B"), []);
-  assert.match(agentSource, /state\.execution === "prime"[\s\S]{0,180}model\.reasoning_levels/);
+  for (const modelId of [
+    "openai/gpt-5.6-sol",
+    "openai/gpt-5-chat",
+    "anthropic/claude-fable-5",
+    "google/gemini-3.5-flash",
+    "x-ai/grok-4.20-multi-agent",
+    "Qwen/Qwen3.5-0.8B"
+  ]) {
+    assert.deepEqual(primeReasoningLevels(modelId), ["low", "medium", "high"]);
+  }
+  assert.match(agentSource, /state\.execution === "prime"[\s\S]{0,100}return \["low", "medium", "high"\]/);
 
   const primeOnlyService = createAgentRunService({
     agentEnvironment: () => ({}),
@@ -180,30 +178,35 @@ try {
     /active local subscription session/
   );
 
-  const codex = parseArgs([
-    "--env-dir", path.join(root, "environments", "mazebench_agent"),
-    "--out", runDir,
-    "--harness", "codex"
-  ]);
-  assert.equal(codex.harness, "codex");
-  const claude = parseArgs([
-    "--env-dir", path.join(root, "environments", "mazebench_agent"),
-    "--out", runDir,
-    "--harness", "claude"
-  ]);
-  assert.equal(claude.harness, "claude-code");
+  assert.throws(
+    () => parseArgs([
+      "--env-dir", path.join(root, "environments", "mazebench_agent"),
+      "--out", runDir,
+      "--harness", "codex"
+    ]),
+    /built-in coding-agent harness exposes the benchmark runtime/
+  );
+  assert.throws(
+    () => parseArgs([
+      "--env-dir", path.join(root, "environments", "mazebench_agent"),
+      "--out", runDir,
+      "--harness", "claude"
+    ]),
+    /built-in coding-agent harness exposes the benchmark runtime/
+  );
   assert.throws(
     () => parseArgs(["--env-dir", root, "--out", runDir, "--harness", "unknown"]),
     /Unknown Prime harness/
   );
-  const codexVision = parseArgs([
-    "--env-dir", root,
-    "--out", runDir,
-    "--harness", "codex",
-    "--vision"
-  ]);
-  assert.equal(codexVision.vision, true);
-  assert.equal(codexVision.observationMode, "vision");
+  assert.throws(
+    () => parseArgs([
+      "--env-dir", root,
+      "--out", runDir,
+      "--harness", "codex",
+      "--vision"
+    ]),
+    /built-in coding-agent harness exposes the benchmark runtime/
+  );
 
   const start = spawnSync(
     process.execPath,

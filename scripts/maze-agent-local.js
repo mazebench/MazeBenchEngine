@@ -208,8 +208,8 @@ their elevation coordinate drops by one while an orange button is pressed. ${
     ? "The observation is omniscient and contains every object in the current room, so camera rotation is not needed for visibility."
     : "Only objects with at least one character visible in the equivalent ASCII view are included, so rotate the camera to reveal occluded objects."
 } Object type names are literal.`
-      : `This is ASCII mode. Observations contain an ASCII board in the level
-field plus the current status.${config.hideNames
+      : `This is ASCII mode. Observations contain only the current room's ASCII
+board in the level field.${config.hideNames
   ? " Every glyph except player P and gem G is assigned a stable random identity for this run. Infer meanings only from observations and interactions in this run."
   : ""}`;
   const capability = config.toolUse === "offline"
@@ -291,7 +291,7 @@ stop after the first observation while budget remains. Before every primary
 ${controls.action}, write one short sentence explaining the choice. Valid action
 strings include ${validActions}.
 
-After every action, inspect the returned ${config.mode === "vision" ? "frame and status" : config.mode === "json" ? "JSON observation and status" : "board and status"} before choosing the next move. Collect as many
+After every action, inspect the returned ${config.mode === "vision" ? "frame and status" : config.mode === "json" ? "JSON observation and status" : "ASCII board"} before choosing the next move. Collect as many
 unique gems as possible. If the player dies, recover with undo, reset, or a room
 change. Scoring is runner-only; do not attempt to access a scorecard. When done,
 give a one-line summary of the route and gems collected.`;

@@ -26,6 +26,9 @@ const HOSTED_STATE_FILE = "prime-evaluation.json";
 const HOSTED_SAMPLES_FILE = "prime-evaluation-samples.json";
 const TEXT_RUNTIME_IMAGE = "node:24-bookworm-slim";
 const VISION_RUNTIME_IMAGE = "mcr.microsoft.com/playwright:v1.60.0-noble";
+const PRIME_REASONING_LEVELS = new Set(["low", "medium", "high"]);
+const UNSAFE_AGENT_HARNESS_MESSAGE =
+  "Codex and Claude Code via Prime are disabled: the built-in coding-agent harness exposes the benchmark runtime and hidden state. Use the isolated Prime Intellect harness instead.";
 
 function positiveTurnBudget(value, fallback = 20) {
   const number = Number(value);
@@ -116,9 +119,15 @@ function parseArgs(argv) {
   if (!["none", "codex", "claude-code"].includes(opts.harness)) {
     throw new Error(`Unknown Prime harness "${opts.harness}".`);
   }
+  if (opts.harness !== "none") {
+    throw new Error(UNSAFE_AGENT_HARNESS_MESSAGE);
+  }
   if (opts.hosted && opts.harness !== "none") {
     throw new Error("Prime coding-agent harnesses currently run through the local evaluator with a Prime sandbox.");
   }
+  opts.reasoning = PRIME_REASONING_LEVELS.has(String(opts.reasoning).toLowerCase())
+    ? String(opts.reasoning).toLowerCase()
+    : "";
   return opts;
 }
 
@@ -629,9 +638,8 @@ function runEval(opts) {
     );
   }
 
-  // Ask the model for reasoning tokens. OpenAI reasoning models and Claude
-  // (extended thinking) emit reasoning_content when this is set; models that
-  // don't support it ignore the knob. Without it, Claude returns no reasoning.
+  // Prime's stable cross-provider reasoning contract is low/medium/high. Other
+  // provider-native values are normalized to off during argument parsing.
   if (opts.reasoning) {
     argv.push("--sampling.reasoning-effort", opts.reasoning);
   }

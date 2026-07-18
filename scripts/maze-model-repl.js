@@ -79,7 +79,7 @@ const ACTION_SCHEMAS = [
   {
     name: "quit",
     arguments: {},
-    description: "End the run and print the final scorecard."
+    description: "End the run as a loss."
   }
 ];
 
@@ -263,26 +263,23 @@ function responseInstruction(snapshot) {
   return "Respond with exactly one command line, such as `up`, `down`, `rotate camera left`, `go to level H I`, or `quit`.";
 }
 
+function noticeText(snapshot, resultText) {
+  const notices = [];
+  const text = String(resultText || "");
+  if (text.startsWith("Previous response was invalid:")) notices.push(text);
+  const warningStart = text.indexOf("AUTO-QUIT WARNING:");
+  if (warningStart >= 0) notices.push(text.slice(warningStart));
+  if (snapshot.player_dead) notices.push(snapshot.death_message || DEATH_MESSAGE);
+  return [...new Set(notices)].join("\n\n");
+}
+
 function renderUserMessage(snapshot, options, resultText = "Start of run.") {
-  const player = snapshot.player || {};
   return renderTemplate(readPrompt("multiturn_user.txt"), {
-    allowed_commands: allowedCommandsText(snapshot),
-    current_room: snapshot.current_room,
-    current_view: snapshot.current_view,
-    death_text: snapshot.player_dead ? (snapshot.death_message || DEATH_MESSAGE) : "",
-    gem_count: snapshot.gem_count ?? 0,
     level: snapshot.level || screenFromSnapshot(snapshot).split("\n").slice(1).join("\n"),
-    player_elevation: player.elevation ?? "?",
-    player_x: player.x ?? "?",
-    player_y: player.y ?? "?",
+    notice_text: noticeText(snapshot, resultText),
     response_instruction: responseInstruction(snapshot),
-    result_text: resultText,
     target_text: targetText(options.targetGems),
     terminal_note: snapshot.player_dead ? "" : "Typing quit ends the run as a loss.",
-    visited_rooms: Array.isArray(snapshot.visited_levels) && snapshot.visited_levels.length > 0
-      ? snapshot.visited_levels.join(", ")
-      : "(none)",
-    yaw: snapshot.yaw
   });
 }
 
@@ -573,8 +570,8 @@ function formatAction(message) {
 function printEnvResponse(response, options) {
   console.log("\n=== ENV RESPONSE (USER) ===");
 
-  if ((response.quit || response.game_lost || response.game_won) && response.scorecard) {
-    console.log(`Final scorecard:\n\`\`\`json\n${JSON.stringify(response.scorecard, null, 2)}\n\`\`\``);
+  if (response.quit || response.game_lost || response.game_won) {
+    console.log("The game has ended. No further action is available.");
     return;
   }
 

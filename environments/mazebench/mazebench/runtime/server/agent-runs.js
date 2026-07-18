@@ -86,8 +86,11 @@ const PRIME_HARNESSES = new Map([
   ["codex", { id: "codex", label: "Codex", taskset: "mazebench-agent", protocol: "OpenAI Responses" }],
   ["claude-code", { id: "claude-code", label: "Claude Code", taskset: "mazebench-agent", protocol: "Anthropic Messages" }]
 ]);
+const UNSAFE_PRIME_AGENT_HARNESS_MESSAGE =
+  "Codex and Claude Code via Prime are disabled because the built-in coding-agent harness exposes benchmark internals. Choose Prime Intellect for an isolated run, or use the separately sandboxed Local Run path.";
 
 const STANDARD_REASONING_LEVELS = ["low", "medium", "high"];
+const PRIME_REASONING_LEVELS = ["low", "medium", "high"];
 
 function claudeReasoningLevels(modelId) {
   const id = String(modelId || "").toLowerCase().replace(/\./g, "-");
@@ -104,70 +107,11 @@ function claudeReasoningLevels(modelId) {
   ];
 }
 
-// Prime forwards provider-native reasoning values even though its /models
-// response does not publish per-model capability metadata. Keep this mapping
-// deliberately narrow: each entry is backed by the provider's model docs or by
-// the live Codex model metadata for Prime's OpenAI frontier variants. An empty
-// list means "provider default only"; it is safer than offering a control that
-// a model ignores or rejects.
-function primeReasoningLevels(modelId) {
-  const id = String(modelId || "").trim().toLowerCase();
-  const slash = id.indexOf("/");
-  const provider = slash === -1 ? "" : id.slice(0, slash);
-  const model = slash === -1 ? id : id.slice(slash + 1);
-
-  if (provider === "anthropic") {
-    return claudeReasoningLevels(model);
-  }
-
-  if (provider === "google") {
-    if (/^gemini-(?:3-flash-preview|3\.5-flash)$/.test(model)) {
-      return ["minimal", ...STANDARD_REASONING_LEVELS];
-    }
-    if (/^gemini-(?:3\.1-pro-preview|2\.5-(?:flash|flash-lite|pro))$/.test(model)) {
-      return [...STANDARD_REASONING_LEVELS];
-    }
-    return [];
-  }
-
-  if (provider === "x-ai") {
-    if (/^grok-4\.20-multi-agent(?:-|$)/.test(model)) {
-      return [...STANDARD_REASONING_LEVELS, "xhigh"];
-    }
-    if (/^grok-(?:4\.20|4\.5)(?:-|$)/.test(model)) {
-      return [...STANDARD_REASONING_LEVELS];
-    }
-    return [];
-  }
-
-  if (provider !== "openai") return [];
-  if (/^gpt-oss-(?:20b|120b)(?:-|$)/.test(model)) {
-    return [...STANDARD_REASONING_LEVELS];
-  }
-  if (/-chat(?:-|$)/.test(model)) return [];
-  if (/-pro(?:-|$)/.test(model)) return ["high"];
-  if (/^gpt-5\.6-(?:sol|terra)$/.test(model)) {
-    return [...STANDARD_REASONING_LEVELS, "xhigh", "max", "ultra"];
-  }
-  if (/^gpt-5\.6-luna$/.test(model)) {
-    return [...STANDARD_REASONING_LEVELS, "xhigh", "max"];
-  }
-  if (/^gpt-5\.(?:[3-9]|\d{2,})(?:[.-]|$)/.test(model)) {
-    return [...STANDARD_REASONING_LEVELS, "xhigh"];
-  }
-  if (/^gpt-5\.2(?:[.-]|$)/.test(model)) {
-    return ["none", ...STANDARD_REASONING_LEVELS, "xhigh"];
-  }
-  if (/^gpt-5\.1(?:[.-]|$)/.test(model)) {
-    return ["none", ...STANDARD_REASONING_LEVELS];
-  }
-  if (/^gpt-5-codex(?:-|$)/.test(model)) {
-    return [...STANDARD_REASONING_LEVELS];
-  }
-  if (/^gpt-5(?:-(?:mini|nano))?$/.test(model)) {
-    return ["minimal", ...STANDARD_REASONING_LEVELS];
-  }
-  return [];
+// Prime exposes one stable cross-provider contract. Provider-native extensions
+// such as minimal, xhigh, max, and ultra can consume the answer channel and
+// yield empty game commands, so never advertise or forward them.
+function primeReasoningLevels(_modelId) {
+  return [...PRIME_REASONING_LEVELS];
 }
 
 function primeHarnessModelCompatible(modelId, harnessId) {
@@ -184,6 +128,18 @@ function primeHarnessModelCompatible(modelId, harnessId) {
     return /^openai\/gpt-(?:4o|4\.1|5(?:[.-]|$))/i.test(id);
   }
   return /^anthropic\/claude-/i.test(id);
+}
+
+function primeSandboxIdsFromText(value) {
+  const ids = new Set();
+  const text = String(value || "");
+  for (const pattern of [
+    /\bsandbox\s+([a-z0-9]{12,64})\s+up\b/gi,
+    /\bsandbox-job-([a-z0-9]{12,64})\b/gi
+  ]) {
+    for (const match of text.matchAll(pattern)) ids.add(match[1]);
+  }
+  return [...ids];
 }
 
 function filterPrimeCatalogForHarness(catalog, harnessId) {
@@ -1213,7 +1169,10 @@ function createAgentRunService({
     };
     writeRunMeta(runId, updated);
     stopAutoQuitMonitor(runId);
-    if (meta.kind === "prime") cancelPrimeEvaluation(runId);
+    if (meta.kind === "prime") {
+      cancelPrimeEvaluation(runId);
+      stopPrimeAgentSandboxes(runId);
+    }
     stopLegacyClaudeSnapshots(runId);
     stopLiveRenderer(runId, { force: true });
     stopDetachedRunRenderers(runId, { force: true });
@@ -3432,7 +3391,7 @@ function createAgentRunService({
         checked_at: modelCatalogCheckedAt(),
         default_model_id: models[0]?.id || "",
         note: models.length
-          ? `${models.length} live models. Prices are USD per million tokens; image support is inferred from the model id and reasoning controls are model-specific.`
+          ? `${models.length} live models. Prices are USD per million tokens; image support is inferred from the model id and Prime reasoning is limited to off, low, medium, or high.`
           : "The Prime catalog came back empty — type a model id instead."
       };
     } catch (error) {
@@ -3643,6 +3602,9 @@ function createAgentRunService({
   // Keep hosted execution as an API-level opt-in for evaluation workflows.
   function buildPrimeCommand(params, runDir, runId, game) {
     const harness = normalizePrimeHarness(params.harness);
+    if (harness !== "none") {
+      throw new Error(UNSAFE_PRIME_AGENT_HARNESS_MESSAGE);
+    }
     const model = String(params.model_name || params.model || "").trim();
     if (harness !== "none" && !primeHarnessModelCompatible(model, harness)) {
       const definition = PRIME_HARNESSES.get(harness);
@@ -3663,9 +3625,8 @@ function createAgentRunService({
     const wantVideo = !(params.video === false || params.video === "false");
     const allowQuit = !(params.allow_quit === false || params.allow_quit === "false");
     const autoQuit = normalizeAutoQuitConfig(params);
-    // Reasoning effort → --sampling.reasoning-effort. Prime forwards native
-    // provider values, but each model supports a different subset. "" means
-    // omit the override and preserve the provider's default.
+    // Reasoning effort → --sampling.reasoning-effort. Prime's stable contract
+    // is off/low/medium/high. "" omits the override and preserves the default.
     const requestedReasoning = String(params.reasoning || "").toLowerCase();
     const reasoning = primeReasoningLevels(model).includes(requestedReasoning)
       ? requestedReasoning
@@ -4833,12 +4794,59 @@ function createAgentRunService({
     return result.status === 0;
   }
 
+  function stopPrimeAgentSandboxes(runId) {
+    const runDir = runDirFor(runId);
+    const ids = new Set();
+    for (const filePath of [
+      path.join(runDir, "launcher.log"),
+      path.join(runDir, "eval-output", "eval.log")
+    ]) {
+      try {
+        primeSandboxIdsFromText(fs.readFileSync(filePath, "utf8")).forEach((id) => ids.add(id));
+      } catch (_error) {
+        /* the sandbox may not have started or logged its id yet */
+      }
+    }
+    if (!ids.size) return false;
+
+    const sandboxIds = [...ids];
+    const result = spawnSync(
+      "prime",
+      ["sandbox", "delete", ...sandboxIds, "--yes", "--plain"],
+      {
+        cwd: rootDir,
+        encoding: "utf8",
+        env: enrichedPathEnv(),
+        timeout: 30_000,
+        maxBuffer: 2 * 1024 * 1024
+      }
+    );
+    const record = {
+      sandbox_ids: sandboxIds,
+      stopped_at: result.status === 0 ? new Date().toISOString() : null,
+      error: result.status === 0
+        ? null
+        : String(result.stderr || result.stdout || "Prime sandbox cleanup failed.").trim()
+    };
+    try {
+      fs.writeFileSync(
+        path.join(runDir, "prime-sandbox-cleanup.json"),
+        `${JSON.stringify(record, null, 2)}\n`,
+        "utf8"
+      );
+    } catch (_error) {
+      /* cleanup must still proceed when its audit record cannot be written */
+    }
+    return result.status === 0;
+  }
+
   function deleteRun(runId) {
     const meta = readRunMeta(runId);
     const runDir = runDirFor(runId);
 
     if (meta?.kind === "prime" && ["running", "stopping"].includes(meta.status)) {
       cancelPrimeEvaluation(runId);
+      stopPrimeAgentSandboxes(runId);
     }
 
     // Remove the daemon-owned container first; killing only the attached docker
@@ -4925,6 +4933,7 @@ function createAgentRunService({
           }
         }
         signalRunProcess(meta, "SIGKILL");
+        if (meta.kind === "prime") stopPrimeAgentSandboxes(runId);
       }
       return summarizeRun(runId);
     }
@@ -4932,6 +4941,7 @@ function createAgentRunService({
     writeRunMeta(runId, { ...meta, status: "stopping" });
     stopAutoQuitMonitor(runId);
     if (meta.kind === "prime") cancelPrimeEvaluation(runId);
+    if (meta.kind === "prime") stopPrimeAgentSandboxes(runId);
     stopLegacyClaudeSnapshots(runId);
     stopLiveRenderer(runId, { force: true });
 
@@ -5035,5 +5045,6 @@ module.exports = {
   filterPrimeCatalogForHarness,
   primeReasoningLevels,
   primeHarnessModelCompatible,
+  primeSandboxIdsFromText,
   replayMessageForCommandText
 };

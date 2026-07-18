@@ -114,6 +114,13 @@ try {
   assert.equal(options.allowQuit, false);
   assert.equal(options.video, false);
 
+  const legacyReasoningOptions = parseArgs([
+    "--hosted",
+    "--out", outDir,
+    "--reasoning", "max"
+  ]);
+  assert.equal(legacyReasoningOptions.reasoning, "");
+
   const argv = hostedEvalArgs(options);
   assert.deepEqual(argv.slice(0, 4), ["eval", "run", "mazebench/mazebench", "--hosted"]);
   assert(argv.includes("--follow"));

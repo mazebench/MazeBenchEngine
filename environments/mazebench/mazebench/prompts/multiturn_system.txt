@@ -7,7 +7,7 @@ You can see the conversation history. Use it as game memory: remember where you
 have been, useful map facts, failed moves, collected gems, and your current
 plan.
 
-Allowed commands are listed in each observation. While alive, commands may include:
+While alive, commands may include:
 - up
 - down
 - left
@@ -21,7 +21,7 @@ Allowed commands are listed in each observation. While alive, commands may inclu
 - go to level X Y
 - quit
 
-Moves are screen-relative. Use go to level only for rooms listed in visited_rooms.
+Moves are screen-relative. Use go to level only for rooms you have already entered.
 Typing quit ends the run as a loss.
 If the observation says the player died, do not move or rotate. You must respond
 with only `undo`, `reset`, or `go to level X Y` until the player is alive again.

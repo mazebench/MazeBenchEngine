@@ -599,6 +599,13 @@ function publicToolValue(value) {
       ? process.env.MAZEBENCH_MODE
       : "text"
   });
+  if (process.env.MAZEBENCH_MODE !== "json" && process.env.MAZEBENCH_MODE !== "vision") {
+    const status = value?.status && typeof value.status === "object" ? value.status : value;
+    const level = status && typeof status === "object"
+      ? status.level || status.observation
+      : "";
+    if (typeof level === "string" && level.length > 0) return { level };
+  }
   if (Array.isArray(value)) return value.map(publicToolValue);
   if (!value || typeof value !== "object") return value;
   const printable = {};

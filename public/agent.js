@@ -407,9 +407,15 @@
     const supportsLocal = Boolean(localProviderId());
     if (wrapper) tweenVisibility(wrapper, supportsLocal, 420);
     picker?.querySelectorAll("[data-execution]").forEach((option) => {
+      const blockedPrimeAgentHarness = option.dataset.execution === "prime" && state.harness !== "none";
       const selected = option.dataset.execution === state.execution;
       option.classList.toggle("is-selected", selected);
       option.setAttribute("aria-pressed", String(selected));
+      option.disabled = blockedPrimeAgentHarness;
+      option.classList.toggle("is-disabled", blockedPrimeAgentHarness);
+      option.title = blockedPrimeAgentHarness
+        ? "Disabled: Prime's built-in coding-agent harness exposes hidden benchmark files."
+        : "";
     });
 
     const status = document.getElementById("local-run-status");
@@ -424,14 +430,20 @@
 
     const note = document.getElementById("execution-note");
     if (note) {
-      note.textContent = state.execution === "prime"
-        ? "Choose a harness. Prime supplies inference by default."
-        : "This run uses the signed-in CLI and your local subscription limits.";
+      note.textContent = state.harness !== "none"
+        ? "Codex and Claude Code via Prime are disabled until they can be isolated to game controls only. Local No Tools runs remain sandboxed."
+        : state.execution === "prime"
+          ? "Prime supplies inference through the isolated Verifiers environment."
+          : "This run uses the signed-in CLI and your local subscription limits.";
     }
   }
 
   function setExecution(value) {
     const next = value === "local" ? "local" : "prime";
+    if (next === "prime" && state.harness !== "none") {
+      setStatus("Codex and Claude Code via Prime are disabled until the hidden benchmark runtime is isolated.", true);
+      return;
+    }
     if (next === "local" && !localProviderId()) return;
     if (state.execution === next) return;
     state.execution = next;
@@ -655,7 +667,7 @@
     const providerHost = document.getElementById("provider-picker");
     const providerSelectionFrom = selectedRect(providerHost, ".provider-card.is-selected");
     localAvailabilityRequest += 1;
-    state.execution = "prime";
+    state.execution = harnessId === "none" ? "prime" : "local";
     state.localAvailability = "idle";
     state.harness = harnessId;
     state.modelId = null;
@@ -681,13 +693,13 @@
     renderExecutionPicker();
 
     tweenResize(document.querySelector(".settings-stage"), () => {
-      document.getElementById("local-settings").hidden = true;
-      document.getElementById("prime-settings").hidden = false;
+      document.getElementById("local-settings").hidden = state.execution !== "local";
+      document.getElementById("prime-settings").hidden = state.execution !== "prime";
     }, 440);
     tweenResize(document.querySelector(".model-browser"), renderModels, 440);
     syncComposerSteps();
     loadModels(harnessId, { fresh: !state.catalogs[catalogKey(harnessId)] });
-    void checkPrimeAvailability();
+    if (state.execution === "prime") void checkPrimeAvailability();
     if (localProviderId(harnessId)) checkLocalAvailability(harnessId);
   }
 
@@ -973,7 +985,7 @@
   function reasoningOptions() {
     const model = selectedModel();
     if (state.execution === "prime") {
-      return model && Array.isArray(model.reasoning_levels) ? model.reasoning_levels : [];
+      return ["low", "medium", "high"];
     }
     if (state.harness === "claude-code") {
       return model && Array.isArray(model.reasoning_levels) ? model.reasoning_levels : [];
@@ -1876,6 +1888,10 @@
   renderLevelSummary();
   document.querySelectorAll("[data-execution]").forEach((option) => {
     option.addEventListener("click", () => {
+      if (option.disabled) {
+        setStatus("Codex and Claude Code via Prime are disabled until the hidden benchmark runtime is isolated.", true);
+        return;
+      }
       if (option.dataset.execution === "local") selectLocalRun();
       else {
         setExecution("prime");

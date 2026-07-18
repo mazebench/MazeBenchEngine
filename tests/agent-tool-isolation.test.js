@@ -66,6 +66,10 @@ for (const mode of ["text", "json", "vision"]) {
   assert.match(prompt, /do not read any\s+files/);
   assert.match(prompt, /do not spawn any sub-agents/);
   assert.doesNotMatch(prompt, /(?:game|maze)_scorecard/);
+  if (mode === "text") {
+    assert.match(prompt, /only the current room's ASCII/);
+    assert.doesNotMatch(prompt, /ASCII board in the level\s+field plus the current status/);
+  }
   if (mode !== "json") assert.doesNotMatch(prompt, /player position|x\/y\/elevation/i);
 }
 
