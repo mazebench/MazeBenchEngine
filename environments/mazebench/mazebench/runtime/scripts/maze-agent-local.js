@@ -904,7 +904,11 @@ function agentCommand(config, prompt) {
     // Ask Codex for fuller reasoning summaries (it emits `reasoning` items in
     // the JSON stream). Codex only ever exposes summaries — never raw
     // chain-of-thought — but "detailed" is richer than the terse default.
-    argv.push("-c", 'model_reasoning_summary="detailed"');
+    // Spark rejects the underlying reasoning.summary request entirely, so let
+    // that model use its provider default instead of failing before game_start.
+    if (!String(config.modelName || "").toLowerCase().includes("codex-spark")) {
+      argv.push("-c", 'model_reasoning_summary="detailed"');
+    }
     if (config.modelName) {
       argv.push("-m", config.modelName);
     }

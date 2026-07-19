@@ -123,6 +123,20 @@ assert.deepEqual(
   codexMcpConfigArgs(codexConfig).filter((value) => value.includes("enabled_tools")),
   ['mcp_servers.game.enabled_tools=["game_start","game_observe","game_action"]']
 );
+assert(codex.argv.includes('model_reasoning_summary="detailed"'));
+
+const codexSparkConfig = {
+  ...codexConfig,
+  modelName: "gpt-5.3-codex-spark",
+  reasoning: "xhigh"
+};
+const codexSpark = agentCommand(codexSparkConfig, buildMcpPrompt(codexSparkConfig));
+assert.equal(
+  codexSpark.argv.some((value) => value.includes("model_reasoning_summary")),
+  false,
+  "Codex Spark rejects reasoning.summary"
+);
+assert(codexSpark.argv.includes('model_reasoning_effort="xhigh"'));
 
 const claudeConfig = { ...baseConfig, model: "claude", modelName: "claude-test" };
 const claude = agentCommand(claudeConfig, buildMcpPrompt(claudeConfig));
