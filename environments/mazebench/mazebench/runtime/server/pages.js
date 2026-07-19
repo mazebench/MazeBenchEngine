@@ -613,7 +613,7 @@ function createPageRenderer({
           <p class="muted" style="margin-top: -4px">The master benchmark world. Edits here change the world agents are scored on.</p>
           <div class="world-grid">${worldCard({
             game: masterGame,
-            title: masterGame.name,
+            title: "Maze Bench Environment v0.7",
             subtitle: "The world agents are benchmarked on",
             badges: ["ENVIRONMENT"],
             gemCount: buildWorlds.countWorldGems(masterGame),
