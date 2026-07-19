@@ -19,6 +19,7 @@
       restoreTerrainState,
       computeRaisedPlayerGateSet,
       computeRaisedOrangeWallSet,
+      setRaisedOrangeWallState,
       easeOutBack,
       easeInOutQuad,
       syncFloatingFloorTicker,
@@ -3558,6 +3559,7 @@
       if (options.instantRestore === true) {
         restoreTerrainState(previousState.terrain);
         movement.applyMoveFinalState(moves);
+        setRaisedOrangeWallState(previousState.raisedOrangeWalls || []);
         finishRestoredUndo(options);
         return;
       }
@@ -3589,6 +3591,7 @@
             liftPhaseFirst: true,
             startLiftPhase: () => {
               restoreTerrainState(previousState.terrain);
+              setRaisedOrangeWallState(previousState.raisedOrangeWalls || []);
               app.gateRenderOverride = null;
               app.orangeWallRenderOverride = null;
             },
@@ -3598,6 +3601,7 @@
         }
 
         restoreTerrainState(previousState.terrain);
+        setRaisedOrangeWallState(previousState.raisedOrangeWalls || []);
         app.gateRenderOverride = raisedPlayerGates;
         app.orangeWallRenderOverride = raisedOrangeWalls;
         animateMoves(moves, null, { onFinish: finishUndo });
@@ -3605,6 +3609,7 @@
       }
 
       restoreTerrainState(previousState.terrain);
+      setRaisedOrangeWallState(previousState.raisedOrangeWalls || []);
       app.gateRenderOverride = null;
       app.orangeWallRenderOverride = null;
       syncFloatingFloorTicker();
@@ -3621,6 +3626,7 @@
       restoreTerrainState(app.initialTerrain);
       app.gateRenderOverride = computeRaisedPlayerGateSet();
       app.orangeWallRenderOverride = computeRaisedOrangeWallSet();
+      setRaisedOrangeWallState(app.levelEntrySnapshot?.raisedOrangeWalls || []);
       const moves = buildMovesToPositions(app.initialPositions, {
         collectedGemVisual: "ghost"
       });

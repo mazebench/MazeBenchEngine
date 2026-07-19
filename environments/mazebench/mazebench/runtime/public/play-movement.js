@@ -16,6 +16,7 @@
       cloneTerrainState,
       computeRaisedPlayerGateSet,
       computeRaisedOrangeWallSet,
+      setRaisedOrangeWallState,
       setPlayerLiftRaised
     } = app;
 
@@ -68,16 +69,6 @@
         ...record,
         actor
       };
-    }
-
-    function actorSnapshotsFromEngineState(engineState) {
-      return state.actors.map((actor, index) => ({
-        ...actor,
-        elevation: engineState.actorElevation[index] ?? actor.elevation ?? 0,
-        removed: Boolean(engineState.actorRemoved[index]),
-        x: engineState.actorX[index] ?? actor.x,
-        y: engineState.actorY[index] ?? actor.y
-      }));
     }
 
     function hasOrangeWallLowered(fromRaised, toRaised) {
@@ -345,6 +336,7 @@
           ? {
               actors: cloneActorPositions(),
               terrain: cloneTerrainState(state.terrain),
+              raisedOrangeWalls: Array.from(raisedOrangeWalls),
               levelSnapshot:
                 typeof app.cloneLevelSnapshot === "function" ? app.cloneLevelSnapshot() : null,
               levelEntrySnapshot:
@@ -356,8 +348,10 @@
           : null;
       app.recordCollectedGemsFromMoves?.(moves);
       const liftToggles = Array.isArray(moveResult.liftToggles) ? moveResult.liftToggles : [];
-      const finalRaisedOrangeWalls = computeRaisedOrangeWallSet(
-        actorSnapshotsFromEngineState(engineState)
+      const finalRaisedOrangeWalls = new Set(
+        Array.isArray(moveResult.raisedOrangeWalls)
+          ? moveResult.raisedOrangeWalls
+          : engine.raisedOrangeWallKeys(engineState)
       );
       const preTerrainLiftMoves = preTerrainOrangeButtonLiftMoves(
         moves,
@@ -398,6 +392,7 @@
               liftToggles.forEach(({ x, y, raised }) => {
                 setPlayerLiftRaised(x, y, raised);
               });
+              setRaisedOrangeWallState(finalRaisedOrangeWalls);
               app.orangeWallRenderOverride = null;
             },
             onMoveFrame
@@ -406,6 +401,7 @@
           liftToggles.forEach(({ x, y, raised }) => {
             setPlayerLiftRaised(x, y, raised);
           });
+          setRaisedOrangeWallState(finalRaisedOrangeWalls);
           applyMoveFinalState(moves);
           app.gateRenderOverride = null;
           app.orangeWallRenderOverride = null;

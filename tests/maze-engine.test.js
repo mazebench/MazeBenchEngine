@@ -4801,6 +4801,82 @@ for (const landingType of ["player", "clone"]) {
   );
 }
 
+{
+  // Released orange terrain raises per connected component. A rider trapped
+  // under a fixed ceiling holds only its own component down; after the rider
+  // can leave, that pending component retries and raises automatically.
+  const terrain = floorTerrain(7, 1);
+  terrain[0][0] = wallStack(1);
+  terrain[0][1] = {
+    type: "wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "orange_wall", elevation: 0 },
+      { type: "orange_wall", elevation: 1 },
+      { type: "wall", elevation: 2 }
+    ]
+  };
+  terrain[0][2] = {
+    type: "wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "wall", elevation: 1 }
+    ]
+  };
+  terrain[0][3] = {
+    type: "orange_wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "orange_wall", elevation: 0 }
+    ]
+  };
+
+  const { engine, state } = createState({
+    width: 7,
+    height: 1,
+    terrain,
+    actors: [
+      { type: "player", x: 1, y: 0, elevation: 1, removed: false },
+      { type: "player", x: 4, y: 0, removed: false },
+      { type: "box", x: 5, y: 0, removed: false },
+      { type: "orange_button", x: 4, y: 0, elevation: 0, removed: false }
+    ]
+  });
+
+  assert.equal(engine.areOrangeButtonsPressed(state), true);
+  assert.deepEqual(engine.raisedOrangeWallKeys(state), []);
+
+  const release = engine.move(state, 1, 0);
+
+  assert.equal(release.moved, true);
+  assert.equal(engine.areOrangeButtonsPressed(state), false);
+  assert.deepEqual(
+    engine.raisedOrangeWallKeys(state),
+    ["3,0"],
+    "the disconnected clear component raises while the ceiling-blocked component stays down"
+  );
+  assert.deepEqual(
+    [state.actorX[0], state.actorElevation[0]],
+    [1, 1],
+    "the blocked rider remains legally supported on the lowered component"
+  );
+
+  state.actorRemoved[1] = 1;
+  const clear = engine.move(state, -1, 0);
+
+  assert.equal(clear.moved, true);
+  assert.deepEqual(
+    [state.actorX[0], state.actorElevation[0]],
+    [0, 1],
+    "the rider can leave the pending component through valid territory"
+  );
+  assert.deepEqual(
+    engine.raisedOrangeWallKeys(state),
+    ["1,0", "3,0"],
+    "the pending component raises on the first state change that clears it"
+  );
+}
+
 // Owner rule (2026-07, functional round): attached lifts WORK. A player
 // ending its move on the platform toggles it and rides up; the raised
 // platform blocks the band it rose out of; the raised bit rides carrier

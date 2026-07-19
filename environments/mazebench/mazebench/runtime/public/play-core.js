@@ -229,6 +229,9 @@
       liveRaisedPlayerGates: new Set(),
       gateRenderOverride: null,
       liveRaisedOrangeWalls: new Set(),
+      orangeWallRaisedState: Array.isArray(playData.raisedOrangeWalls)
+        ? new Set(playData.raisedOrangeWalls)
+        : null,
       orangeWallRenderOverride: null,
       gateAnimationFrameId: null,
       gateAnimationsInitialized: false,
@@ -281,11 +284,15 @@
       const previousHeight = app.state.height;
       const previousTerrain = app.state.terrain;
       const previousActors = app.state.actors;
+      const previousOrangeWallRaisedState = app.orangeWallRaisedState;
 
       app.state.width = levelState.width;
       app.state.height = levelState.height;
       app.state.terrain = levelState.terrain;
       app.state.actors = levelState.actors;
+      app.orangeWallRaisedState = Array.isArray(levelState.raisedOrangeWalls)
+        ? new Set(levelState.raisedOrangeWalls)
+        : null;
       // The feature index caches by app.state identity, which this in-place
       // swap preserves — drop it so callbacks index the temporary terrain.
       invalidateTerrainFeatureIndex();
@@ -297,6 +304,7 @@
         app.state.height = previousHeight;
         app.state.terrain = previousTerrain;
         app.state.actors = previousActors;
+        app.orangeWallRaisedState = previousOrangeWallRaisedState;
         invalidateTerrainFeatureIndex();
       }
     }
@@ -1510,7 +1518,8 @@
         width: app.state.width,
         height: app.state.height,
         terrain: cloneTerrainState(app.state.terrain),
-        actors: cloneActorStateList()
+        actors: cloneActorStateList(),
+        raisedOrangeWalls: Array.from(computeRaisedOrangeWallSet())
       };
     }
 
@@ -1581,6 +1590,9 @@
       app.state.actors = (levelState.actors || []).map((actor, index) =>
         createRuntimeActor(actor, index, levelState.levelId || app.currentLevelId)
       );
+      app.orangeWallRaisedState = Array.isArray(levelState.raisedOrangeWalls)
+        ? new Set(levelState.raisedOrangeWalls)
+        : null;
       // The editor reuses one runtime app while painting. Terrain can change
       // without actor coordinates changing, so invalidate the live surface
       // cache or newly painted gates/walls inherit the previous board state.
@@ -1594,6 +1606,7 @@
       app.playerLiftAnimations.clear();
       app.playerLiftAnimationsInitialized = false;
       initializeActorElevations();
+      setRaisedOrangeWallState(computeRaisedOrangeWallSet());
 
       if (!skipTransientSideEffects) {
         registerTerrainImageUrls(app.state.terrain);
@@ -2155,11 +2168,26 @@
         return raised;
       }
 
+      const resolvedState =
+        actors === app.state.actors && app.orangeWallRaisedState instanceof Set
+          ? app.orangeWallRaisedState
+          : null;
+
       eachOrangeWall((x, y, key) => {
-        raised.add(key);
+        if (!resolvedState || resolvedState.has(key)) {
+          raised.add(key);
+        }
       });
 
       return raised;
+    }
+
+    function setRaisedOrangeWallState(keys) {
+      const nextState = keys instanceof Set ? new Set(keys) : new Set(keys || []);
+      app.orangeWallRaisedState = nextState;
+      app.liveRaisedOrangeWalls = new Set(nextState);
+      liveSurfaceActorCodes = null;
+      liveSurfaceActorState = null;
     }
 
     function isRaisedOrangeWall(x, y, orangeWallState = app.liveRaisedOrangeWalls) {
@@ -3465,6 +3493,7 @@
       isOrangeButtonPressed,
       areOrangeButtonsPressed,
       computeRaisedOrangeWallSet,
+      setRaisedOrangeWallState,
       isRaisedOrangeWall,
       eachPlayerLift,
       isRaisedPlayerLift,
@@ -3515,6 +3544,7 @@
 
     rememberCanonicalLevelPlayerStart(playData);
     initializeActorElevations();
+    setRaisedOrangeWallState(computeRaisedOrangeWallSet());
     syncDocumentLevelState();
     rememberHorizontalNeighborLevelState(playData);
     syncHorizontalNeighborLevelStates();

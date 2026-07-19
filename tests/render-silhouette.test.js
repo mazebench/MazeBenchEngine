@@ -210,6 +210,24 @@ function createRenderApp({ terrain, actors, playData = {}, collectedGemIds = [] 
 }
 
 {
+  const app = createRenderApp({ terrain: buildOrangeWallTerrain(), actors: [] });
+  app.setRaisedOrangeWallState([]);
+  const loweredSnapshot = app.cloneLevelSnapshot();
+  app.setRaisedOrangeWallState(["0,0"]);
+
+  app.applyLevelState(loweredSnapshot, {
+    deferRender: true,
+    skipTransientSideEffects: true
+  });
+
+  assert.deepEqual(
+    Array.from(app.computeRaisedOrangeWallSet()),
+    [],
+    "level snapshots preserve a deferred lowered orange-wall component"
+  );
+}
+
+{
   const actors = [{ type: "box", x: 1, y: 0, elevation: 0, removed: false }];
   const playApp = createRenderApp({ terrain: buildOrangeSlopeTerrain(), actors });
   const editorApp = createRenderApp({

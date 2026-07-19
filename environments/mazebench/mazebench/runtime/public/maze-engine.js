@@ -180,6 +180,7 @@
     const playerGateCells = [];
     const playerLiftCells = [];
     const orangeWallCells = [];
+    const orangeTerrainCells = [];
     const orangeButtonCells = [];
     const actorSource = Array.isArray(playData?.actors) ? playData.actors : [];
     const actorTypes = actorSource.map((actor) => actorType(actor));
@@ -315,10 +316,56 @@
           orangeWallCells.push(index);
         }
 
+        if (terrainLayers[index].some((layer) => isOrangeTerrainLayerType(layer.type))) {
+          orangeTerrainCells.push(index);
+        }
+
         if (terrainLayers[index].some((layer) => layer.type === terrainTypes.orange_button)) {
           orangeButtonCells.push(index);
         }
       }
+    }
+
+    const orangeTerrainCellMask = new Uint8Array(cellCount);
+    const orangeTerrainComponents = [];
+
+    orangeTerrainCells.forEach((cell) => {
+      orangeTerrainCellMask[cell] = 1;
+    });
+
+    for (const startCell of orangeTerrainCells) {
+      if (orangeTerrainCellMask[startCell] !== 1) {
+        continue;
+      }
+
+      const component = [];
+      const queue = [startCell];
+      orangeTerrainCellMask[startCell] = 2;
+
+      for (let head = 0; head < queue.length; head += 1) {
+        const cell = queue[head];
+        const x = cell % width;
+        const y = Math.floor(cell / width);
+        component.push(cell);
+
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nextX = x + dx;
+          const nextY = y + dy;
+
+          if (!isInsideBoard(nextX, nextY)) {
+            continue;
+          }
+
+          const nextCell = cellIndex(nextX, nextY);
+
+          if (orangeTerrainCellMask[nextCell] === 1) {
+            orangeTerrainCellMask[nextCell] = 2;
+            queue.push(nextCell);
+          }
+        }
+      }
+
+      orangeTerrainComponents.push(component);
     }
 
     initializeWeightlessRelativeElevations();
@@ -771,7 +818,7 @@
       });
 
       let gateState = computeRaisedPlayerGateSet(state);
-      let orangeButtonsPressed = areOrangeButtonsPressed(state);
+      let orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState);
 
       for (let iteration = 0; iteration < 4; iteration += 1) {
         const changed = syncWeightlessGroupElevations(
@@ -782,7 +829,7 @@
         );
 
         gateState = computeRaisedPlayerGateSet(state);
-        orangeButtonsPressed = areOrangeButtonsPressed(state);
+        orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState);
 
         if (!changed) {
           break;
@@ -1409,6 +1456,20 @@
       return type === terrainTypes.orange_wall || type === terrainTypes.orange_ice_slope;
     }
 
+    function isOrangeTerrainRaisedAtCell(cell, orangeState) {
+      if (orangeState instanceof Set) {
+        return orangeState.has(cell);
+      }
+
+      if (ArrayBuffer.isView(orangeState)) {
+        return orangeState[cell] === 1;
+      }
+
+      // Backward-compatible boolean contract: true means the buttons are
+      // pressed (orange terrain lowered), false means globally raised.
+      return orangeState !== true;
+    }
+
     function hasOrangeTerrainLayerAtElevation(state, cell, elevation) {
       return terrainLayersForCell(state, cell).some(
         (candidate) =>
@@ -1504,11 +1565,18 @@
     }
 
     function pressedOrangeWallLowersAsBlock(state, x, y, elevation) {
-      if (!isInsideBoard(x, y) || !areOrangeButtonsPressed(state)) {
+      if (!isInsideBoard(x, y)) {
         return false;
       }
 
       const cell = cellIndex(x, y);
+      const gateState = computeRaisedPlayerGateSet(state);
+      const orangeState = computeRaisedOrangeTerrainCells(state, gateState);
+
+      if (orangeState.has(cell)) {
+        return false;
+      }
+
       const layer = terrainLayersForCell(state, cell).find(
         (candidate) =>
           candidate.type === terrainTypes.orange_wall &&
@@ -1523,8 +1591,8 @@
         state,
         cell,
         layer,
-        computeRaisedPlayerGateSet(state),
-        true
+        gateState,
+        orangeState
       );
     }
 
@@ -1548,7 +1616,9 @@
       }
 
       if (layer.type === terrainTypes.orange_ice_slope) {
-        return orangeButtonsPressed ? layer.elevation : layer.elevation + 1;
+        return isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed)
+          ? layer.elevation + 1
+          : layer.elevation;
       }
 
       if (layer.type === terrainTypes.tree) {
@@ -1564,7 +1634,9 @@
       }
 
       if (layer.type === terrainTypes.orange_wall) {
-        return orangeButtonsPressed ? layer.elevation : layer.elevation + 1;
+        return isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed)
+          ? layer.elevation + 1
+          : layer.elevation;
       }
 
       return layer.elevation;
@@ -1575,7 +1647,7 @@
       x,
       y,
       gateState,
-      orangeButtonsPressed = areOrangeButtonsPressed(state)
+      orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState)
     ) {
       if (!isInsideBoard(x, y)) {
         return [];
@@ -1606,7 +1678,7 @@
       x,
       y,
       gateState,
-      orangeButtonsPressed = areOrangeButtonsPressed(state)
+      orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState)
     ) {
       const heights = terrainSurfaceHeightsAt(state, x, y, gateState, orangeButtonsPressed);
 
@@ -1619,7 +1691,7 @@
       y,
       elevation,
       gateState,
-      orangeButtonsPressed = areOrangeButtonsPressed(state)
+      orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState)
     ) {
       if (!isInsideBoard(x, y)) {
         return false;
@@ -1678,7 +1750,7 @@
       type,
       elevation,
       gateState,
-      orangeButtonsPressed = areOrangeButtonsPressed(state)
+      orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState)
     ) {
       if (!isInsideBoard(x, y)) {
         return null;
@@ -1732,7 +1804,7 @@
       return terrainLayers[cellIndex(x, y)].filter((layer) => layer.type === type);
     }
 
-    function isIce(state, x, y, elevation = 0, gateState = computeRaisedPlayerGateSet(state), orangeButtonsPressed = areOrangeButtonsPressed(state)) {
+    function isIce(state, x, y, elevation = 0, gateState = computeRaisedPlayerGateSet(state), orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState)) {
       return Boolean(
         terrainLayerOfTypeAtElevation(
           state,
@@ -1790,7 +1862,7 @@
             return;
           }
 
-          if (!orangeButtonsPressed) {
+          if (isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed)) {
             layers.push(layer);
             return;
           }
@@ -2493,7 +2565,7 @@
       );
     }
 
-    function isIceOrHole(state, x, y, elevation = 0, gateState = computeRaisedPlayerGateSet(state), orangeButtonsPressed = areOrangeButtonsPressed(state)) {
+    function isIceOrHole(state, x, y, elevation = 0, gateState = computeRaisedPlayerGateSet(state), orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState)) {
       return (
         isIce(state, x, y, elevation, gateState, orangeButtonsPressed) ||
         isHole(state, x, y, elevation)
@@ -2510,7 +2582,7 @@
       y,
       elevation,
       gateState,
-      orangeButtonsPressed = areOrangeButtonsPressed(state)
+      orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState)
     ) {
       return terrainLayerOfTypeAtElevation(
         state,
@@ -2618,8 +2690,208 @@
       return true;
     }
 
+    function orangeComponentRideActors(state, component, gateState, raisedOrangeTerrain) {
+      const componentCells = new Set(component);
+      const riders = new Set();
+
+      function addActorAndRigidGroup(actor) {
+        if (riders.has(actor)) {
+          return false;
+        }
+
+        const members =
+          actorTypes[actor] === "weightless_box"
+            ? weightlessGroupMembers(state, actorGroupIds[actor])
+            : isCloneActor(actor)
+              ? cloneGroupMembers(state, actorGroupIds[actor])
+              : [actor];
+        let changed = false;
+
+        members.forEach((member) => {
+          if (!riders.has(member)) {
+            riders.add(member);
+            changed = true;
+          }
+        });
+
+        return changed;
+      }
+
+      for (let actor = 0; actor < actorCount; actor += 1) {
+        if (state.actorRemoved[actor] || isCollectibleActor(actor)) {
+          continue;
+        }
+
+        const x = state.actorX[actor];
+        const y = state.actorY[actor];
+
+        if (!isInsideBoard(x, y)) {
+          continue;
+        }
+
+        const cell = cellIndex(x, y);
+
+        if (!componentCells.has(cell)) {
+          continue;
+        }
+
+        const elevation = actorElevation(state, actor);
+        const ridesLoweredSurface = terrainLayersForCell(state, cell).some(
+          (layer) =>
+            isOrangeTerrainLayerType(layer.type) &&
+            terrainLayerSurfaceHeight(state, cell, layer, gateState, true) === elevation
+        );
+
+        if (ridesLoweredSurface) {
+          addActorAndRigidGroup(actor);
+        }
+      }
+
+      // Carry complete vertical actor stacks. Rigid clone/weightless groups
+      // join as a unit when any member is rooted on this orange component.
+      let expanded = true;
+
+      while (expanded) {
+        expanded = false;
+
+        for (const lower of Array.from(riders)) {
+          if (!actorProvidesFlatSupport(lower)) {
+            continue;
+          }
+
+          for (let upper = 0; upper < actorCount; upper += 1) {
+            if (
+              upper === lower ||
+              riders.has(upper) ||
+              state.actorRemoved[upper] ||
+              isCollectibleActor(upper) ||
+              state.actorX[upper] !== state.actorX[lower] ||
+              state.actorY[upper] !== state.actorY[lower] ||
+              actorElevation(state, upper) !== actorElevation(state, lower) + 1
+            ) {
+              continue;
+            }
+
+            expanded = addActorAndRigidGroup(upper) || expanded;
+          }
+        }
+      }
+
+      const blockingTargets = new Set();
+
+      for (const rider of riders) {
+        const x = state.actorX[rider];
+        const y = state.actorY[rider];
+        const targetElevation = actorElevation(state, rider) + 1;
+
+        if (
+          terrainBlocksElevation(
+            state,
+            x,
+            y,
+            targetElevation,
+            gateState,
+            raisedOrangeTerrain
+          )
+        ) {
+          return null;
+        }
+
+        if (!isNonBlockingActor(rider)) {
+          const targetKey = occupiedElevationKey(x, y, targetElevation);
+
+          if (blockingTargets.has(targetKey)) {
+            return null;
+          }
+
+          blockingTargets.add(targetKey);
+        }
+
+        for (let blocker = 0; blocker < actorCount; blocker += 1) {
+          if (
+            blocker === rider ||
+            riders.has(blocker) ||
+            state.actorRemoved[blocker] ||
+            isNonBlockingActor(blocker) ||
+            state.actorX[blocker] !== x ||
+            state.actorY[blocker] !== y ||
+            actorElevation(state, blocker) !== targetElevation
+          ) {
+            continue;
+          }
+
+          return null;
+        }
+      }
+
+      // No stationary blocking actor may remain inside the component's raised
+      // volume. Riders are exempt because they vacate those voxels atomically.
+      for (let actor = 0; actor < actorCount; actor += 1) {
+        if (
+          riders.has(actor) ||
+          state.actorRemoved[actor] ||
+          isNonBlockingActor(actor) ||
+          !isInsideBoard(state.actorX[actor], state.actorY[actor])
+        ) {
+          continue;
+        }
+
+        const cell = cellIndex(state.actorX[actor], state.actorY[actor]);
+
+        if (
+          componentCells.has(cell) &&
+          terrainBlocksElevation(
+            state,
+            state.actorX[actor],
+            state.actorY[actor],
+            actorElevation(state, actor),
+            gateState,
+            raisedOrangeTerrain
+          )
+        ) {
+          return null;
+        }
+      }
+
+      return riders;
+    }
+
+    function computeRaisedOrangeTerrainCells(
+      state,
+      gateState = computeRaisedPlayerGateSet(state),
+      buttonsPressed = areOrangeButtonsPressed(state)
+    ) {
+      const raised = new Set();
+
+      if (buttonsPressed) {
+        return raised;
+      }
+
+      for (const component of orangeTerrainComponents) {
+        const candidateRaised = new Set(raised);
+        component.forEach((cell) => candidateRaised.add(cell));
+
+        if (orangeComponentRideActors(state, component, gateState, candidateRaised) !== null) {
+          component.forEach((cell) => raised.add(cell));
+        }
+      }
+
+      return raised;
+    }
+
+    function raisedOrangeWallKeys(state) {
+      const raised = computeRaisedOrangeTerrainCells(state);
+
+      return orangeTerrainCells
+        .filter((cell) => raised.has(cell))
+        .map((cell) => `${cell % width},${Math.floor(cell / width)}`);
+    }
+
     function isRaisedOrangeWall(x, y, orangeButtonsPressed) {
-      return isOrangeWall(x, y) && !orangeButtonsPressed;
+      return (
+        isOrangeWall(x, y) &&
+        isOrangeTerrainRaisedAtCell(cellIndex(x, y), orangeButtonsPressed)
+      );
     }
 
     function attachedLiftIndexAt(state, x, y) {
@@ -2759,7 +3031,7 @@
       );
     }
 
-    function isWall(state, x, y, gateState, orangeButtonsPressed = areOrangeButtonsPressed(state), elevation = 0) {
+    function isWall(state, x, y, gateState, orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState), elevation = 0) {
       const height = terrainSurfaceHeightAt(state, x, y, gateState, orangeButtonsPressed);
 
       return height !== null && height > elevation;
@@ -2788,7 +3060,7 @@
       }
 
       if (layer.type === terrainTypes.orange_ice_slope) {
-        if (!orangeButtonsPressed) {
+        if (isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed)) {
           return elevation === layerElevation || elevation === layerElevation + 1;
         }
 
@@ -2825,7 +3097,7 @@
       }
 
       if (layer.type === terrainTypes.orange_wall) {
-        if (!orangeButtonsPressed) {
+        if (isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed)) {
           return layerElevation === elevation;
         }
 
@@ -2847,7 +3119,7 @@
       y,
       elevation,
       gateState,
-      orangeButtonsPressed = areOrangeButtonsPressed(state)
+      orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState)
     ) {
       if (!isInsideBoard(x, y)) {
         return true;
@@ -2882,7 +3154,7 @@
       y,
       elevation,
       gateState,
-      orangeButtonsPressed = areOrangeButtonsPressed(state)
+      orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState)
     ) {
       if (!isInsideBoard(x, y)) {
         return [];
@@ -2908,7 +3180,7 @@
       y,
       elevation,
       gateState,
-      orangeButtonsPressed = areOrangeButtonsPressed(state)
+      orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState)
     ) {
       const blockers = terrainBlockingLayersAtElevation(
         state,
@@ -3089,7 +3361,7 @@
       y,
       elevation,
       gateState,
-      orangeButtonsPressed = areOrangeButtonsPressed(state),
+      orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState),
       ignoredActors = null
     ) {
       if (terrainBlocksElevation(state, x, y, elevation, gateState, orangeButtonsPressed)) {
@@ -3465,7 +3737,7 @@
       x,
       y,
       gateState,
-      orangeButtonsPressed = areOrangeButtonsPressed(state),
+      orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState),
       currentElevation = null,
       ignoredActors = null
     ) {
@@ -7819,9 +8091,9 @@
         // move are visible to punches (a raised lift blocks a punch).
         const gateState = moveGateState || computeRaisedPlayerGateSet(state);
         const orangeButtonsPressed =
-          typeof moveOrangeButtonsPressed === "boolean"
+          typeof moveOrangeButtonsPressed === "boolean" || moveOrangeButtonsPressed instanceof Set
             ? moveOrangeButtonsPressed
-            : areOrangeButtonsPressed(state);
+            : computeRaisedOrangeTerrainCells(state, gateState);
         const candidateSource = (
           candidateActorIndexes
             ? Array.from(candidateActorIndexes)
@@ -8417,7 +8689,7 @@
 
     function applyHoleFalls(state, moves) {
       const gateState = computeRaisedPlayerGateSet(state);
-      const orangeButtonsPressed = areOrangeButtonsPressed(state);
+      const orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState);
       const stickyPuncherMoves = [];
 
       function copyCarrierRemovalToStickyPuncher(move) {
@@ -8567,7 +8839,7 @@
       state,
       moves,
       previousGateState = computeRaisedPlayerGateSet(state),
-      previousOrangeButtonsPressed = areOrangeButtonsPressed(state)
+      previousOrangeButtonsPressed = computeRaisedOrangeTerrainCells(state, previousGateState)
     ) {
       // Fast exit: with no device terrain, no hole/void cells, and every
       // actor exactly at ground level, nothing can ride a surface
@@ -8594,7 +8866,7 @@
       syncOriginalElevations.set(state.actorElevation);
       const originalElevations = syncOriginalElevations;
       let gateState = computeRaisedPlayerGateSet(state);
-      let orangeButtonsPressed = areOrangeButtonsPressed(state);
+      let orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState);
 
       function dynamicAttachedGateRideElevation(index, nextGateState, nextOrangeButtonsPressed) {
         const elevation = actorElevation(state, index);
@@ -8878,7 +9150,7 @@
 
       for (let iteration = 0; iteration < maxDynamicElevationIterations; iteration += 1) {
         gateState = computeRaisedPlayerGateSet(state);
-        orangeButtonsPressed = areOrangeButtonsPressed(state);
+        orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState);
         let changed = false;
         syncIterationElevations.set(state.actorElevation);
         const iterationStartElevations = syncIterationElevations;
@@ -8938,7 +9210,7 @@
         // neighbor's component BFS still pulls them in.
         const changeStamp = stampSupportChangeCells(moves);
         const syncAllGroups =
-          previousOrangeButtonsPressed !== orangeButtonsPressed ||
+          gateSetsDiffer(previousOrangeButtonsPressed, orangeButtonsPressed) ||
           gateSetsDiffer(previousGateState, gateState);
 
         const handledWeightlessGroups = new Set();
@@ -9068,7 +9340,7 @@
       }
 
       gateState = computeRaisedPlayerGateSet(state);
-      orangeButtonsPressed = areOrangeButtonsPressed(state);
+      orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState);
 
       function ensureDynamicMove(index, toElevation) {
         const existingMove = moveByActor.get(index);
@@ -9143,7 +9415,7 @@
         let changed = false;
 
         gateState = computeRaisedPlayerGateSet(state);
-        orangeButtonsPressed = areOrangeButtonsPressed(state);
+        orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState);
 
         for (let index = 0; index < actorCount; index += 1) {
           if (
@@ -9589,7 +9861,7 @@
 
       for (let iteration = 0; iteration < maxCloneSupportIterations; iteration += 1) {
         gateState = computeRaisedPlayerGateSet(state);
-        orangeButtonsPressed = areOrangeButtonsPressed(state);
+        orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, gateState);
 
         const cloneChanged = syncCloneGroupsAfterSupportChanges();
         const actorChanged = runPostSupportLossPass();
@@ -10008,7 +10280,7 @@
 
       const occupied = buildOccupiedMap(state);
       const raisedPlayerGates = computeRaisedPlayerGateSet(state);
-      const orangeButtonsPressed = areOrangeButtonsPressed(state);
+      const orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, raisedPlayerGates);
       const orderedPlayers = sortPlayersForMove(state, dx, dy);
       const moves = [];
       const collectedGems = new Set();
@@ -11287,6 +11559,7 @@
       return {
         direction: directionNames[`${dx},${dy}`] || "",
         liftToggles: pendingLiftToggles.map(({ x, y, raised }) => ({ x, y, raised })),
+        raisedOrangeWalls: raisedOrangeWallKeys(state),
         // FIX(SEMANTICS): moved reflects a real state change in BOTH modes.
         // Legacy play mode returned moved:true for zero-effect visual bounce
         // records, so agents scored no-op inputs as successful moves and the
@@ -11519,6 +11792,7 @@
       move,
       moveForSearch,
       pressedOrangeWallLowersAsBlock,
+      raisedOrangeWallKeys,
       stateKey,
       terrainTypes,
       undoMove,

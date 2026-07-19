@@ -207,6 +207,10 @@ function createGameplayApp(actors, options = {}) {
     setPlayerLiftRaised: () => {},
     computeRaisedPlayerGateSet: () => new Set(),
     computeRaisedOrangeWallSet: () => new Set(),
+    setRaisedOrangeWallState(keys) {
+      app.orangeWallRaisedState = new Set(keys || []);
+      app.liveRaisedOrangeWalls = new Set(app.orangeWallRaisedState);
+    },
     isIce: options.isIce || (() => false),
     isHole: options.isHole || (() => false),
     isIceOrHole: () => false,
@@ -296,6 +300,61 @@ function createUShapeActors(extraActors = []) {
     { type: "weightless_box", groupId: "M0", x: 3, y: 2, removed: false },
     ...extraActors
   ];
+}
+
+{
+  const terrain = createTerrain(7, 1);
+  terrain[0][0] = stackedWall(1);
+  terrain[0][1] = {
+    type: "wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "orange_wall", elevation: 0 },
+      { type: "orange_wall", elevation: 1 },
+      { type: "wall", elevation: 2 }
+    ]
+  };
+  terrain[0][2] = {
+    type: "wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "wall", elevation: 1 }
+    ]
+  };
+  terrain[0][3] = {
+    type: "orange_wall",
+    layers: [
+      { type: "floor", elevation: 0 },
+      { type: "orange_wall", elevation: 0 }
+    ]
+  };
+  const actors = [
+    { type: "player", x: 1, y: 0, elevation: 1, removed: false },
+    { type: "player", x: 4, y: 0, elevation: 0, removed: false },
+    { type: "box", x: 5, y: 0, elevation: 0, removed: false },
+    { type: "orange_button", x: 4, y: 0, elevation: 0, removed: false }
+  ];
+  const app = createGameplayApp(actors, { height: 1, terrain, width: 7 });
+
+  app.movePlayers(1, 0);
+
+  assert.deepEqual(
+    Array.from(app.liveRaisedOrangeWalls),
+    ["3,0"],
+    "play rendering keeps the engine's component-scoped orange-wall result"
+  );
+  assert.deepEqual(
+    [actors[0].x, actors[0].elevation],
+    [1, 1],
+    "the ceiling-blocked player remains supported by the lowered component"
+  );
+
+  app.undoMove({ instantRestore: true });
+  assert.deepEqual(
+    Array.from(app.liveRaisedOrangeWalls),
+    [],
+    "undo restores the component state from before the button was released"
+  );
 }
 
 {
