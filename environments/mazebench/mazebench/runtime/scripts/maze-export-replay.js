@@ -23,6 +23,30 @@ const DIRECTIONS = new Set(["up", "down", "left", "right"]);
 const VIEW_NAMES = ["top", "top-diagonal", "diagonal", "side-diagonal", "side"];
 const LEGACY_GEM_ID_PATTERN = /^(.*):gem:(?:-?\d+:)?(-?\d+),(-?\d+),(-?\d+)$/;
 
+function asciiViewIndex(view) {
+  const index = VIEW_NAMES.indexOf(String(view || "").toLowerCase());
+  return index === -1 ? VIEW_NAMES.indexOf("top-diagonal") : index;
+}
+
+function visionTiltDegreesForAsciiView(view) {
+  // ASCII uses a four-row tile: pitch rows show the vertical side and the
+  // remaining rows show its top. Matching tan(tilt) to that side/top ratio
+  // gives the equivalent visual camera angle, including true 0° and 90° ends.
+  const sideRows = asciiViewIndex(view);
+  const topRows = VIEW_NAMES.length - 1 - sideRows;
+  return (Math.atan2(sideRows, topRows) * 180) / Math.PI;
+}
+
+function rotateAsciiView(view, direction) {
+  const currentIndex = asciiViewIndex(view);
+  const nextIndex = direction === "up"
+    ? Math.max(0, currentIndex - 1)
+    : direction === "down"
+      ? Math.min(VIEW_NAMES.length - 1, currentIndex + 1)
+      : currentIndex;
+  return VIEW_NAMES[nextIndex];
+}
+
 function normalizeGemCollectionId(value) {
   const id = String(value || "");
   const match = id.match(LEGACY_GEM_ID_PATTERN);
@@ -2656,7 +2680,10 @@ async function renderReplayVideo(
       else if (!options.accelerated) captured.dataUrls.forEach(writeFrameDataUrl);
     }
 
-    let cameraTiltDegrees = options.cameraTiltDegrees;
+    let asciiCameraView = mazeOptions.view;
+    let cameraTiltDegrees = options.asciiSideBySide
+      ? visionTiltDegreesForAsciiView(asciiCameraView)
+      : options.cameraTiltDegrees;
     let cameraYawTurns = ((mazeOptions.yaw % 4) + 4) % 4;
     const cameraTiltDurationMs = 620 / options.cameraSpeed;
     const cameraYawDurationMs = 780 / options.cameraSpeed;
@@ -2991,11 +3018,21 @@ async function renderReplayVideo(
           await setCameraView({ animate: !options.fast, durationMs: cameraYawDurationMs });
           await settleAndCapture(1.8);
         } else if (parsed.direction === "up") {
-          cameraTiltDegrees = Math.max(20, cameraTiltDegrees - options.cameraStepDegrees);
+          if (options.asciiSideBySide) {
+            asciiCameraView = rotateAsciiView(asciiCameraView, "up");
+            cameraTiltDegrees = visionTiltDegreesForAsciiView(asciiCameraView);
+          } else {
+            cameraTiltDegrees = Math.max(20, cameraTiltDegrees - options.cameraStepDegrees);
+          }
           await setCameraView({ animate: !options.fast, durationMs: cameraTiltDurationMs });
           await settleAndCapture(1.5);
         } else if (parsed.direction === "down") {
-          cameraTiltDegrees = Math.min(82, cameraTiltDegrees + options.cameraStepDegrees);
+          if (options.asciiSideBySide) {
+            asciiCameraView = rotateAsciiView(asciiCameraView, "down");
+            cameraTiltDegrees = visionTiltDegreesForAsciiView(asciiCameraView);
+          } else {
+            cameraTiltDegrees = Math.min(82, cameraTiltDegrees + options.cameraStepDegrees);
+          }
           await setCameraView({ animate: !options.fast, durationMs: cameraTiltDurationMs });
           await settleAndCapture(1.5);
         }
@@ -3473,8 +3510,10 @@ module.exports = {
   replayTranscodeArguments,
   resolveInput,
   renderReplayVideo,
+  rotateAsciiView,
   rowFromActionLog,
   targetVideoBitrate,
   validateReplayOptions,
+  visionTiltDegreesForAsciiView,
   writeSidecarFiles
 };

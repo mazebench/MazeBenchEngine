@@ -23,7 +23,9 @@ const {
   defaultReplayOptions,
   nativeFrameCountIsAcceptable,
   replayTranscodeArguments,
-  targetVideoBitrate
+  rotateAsciiView,
+  targetVideoBitrate,
+  visionTiltDegreesForAsciiView
 } = require(path.join(root, "scripts", "maze-export-replay.js"));
 
 assert.match(buildScript, /world-card new-world-card/);
@@ -254,6 +256,17 @@ assert.equal(nativeFrameCountIsAcceptable(2698, 2698), true);
 assert.equal(nativeFrameCountIsAcceptable(2697, 2698), true);
 assert.equal(nativeFrameCountIsAcceptable(2696, 2698), false);
 assert.equal(nativeFrameCountIsAcceptable(2699, 2698), false);
+const expectedVisionTilts = [0, 18.43494882292201, 45, 71.56505117707799, 90];
+["top", "top-diagonal", "diagonal", "side-diagonal", "side"].forEach((view, index) => {
+  assert.ok(
+    Math.abs(visionTiltDegreesForAsciiView(view) - expectedVisionTilts[index]) < 1e-10,
+    `${view} should use the ASCII projection's matching vision angle`
+  );
+});
+assert.equal(rotateAsciiView("top-diagonal", "up"), "top");
+assert.equal(rotateAsciiView("top", "up"), "top");
+assert.equal(rotateAsciiView("top-diagonal", "down"), "diagonal");
+assert.equal(rotateAsciiView("side", "down"), "side");
 assert.equal(
   targetVideoBitrate(24, 120),
   Math.floor((24 * 1024 * 1024 * 8 * 0.96) / 120)
