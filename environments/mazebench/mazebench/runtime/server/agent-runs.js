@@ -18,7 +18,8 @@ const {
   parseCodexSession,
   parseCodexSwarmSessions,
   parsePrimeLiveUsage,
-  parsePrimeResults
+  parsePrimeResults,
+  withApiCostEstimate
 } = require("./token-usage");
 const {
   claudeProjectKey,
@@ -456,6 +457,37 @@ function collectedAllWorldGems(gemCount, gemTotal) {
   const collected = Number(gemCount);
   const total = Number(gemTotal);
   return Number.isFinite(collected) && Number.isFinite(total) && total >= 0 && collected >= total;
+}
+
+function normalizedPricingModelId(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function apiPricingForRun(summary, models) {
+  const runModel = normalizedPricingModelId(summary?.model_name);
+  if (!runModel) return null;
+
+  const expectedProvider = summary?.provider === "codex"
+    ? "openai"
+    : summary?.provider === "claude"
+      ? "anthropic"
+      : "";
+  const model = (Array.isArray(models) ? models : []).find((candidate) => {
+    const id = String(candidate?.id || "");
+    const slash = id.indexOf("/");
+    const provider = slash === -1 ? "" : id.slice(0, slash).toLowerCase();
+    const shortId = slash === -1 ? id : id.slice(slash + 1);
+    if (expectedProvider && provider !== expectedProvider) return false;
+    return normalizedPricingModelId(id) === runModel || normalizedPricingModelId(shortId) === runModel;
+  });
+  const input = Number(model?.pricing?.input);
+  const output = Number(model?.pricing?.output);
+  if (!Number.isFinite(input) || input < 0 || !Number.isFinite(output) || output < 0) return null;
+  return { model: model.id, input, output };
 }
 
 function primeEvaluationReward(sample, scorecard = null) {
@@ -2905,13 +2937,28 @@ function createAgentRunService({
         agents_ran: agentsRan
       };
     };
+    const withCatalogApiEstimate = (usage) => {
+      const existingCost = usage?.api_cost_estimate_usd;
+      if (
+        !usage?.available ||
+        existingCost !== null && existingCost !== undefined && Number.isFinite(Number(existingCost))
+      ) {
+        return usage;
+      }
+      try {
+        const pricing = apiPricingForRun(summary, listProviderModels("prime").models);
+        return withApiCostEstimate(usage, pricing);
+      } catch (_error) {
+        return usage;
+      }
+    };
     const cached = tokenUsageCache.get(runId);
-    if (cached?.signature === signature) return withSwarmAgentStatus(cached.value);
+    if (cached?.signature === signature) return withSwarmAgentStatus(withCatalogApiEstimate(cached.value));
     const active = ["running", "pausing", "stopping"].includes(summary.status);
     const expensive = [eventsPath, codexSessionPath, ...codexSwarmSessionPaths, primeLiveUsagePath, primeResultsPath]
       .some((filePath) => fileSize(filePath) > LARGE_TELEMETRY_BYTES);
     if (active && expensive && cached && Date.now() - cached.checkedAt < LARGE_TELEMETRY_REFRESH_MS) {
-      return withSwarmAgentStatus(cached.value);
+      return withSwarmAgentStatus(withCatalogApiEstimate(cached.value));
     }
 
     let value;
@@ -2948,7 +2995,7 @@ function createAgentRunService({
     }
 
     tokenUsageCache.set(runId, { signature, checkedAt: Date.now(), value });
-    return withSwarmAgentStatus(value);
+    return withSwarmAgentStatus(withCatalogApiEstimate(value));
   }
 
   // The rendered image the human watches: in vision mode the agent's own frames
@@ -5979,6 +6026,7 @@ function createAgentRunService({
 }
 
 module.exports = {
+  apiPricingForRun,
   branchLaunchParams,
   collectedAllWorldGems,
   createAgentRunService,

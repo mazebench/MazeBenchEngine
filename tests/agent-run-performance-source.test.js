@@ -16,10 +16,12 @@ assert.match(runService, /const LARGE_TELEMETRY_REFRESH_MS = 10_000/);
 assert.match(runService, /Date\.now\(\) - cached\.checkedAt < LARGE_TELEMETRY_REFRESH_MS/);
 assert.match(runService, /actions: tokenUsage\.actions\.filter/);
 assert.match(runService, /reasoning\.filter\(\(entry\)/);
+assert.match(runService, /apiPricingForRun\(summary, listProviderModels\("prime"\)\.models\)/);
 assert.match(runScript, /const FEED_RENDER_BATCH = 200/);
 assert.match(runScript, /const renderedMoveNums = hiddenMoveCount > 0 \? moveNums\.slice\(-state\.feedRenderLimit\) : moveNums/);
 assert.match(runScript, /data-feed-load-more/);
 assert.match(runScript, /state\.tokenUsagePoints\.set\(action/);
+assert.match(runScript, /\$\$\{pricing\.input\}\/M in · \$\$\{pricing\.output\}\/M out/);
 assert.match(siteTheme, /\.agent-feed__load-more \{/);
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mazebench-run-performance-"));

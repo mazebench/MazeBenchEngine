@@ -102,6 +102,38 @@ function finishUsage({
   };
 }
 
+function withApiCostEstimate(usage, pricing) {
+  const inputRate = pricing?.input === null || pricing?.input === undefined || pricing?.input === ""
+    ? NaN
+    : Number(pricing.input);
+  const outputRate = pricing?.output === null || pricing?.output === undefined || pricing?.output === ""
+    ? NaN
+    : Number(pricing.output);
+  const existingCost = usage?.api_cost_estimate_usd;
+  const hasExistingCost = existingCost !== null && existingCost !== undefined &&
+    Number.isFinite(Number(existingCost));
+  if (
+    !usage ||
+    hasExistingCost ||
+    !Number.isFinite(inputRate) || inputRate < 0 ||
+    !Number.isFinite(outputRate) || outputRate < 0
+  ) {
+    return usage;
+  }
+
+  const inputTokens = Math.max(0, number(usage.input_tokens));
+  const outputTokens = Math.max(0, number(usage.output_tokens));
+  return {
+    ...usage,
+    api_cost_estimate_usd: (inputTokens * inputRate + outputTokens * outputRate) / 1_000_000,
+    api_pricing: {
+      model: String(pricing.model || ""),
+      input: inputRate,
+      output: outputRate
+    }
+  };
+}
+
 function codexUsageShape(usage = {}) {
   const input = number(usage.input_tokens);
   const output = number(usage.output_tokens);
@@ -876,5 +908,6 @@ module.exports = {
   parseCodexSession,
   parseCodexSwarmSessions,
   parsePrimeLiveUsage,
-  parsePrimeResults
+  parsePrimeResults,
+  withApiCostEstimate
 };
