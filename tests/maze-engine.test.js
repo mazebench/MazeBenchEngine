@@ -4940,6 +4940,48 @@ for (const boxType of ["box", "weightless_box"]) {
   }
 }
 
+{
+  // A different member of a rigid carrier may move into the rider's current
+  // voxel while the rider vacates it with its own support. The collision
+  // preflight must treat that swept cell as part of the same transaction.
+  const { engine, state } = createState({
+    width: 4,
+    height: 2,
+    terrain: floorTerrain(4, 2),
+    actors: [
+      { type: "player", x: 0, y: 1, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 0, removed: false },
+      { type: "weightless_box", groupId: "M0", x: 2, y: 0, elevation: 1, removed: false },
+      { type: "clone", groupId: "c0", x: 1, y: 0, elevation: 1, removed: false },
+      { type: "clone", groupId: "c1", x: 2, y: 0, elevation: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, -1, 0);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual(
+    [
+      [state.actorX[1], state.actorY[1], state.actorElevation[1]],
+      [state.actorX[2], state.actorY[2], state.actorElevation[2]],
+      [state.actorX[3], state.actorY[3], state.actorElevation[3]],
+      [state.actorX[4], state.actorY[4], state.actorElevation[4]]
+    ],
+    [
+      [0, 0, 0],
+      [1, 0, 1],
+      [0, 0, 1],
+      [1, 0, 0]
+    ],
+    "the pushing clone moves the cluster while the other clone rides it"
+  );
+  assert.equal(
+    result.moves.filter((move) => move.actorIndex === 3 && !move.visualOnly).length,
+    1,
+    "the swept-cell rider moves exactly once"
+  );
+}
+
 for (const riderType of ["player", "clone"]) {
   // A raised attached lift is the rider's immediate surface, but its
   // underlying pushblock remains the moving carrier.

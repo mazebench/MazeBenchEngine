@@ -6773,27 +6773,71 @@
       let remainingBudget = budget - cost;
       const blockers = [];
       let movingMembers = [];
-      const weightlessCluster =
-        actorTypes[actorIndex] === "weightless_box"
-          ? collectWeightlessPushCluster(
-              state,
-              actorGroupIds[actorIndex],
-              dx,
-              dy,
-              occupied,
-              gateState,
-              orangeButtonsPressed,
-              ignoredActors
-            )
-          : null;
+      let carriedRiders = [];
+      let weightlessCluster = null;
 
       if (actorTypes[actorIndex] === "weightless_box") {
-        if (!weightlessCluster) {
-          return null;
-        }
+        // A rigid cluster member can sweep into a rider's current voxel while
+        // the rider simultaneously vacates it with another support member.
+        // Discover those riders before collision collection so the preflight
+        // treats the whole carrier+rider move as one transaction. Re-run if
+        // collection expands the moving cluster and exposes more riders.
+        const riderAwareIgnoredActors = new Set(ignoredActors);
+        movingMembers = weightlessGroupMembers(state, actorGroupIds[actorIndex]);
+        cloneRidersForMove(
+          state,
+          movingMembers,
+          dx,
+          dy,
+          gateState,
+          orangeButtonsPressed,
+          ignoredActors
+        ).forEach((rider) => riderAwareIgnoredActors.add(rider.actorIndex));
 
+        while (true) {
+          weightlessCluster = collectWeightlessPushCluster(
+            state,
+            actorGroupIds[actorIndex],
+            dx,
+            dy,
+            occupied,
+            gateState,
+            orangeButtonsPressed,
+            riderAwareIgnoredActors
+          );
+
+          if (!weightlessCluster) {
+            return null;
+          }
+
+          movingMembers = weightlessClusterMembers(state, weightlessCluster.groupIds);
+          carriedRiders = cloneRidersForMove(
+            state,
+            movingMembers,
+            dx,
+            dy,
+            gateState,
+            orangeButtonsPressed,
+            ignoredActors
+          );
+
+          let addedRider = false;
+
+          carriedRiders.forEach((rider) => {
+            if (!riderAwareIgnoredActors.has(rider.actorIndex)) {
+              riderAwareIgnoredActors.add(rider.actorIndex);
+              addedRider = true;
+            }
+          });
+
+          if (!addedRider) {
+            break;
+          }
+        }
+      }
+
+      if (actorTypes[actorIndex] === "weightless_box") {
         blockers.push(...weightlessCluster.blockers);
-        movingMembers = weightlessClusterMembers(state, weightlessCluster.groupIds);
       } else {
         const members = pushActorMembers(state, actorIndex);
         movingMembers = members;
@@ -6940,15 +6984,18 @@
       }
 
       const moveStartIndex = moves.length;
-      const carriedRiders = cloneRidersForMove(
-        state,
-        movingMembers,
-        dx,
-        dy,
-        gateState,
-        orangeButtonsPressed,
-        ignoredActors
-      );
+
+      if (actorTypes[actorIndex] !== "weightless_box") {
+        carriedRiders = cloneRidersForMove(
+          state,
+          movingMembers,
+          dx,
+          dy,
+          gateState,
+          orangeButtonsPressed,
+          ignoredActors
+        );
+      }
 
       for (const blocker of blockers) {
         const result = attemptPushActor(
