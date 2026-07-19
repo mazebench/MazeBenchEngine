@@ -243,6 +243,8 @@ assert.equal(nativeFrameCountIsAcceptable(2696, 2698), false);
 assert.equal(nativeFrameCountIsAcceptable(2699, 2698), false);
 assert.match(replayExporter, /Accelerated replay produced a blank gameplay frame/);
 assert.match(replayExporter, /Accelerated replay diverged after action/);
+assert.match(replayExporter, /function inferReplayPrefixCommands\(/);
+assert.match(replayExporter, /expectedState\?\.replay_prefix_commands/);
 assert.match(replayExporter, /await captureFixedFrames\(edgeFrames\)/);
 assert.match(replayExporter, /const startedAt = Number\(window\.__MAZE_REPLAY_NOW__\) \|\| performance\.now\(\)/);
 assert.match(replayExporter, /app\.vectorGlowAmount = 1 - eased/);

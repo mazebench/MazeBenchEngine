@@ -12,6 +12,7 @@ const modelReplScript = path.join(ROOT_DIR, "scripts", "maze-model-repl.js");
 const {
   expectedReplayPlayerState,
   extractAsciiFrames,
+  inferReplayPrefixCommands,
   resolveInput,
   rowFromActionLog
 } = require(path.join(ROOT_DIR, "scripts", "maze-export-replay.js"));
@@ -77,6 +78,34 @@ assert.deepEqual(expectedReplayPlayerState({
   known: true,
   player: { elevation: 0, x: 4, y: 12 }
 });
+
+assert.deepEqual(
+  inferReplayPrefixCommands(
+    { current_room: "level_HxI", current_view: "top", player: { elevation: 0, x: 4, y: 14 }, yaw: 0 },
+    { current_room: "level_HxI", current_view: "top", moved: false, player: { elevation: 0, x: 5, y: 14 }, yaw: 0 },
+    "down",
+    1
+  ),
+  ["right"]
+);
+assert.deepEqual(
+  inferReplayPrefixCommands(
+    { current_room: "level_HxH", current_view: "top", player: { elevation: 0, x: 4, y: 9 }, yaw: 0 },
+    { current_room: "level_HxH", current_view: "top", player: { elevation: 0, x: 4, y: 10 }, yaw: 1 },
+    "rotate camera right",
+    1
+  ),
+  ["down"]
+);
+assert.deepEqual(
+  inferReplayPrefixCommands(
+    { current_room: "level_HxH", current_view: "top", player: { elevation: 0, x: 1, y: 13 }, yaw: 2 },
+    { current_room: "level_HxH", current_view: "top", moved: true, player: { elevation: 0, x: 1, y: 11 }, yaw: 2 },
+    "down",
+    1
+  ),
+  ["down"]
+);
 
 {
   const board = (name) => `maze level_HxI | view=top-diagonal yaw=0\n${name}`;
@@ -189,6 +218,44 @@ assert.deepEqual(expectedReplayPlayerState({
   assert.equal(rejectedGoto.maze_replay.action_statuses[0].replay_action_valid, false);
   assert.match(rejectedGoto.maze_replay.action_statuses[0].replay_action_error, /unvisited/);
   assert.deepEqual(rejectedGoto.maze_ascii_frames, ["INITIAL", "SAME-ROOM"]);
+
+  const bridgedGap = rowFromActionLog(
+    [
+      {
+        command_text: "down",
+        valid: true,
+        status: {
+          action_count: 1,
+          current_room: "level_HxI",
+          current_view: "top",
+          moved: true,
+          player: { elevation: 0, x: 4, y: 14 },
+          yaw: 0
+        }
+      },
+      {
+        command_text: "down",
+        valid: true,
+        status: {
+          action_count: 3,
+          current_room: "level_HxI",
+          current_view: "top",
+          moved: false,
+          player: { elevation: 0, x: 5, y: 14 },
+          yaw: 0
+        }
+      }
+    ],
+    {},
+    {
+      action_count: 0,
+      current_room: "level_HxI",
+      current_view: "top",
+      player: { elevation: 0, x: 4, y: 13 },
+      yaw: 0
+    }
+  );
+  assert.deepEqual(bridgedGap.maze_replay.action_statuses[1].replay_prefix_commands, ["right"]);
   fs.rmSync(actionLogDir, { recursive: true, force: true });
 }
 

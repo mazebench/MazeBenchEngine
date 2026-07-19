@@ -423,11 +423,180 @@ function rowFromSession(session) {
   };
 }
 
+function normalizeReplayYaw(value) {
+  const yaw = Number(value);
+  const integer = Number.isInteger(yaw) ? yaw : 0;
+  return ((integer % 4) + 4) % 4;
+}
+
+function replayMoveVector(direction, yaw = 0) {
+  const vectors = {
+    down: { dx: 0, dy: 1 },
+    left: { dx: -1, dy: 0 },
+    right: { dx: 1, dy: 0 },
+    up: { dx: 0, dy: -1 }
+  };
+  const vector = vectors[String(direction || "").toLowerCase()];
+  if (!vector) return null;
+
+  switch (normalizeReplayYaw(yaw)) {
+    case 1:
+      return { dx: vector.dy, dy: -vector.dx };
+    case 2:
+      return { dx: -vector.dx, dy: -vector.dy };
+    case 3:
+      return { dx: -vector.dy, dy: vector.dx };
+    default:
+      return vector;
+  }
+}
+
+function replayDirectionForVector(dx, dy, yaw) {
+  return ["up", "down", "left", "right"].find((direction) => {
+    const vector = replayMoveVector(direction, yaw);
+    return vector?.dx === dx && vector?.dy === dy;
+  }) || "";
+}
+
+function replayViewBeforeCommand(currentView, parsed) {
+  const currentIndex = VIEW_NAMES.indexOf(String(currentView || "").toLowerCase());
+  if (currentIndex < 0 || parsed?.command !== "rotate_camera") return currentView;
+  if (parsed.direction === "up") return VIEW_NAMES[Math.min(VIEW_NAMES.length - 1, currentIndex + 1)];
+  if (parsed.direction === "down") return VIEW_NAMES[Math.max(0, currentIndex - 1)];
+  return currentView;
+}
+
+function replayYawBeforeCommand(currentYaw, parsed) {
+  const yaw = normalizeReplayYaw(currentYaw);
+  if (parsed?.command !== "rotate_camera") return yaw;
+  if (parsed.direction === "right") return normalizeReplayYaw(yaw - 1);
+  if (parsed.direction === "left") return normalizeReplayYaw(yaw + 1);
+  return yaw;
+}
+
+// A live Prime trace occasionally contains one status whose bridge action
+// count advances by more than the single recorded model turn. The status is
+// authoritative, so recover simple missing screen-relative moves inside that
+// turn instead of letting the visual replay drift (or silently exporting a
+// dud through the unvalidated PNG fallback).
+function inferReplayPrefixCommands(previousStatus, currentStatus, commandText, missingCount) {
+  const count = Math.max(0, Math.floor(Number(missingCount) || 0));
+  if (!count) return [];
+
+  const parsed = parseCommandLine(commandText);
+  const stableFallback = parsed?.command === "move" && currentStatus?.moved === false
+    ? parsed.direction
+    : "no move";
+  const fallback = () => Array.from({ length: count }, () => stableFallback);
+  const previousPlayer = previousStatus?.player;
+  const currentPlayer = currentStatus?.player;
+  if (!previousPlayer || !currentPlayer) return fallback();
+  if (
+    previousStatus?.current_room &&
+    currentStatus?.current_room &&
+    String(previousStatus.current_room) !== String(currentStatus.current_room)
+  ) {
+    return fallback();
+  }
+
+  const beforeYaw = replayYawBeforeCommand(currentStatus?.yaw, parsed);
+  const beforeView = replayViewBeforeCommand(currentStatus?.current_view, parsed);
+  if (
+    previousStatus?.yaw !== undefined &&
+    normalizeReplayYaw(previousStatus.yaw) !== beforeYaw
+  ) {
+    return fallback();
+  }
+  if (
+    previousStatus?.current_view &&
+    beforeView &&
+    String(previousStatus.current_view) !== String(beforeView)
+  ) {
+    return fallback();
+  }
+
+  const beforeCurrent = {
+    elevation: Number(currentPlayer.elevation) || 0,
+    x: Number(currentPlayer.x),
+    y: Number(currentPlayer.y)
+  };
+  if (parsed?.command === "move" && currentStatus?.moved === true) {
+    const currentVector = replayMoveVector(parsed.direction, beforeYaw);
+    if (!currentVector) return fallback();
+    beforeCurrent.x -= currentVector.dx;
+    beforeCurrent.y -= currentVector.dy;
+  }
+  if (
+    !Number.isFinite(beforeCurrent.x) ||
+    !Number.isFinite(beforeCurrent.y) ||
+    (Number(previousPlayer.elevation) || 0) !== beforeCurrent.elevation
+  ) {
+    return fallback();
+  }
+
+  let dx = beforeCurrent.x - Number(previousPlayer.x);
+  let dy = beforeCurrent.y - Number(previousPlayer.y);
+  if (!Number.isInteger(dx) || !Number.isInteger(dy) || Math.abs(dx) + Math.abs(dy) > count) {
+    return fallback();
+  }
+
+  const commands = [];
+  while (dx !== 0) {
+    const step = Math.sign(dx);
+    const direction = replayDirectionForVector(step, 0, beforeYaw);
+    if (!direction) return fallback();
+    commands.push(direction);
+    dx -= step;
+  }
+  while (dy !== 0) {
+    const step = Math.sign(dy);
+    const direction = replayDirectionForVector(0, step, beforeYaw);
+    if (!direction) return fallback();
+    commands.push(direction);
+    dy -= step;
+  }
+  while (commands.length < count) commands.push(stableFallback);
+  return commands;
+}
+
+function annotateReplayActionGaps(entries, initialStatus = null) {
+  let previousStatus = initialStatus || null;
+  let previousCount = Number(initialStatus?.action_count);
+  if (!Number.isInteger(previousCount) || previousCount < 0) previousCount = 0;
+
+  return entries.map((entry) => {
+    const status = entry.status || {};
+    const currentCount = Number(status.action_count);
+    let next = entry;
+    if (Number.isInteger(currentCount) && currentCount >= previousCount) {
+      const recordedActionCount = entry.valid ? 1 : 0;
+      const missingCount = Math.max(0, currentCount - previousCount - recordedActionCount);
+      if (missingCount > 0) {
+        next = {
+          ...entry,
+          status: {
+            ...status,
+            replay_prefix_commands: inferReplayPrefixCommands(
+              previousStatus,
+              status,
+              entry.command,
+              missingCount
+            )
+          }
+        };
+      }
+      previousCount = currentCount;
+    }
+    previousStatus = status;
+    return next;
+  });
+}
+
 // Prime writes actions.jsonl after every turn, while results.jsonl is only
 // finalized when the Verifiers rollout exits normally. Auto-quit and cancelled
 // runs can therefore be replayable even when no final rollout row exists.
 function rowFromActionLog(actionRecords, runMeta = {}, initialStatus = null) {
-  const replayEntries = (Array.isArray(actionRecords) ? actionRecords : [])
+  const replayEntries = annotateReplayActionGaps((Array.isArray(actionRecords) ? actionRecords : [])
     .filter(Boolean)
     .map((action) => {
       const valid = action.valid !== false && !action.error;
@@ -446,7 +615,7 @@ function rowFromActionLog(actionRecords, runMeta = {}, initialStatus = null) {
     // Keep parseable rejected attempts in the timeline as visual no-ops. That
     // preserves exact action/observation alignment without trying to replay
     // malformed prose as a game command.
-    .filter((action) => action.command && (action.valid || parseCommandLine(action.command)));
+    .filter((action) => action.command && (action.valid || parseCommandLine(action.command))), initialStatus);
   const actions = replayEntries.map(({ command }) => ({ command, valid: true }));
   const firstStatus = replayEntries.find((entry) => entry.status)?.status || {};
   const initialLevel = String(initialStatus?.level || firstStatus.level || "");
@@ -2613,6 +2782,31 @@ async function renderReplayVideo(
         await page.evaluate(() => window.__syncMazeReplayClock__?.());
       }
 
+      for (const prefixCommand of expectedState?.replay_prefix_commands || []) {
+        const prefix = parseCommandLine(prefixCommand);
+        if (prefix?.command === "move") {
+          const key = {
+            down: "ArrowDown",
+            left: "ArrowLeft",
+            right: "ArrowRight",
+            up: "ArrowUp"
+          }[prefix.direction];
+          await page.keyboard.press(key);
+          await settleAndCapture(3.0);
+        } else {
+          await captureFrame();
+        }
+        const prefixHandoff = await settleReplayActionBoundary();
+        if (!prefixHandoff.settled) {
+          throw new Error(
+            `Recovered replay action did not settle before action ${entry.sourceIndex + 1}`
+          );
+        }
+        if (options.accelerated) {
+          await page.evaluate(() => window.__syncMazeReplayClock__?.());
+        }
+      }
+
       if (!replayActionValid) {
         // The trusted evaluator rejected this attempt (for example, a goto to
         // an unvisited room). Hold the authoritative visual state for one
@@ -3105,6 +3299,7 @@ module.exports = {
   expectedReplayPlayerState,
   extractAsciiFrames,
   humanSize,
+  inferReplayPrefixCommands,
   nativeFrameCountIsAcceptable,
   resolveInput,
   renderReplayVideo,
