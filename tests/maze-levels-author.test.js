@@ -29,7 +29,8 @@ const game = {
           { token: "Sr", direction: "right" },
           { token: "Sl", direction: "left" },
           { token: "Su", direction: "up" },
-          { token: "Sd", direction: "down" }
+          { token: "Sd", direction: "down" },
+          { token: "Sr#", direction: "right", style_key: "wall" }
         ]
       },
       gem: { token: "G" },
@@ -130,6 +131,7 @@ const catalogWeightless = authorPageData.palette.find((tool) => tool.token === "
 assert.equal(catalogWeightless.label, "Feather Box");
 assert.equal(catalogWeightless.description, "Catalog description.");
 assert.deepEqual(catalogWeightless.demo, { layout: ["p $ ."], moves: "R" });
+assert.equal(authorPageData.palette.find((tool) => tool.token === "Sr#").styleKey, "wall");
 assert.equal(authorPageData.toolboxCatalog.format, 1);
 
 assert.deepEqual(editorState.cells[0].slice(0, 3), ["+", ".", "+++#"]);

@@ -788,6 +788,7 @@ function createMazeLevelService({
             name !== "circle_player" &&
             name !== "exit" &&
             name !== "hole",
+          styleKey: entry.styleKey || null,
           token: entry.token,
           type: definition.type,
           direction: entry.direction || null
