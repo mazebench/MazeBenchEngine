@@ -4429,6 +4429,35 @@
           };
         }
 
+        const nextTraversal = iceSlopeTraversalForEntry(
+          state,
+          traversal.exitX,
+          traversal.exitY,
+          dx,
+          dy,
+          traversal.exitElevation,
+          orangeButtonsPressed
+        );
+
+        // Terrain slopes block both their lower and upper collision bands, so
+        // the old order naturally discovered a connected downhill wedge.
+        // Slope-shaped actors occupy only their lower actor voxel; prefer a
+        // compatible continuation before treating their upper band as empty.
+        if (
+          nextTraversal &&
+          !iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal)
+        ) {
+          if (
+            traversal.exitElevation < traversal.entryElevation &&
+            nextTraversal.exitElevation > nextTraversal.entryElevation
+          ) {
+            appendPathPoints(path, [iceSlopeSharedEdgePoint(traversal, dx, dy)]);
+          }
+          traversal = nextTraversal;
+          appendPathPoints(path, iceSlopeTraversalPathPoints(traversal));
+          continue;
+        }
+
         if (
           canTravelThroughSpace(
             state,
@@ -4466,31 +4495,7 @@
           };
         }
 
-        const nextTraversal = iceSlopeTraversalForEntry(
-          state,
-          traversal.exitX,
-          traversal.exitY,
-          dx,
-          dy,
-          traversal.exitElevation,
-          orangeButtonsPressed
-        );
-
-        if (
-          !nextTraversal ||
-          iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal)
-        ) {
-          return null;
-        }
-
-        if (
-          traversal.exitElevation < traversal.entryElevation &&
-          nextTraversal.exitElevation > nextTraversal.entryElevation
-        ) {
-          appendPathPoints(path, [iceSlopeSharedEdgePoint(traversal, dx, dy)]);
-        }
-        traversal = nextTraversal;
-        appendPathPoints(path, iceSlopeTraversalPathPoints(traversal));
+        return null;
       }
 
       return null;
@@ -4514,6 +4519,25 @@
       while (traversal && guard > 0) {
         guard -= 1;
 
+        const nextTraversal = iceSlopeTraversalForEntry(
+          state,
+          traversal.exitX,
+          traversal.exitY,
+          dx,
+          dy,
+          traversal.exitElevation,
+          orangeButtonsPressed
+        );
+
+        if (
+          nextTraversal &&
+          !iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal)
+        ) {
+          traversal = nextTraversal;
+          appendPathPoints(path, iceSlopeTraversalPathPoints(traversal));
+          continue;
+        }
+
         if (
           canTravelThroughSpace(
             state,
@@ -4528,25 +4552,7 @@
           return null;
         }
 
-        const nextTraversal = iceSlopeTraversalForEntry(
-          state,
-          traversal.exitX,
-          traversal.exitY,
-          dx,
-          dy,
-          traversal.exitElevation,
-          orangeButtonsPressed
-        );
-
-        if (
-          !nextTraversal ||
-          iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal)
-        ) {
-          return path.map((point) => ({ ...point }));
-        }
-
-        traversal = nextTraversal;
-        appendPathPoints(path, iceSlopeTraversalPathPoints(traversal));
+        return path.map((point) => ({ ...point }));
       }
 
       return null;
@@ -4584,6 +4590,26 @@
       while (traversal && guard > 0) {
         guard -= 1;
 
+        const nextTraversal = iceSlopeTraversalForEntry(
+          state,
+          traversal.exitX,
+          traversal.exitY,
+          dx,
+          dy,
+          traversal.exitElevation,
+          orangeButtonsPressed
+        );
+
+        if (nextTraversal) {
+          if (iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal)) {
+            return null;
+          }
+
+          traversal = nextTraversal;
+          appendPathPoints(path, iceSlopeTraversalPathPoints(traversal));
+          continue;
+        }
+
         if (
           canTravelThroughSpace(
             state,
@@ -4598,51 +4624,32 @@
           return null;
         }
 
-        const nextTraversal = iceSlopeTraversalForEntry(
+        const blocker = !terrainBlocksElevation(
           state,
           traversal.exitX,
           traversal.exitY,
-          dx,
-          dy,
           traversal.exitElevation,
+          gateState,
           orangeButtonsPressed
-        );
+        )
+          ? pushableBlockingActorAtElevation(
+              state,
+              traversal.exitX,
+              traversal.exitY,
+              traversal.exitElevation,
+              ignoredActors
+            )
+          : -1;
 
-        if (!nextTraversal) {
-          const blocker = !terrainBlocksElevation(
-            state,
-            traversal.exitX,
-            traversal.exitY,
-            traversal.exitElevation,
-            gateState,
-            orangeButtonsPressed
-          )
-            ? pushableBlockingActorAtElevation(
-                state,
-                traversal.exitX,
-                traversal.exitY,
-                traversal.exitElevation,
-                ignoredActors
-              )
-            : -1;
-
-          return blocker === -1
-            ? null
-            : {
-                blocker,
-                traversal: {
-                  ...traversal,
-                  path: path.concat(iceSlopeExitCenterPoint(traversal)).map((point) => ({ ...point }))
-                }
-              };
-        }
-
-        if (iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal)) {
-          return null;
-        }
-
-        traversal = nextTraversal;
-        appendPathPoints(path, iceSlopeTraversalPathPoints(traversal));
+        return blocker === -1
+          ? null
+          : {
+              blocker,
+              traversal: {
+                ...traversal,
+                path: path.concat(iceSlopeExitCenterPoint(traversal)).map((point) => ({ ...point }))
+              }
+            };
       }
 
       return null;

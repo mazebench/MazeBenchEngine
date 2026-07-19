@@ -4556,11 +4556,12 @@ for (const ownerType of ["weightless_box", "clone"]) {
   // voxel that begins its inclined face. Chaining two owned wedges therefore
   // puts the second wedge at the first wedge's exit. That wedge is the next
   // ramp, not a solid actor blocking the chain.
-  const terrain = floorTerrain(1, 4);
+  const terrain = floorTerrain(2, 4);
   terrain[0][0] = wallStack(2);
+  terrain[3][1] = wallStack(1);
   const groupId = ownerType === "clone" ? "c7" : "M7";
   const { engine, state } = createState({
-    width: 1,
+    width: 2,
     height: 4,
     terrain,
     actors: [
@@ -4585,7 +4586,13 @@ for (const ownerType of ["weightless_box", "clone"]) {
         y: 1,
         elevation: 1,
         removed: false
-      }
+      },
+      // Clone-owned ramps mirror the input before the main player moves.
+      // This foreign member makes the c7 structure stationary on the down
+      // action, matching the conditions under which another actor can use it.
+      ...(ownerType === "clone"
+        ? [{ type: ownerType, groupId, x: 1, y: 2, elevation: 0, removed: false }]
+        : [])
     ]
   });
 
@@ -4606,6 +4613,31 @@ for (const ownerType of ["weightless_box", "clone"]) {
       { x: 0, y: 0, elevation: 2 }
     ],
     `${ownerType} wedges use the normal connected-ramp path`
+  );
+
+  const descent = engine.move(state, 0, 1);
+  const descentMove = descent.moves.find((move) => move.actorIndex === 0);
+
+  assert.equal(descent.moved, true);
+  assert.deepEqual(
+    [state.actorX[0], state.actorY[0], state.actorElevation[0]],
+    [0, 3, 0],
+    `player slides back down a connected ${ownerType} ice-slope chain`
+  );
+  assert.deepEqual(
+    descentMove?.path,
+    [
+      { x: 0, y: 0, elevation: 2 },
+      { x: 0, y: 1, elevation: 2 },
+      { x: 0, y: 2, elevation: 1 },
+      { x: 0, y: 3, elevation: 0 }
+    ],
+    `${ownerType} wedges use the normal connected-ramp descent path`
+  );
+  assert.notEqual(
+    descentMove?.iceSlipOff,
+    true,
+    `${ownerType} descent exits the ramp instead of falling through its bottom`
   );
 }
 
