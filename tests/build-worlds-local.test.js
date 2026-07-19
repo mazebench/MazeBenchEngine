@@ -153,6 +153,7 @@ assert.deepEqual(
 
 // --- gem counting ---
 assert.equal(buildWorlds.countWorldGems(imported), 2);
+assert.equal(buildWorlds.describeLocalWorld(imported.id).total_gems, 2);
 
 // --- local drafts persist the same configurable starting-room choice as hosted worlds ---
 buildWorlds.updateDraftMeta(imported.id, { default_level_id: "level_CxB" });

@@ -1,4 +1,5 @@
 (() => {
+  const GEM_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10.5 3 8 9l4 13 4-13-2.5-6"></path><path d="M17 3a2 2 0 0 1 1.6.8l3 4a2 2 0 0 1 .013 2.382l-7.99 10.986a2 2 0 0 1-3.247 0l-7.99-10.986A2 2 0 0 1 2.4 7.8l2.998-3.997A2 2 0 0 1 7 3z"></path><path d="M2 9h20"></path></svg>';
   const data = window.__BUILD_DATA__ || { worlds: [], master: null, apiUrl: "/api/build/worlds" };
   const statusEl = document.getElementById("build-status");
   const worldsEl = document.getElementById("build-worlds");
@@ -89,6 +90,8 @@
 
   function worldCard(world) {
     const updated = formatWhen(world.updated_at);
+    const gemCount = Math.max(0, Math.trunc(Number(world.total_gems) || 0));
+    const gemLabel = `${gemCount} ${gemCount === 1 ? "gem" : "gems"}`;
 
     return `
       <article class="world-card world-card--draft" data-world-id="${escapeText(world.id)}">
@@ -98,6 +101,7 @@
           <div class="screen-fx"></div>
           <div class="screen-badges"><span class="badge badge--status">Draft</span></div>
           ${updated ? `<span class="badge badge--updated">${escapeText(updated)}</span>` : ""}
+          <span class="screen-gems" title="${gemLabel}" aria-label="${gemLabel}">${GEM_ICON_SVG}<span>${gemCount}</span></span>
         </div>
         <div class="card-body">
           <h3 class="card-title" data-role="title">${escapeText(world.title)}</h3>

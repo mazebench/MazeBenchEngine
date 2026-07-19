@@ -421,6 +421,7 @@ function createLocalBuildWorldService({
       world_width: config.worldSize.width,
       world_height: config.worldSize.height,
       level_count: game.worldMap.levels.length,
+      total_gems: countWorldGems(game),
       created_at: meta.created_at || null,
       updated_at: meta.updated_at || null,
       remote_id: meta.remote_id || null,
