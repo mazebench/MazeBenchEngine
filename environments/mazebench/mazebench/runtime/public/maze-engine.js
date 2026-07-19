@@ -1392,6 +1392,24 @@
       return (value >>> 8) === occupancyStamp && (value & 0xff) !== 0;
     }
 
+    function isOccupiedAtElevationByOtherThan(occupied, x, y, elevation, allowedActor) {
+      const slot = occupancySlot(x, y, elevation || 0);
+
+      if (slot < 0) {
+        return false;
+      }
+
+      const value = occupancyGrid[slot];
+
+      if ((value >>> 8) !== occupancyStamp || (value & 0xff) === 0) {
+        return false;
+      }
+
+      // addOccupiedAtElevation uses 0xff when no actor identity is available;
+      // that synthetic occupant must never inherit an actor exemption.
+      return (value & 0xff) === 0xff || (value & 0xff) - 1 !== allowedActor;
+    }
+
     function addOccupiedAtElevation(occupied, x, y, elevation) {
       const slot = occupancySlot(x, y, elevation || 0);
       if (slot >= 0) {
@@ -4344,6 +4362,28 @@
       return canMoveInto(state, x, y, occupied, gateState, orangeButtonsPressed, elevation);
     }
 
+    function iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal) {
+      const slopeActor = nextTraversal?.slopeLayer?.slopeActorIndex;
+
+      // A slope-shaped actor occupies the voxel containing its own inclined
+      // face. When that face continues a ramp chain, exempt only that actor;
+      // any other occupant still blocks exactly as it would on terrain ramps.
+      return Number.isInteger(slopeActor)
+        ? isOccupiedAtElevationByOtherThan(
+            occupied,
+            traversal.exitX,
+            traversal.exitY,
+            traversal.exitElevation,
+            slopeActor
+          )
+        : isOccupiedAtElevation(
+            occupied,
+            traversal.exitX,
+            traversal.exitY,
+            traversal.exitElevation
+          );
+    }
+
     function resolveIceSlopeTraversal(
       state,
       slopeX,
@@ -4438,7 +4478,7 @@
 
         if (
           !nextTraversal ||
-          isOccupiedAtElevation(occupied, traversal.exitX, traversal.exitY, traversal.exitElevation)
+          iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal)
         ) {
           return null;
         }
@@ -4500,7 +4540,7 @@
 
         if (
           !nextTraversal ||
-          isOccupiedAtElevation(occupied, traversal.exitX, traversal.exitY, traversal.exitElevation)
+          iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal)
         ) {
           return path.map((point) => ({ ...point }));
         }
@@ -4597,7 +4637,7 @@
               };
         }
 
-        if (isOccupiedAtElevation(occupied, traversal.exitX, traversal.exitY, traversal.exitElevation)) {
+        if (iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal)) {
           return null;
         }
 

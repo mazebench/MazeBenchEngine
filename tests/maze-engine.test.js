@@ -4551,6 +4551,64 @@ console.log("maze-engine tests passed");
   assert.equal(engine.stateKey(state), keyBefore);
 }
 
+for (const ownerType of ["weightless_box", "clone"]) {
+  // level_AxA regression: a slope-shaped group member occupies the same
+  // voxel that begins its inclined face. Chaining two owned wedges therefore
+  // puts the second wedge at the first wedge's exit. That wedge is the next
+  // ramp, not a solid actor blocking the chain.
+  const terrain = floorTerrain(1, 4);
+  terrain[0][0] = wallStack(2);
+  const groupId = ownerType === "clone" ? "c7" : "M7";
+  const { engine, state } = createState({
+    width: 1,
+    height: 4,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 3, removed: false },
+      {
+        type: ownerType,
+        groupId,
+        shape: "slope",
+        direction: "up",
+        x: 0,
+        y: 2,
+        elevation: 0,
+        removed: false
+      },
+      { type: ownerType, groupId, x: 0, y: 1, elevation: 0, removed: false },
+      {
+        type: ownerType,
+        groupId,
+        shape: "slope",
+        direction: "up",
+        x: 0,
+        y: 1,
+        elevation: 1,
+        removed: false
+      }
+    ]
+  });
+
+  const result = engine.move(state, 0, -1);
+
+  assert.equal(result.moved, true);
+  assert.deepEqual(
+    [state.actorX[0], state.actorY[0], state.actorElevation[0]],
+    [0, 0, 2],
+    `player slides through a connected ${ownerType} ice-slope chain`
+  );
+  assert.deepEqual(
+    result.moves.find((move) => move.actorIndex === 0)?.path,
+    [
+      { x: 0, y: 3, elevation: 0 },
+      { x: 0, y: 2, elevation: 1 },
+      { x: 0, y: 1, elevation: 2 },
+      { x: 0, y: 0, elevation: 2 }
+    ],
+    `${ownerType} wedges use the normal connected-ramp path`
+  );
+}
+
 {
   const { engine, state } = createState({
     width: 5,
