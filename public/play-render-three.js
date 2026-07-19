@@ -8974,7 +8974,14 @@
     }
 
     function layerSignature(layer) {
-      return `${layer.type}:${layer.elevation ?? 0}:${layer.raised ? 1 : 0}:${layer.modelUrl || ""}`;
+      return [
+        layer.type,
+        layer.elevation ?? 0,
+        layer.raised ? 1 : 0,
+        layer.direction || "",
+        layer.styleKey || "",
+        layer.modelUrl || ""
+      ].join(":");
     }
 
     function cameraFitSignature() {

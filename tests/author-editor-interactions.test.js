@@ -102,6 +102,29 @@ assert.equal(
   "numbered slope families must not visually merge with unrelated terrain"
 );
 
+const layerSignatureSection = sourceSection(
+  rendererSource,
+  "function layerSignature",
+  "function cameraFitSignature"
+);
+const layerSignature = vm.runInNewContext(`(${layerSignatureSection.trim()})`);
+const plainSlopeLayer = {
+  type: "ice_slope",
+  elevation: 0,
+  direction: "right",
+  styleKey: null
+};
+assert.notEqual(
+  layerSignature(plainSlopeLayer),
+  layerSignature({ ...plainSlopeLayer, styleKey: "wall" }),
+  "black ice slopes must invalidate an ice-colored cached render"
+);
+assert.notEqual(
+  layerSignature(plainSlopeLayer),
+  layerSignature({ ...plainSlopeLayer, direction: "left" }),
+  "rotated ice slopes must invalidate cached slope geometry"
+);
+
 const selectCellSection = sourceSection(
   authorSource,
   "function selectCell",
