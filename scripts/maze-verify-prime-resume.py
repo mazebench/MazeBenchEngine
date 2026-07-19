@@ -14,6 +14,7 @@ from mazebench.mazebench import (
     MazeBenchTaskset,
     MazeSession,
     load_prime_resume_checkpoint,
+    prime_resume_prompt,
     slim_status,
 )
 
@@ -136,6 +137,11 @@ def self_test() -> None:
             ),
             encoding="utf8",
         )
+        checkpoint = load_prime_resume_checkpoint(str(checkpoint_path))
+        resumed_prompt = prime_resume_prompt(checkpoint)[-1]["content"]
+        assert "Previous action: move." in resumed_prompt
+        assert "Direction: up." in resumed_prompt
+        assert "Moved: true." in resumed_prompt
         result = asyncio.run(verify(checkpoint_path))
         assert result["action_count"] == 1
 
