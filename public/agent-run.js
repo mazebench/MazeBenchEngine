@@ -37,7 +37,9 @@
   const downloadVideoButton = document.getElementById("download-video");
   const deleteButton = document.getElementById("delete-run");
   const liveImage = document.getElementById("run-live-image");
+  const liveBitmap = document.getElementById("run-live-bitmap");
   const livePlaceholder = document.getElementById("run-live-placeholder");
+  const captionEl = document.getElementById("run-live-caption");
   const liveGrid = document.getElementById("run-live-grid");
   const mainReplayControls = document.getElementById("run-main-replay-controls");
   const tokenChart = document.getElementById("run-token-chart");
@@ -201,8 +203,7 @@
     // -1 makes move 0 a real render target instead of waiting for move 1.
     lastRenderedTurn: -1,
     lastImageUrl: null,
-    frameRendering: false,
-    frameFailures: 0,
+    lastBitmapBoard: "",
     jsonObservationTurn: -1,
     jsonObservationPending: false,
     replayFrameRequest: 0,
@@ -269,10 +270,70 @@
     boardEl.style.setProperty("--run-ascii-line-height", `${availableHeight / terminalRows}px`);
   }
 
-  function showAsciiBoard(board) {
+  function bitmapRgb(value) {
+    const hex = String(value || "#2a2d33").replace(/^#/, "");
+    return [
+      Number.parseInt(hex.slice(0, 2), 16) || 0,
+      Number.parseInt(hex.slice(2, 4), 16) || 0,
+      Number.parseInt(hex.slice(4, 6), 16) || 0
+    ];
+  }
+
+  function drawAsciiBitmap(board, turn = null) {
+    if (!liveBitmap || isVision || isJson) return false;
+    const boardText = String(board || "");
+    if (state.lastBitmapBoard === boardText) {
+      liveBitmap.hidden = false;
+      liveImage.hidden = true;
+      livePlaceholder.hidden = true;
+      if (captionEl && turn != null) {
+        captionEl.textContent = Number(turn) === 0
+          ? "move 0 · live ASCII colors"
+          : `after move ${turn} · live ASCII colors`;
+        captionEl.hidden = false;
+      }
+      return true;
+    }
+    const rows = boardText.replaceAll("\r", "").split("\n");
+    const width = Math.max(1, ...rows.map((row) => Array.from(row).length));
+    const height = Math.max(1, rows.length);
+    const context = liveBitmap.getContext("2d");
+    if (!context) return false;
+
+    liveBitmap.width = width;
+    liveBitmap.height = height;
+    const image = context.createImageData(width, height);
+    const palette = initial.ascii_palette || {};
+    for (let y = 0; y < height; y += 1) {
+      const glyphs = Array.from(rows[y] || "");
+      for (let x = 0; x < width; x += 1) {
+        const [red, green, blue] = bitmapRgb(palette[glyphs[x] ?? " "] || "#050608");
+        const offset = (y * width + x) * 4;
+        image.data[offset] = red;
+        image.data[offset + 1] = green;
+        image.data[offset + 2] = blue;
+        image.data[offset + 3] = 255;
+      }
+    }
+    context.putImageData(image, 0, 0);
+    state.lastBitmapBoard = boardText;
+    liveBitmap.hidden = false;
+    liveImage.hidden = true;
+    livePlaceholder.hidden = true;
+    if (captionEl && turn != null) {
+      captionEl.textContent = Number(turn) === 0
+        ? "move 0 · live ASCII colors"
+        : `after move ${turn} · live ASCII colors`;
+      captionEl.hidden = false;
+    }
+    return true;
+  }
+
+  function showAsciiBoard(board, turn = null) {
     if (!board) return;
     boardEl.textContent = board;
     boardWrap.hidden = false;
+    drawAsciiBitmap(board, turn);
     requestAnimationFrame(fitAsciiBoard);
   }
 
@@ -2638,7 +2699,7 @@
         state.feedVersion += 1;
       }
       if (!state.replayCursors.has("primary")) {
-        if (action.level && !isVision) showAsciiBoard(action.level);
+        if (action.level && !isVision) showAsciiBoard(action.level, action.turn);
         if (isJson && action.json_observation) {
           showJsonObservation(action.json_observation, action.turn);
         }
@@ -3067,8 +3128,6 @@
 
   // ---- live image -----------------------------------------------------------
 
-  const captionEl = document.getElementById("run-live-caption");
-
   function cancelReplayFrameResolution() {
     state.replayFrameRequest += 1;
     if (state.replayFrameTimer) clearTimeout(state.replayFrameTimer);
@@ -3083,7 +3142,9 @@
 
     const attempt = async (retries = 0) => {
       try {
-        const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/frame?turn=${requestedTurn}`);
+        const response = await fetch(
+          `/api/agent/runs/${encodeURIComponent(runId)}/frame?turn=${requestedTurn}&manual=1`
+        );
         const payload = await response.json();
         if (requestId !== state.replayFrameRequest || replayTurn("primary") !== requestedTurn) return;
         const renderedTurn = Number.isFinite(Number(payload.turn)) ? Number(payload.turn) : requestedTurn;
@@ -3112,6 +3173,7 @@
       state.lastImageUrl = url;
       liveImage.src = url;
     }
+    if (liveBitmap) liveBitmap.hidden = true;
     liveImage.hidden = false;
     livePlaceholder.hidden = true;
     if (captionEl && turn != null) {
@@ -3123,8 +3185,10 @@
   function applyMainObservation(observation) {
     if (!observation) return;
     const turn = Math.max(0, Number(observation.turn) || 0);
+    let showsAsciiBitmap = false;
     if (observation.board && observation.mode !== "vision") {
-      showAsciiBoard(observation.board);
+      showAsciiBoard(observation.board, turn);
+      showsAsciiBitmap = observation.mode === "text" && Boolean(liveBitmap);
     }
     if (observation.mode === "json" && observation.json_observation) {
       showJsonObservation(observation.json_observation, turn);
@@ -3132,6 +3196,11 @@
     if (observation.frame_url) {
       cancelReplayFrameResolution();
       showImage(observation.frame_url, turn);
+      return;
+    }
+
+    if (showsAsciiBitmap) {
+      if (state.playingView !== "primary") resolveReplayFrame(turn);
       return;
     }
 
@@ -3167,42 +3236,12 @@
       );
       if (!response.ok) return;
       const observation = await response.json();
-      if (observation.board) showAsciiBoard(observation.board);
+      if (observation.board) showAsciiBoard(observation.board, observation.turn);
       if (observation.json_observation) {
         showJsonObservation(observation.json_observation, observation.turn);
       }
     } finally {
       state.jsonObservationPending = false;
-    }
-  }
-
-  // Text-mode runs always use an on-demand frame. Vision runs use the same
-  // renderer for move 0 until the agent's own first vision frame is available.
-  // Throttle to one render at a time so we never queue browser boots.
-  async function maybeRenderLocalFrame() {
-    if (state.frameRendering || state.replayCursors.has("primary")) return;
-    const latest = state.afterTurn;
-    if (latest <= state.lastRenderedTurn) return;
-
-    state.frameRendering = true;
-    try {
-      const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/frame?turn=${latest}`);
-      const payload = await response.json();
-      if (payload.url && !state.replayCursors.has("primary")) {
-        const renderedTurn = Number.isFinite(Number(payload.turn)) ? Number(payload.turn) : latest;
-        state.frameFailures = 0;
-        showImage(payload.url, renderedTurn);
-        state.lastRenderedTurn = Math.max(state.lastRenderedTurn, renderedTurn);
-      } else if (payload.error && !payload.pending) {
-        state.frameFailures += 1;
-        if (livePlaceholder && !liveImage.src) {
-          livePlaceholder.querySelector("span:last-child").textContent = payload.error;
-        }
-      }
-    } catch (error) {
-      state.frameFailures += 1;
-    } finally {
-      state.frameRendering = false;
     }
   }
 
@@ -3322,10 +3361,6 @@
         renderFeed();
         renderMainReplayControls();
 
-        const mayRenderLiveFrame = !["paused", "stopping", "stopped", "waiting", "failed"].includes(
-          progress.run.status
-        );
-
         if (!state.replayCursors.has("primary") && isVision && progress.vision_frame_url) {
           const match = String(progress.vision_frame_url).match(/frame-(\d+)\.png(?:$|\?)/);
           const visionTurn = match ? Number(match[1]) : state.afterTurn;
@@ -3333,9 +3368,6 @@
             showImage(progress.vision_frame_url, visionTurn);
             state.lastRenderedTurn = visionTurn;
           }
-          if (mayRenderLiveFrame && state.lastRenderedTurn < state.afterTurn) maybeRenderLocalFrame();
-        } else if (!state.replayCursors.has("primary") && mayRenderLiveFrame) {
-          maybeRenderLocalFrame();
         }
 
         updateReplay(progress.run, progress.replay_progress);
@@ -3417,14 +3449,6 @@
               : `${progress.run.complete ? "Complete" : "Ended"} — ${progress.run.gem_count ?? 0}/${progress.run.gem_total ?? "—"} gems in ${progress.run.turns} moves.`,
           progress.run.status === "failed"
         );
-        // The text-mode image renders async and lags the board; keep polling
-        // until it catches up to the final move so the two end up in sync.
-        // Give up after a few consecutive renderer failures — otherwise a
-        // finished run whose renderer keeps erroring polls forever.
-        if (!isPrime && !isVision && state.lastRenderedTurn < state.afterTurn && state.frameFailures < 5) {
-          maybeRenderLocalFrame();
-          state.timer = setTimeout(poll, 1200);
-        }
       }
     } catch (error) {
       setStatus(error.message, true);

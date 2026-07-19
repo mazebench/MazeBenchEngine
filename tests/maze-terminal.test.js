@@ -22,6 +22,7 @@ const {
 } = require(codexPlayScript);
 const { recordNoMoveIfIdle } = require(path.join(ROOT_DIR, "scripts", "maze-agent-local.js"));
 const { evaluateAutoQuit } = require(path.join(ROOT_DIR, "shared", "auto-quit.js"));
+const { asciiGlyphPalette } = require(path.join(ROOT_DIR, "shared", "maze-ascii-palette.js"));
 const {
   applyMove,
   boardStateHash,
@@ -40,6 +41,26 @@ const {
   undoMove
 } = require(terminalScript);
 const mazeEngine = loadMazeEngine();
+
+{
+  const literal = asciiGlyphPalette();
+  assert.equal(literal.P, "#5aa95c");
+  assert.equal(literal.G, "#6cd7ff");
+  assert.equal(literal.W, "#23262c");
+  assert.equal(literal.I, "#a9d6f4");
+  assert.equal(literal.C, "#b59a2a");
+  assert.equal(literal.U, "#315991");
+
+  const hidden = asciiGlyphPalette({ hideNames: true, hideNamesSeed: "bitmap-seed" });
+  assert.equal(hidden.P, "#5aa95c", "hidden ASCII keeps the player glyph and 3D color");
+  assert.equal(hidden.G, "#6cd7ff", "hidden ASCII keeps the gem glyph and 3D color");
+  assert.notDeepEqual(hidden, literal, "hidden ASCII colors follow the run's glyph permutation");
+  assert.deepEqual(
+    Object.values(hidden).sort(),
+    Object.values(literal).sort(),
+    "glyph randomization preserves the complete semantic 3D color palette"
+  );
+}
 
 assert.deepEqual(expectedReplayPlayerState({ player_dead: false }), {
   known: false,
@@ -954,6 +975,13 @@ function syntheticFloor(width, height) {
   assert.match(hiddenA, /P/);
   assert.match(hiddenA, /G/);
   assert.doesNotMatch(hiddenA, /[pg]/, "top faces reserve uppercase P/G for player and gem");
+  const hiddenPalette = asciiGlyphPalette({ hideNames: true, hideNamesSeed: "ascii-run-a" });
+  Array.from(hiddenA.replaceAll("\n", "")).forEach((glyph) => {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(hiddenPalette, glyph),
+      `the live bitmap palette must color hidden glyph ${JSON.stringify(glyph)}`
+    );
+  });
 
   const hiddenSide = renderHidden("ascii-run-a", 4);
   assert.match(hiddenSide, /p/);

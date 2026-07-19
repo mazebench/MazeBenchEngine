@@ -379,7 +379,8 @@ function createRequestRouter({
 
       if (segments[4] === "frame" && request.method === "GET") {
         const turn = Math.max(0, Number(url.searchParams.get("turn")) || 0);
-        sendJson(response, 200, await agentRuns.renderLiveFrame(runId, turn));
+        const manual = url.searchParams.get("manual") === "1";
+        sendJson(response, 200, await agentRuns.renderLiveFrame(runId, turn, { manual }));
         return;
       }
 
