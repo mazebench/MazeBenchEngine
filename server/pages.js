@@ -599,8 +599,8 @@ function createPageRenderer({
 
     const masterGame = getGame("maze");
     const masterSection = masterGame
-      ? `<section class="panel" aria-label="Maze Bench Environment">
-          <h2>Maze Bench Environment</h2>
+      ? `<section class="panel" aria-label="Maze Bench Environment v0.7">
+          <h2>Maze Bench Environment v0.7</h2>
           <p class="muted" style="margin-top: -4px">The master benchmark world. Edits here change the world agents are scored on.</p>
           <div class="world-grid">${worldCard({
             game: masterGame,

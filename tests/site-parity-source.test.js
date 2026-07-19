@@ -40,6 +40,7 @@ assert.match(buildTheme, /\.world-card--draft \.card-body/);
 assert.match(buildTheme, /\.world-card--draft \.card-actions/);
 assert.match(buildTheme, /\.build-modal\.open/);
 assert.match(pages, /Build and Play/);
+assert.match(pages, /aria-label="Maze Bench Environment v0\.7">[\s\S]*?<h2>Maze Bench Environment v0\.7<\/h2>/);
 assert.doesNotMatch(pages, /modeCard\("\/play"/);
 assert.match(pages, /\["Edit", `\/author\/maze\//);
 assert.doesNotMatch(pages, /\["Edit Levels", `\/author\/maze\//);
