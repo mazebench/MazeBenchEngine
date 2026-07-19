@@ -1208,15 +1208,21 @@
     ].filter(Boolean);
     inputDetail.textContent = inputParts.join(" · ");
 
-    const cost = Number(usage?.api_cost_estimate_usd);
+    const rawCost = usage?.api_cost_estimate_usd;
+    const cost = rawCost === null || rawCost === undefined ? NaN : Number(rawCost);
     document.getElementById("run-token-cost").textContent = Number.isFinite(cost) && cost >= 0
       ? cost.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 })
       : "—";
     const costDetail = document.getElementById("run-token-cost-detail");
     const pricing = usage?.api_pricing;
-    costDetail.textContent = pricing
+    const pricingDetail = pricing && Number.isFinite(Number(pricing.cache_read))
       ? `$${pricing.input}/M new · $${pricing.cache_read}/M reads · $${pricing.cache_write_1h}/M 1h writes · $${pricing.output}/M out`
-      : cost ? "Provider-reported API-equivalent cost" : "Pricing unavailable";
+      : pricing && Number.isFinite(Number(pricing.input)) && Number.isFinite(Number(pricing.output))
+        ? `$${pricing.input}/M in · $${pricing.output}/M out`
+        : "";
+    costDetail.textContent = pricingDetail || (Number.isFinite(cost)
+      ? "Provider-reported API-equivalent cost"
+      : "Pricing unavailable");
     document.getElementById("run-token-context").textContent = usage?.current_context_tokens
       ? formatTokens(usage.current_context_tokens)
       : "—";

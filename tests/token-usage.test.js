@@ -5,8 +5,10 @@ const {
   parseCodexSession,
   parseCodexSwarmSessions,
   parsePrimeLiveUsage,
-  parsePrimeResults
+  parsePrimeResults,
+  withApiCostEstimate
 } = require("../server/token-usage");
+const { apiPricingForRun } = require("../server/agent-runs");
 const {
   actionsFromShellCommand,
   actionsFromToolCall,
@@ -24,6 +26,45 @@ assert.deepEqual(containerRuntimeMountArgs("/tmp/maze-current"), [
 ]);
 
 const lines = (...events) => events.map((event) => JSON.stringify(event)).join("\n");
+
+{
+  const catalog = [
+    { id: "openai/gpt-5.6-sol", pricing: { input: 5, output: 30 } },
+    { id: "anthropic/claude-haiku-4.5", pricing: { input: 1, output: 5 } },
+    { id: "google/gemini-3.5-flash", pricing: { input: 1.5, output: 9 } }
+  ];
+  assert.deepEqual(
+    apiPricingForRun({ provider: "prime", model_name: "google/gemini-3.5-flash" }, catalog),
+    { model: "google/gemini-3.5-flash", input: 1.5, output: 9 }
+  );
+  assert.deepEqual(
+    apiPricingForRun({ provider: "codex", model_name: "gpt-5.6-sol" }, catalog),
+    { model: "openai/gpt-5.6-sol", input: 5, output: 30 }
+  );
+  assert.deepEqual(
+    apiPricingForRun({ provider: "claude", model_name: "claude-haiku-4-5" }, catalog),
+    { model: "anthropic/claude-haiku-4.5", input: 1, output: 5 }
+  );
+
+  const usage = withApiCostEstimate(
+    { available: true, input_tokens: 1_000_000, output_tokens: 500_000, api_cost_estimate_usd: null },
+    { model: "google/gemini-3.5-flash", input: 1.5, output: 9 }
+  );
+  assert.equal(usage.api_cost_estimate_usd, 6);
+  assert.deepEqual(usage.api_pricing, {
+    model: "google/gemini-3.5-flash",
+    input: 1.5,
+    output: 9
+  });
+  assert.equal(
+    withApiCostEstimate(
+      { input_tokens: 100, output_tokens: 100, api_cost_estimate_usd: 2.75 },
+      { model: "test", input: 100, output: 100 }
+    ).api_cost_estimate_usd,
+    2.75,
+    "provider-reported cost remains authoritative"
+  );
+}
 
 assert.deepEqual(
   providerFailureFromEvents(lines({ type: "result", is_error: true, api_error_status: 502, result: "Bad Gateway" }), "claude"),
