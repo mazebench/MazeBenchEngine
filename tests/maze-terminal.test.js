@@ -462,22 +462,56 @@ function syntheticFloor(width, height) {
     width: 2
   };
   const context = syntheticContext(playData, { pitch: 0, yaw: 0 });
-  const initialHash = boardStateHash(context, new Set());
+  const initialHash = boardStateHash(context);
   context.options.pitch = 4;
   context.options.yaw = 3;
   assert.equal(
-    boardStateHash(context, new Set()),
+    boardStateHash(context),
     initialHash,
     "camera changes do not create new canonical board states"
   );
   context.state.actorX[0] = 1;
-  assert.notEqual(boardStateHash(context, new Set()), initialHash, "actor x/y/z changes alter the hash");
+  assert.notEqual(boardStateHash(context), initialHash, "actor x/y/z changes alter the hash");
   context.state.actorX[0] = 0;
-  assert.equal(boardStateHash(context, new Set()), initialHash, "restoring every object restores the hash");
-  assert.notEqual(
-    boardStateHash(context, new Set(["level_AxA:gem:1,1,0"])),
+  assert.equal(boardStateHash(context), initialHash, "restoring every object restores the hash");
+  context.stats = { collectedGemIds: new Set(["level_AxA:gem:1,1,0"]) };
+  assert.equal(
+    boardStateHash(context),
     initialHash,
-    "world-level collected objects are part of canonical state"
+    "world-level collected gems do not alter board novelty"
+  );
+}
+
+{
+  const basePlayData = {
+    actors: [{ type: "player", x: 0, y: 0, elevation: 0, removed: false }],
+    gameId: "maze",
+    height: 1,
+    levelId: "board_state_hash_gems",
+    terrain: syntheticFloor(2, 1),
+    width: 2
+  };
+  const withGemPlayData = {
+    ...basePlayData,
+    actors: basePlayData.actors.concat({
+      type: "gem",
+      collectionId: "board_state_hash_gems:gem:1,0,0",
+      x: 1,
+      y: 0,
+      elevation: 0,
+      removed: false
+    })
+  };
+  const initialHash = boardStateHash(syntheticContext(basePlayData));
+  const gemContext = syntheticContext(withGemPlayData);
+  assert.equal(boardStateHash(gemContext), initialHash, "in-room gems do not alter board novelty");
+  gemContext.state.actorX[1] = 0;
+  gemContext.state.actorElevation[1] = 1;
+  gemContext.state.actorRemoved[1] = 1;
+  assert.equal(
+    boardStateHash(gemContext),
+    initialHash,
+    "moving or removing an in-room gem does not alter board novelty"
   );
 }
 
@@ -500,8 +534,8 @@ function syntheticFloor(width, height) {
     actors: [actors[1], actors[2], actors[0]]
   };
   assert.equal(
-    boardStateHash(syntheticContext(reorderedPlayData), new Set()),
-    boardStateHash(syntheticContext(playData), new Set()),
+    boardStateHash(syntheticContext(reorderedPlayData)),
+    boardStateHash(syntheticContext(playData)),
     "equivalent actor lists hash identically regardless of engine array order"
   );
 
@@ -510,8 +544,8 @@ function syntheticFloor(width, height) {
     actors: actors.map((actor, index) => index === 1 ? { ...actor, groupId: "M1" } : actor)
   };
   assert.notEqual(
-    boardStateHash(syntheticContext(regroupedPlayData), new Set()),
-    boardStateHash(syntheticContext(playData), new Set()),
+    boardStateHash(syntheticContext(regroupedPlayData)),
+    boardStateHash(syntheticContext(playData)),
     "gameplay-relevant actor group identity remains part of the canonical state"
   );
 }

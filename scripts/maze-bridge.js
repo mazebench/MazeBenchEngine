@@ -447,7 +447,7 @@ function sessionSnapshot(session, extra = {}) {
     ok: true,
     action_count: session.actionCount,
     allowed_commands: allowedCommandsForContext(context),
-    board_state_hash: boardStateHash(context, session.collectedGemIds),
+    board_state_hash: boardStateHash(context),
     board_state_hash_version: BOARD_STATE_HASH_VERSION,
     collected_gems: Array.from(session.collectedGemIds),
     current_room: context.level.id,
