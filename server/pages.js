@@ -85,7 +85,7 @@ function createPageRenderer({
     ${pageHead({
       title,
       description,
-      extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css?v=20260710-card-parity-1">
+      extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css?v=20260719-build-card-gems-1">
     <link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-2">
     ${extraHeadHtml}`
     })}
@@ -135,7 +135,7 @@ function createPageRenderer({
     return `<div class="screen-mosaic" style="grid-template-columns:repeat(${columns},1fr);grid-template-rows:repeat(${rows},1fr);aspect-ratio:${columns}/${rows};${fitStyle}">${cells.join("")}</div>`;
   }
 
-  function worldCard({ game, title, subtitle, badges = [], tags = [], stats = [], actions = [], playUrl }) {
+  function worldCard({ game, title, subtitle, badges = [], tags = [], stats = [], actions = [], playUrl, gemCount = null }) {
     const badgeHtml = badges
       .map((badge) => `<span class="badge">${escapeHtml(badge)}</span>`)
       .join("");
@@ -149,11 +149,20 @@ function createPageRenderer({
         `<a class="button${extraClass ? ` ${extraClass}` : ""}" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`
       )
       .join("");
+    const gemNumber = Number(gemCount);
+    const gemTotal = gemCount !== null && gemCount !== undefined && Number.isFinite(gemNumber)
+      ? Math.max(0, Math.trunc(gemNumber))
+      : null;
+    const gemLabel = gemTotal === null ? "" : `${gemTotal} ${gemTotal === 1 ? "gem" : "gems"}`;
+    const gemHtml = gemTotal === null
+      ? ""
+      : `<span class="screen-gems" title="${gemLabel}" aria-label="${gemLabel}">${PLAY_HUD_ICONS.gems}<span>${gemTotal}</span></span>`;
 
     return `<div class="world-card">
         <a class="card-screen" href="${escapeHtml(playUrl)}" aria-label="Play ${escapeHtml(title)}">
           ${worldCardMosaic(game)}
           <div class="screen-fx"></div>
+          ${gemHtml}
           <div class="screen-badges">${badgeHtml}</div>
           <div class="screen-play">PLAY</div>
         </a>
@@ -607,6 +616,7 @@ function createPageRenderer({
             title: masterGame.name,
             subtitle: "The world agents are benchmarked on",
             badges: ["ENVIRONMENT"],
+            gemCount: buildWorlds.countWorldGems(masterGame),
             stats: [[String(masterGame.worldMap?.levels?.length || 0), "levels"]],
             playUrl: `/play/maze/${encodeURIComponent(defaultLevelIdForGame(masterGame))}`,
             actions: [
