@@ -66,6 +66,7 @@ Options:
   --speed <n>          Uniform speed multiplier for movement and camera.
   --crf <n>            x264 CRF; lower is larger/higher quality. Default: 21.
   --preset <name>      x264 preset. Default: veryfast.
+  --max-video-mib <n>  Maximum final video size in MiB; 0 disables. Default: 0.
   --camera-tilt <deg>  Perspective camera tilt from top-down. Default: 58.
   --camera-step <deg>  Tilt delta for rotate camera up/down. Default: 18.
   --camera-zoom <n>    Perspective camera zoom multiplier. Default: 1.
@@ -149,6 +150,8 @@ function parseCli(argv) {
       options.crf = Number(next());
     } else if (arg === "--preset") {
       options.preset = next();
+    } else if (arg === "--max-video-mib") {
+      options.maxVideoMiB = Number(next());
     } else if (arg === "--camera-tilt") {
       options.cameraTiltDegrees = Number(next());
     } else if (arg === "--camera-step") {
@@ -197,6 +200,7 @@ function defaultReplayOptions() {
     index: 0,
     intro: false,
     keepFrames: false,
+    maxVideoMiB: 0,
     moveSpeed: 5,
     nativeRecorder: true,
     outDir: "",
@@ -239,6 +243,10 @@ function validateReplayOptions(options) {
 
   if (!Number.isFinite(options.tailSeconds) || options.tailSeconds < 0) {
     throw new Error("--tail-seconds must be zero or a positive number");
+  }
+
+  if (!Number.isFinite(options.maxVideoMiB) || options.maxVideoMiB < 0) {
+    throw new Error("--max-video-mib must be zero or a positive number");
   }
 
   options.cameraTiltDegrees = Math.max(1, Math.min(89, options.cameraTiltDegrees));
@@ -1608,6 +1616,156 @@ async function encodeVideo(ffmpegArgs, { durationSeconds, estimateBytes }) {
   });
 
   progress.finish(`Encoded video; expected MP4 ~${humanBytes(estimateBytes)}.`);
+}
+
+const VIDEO_SIZE_TARGET_RATIO = 0.96;
+
+function targetVideoBitrate(maxVideoMiB, durationSeconds) {
+  if (
+    !Number.isFinite(maxVideoMiB) ||
+    maxVideoMiB <= 0 ||
+    !Number.isFinite(durationSeconds) ||
+    durationSeconds <= 0
+  ) {
+    return 0;
+  }
+
+  const maxBytes = maxVideoMiB * 1024 * 1024;
+  return Math.max(1, Math.floor((maxBytes * 8 * VIDEO_SIZE_TARGET_RATIO) / durationSeconds));
+}
+
+function replayTranscodeArguments(sourcePath, targetPath, options, settings = {}) {
+  const args = [
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-nostats",
+    "-progress",
+    "pipe:1",
+    "-i",
+    sourcePath,
+    "-an",
+    "-c:v",
+    "libx264",
+    "-preset",
+    options.preset
+  ];
+
+  if (settings.bitrate) {
+    args.push("-b:v", String(settings.bitrate));
+  } else {
+    args.push("-crf", String(options.crf));
+  }
+
+  args.push("-pix_fmt", "yuv420p");
+
+  if (settings.pass) {
+    args.push("-pass", String(settings.pass), "-passlogfile", settings.passLogPath);
+  }
+
+  if (settings.pass === 1) {
+    args.push("-f", "null", process.platform === "win32" ? "NUL" : "/dev/null");
+  } else {
+    args.push("-movflags", "+faststart", targetPath);
+  }
+
+  return args;
+}
+
+function replaceVideoFile(sourcePath, targetPath) {
+  fs.rmSync(targetPath, { force: true });
+  fs.renameSync(sourcePath, targetPath);
+}
+
+function removePassLogs(passLogPath) {
+  for (const suffix of ["-0.log", "-0.log.mbtree", ".log", ".log.mbtree"]) {
+    fs.rmSync(`${passLogPath}${suffix}`, { force: true });
+  }
+}
+
+async function optimizeNativeReplayVideo(sourcePath, videoPath, options, durationSeconds) {
+  const extension = path.extname(videoPath);
+  const optimizedPath = path.join(path.dirname(videoPath), `.maze_replay.optimized${extension}`);
+  fs.rmSync(optimizedPath, { force: true });
+
+  try {
+    await encodeVideo(
+      replayTranscodeArguments(sourcePath, optimizedPath, options),
+      {
+        durationSeconds,
+        estimateBytes: fs.statSync(sourcePath).size
+      }
+    );
+    replaceVideoFile(optimizedPath, videoPath);
+  } finally {
+    fs.rmSync(optimizedPath, { force: true });
+  }
+}
+
+async function capReplayVideoSize(videoPath, options, durationSeconds) {
+  if (!options.maxVideoMiB) return;
+
+  const maxBytes = Math.floor(options.maxVideoMiB * 1024 * 1024);
+  const currentBytes = fs.statSync(videoPath).size;
+  if (currentBytes <= maxBytes) return;
+
+  let bitrate = targetVideoBitrate(options.maxVideoMiB, durationSeconds);
+  const extension = path.extname(videoPath);
+  const cappedPath = path.join(path.dirname(videoPath), `.maze_replay.capped${extension}`);
+  const passLogPath = path.join(path.dirname(videoPath), ".maze_replay.passlog");
+  fs.rmSync(cappedPath, { force: true });
+  removePassLogs(passLogPath);
+
+  console.log(
+    `Optimized replay is ${humanBytes(currentBytes)}; constraining it to ` +
+      `${options.maxVideoMiB} MiB.`
+  );
+
+  try {
+    let cappedBytes = Infinity;
+    for (let attempt = 1; attempt <= 3 && cappedBytes > maxBytes; attempt += 1) {
+      fs.rmSync(cappedPath, { force: true });
+      removePassLogs(passLogPath);
+      await encodeVideo(
+        replayTranscodeArguments(videoPath, cappedPath, options, {
+          bitrate,
+          pass: 1,
+          passLogPath
+        }),
+        { durationSeconds, estimateBytes: maxBytes }
+      );
+      await encodeVideo(
+        replayTranscodeArguments(videoPath, cappedPath, options, {
+          bitrate,
+          pass: 2,
+          passLogPath
+        }),
+        { durationSeconds, estimateBytes: maxBytes }
+      );
+      cappedBytes = fs.statSync(cappedPath).size;
+      if (cappedBytes > maxBytes && attempt < 3) {
+        bitrate = Math.max(
+          1,
+          Math.floor(bitrate * (maxBytes / cappedBytes) * VIDEO_SIZE_TARGET_RATIO)
+        );
+        console.log(
+          `Capped replay is still ${humanBytes(cappedBytes)}; retrying with a corrected bitrate.`
+        );
+      }
+    }
+
+    if (cappedBytes > maxBytes) {
+      throw new Error(
+        `Could not constrain replay video below ${options.maxVideoMiB} MiB ` +
+          `(encoded ${humanBytes(cappedBytes)})`
+      );
+    }
+    replaceVideoFile(cappedPath, videoPath);
+  } finally {
+    fs.rmSync(cappedPath, { force: true });
+    removePassLogs(passLogPath);
+  }
 }
 
 function countedVideoFrames(videoPath) {
@@ -3076,8 +3234,17 @@ async function renderReplayVideo(
       fs.rmSync(recordedVideoPath, { force: true });
       throw new Error(retime.stderr || "Could not retime native replay video");
     }
-    fs.renameSync(retimedPath, videoPath);
-    fs.rmSync(recordedVideoPath, { force: true });
+    try {
+      await optimizeNativeReplayVideo(
+        retimedPath,
+        videoPath,
+        options,
+        frameIndex / options.fps
+      );
+    } finally {
+      fs.rmSync(retimedPath, { force: true });
+      fs.rmSync(recordedVideoPath, { force: true });
+    }
   } else if (rawEncoder) {
     writeReplayProgress({
       phase: "encoding",
@@ -3126,6 +3293,8 @@ async function renderReplayVideo(
       estimateBytes: estimatedBytes
     });
   }
+
+  await capReplayVideoSize(videoPath, options, frameIndex / options.fps);
 
   if (!options.keepFrames) {
     fs.rmSync(framesDir, { force: true, recursive: true });
@@ -3301,9 +3470,11 @@ module.exports = {
   humanSize,
   inferReplayPrefixCommands,
   nativeFrameCountIsAcceptable,
+  replayTranscodeArguments,
   resolveInput,
   renderReplayVideo,
   rowFromActionLog,
+  targetVideoBitrate,
   validateReplayOptions,
   writeSidecarFiles
 };

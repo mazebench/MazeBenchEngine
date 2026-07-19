@@ -788,6 +788,8 @@ try {
   assert(videoArgs.includes("--ascii-side-by-side"));
   assert.equal(videoArgs.includes("--draft"), false);
   assert.equal(videoArgs[videoArgs.indexOf("--preset") + 1], "veryfast");
+  assert.equal(videoArgs[videoArgs.indexOf("--crf") + 1], "25");
+  assert.equal(videoArgs[videoArgs.indexOf("--max-video-mib") + 1], "24");
   assert.ok(videoArgs.includes("--accelerated"));
   const canceledVideo = service.cancelRunVideo(hostReadOnlySwarm.id);
   assert.equal(canceledVideo.video_status, "idle");

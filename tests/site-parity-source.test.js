@@ -19,7 +19,12 @@ const replayExporter = fs.readFileSync(path.join(root, "scripts", "maze-export-r
 const visionRenderer = fs.readFileSync(path.join(root, "scripts", "maze-render-frame.js"), "utf8");
 const favicon = fs.readFileSync(path.join(root, "public", "favicon.svg"), "utf8");
 const router = fs.readFileSync(path.join(root, "server", "router.js"), "utf8");
-const { nativeFrameCountIsAcceptable } = require(path.join(root, "scripts", "maze-export-replay.js"));
+const {
+  defaultReplayOptions,
+  nativeFrameCountIsAcceptable,
+  replayTranscodeArguments,
+  targetVideoBitrate
+} = require(path.join(root, "scripts", "maze-export-replay.js"));
 
 assert.match(buildScript, /world-card new-world-card/);
 assert.match(buildScript, /world-card world-card--draft/);
@@ -241,6 +246,23 @@ assert.equal(nativeFrameCountIsAcceptable(2698, 2698), true);
 assert.equal(nativeFrameCountIsAcceptable(2697, 2698), true);
 assert.equal(nativeFrameCountIsAcceptable(2696, 2698), false);
 assert.equal(nativeFrameCountIsAcceptable(2699, 2698), false);
+assert.equal(
+  targetVideoBitrate(24, 120),
+  Math.floor((24 * 1024 * 1024 * 8 * 0.96) / 120)
+);
+assert.equal(targetVideoBitrate(0, 120), 0);
+const replayTranscodeArgs = replayTranscodeArguments(
+  "captured.mp4",
+  "optimized.mp4",
+  { ...defaultReplayOptions(), crf: 25 }
+);
+assert.deepEqual(
+  replayTranscodeArgs.slice(replayTranscodeArgs.indexOf("-c:v"), replayTranscodeArgs.indexOf("-pix_fmt")),
+  ["-c:v", "libx264", "-preset", "veryfast", "-crf", "25"]
+);
+assert.deepEqual(replayTranscodeArgs.slice(-3), ["-movflags", "+faststart", "optimized.mp4"]);
+assert.match(replayExporter, /await optimizeNativeReplayVideo\(/);
+assert.match(replayExporter, /await capReplayVideoSize\(/);
 assert.match(replayExporter, /Accelerated replay produced a blank gameplay frame/);
 assert.match(replayExporter, /Accelerated replay diverged after action/);
 assert.match(replayExporter, /function inferReplayPrefixCommands\(/);

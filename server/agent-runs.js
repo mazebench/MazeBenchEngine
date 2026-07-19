@@ -5637,7 +5637,11 @@ function createAgentRunService({
         replayInputPath,
         "--out-dir", runDir,
         "--fps", "24",
-        "--crf", "19",
+        // The native recorder produces a high-bitrate intermediate. The replay
+        // exporter applies this quality setting to every final MP4 and enforces
+        // a Pages-safe ceiling for unusually long runs.
+        "--crf", "25",
+        "--max-video-mib", "24",
         "--preset", "veryfast",
         "--tail-seconds", "1",
         "--accelerated",
