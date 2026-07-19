@@ -20,6 +20,7 @@
 //   tool_use     read-only (game controls only) | offline    (default read-only)
 //   tools        legacy boolean alias (false=game-only, true=offline)
 //   swarm        true lets an offline lead spawn identical-model workers
+//   max_swarm_workers  hard cap on workers/private instances   (default 8)
 //   mode         text (ASCII) | json (structured room) | vision (PNG) (default text)
 //   omniscient   JSON mode includes every object in the room (default false)
 //   hide_names   ASCII/JSON randomizes glyphs/names except player/gem
@@ -56,6 +57,7 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { spawn, spawnSync } = require("node:child_process");
 const { redactAgentStatus } = require("./codex-play");
+const DEFAULT_MAX_SWARM_WORKERS = 8;
 
 // Claude Code discovers MCP tools only when its default tool registry is
 // enabled. Keep that registry on, then explicitly remove every non-game tool
@@ -220,6 +222,7 @@ function timestampSlug() {
 
 function buildMcpPrompt(config) {
   const restricted = config.toolUse === "read-only";
+  const maxSwarmWorkers = positiveInt(config.maxSwarmWorkers, DEFAULT_MAX_SWARM_WORKERS);
   const controlPrefix = restricted ? "game" : "maze";
   const controls = {
     start: `${controlPrefix}_start`,
@@ -260,10 +263,8 @@ is disabled. Host access is less isolated than Docker.`
       : `TOOLS-ON mode. You may use the local file, coding, and execution tools
 made available to you; tool availability is not guaranteed. Work inside the
 persistent Docker workspace at ${config.agentWorkspaceDir}. Outbound network access is disabled.
-If a tool or algorithm needs an experimental game branch, call maze_clone
-with a descriptive worker_id and label, then include its clone_id in every maze
-call. Each branch starts from the selected checkpoint and all of its attempted
-and applied actions are tracked separately from the primary score.`
+Only genuine swarm workers receive private game instances, and each worker is
+permanently bound to exactly one instance.`
     : `Do not use any external tools. Do not search the web, do not read any
 files, do not run shell commands, and do not spawn any sub-agents. This is
 TOOLS-OFF mode. Do not access repositories, connectors, resource listings,
@@ -282,16 +283,15 @@ named below and your current conversation memory.`;
     ? `
 SWARM IS ENABLED. You are the superior lead and retain control of the primary
 maze. ${workerSpawnRule} Every worker uses the exact same model and reasoning
-effort as you and inherits your tool-use policy. Spawn as many sub-agents as
-you like; delegation is optional.
+effort as you and inherits your tool-use policy. You may spawn at most
+${maxSwarmWorkers} workers; delegation is optional.
 
-Each worker you spawn must begin by calling maze_clone with a unique worker_id. That tool
-creates an independent copy of the maze and returns a private persistent coding
-workspace. The worker must include that clone_id in every maze_observe and
-maze_action call, may explore freely, ${workerCapability},
-then report its findings to you. Workers must never act on
-the primary maze. You decide which findings to use and make every primary move
-yourself by omitting clone_id. ${config.toolUse === "offline" ? "You may also create clearly labelled tool-driven branches with maze_clone; never use those clone ids for the primary score." : "Provider workers create their own branches."}
+Each worker receives exactly one private maze instance automatically and begins
+by calling maze_start once. It then uses maze_observe and maze_action without an
+instance id, may explore freely, ${workerCapability}, and reports its findings
+to you. Workers must never act on the primary maze. You decide which findings
+to use and make every primary move yourself. No model may create, branch, or
+select additional maze instances.
 Beyond that, spawn, steer, stop, or wait for workers at your
 discretion. If you spawn workers, gather their reports before finishing.`
     : "";
@@ -313,8 +313,8 @@ game is won or the user stops the run.`
 ${controls.observe}, and ${controls.action}.`
     : `You are controlling a 3D grid game. Control game state only
 through the configured MCP tools: maze_start, maze_observe, and maze_action.
-Offline tool runs and swarm workers also receive maze_clone for
-independent, fully tracked branches. Never edit session JSON directly.`;
+Swarm workers receive one automatically assigned private instance. Never edit
+session JSON directly or create, select, or branch game instances yourself.`;
 
   return `${intro}
 
@@ -458,7 +458,9 @@ function mcpEnvironment(config, workerOnly = false) {
     MAZEBENCH_MOVE_BUDGET: config.unlimited ? "unlimited" : String(config.moves),
     MAZEBENCH_ALLOW_QUIT: config.allowQuit ? "1" : "0",
     MAZEBENCH_SWARM: config.swarm ? "1" : "0",
-    MAZEBENCH_ALLOW_LEAD_CLONES: config.toolUse === "offline" ? "1" : "0",
+    MAZEBENCH_MAX_SWARM_WORKERS: String(
+      positiveInt(config.maxSwarmWorkers, DEFAULT_MAX_SWARM_WORKERS)
+    ),
     MAZEBENCH_MODE: config.mode,
     MAZEBENCH_OMNISCIENT: config.omniscient ? "1" : "0",
     MAZEBENCH_HIDE_NAMES: config.hideNames ? "1" : "0",
@@ -494,7 +496,9 @@ function codexMcpConfigArgs(config) {
   const prefix = `mcp_servers.${restricted ? "game" : "mazebench"}`;
   const enabledTools = restricted
     ? '["game_start","game_observe","game_action"]'
-    : '["maze_start","maze_observe","maze_action","maze_clone","maze_workers"]';
+    : config.swarm
+      ? '["maze_start","maze_observe","maze_action","maze_workers"]'
+      : '["maze_start","maze_observe","maze_action"]';
   if (config.mcpUrl) {
     return [
       "-c", `${prefix}.url=${tomlString(config.mcpUrl)}`,
@@ -534,7 +538,7 @@ function codexWorkerConfig(config, name) {
     `sandbox_mode = ${tomlString(offline ? "workspace-write" : "read-only")}`,
     `developer_instructions = ${tomlString(
       "You are a grid-game swarm worker. Use the identical model and reasoning effort inherited from the lead. " +
-      "First call maze_clone with a unique worker_id, then use that clone_id for every maze tool call. " +
+      "You have exactly one private maze instance. Call maze_start once, then use maze_observe and maze_action without an instance id. " +
       (offline
         ? "Explore only your private maze, write and execute any useful local code in the returned workspace, and report findings to the lead. "
         : "Explore only your private maze without writing files or executing general-purpose code, and report findings to the lead. ") +
@@ -609,10 +613,9 @@ function claudeSandboxSettings(config) {
   const workerAllow = config.swarm
     ? [
         ...(offline ? ["Bash(*)", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "Skill"] : ["Read", "Glob", "Grep"]),
-        "mcp__mazebench_worker__maze_clone",
+        "mcp__mazebench_worker__maze_start",
         "mcp__mazebench_worker__maze_observe",
-        "mcp__mazebench_worker__maze_action",
-        "mcp__mazebench_worker__maze_workers"
+        "mcp__mazebench_worker__maze_action"
       ]
     : [];
   const home = config.inContainer ? "/home/pwuser" : process.env.HOME || "/home/pwuser";
@@ -673,8 +676,8 @@ function claudeAgents(config) {
       ? "Explore a private game clone, use offline coding tools, and report to the lead."
       : "Explore a private game clone read-only and report to the lead.",
     prompt:
-      "You are a grid-game swarm worker controlled by the superior lead. First call maze_clone with a unique worker_id. " +
-      "Use the returned clone_id for all maze calls, work only in its private workspace, and report findings to the lead. " +
+      "You are a grid-game swarm worker controlled by the superior lead. You have exactly one private maze instance. " +
+      "Call maze_start once, then use maze_observe and maze_action without an instance id. Work only in your private workspace and report findings to the lead. " +
       (offline
         ? "You may write and execute local code in that workspace. "
         : "Do not write files or execute general-purpose code. ") +
@@ -684,10 +687,9 @@ function claudeAgents(config) {
     background: true,
     tools: [
       ...localTools,
-      "mcp__mazebench_worker__maze_clone",
+      "mcp__mazebench_worker__maze_start",
       "mcp__mazebench_worker__maze_observe",
-      "mcp__mazebench_worker__maze_action",
-      "mcp__mazebench_worker__maze_workers"
+      "mcp__mazebench_worker__maze_action"
     ],
     mcpServers: [{
       mazebench_worker: config.mcpWorkerUrl
@@ -946,8 +948,7 @@ function agentCommand(config, prompt) {
             "mcp__mazebench__maze_start",
             "mcp__mazebench__maze_observe",
             "mcp__mazebench__maze_action",
-            "mcp__mazebench__maze_clone",
-            "mcp__mazebench__maze_workers"
+            ...(config.swarm ? ["mcp__mazebench__maze_workers"] : [])
           ];
       const localTools = config.toolUse === "offline"
         ? ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "Skill", "TaskOutput", "TaskStop"]
@@ -1649,7 +1650,7 @@ function runInContainer(config, raw) {
   // path options (out/session) are intentionally dropped; the inner run writes
   // under the mounted /app/outputs/maze-local.
   const forwardKeys = [
-    "model", "moves", "unlimited", "allow_quit", "mode", "omniscient", "hide_names", "hide_names_seed", "tools", "tool_use", "swarm", "game", "level", "view", "yaw", "gems",
+    "model", "moves", "unlimited", "allow_quit", "mode", "omniscient", "hide_names", "hide_names_seed", "tools", "tool_use", "swarm", "max_swarm_workers", "game", "level", "view", "yaw", "gems",
     "video", "no_video", "fast", "draft", "width", "height", "fps",
     "vision_width", "vision_height", "vision_view", "model_name", "llm",
     "reasoning", "effort", "codex_fast", "resume", "seed", "fork_session", "session_id",
@@ -2108,6 +2109,10 @@ async function main() {
     tools: toolUse !== "read-only",
     toolUse,
     swarm,
+    maxSwarmWorkers: Math.min(
+      32,
+      positiveInt(raw.max_swarm_workers, DEFAULT_MAX_SWARM_WORKERS)
+    ),
     hostAccess,
     inContainer,
     agentUid: agentHomeStat?.uid ?? (typeof process.getuid === "function" ? process.getuid() : 0),

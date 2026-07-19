@@ -17,13 +17,11 @@ try {
     { jsonrpc: "2.0", method: "notifications/initialized" },
     { jsonrpc: "2.0", id: 10, method: "tools/list", params: {} },
     { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "maze_start", arguments: {} } },
-    { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "maze_clone", arguments: { worker_id: "scout" } } },
-    { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "maze_action", arguments: { clone_id: "scout", action: "up" } } },
     { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "maze_action", arguments: { action: "right" } } },
     { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "maze_action", arguments: { action: "down" } } },
-    { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "maze_action", arguments: { clone_id: "scout", action: "go to level 1 1" } } },
-    { jsonrpc: "2.0", id: 8, method: "tools/call", params: { name: "maze_clone", arguments: { worker_id: "scout-branch", source_clone_id: "scout", label: "nested search" } } },
-    { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "maze_action", arguments: { clone_id: "scout-branch", action: "left" } } }
+    { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "maze_clone", arguments: {} } },
+    { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "maze_action", arguments: { clone_id: "guessed-worker", action: "up" } } },
+    { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "maze_workers", arguments: {} } }
   ];
   const result = spawnSync(process.execPath, [path.join(rootDir, "scripts", "maze-mcp-server.js")], {
     cwd: rootDir,
@@ -35,7 +33,8 @@ try {
       MAZEBENCH_RUN_DIR: runDir,
       MAZEBENCH_SESSION_FILE: path.join(runDir, "session.json"),
       MAZEBENCH_SWARM_DIR: path.join(runDir, "swarm"),
-      MAZEBENCH_ALLOW_LEAD_CLONES: "1",
+      MAZEBENCH_SWARM: "1",
+      MAZEBENCH_MAX_SWARM_WORKERS: "2",
       MAZEBENCH_MOVE_BUDGET: "1"
     }
   });
@@ -48,39 +47,71 @@ try {
   assert.equal(Object.prototype.hasOwnProperty.call(firstObservation, "player"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(firstObservation, "scorecard"), false);
   const listedTools = responses.find((response) => response.id === 10)?.result?.tools || [];
-  assert(listedTools.some((tool) => tool.name === "maze_clone"));
+  assert.deepEqual(listedTools.map((tool) => tool.name), ["maze_start", "maze_observe", "maze_action", "maze_workers"]);
+  assert.doesNotMatch(JSON.stringify(listedTools), /clone_id|maze_clone/i);
   assert.equal(listedTools.some((tool) => /scorecard/i.test(tool.name)), false);
-  assert.equal(responses.find((response) => response.id === 3)?.result?.structuredContent?.id, "scout");
+  assert(responses.find((response) => response.id === 3)?.error, "the lead cannot call maze_clone");
+  assert(responses.find((response) => response.id === 4)?.error, "the lead cannot supply clone_id");
+  assert.deepEqual(responses.find((response) => response.id === 9)?.result?.structuredContent, []);
 
   const primary = JSON.parse(fs.readFileSync(path.join(runDir, "session.json"), "utf8"));
-  const worker = JSON.parse(fs.readFileSync(path.join(runDir, "swarm", "scout", "session.json"), "utf8"));
   assert.equal(primary.actions.length, 1, "the lead gets exactly its configured action budget");
   assert.equal(primary.maxActions, 1, "the helper cap must match the selected finite budget");
   assert.equal(Number.isFinite(Date.parse(primary.actions[0].timestamp)), true, "maze actions retain their exact timestamp");
-  assert.equal(worker.actions.length, 1, "worker clone should keep its own action history");
-  assert.equal(worker.maxActions, null, "independent worker exploration must not inherit the primary cap");
-  const workerMetadata = JSON.parse(fs.readFileSync(path.join(runDir, "swarm", "scout", "worker.json"), "utf8"));
-  assert.equal(workerMetadata.fork_action_count, 0);
-  assert.equal(workerMetadata.owner_kind, "tool");
-  const nestedMetadata = JSON.parse(fs.readFileSync(path.join(runDir, "swarm", "scout-branch", "worker.json"), "utf8"));
-  const nestedSession = JSON.parse(fs.readFileSync(path.join(runDir, "swarm", "scout-branch", "session.json"), "utf8"));
-  const nestedTelemetry = JSON.parse(fs.readFileSync(path.join(runDir, "swarm", "scout-branch", "telemetry.json"), "utf8"));
-  assert.equal(nestedMetadata.parent_instance_id, "scout");
-  assert.equal(nestedMetadata.fork_action_count, 1);
-  assert.equal(nestedSession.actions.length, 2);
-  assert.equal(nestedSession.maxActions, null);
-  assert.equal(nestedTelemetry.actions_applied, 1);
-  assert.equal(nestedTelemetry.own_action_count, 1);
   assert(fs.existsSync(path.join(runDir, "initial-status.json")));
-  assert(fs.existsSync(path.join(runDir, "swarm", "scout", "initial-status.json")));
-  assert(fs.existsSync(path.join(runDir, "swarm", "scout-branch", "initial-status.json")));
-  assert(fs.existsSync(path.join(runDir, "swarm", "scout", "frames", "frame-000.png")));
-  assert(fs.existsSync(path.join(runDir, "swarm", "scout-branch", "frames", "frame-000.png")));
   assert.equal(fs.existsSync(path.join(runDir, "current-render-state.json")), false);
   assert.equal(responses.find((response) => response.id === 6)?.result?.isError, true, "the MCP boundary enforces the lead budget");
-  const invalidAction = responses.find((response) => response.id === 7)?.result?.content?.[0]?.text || "";
-  assert(!invalidAction.includes(rootDir));
-  assert(!invalidAction.includes("\n"), "provider errors should not expose runtime stack traces");
+
+  const workerRequests = [
+    { jsonrpc: "2.0", id: 100, method: "initialize", params: { protocolVersion: "2024-11-05" } },
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+    { jsonrpc: "2.0", id: 101, method: "tools/list", params: {} },
+    { jsonrpc: "2.0", id: 102, method: "tools/call", params: { name: "maze_start", arguments: {} } },
+    { jsonrpc: "2.0", id: 103, method: "tools/call", params: { name: "maze_action", arguments: { action: "up" } } },
+    { jsonrpc: "2.0", id: 104, method: "tools/call", params: { name: "maze_start", arguments: {} } },
+    { jsonrpc: "2.0", id: 105, method: "tools/call", params: { name: "maze_clone", arguments: {} } },
+    { jsonrpc: "2.0", id: 106, method: "tools/call", params: { name: "maze_action", arguments: { clone_id: "other", action: "left" } } },
+    { jsonrpc: "2.0", id: 107, method: "tools/call", params: { name: "maze_workers", arguments: {} } }
+  ];
+  const workerResult = spawnSync(process.execPath, [path.join(rootDir, "scripts", "maze-mcp-server.js")], {
+    cwd: rootDir,
+    encoding: "utf8",
+    input: `${workerRequests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+    env: {
+      ...process.env,
+      MAZEBENCH_REPO_ROOT: rootDir,
+      MAZEBENCH_RUN_DIR: runDir,
+      MAZEBENCH_SESSION_FILE: path.join(runDir, "session.json"),
+      MAZEBENCH_SWARM_DIR: path.join(runDir, "swarm"),
+      MAZEBENCH_SWARM: "1",
+      MAZEBENCH_WORKER_ONLY: "1",
+      MAZEBENCH_WORKER_KEY: "scout",
+      MAZEBENCH_MAX_SWARM_WORKERS: "2",
+      MAZEBENCH_MOVE_BUDGET: "1"
+    }
+  });
+  assert.equal(workerResult.status, 0, workerResult.stderr);
+  const workerResponses = workerResult.stdout.trim().split("\n").map((line) => JSON.parse(line));
+  const workerTools = workerResponses.find((response) => response.id === 101)?.result?.tools || [];
+  assert.deepEqual(workerTools.map((tool) => tool.name), ["maze_start", "maze_observe", "maze_action"]);
+  assert.doesNotMatch(JSON.stringify(workerTools), /clone_id|maze_clone|maze_workers/i);
+  assert.match(workerResponses.find((response) => response.id === 102)?.result?.structuredContent?.level || "", /P|p/);
+  assert.match(workerResponses.find((response) => response.id === 104)?.result?.structuredContent?.level || "", /P|p/);
+  for (const id of [105, 106, 107]) {
+    assert(workerResponses.find((response) => response.id === id)?.error, `worker request ${id} must fail closed`);
+  }
+  const workerIds = fs.readdirSync(path.join(runDir, "swarm"));
+  assert.deepEqual(workerIds, ["scout"], "one worker endpoint receives exactly one private instance");
+  const worker = JSON.parse(fs.readFileSync(path.join(runDir, "swarm", "scout", "session.json"), "utf8"));
+  const workerMetadata = JSON.parse(fs.readFileSync(path.join(runDir, "swarm", "scout", "worker.json"), "utf8"));
+  assert.equal(worker.actions.length, 2, "worker instance inherits the primary action and applies one private action");
+  assert.equal(worker.maxActions, null, "independent worker exploration must not inherit the primary cap");
+  assert.equal(workerMetadata.fork_action_count, 1);
+  assert.equal(workerMetadata.owner_kind, "subagent");
+  assert.equal(workerMetadata.parent_instance_id, "primary");
+  assert(Number.isFinite(Date.parse(workerMetadata.finished_at)), "closing a worker endpoint finishes its instance");
+  assert(fs.existsSync(path.join(runDir, "swarm", "scout", "initial-status.json")));
+  assert(fs.existsSync(path.join(runDir, "swarm", "scout", "frames", "frame-000.png")));
   assert(fs.statSync(path.join(runDir, "swarm-workspaces", "scout")).isDirectory());
   const activity = fs.readFileSync(path.join(runDir, "tool-activity.jsonl"), "utf8")
     .trim()
@@ -92,8 +123,9 @@ try {
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line));
-  assert(instanceEvents.some((entry) => entry.type === "instance.created" && entry.instance_id === "scout-branch"));
-  assert(instanceEvents.some((entry) => entry.type === "instance.action" && entry.instance_id === "scout-branch" && entry.applied));
+  assert(instanceEvents.some((entry) => entry.type === "instance.created" && entry.instance_id === "scout"));
+  assert(instanceEvents.some((entry) => entry.type === "instance.action" && entry.instance_id === "scout" && entry.applied));
+  assert(instanceEvents.some((entry) => entry.type === "instance.finished" && entry.instance_id === "scout"));
 
   const restrictedDir = path.join(runDir, "restricted");
   fs.mkdirSync(restrictedDir, { recursive: true });
@@ -165,6 +197,11 @@ try {
   const noQuitActionTool = noQuitResponses
     .find((response) => response.id === 21)?.result?.tools
     ?.find((tool) => tool.name === "maze_action");
+  assert.deepEqual(
+    noQuitResponses.find((response) => response.id === 21)?.result?.tools?.map((tool) => tool.name),
+    ["maze_start", "maze_observe", "maze_action"],
+    "ordinary runs retain their three game controls and receive no worker controls"
+  );
   assert.doesNotMatch(noQuitActionTool?.inputSchema?.properties?.action?.description || "", /quit/i);
   assert.equal(noQuitResponses.find((response) => response.id === 23)?.result?.isError, true);
   assert.doesNotMatch(
@@ -403,7 +440,9 @@ try {
         MAZEBENCH_REPO_ROOT: rootDir,
         MAZEBENCH_RUN_DIR: httpDir,
         MAZEBENCH_SESSION_FILE: path.join(httpDir, "session.json"),
-        MAZEBENCH_MCP_HTTP_TOKEN: "test-token"
+        MAZEBENCH_MCP_HTTP_TOKEN: "test-token",
+        MAZEBENCH_SWARM: "1",
+        MAZEBENCH_MAX_SWARM_WORKERS: "1"
       }
     }
   );
@@ -413,60 +452,152 @@ try {
   }
   assert(fs.existsSync(portFile), "HTTP MCP server should publish its port");
   const { port } = JSON.parse(fs.readFileSync(portFile, "utf8"));
-  const httpProbe = spawnSync(
-    "curl",
-    [
-      "-fsS",
-      "-H", "content-type: application/json",
-      "-X", "POST",
-      "--data", JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
-      `http://127.0.0.1:${port}/test-token/worker`
-    ],
-    { encoding: "utf8" }
-  );
-  assert.equal(httpProbe.status, 0, httpProbe.stderr);
-  const httpResponse = JSON.parse(httpProbe.stdout);
-  assert(!httpResponse.result.tools.some((tool) => tool.name === "maze_start"));
   const leadProbe = spawnSync(
     "curl",
     [
       "-fsS",
       "-H", "content-type: application/json",
       "-X", "POST",
-      "--data", JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+      "--data", JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
       `http://127.0.0.1:${port}/test-token/lead`
     ],
     { encoding: "utf8" }
   );
   assert.equal(leadProbe.status, 0, leadProbe.stderr);
   const leadResponse = JSON.parse(leadProbe.stdout);
-  assert(!leadResponse.result.tools.some((tool) => tool.name === "maze_clone"));
+  assert.deepEqual(
+    leadResponse.result.tools.map((tool) => tool.name),
+    ["maze_start", "maze_observe", "maze_action", "maze_workers"]
+  );
+  assert.doesNotMatch(JSON.stringify(leadResponse.result.tools), /clone_id|maze_clone/i);
+  const leadStart = spawnSync(
+    "curl",
+    [
+      "-fsS",
+      "-H", "content-type: application/json",
+      "-X", "POST",
+      "--data", JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "maze_start", arguments: {} }
+      }),
+      `http://127.0.0.1:${port}/test-token/lead`
+    ],
+    { encoding: "utf8" }
+  );
+  assert.equal(leadStart.status, 0, leadStart.stderr);
+  assert.equal(JSON.parse(leadStart.stdout).result.isError, false);
+
+  const initializeWorker = (id, headerFile) => spawnSync(
+    "curl",
+    [
+      "-fsS",
+      "-D", headerFile,
+      "-H", "content-type: application/json",
+      "-X", "POST",
+      "--data", JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "initialize",
+        params: { protocolVersion: "2024-11-05" }
+      }),
+      `http://127.0.0.1:${port}/test-token/worker`
+    ],
+    { encoding: "utf8" }
+  );
+  const sessionIdFrom = (headerFile) => {
+    const match = fs.readFileSync(headerFile, "utf8").match(/^mcp-session-id:\s*(.+)\r?$/im);
+    assert(match, "worker initialize must return an MCP session id");
+    return match[1].trim();
+  };
+  const callWorker = (sessionId, id, name, args = {}) => spawnSync(
+    "curl",
+    [
+      "-fsS",
+      "-H", "content-type: application/json",
+      "-H", `Mcp-Session-Id: ${sessionId}`,
+      "-X", "POST",
+      "--data", JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: name === "tools/list" ? "tools/list" : "tools/call",
+        params: name === "tools/list" ? {} : { name, arguments: args }
+      }),
+      `http://127.0.0.1:${port}/test-token/worker`
+    ],
+    { encoding: "utf8" }
+  );
+
+  const workerHeaders = path.join(httpDir, "worker-headers.txt");
+  const workerInitialize = initializeWorker(3, workerHeaders);
+  assert.equal(workerInitialize.status, 0, workerInitialize.stderr);
+  const workerSessionId = sessionIdFrom(workerHeaders);
+  const workerList = callWorker(workerSessionId, 4, "tools/list");
+  assert.equal(workerList.status, 0, workerList.stderr);
+  const httpWorkerTools = JSON.parse(workerList.stdout).result.tools;
+  assert.deepEqual(httpWorkerTools.map((tool) => tool.name), ["maze_start", "maze_observe", "maze_action"]);
+  assert.doesNotMatch(JSON.stringify(httpWorkerTools), /clone_id|maze_clone|maze_workers/i);
+
   for (const request of [
-    { id: 3, name: "maze_start", arguments: {}, endpoint: "lead" },
-    { id: 4, name: "maze_clone", arguments: { worker_id: "http-scout" }, endpoint: "worker" }
+    { id: 5, name: "maze_start", arguments: {}, error: false },
+    { id: 6, name: "maze_action", arguments: { action: "up" }, error: false },
+    { id: 7, name: "maze_start", arguments: {}, error: false },
+    { id: 8, name: "maze_clone", arguments: {}, error: true },
+    { id: 9, name: "maze_action", arguments: { action: "left", clone_id: "other" }, error: true }
   ]) {
-    const call = spawnSync(
+    const call = callWorker(workerSessionId, request.id, request.name, request.arguments);
+    assert.equal(call.status, 0, call.stderr);
+    const response = JSON.parse(call.stdout);
+    assert.equal(Boolean(response.error), request.error, `HTTP worker request ${request.id} error status`);
+  }
+
+  const httpWorkerIds = fs.readdirSync(path.join(httpDir, "swarm"));
+  assert.equal(httpWorkerIds.length, 1, "one HTTP worker session receives exactly one instance");
+  const httpWorkerId = httpWorkerIds[0];
+  const httpWorkerSessionFile = path.join(httpDir, "swarm", httpWorkerId, "session.json");
+  const actionsBeforePause = JSON.parse(fs.readFileSync(httpWorkerSessionFile, "utf8")).actions.length;
+  fs.writeFileSync(path.join(httpDir, "pause-request.json"), `${JSON.stringify({
+    requested_at: new Date().toISOString(),
+    requested_after_turn: 0
+  })}\n`);
+  const pausedAction = callWorker(workerSessionId, 10, "maze_action", { action: "right" });
+  assert.equal(pausedAction.status, 0, pausedAction.stderr);
+  assert.equal(JSON.parse(pausedAction.stdout).result.isError, true, "paused runs reject worker actions");
+  assert.equal(
+    JSON.parse(fs.readFileSync(httpWorkerSessionFile, "utf8")).actions.length,
+    actionsBeforePause,
+    "a rejected paused action must not alter the worker instance"
+  );
+  fs.rmSync(path.join(httpDir, "pause-request.json"));
+
+  const secondHeaders = path.join(httpDir, "second-worker-headers.txt");
+  const secondInitialize = initializeWorker(11, secondHeaders);
+  assert.equal(secondInitialize.status, 0, secondInitialize.stderr);
+  const secondSessionId = sessionIdFrom(secondHeaders);
+  const cappedStart = callWorker(secondSessionId, 12, "maze_start");
+  assert.equal(cappedStart.status, 0, cappedStart.stderr);
+  assert.equal(JSON.parse(cappedStart.stdout).result.isError, true, "the configured swarm-worker cap is enforced");
+  assert.equal(fs.readdirSync(path.join(httpDir, "swarm")).length, 1);
+
+  for (const sessionId of [workerSessionId, secondSessionId]) {
+    const closed = spawnSync(
       "curl",
       [
         "-fsS",
-        "-H", "content-type: application/json",
-        "-X", "POST",
-        "--data", JSON.stringify({
-          jsonrpc: "2.0",
-          id: request.id,
-          method: "tools/call",
-          params: { name: request.name, arguments: request.arguments }
-        }),
-        `http://127.0.0.1:${port}/test-token/${request.endpoint}`
+        "-H", `Mcp-Session-Id: ${sessionId}`,
+        "-X", "DELETE",
+        `http://127.0.0.1:${port}/test-token/worker`
       ],
       { encoding: "utf8" }
     );
-    assert.equal(call.status, 0, call.stderr);
+    assert.equal(closed.status, 0, closed.stderr);
   }
   const httpWorkerMetadata = JSON.parse(
-    fs.readFileSync(path.join(httpDir, "swarm", "http-scout", "worker.json"), "utf8")
+    fs.readFileSync(path.join(httpDir, "swarm", httpWorkerId, "worker.json"), "utf8")
   );
   assert.equal(httpWorkerMetadata.owner_kind, "subagent");
+  assert(Number.isFinite(Date.parse(httpWorkerMetadata.finished_at)));
 } finally {
   if (httpChild) httpChild.kill("SIGTERM");
   fs.rmSync(runDir, { recursive: true, force: true });

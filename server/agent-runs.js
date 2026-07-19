@@ -3118,7 +3118,11 @@ function createAgentRunService({
           updatedAt = 0;
         }
         const terminal = Boolean(
-          status.game_won || status.game_lost || status.quit || fs.existsSync(path.join(workerDir, "scorecard.json"))
+          metadata.finished_at ||
+          status.game_won ||
+          status.game_lost ||
+          status.quit ||
+          fs.existsSync(path.join(workerDir, "scorecard.json"))
         );
         const activity = terminal
           ? "finished"

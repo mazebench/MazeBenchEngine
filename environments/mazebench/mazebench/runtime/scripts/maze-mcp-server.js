@@ -43,9 +43,10 @@ const PRIMARY_MOVE_BUDGET = ["unlimited", "infinite", "infinity", "none"].includ
 const ALLOW_QUIT = process.env.MAZEBENCH_ALLOW_QUIT !== "0";
 const WORKER_ONLY = process.env.MAZEBENCH_WORKER_ONLY === "1";
 const SWARM_REQUIRED = process.env.MAZEBENCH_SWARM === "1";
-const LEAD_CLONES_ALLOWED = process.env.MAZEBENCH_ALLOW_LEAD_CLONES === "1";
+const MAX_SWARM_WORKERS = Math.min(32, positiveInt(process.env.MAZEBENCH_MAX_SWARM_WORKERS, 8));
 const RESTRICTED_MODE = process.env.MAZEBENCH_RESTRICTED_MODE === "1";
 const HTTP_TOKEN = String(process.env.MAZEBENCH_MCP_HTTP_TOKEN || "");
+const WORKER_ALLOCATION_LOCK = path.join(SWARM_DIR, ".instance-allocation.lock");
 
 function sessionActionCount(file) {
   try {
@@ -253,16 +254,68 @@ function readWorkerMetadata(workerId) {
   }
 }
 
-function createWorker(requestedId, options = {}) {
-  if (!fs.existsSync(PRIMARY_SESSION)) {
-    throw new Error("The lead must start or resume the primary maze before a worker can clone it.");
+function withWorkerAllocationLock(callback) {
+  fs.mkdirSync(SWARM_DIR, { recursive: true });
+  const deadline = Date.now() + 30_000;
+  let descriptor;
+  while (descriptor === undefined) {
+    try {
+      descriptor = fs.openSync(WORKER_ALLOCATION_LOCK, "wx", 0o600);
+      fs.writeFileSync(descriptor, `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`);
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      let stale = false;
+      try {
+        stale = Date.now() - fs.statSync(WORKER_ALLOCATION_LOCK).mtimeMs > 5 * 60_000;
+      } catch (statError) {
+        if (statError?.code !== "ENOENT") throw statError;
+      }
+      if (stale) {
+        try {
+          fs.rmSync(WORKER_ALLOCATION_LOCK);
+        } catch (removeError) {
+          if (removeError?.code !== "ENOENT") throw removeError;
+        }
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error("Timed out while assigning a private swarm-worker instance.");
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
   }
+  try {
+    return callback();
+  } finally {
+    fs.closeSync(descriptor);
+    try {
+      fs.rmSync(WORKER_ALLOCATION_LOCK);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+}
 
-  const sourceCloneId = String(options.sourceCloneId || "").trim();
-  const sourceSession = sessionFor(sourceCloneId);
-  const sourceDirectory = path.dirname(sourceSession);
+function createWorker(requestedId, options = {}) {
+  if (!SWARM_REQUIRED) {
+    throw new Error("Private worker instances are available only when agent swarm mode is enabled.");
+  }
+  if (!fs.existsSync(PRIMARY_SESSION)) {
+    throw new Error("The lead must start or resume the primary maze before a worker can begin.");
+  }
+  return withWorkerAllocationLock(() => {
+    if (listWorkers().length >= MAX_SWARM_WORKERS) {
+      throw new Error(`This run already has its maximum of ${MAX_SWARM_WORKERS} swarm workers.`);
+    }
+    return createWorkerUnlocked(requestedId, options);
+  });
+}
+
+function createWorkerUnlocked(requestedId, options = {}) {
+  const sourceSession = PRIMARY_SESSION;
+  const sourceDirectory = path.dirname(PRIMARY_SESSION);
   const forkActionCount = sessionActionCount(sourceSession);
-  const ownerKind = options.workerOnly ? "subagent" : "tool";
+  const ownerKind = "subagent";
 
   fs.mkdirSync(SWARM_DIR, { recursive: true });
   const base = safeWorkerId(requestedId);
@@ -325,7 +378,7 @@ function createWorker(requestedId, options = {}) {
     session,
     workspace,
     agent_workspace: agentWorkspace,
-    parent_instance_id: sourceCloneId || "primary",
+    parent_instance_id: "primary",
     fork_action_count: forkActionCount,
     primary_action_count_at_fork: sessionActionCount(PRIMARY_SESSION),
     owner_kind: ownerKind,
@@ -365,7 +418,7 @@ function createWorker(requestedId, options = {}) {
     ...metadata,
     own_action_count: 0,
     instruction:
-      `Use clone_id \"${id}\" for every MazeBench MCP observe/action call. ` +
+      `This worker is bound to one private maze instance. ` +
       `Put code and notes in ${agentWorkspace}. Never act on the primary maze; report findings to the lead.`
   };
 }
@@ -389,7 +442,27 @@ function listWorkers() {
     });
 }
 
-const TOOLS = [
+function finishWorkerContext(context) {
+  const workerId = String(context?.assignedCloneId || "");
+  if (!workerId) return;
+  const metadata = readWorkerMetadata(workerId);
+  if (!metadata || metadata.finished_at) return;
+  const finishedAt = new Date().toISOString();
+  writeJson(path.join(workerDirectory(workerId), "worker.json"), {
+    ...metadata,
+    finished_at: finishedAt
+  });
+  appendJsonLine(INSTANCE_EVENTS_LOG, {
+    type: "instance.finished",
+    at: finishedAt,
+    instance_id: workerId,
+    parent_instance_id: metadata.parent_instance_id || "primary",
+    owner_kind: metadata.owner_kind || "subagent",
+    owner_agent_id: metadata.owner_agent_id || ""
+  });
+}
+
+const LEAD_TOOLS = [
   {
     name: "maze_start",
     description: "Start the primary MazeBench session. The lead agent calls this exactly once on a fresh run.",
@@ -397,16 +470,16 @@ const TOOLS = [
   },
   {
     name: "maze_observe",
-    description: "Observe the primary maze, or a worker's private clone when clone_id is supplied.",
+    description: "Observe the lead agent's primary maze.",
     inputSchema: {
       type: "object",
-      properties: { clone_id: { type: "string", description: "Worker clone id. Omit only for the lead's primary maze." } },
+      properties: {},
       additionalProperties: false
     }
   },
   {
     name: "maze_action",
-    description: "Apply one MazeBench action to the primary maze or a private worker clone.",
+    description: "Apply one MazeBench action to the lead agent's primary maze.",
     inputSchema: {
       type: "object",
       properties: {
@@ -415,31 +488,46 @@ const TOOLS = [
           description: ALLOW_QUIT
             ? "up, down, left, right, rotate camera up/down/left/right, undo, reset, quit, or go to level X Y"
             : "up, down, left, right, rotate camera up/down/left/right, undo, reset, or go to level X Y"
-        },
-        clone_id: { type: "string", description: "Worker clone id. Omit only for the lead's primary maze." }
+        }
       },
       required: ["action"],
       additionalProperties: false
     }
   },
   {
-    name: "maze_clone",
-    description: "Fork the current primary maze, or another private clone, into an independently tracked exploration instance.",
+    name: "maze_workers",
+    description: "List the private maze instances assigned to swarm workers during this run.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
+  }
+];
+
+const WORKER_TOOLS = [
+  {
+    name: "maze_start",
+    description: "Start or reconnect to this swarm worker's one assigned private maze instance.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
+  },
+  {
+    name: "maze_observe",
+    description: "Observe this swarm worker's assigned private maze instance.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
+  },
+  {
+    name: "maze_action",
+    description: "Apply one action to this swarm worker's assigned private maze instance.",
     inputSchema: {
       type: "object",
       properties: {
-        worker_id: { type: "string", description: "A short unique instance name." },
-        source_clone_id: { type: "string", description: "Optional existing clone to branch from. Omit to fork the primary maze." },
-        owner_agent_id: { type: "string", description: "Optional provider worker or tool invocation label." },
-        label: { type: "string", description: "Optional human-readable purpose for this exploration." }
+        action: {
+          type: "string",
+          description: ALLOW_QUIT
+            ? "up, down, left, right, rotate camera up/down/left/right, undo, reset, quit, or go to level X Y"
+            : "up, down, left, right, rotate camera up/down/left/right, undo, reset, or go to level X Y"
+        }
       },
+      required: ["action"],
       additionalProperties: false
     }
-  },
-  {
-    name: "maze_workers",
-    description: "List the private maze clones created during this run.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false }
   }
 ];
 
@@ -473,8 +561,41 @@ const RESTRICTED_TOOLS = [
   }
 ];
 
-function normalizedToolCall(name, input = {}) {
-  if (!RESTRICTED_MODE) return { name, input };
+function createRequestContext({ workerOnly = false, workerKey = "" } = {}) {
+  return {
+    workerOnly: Boolean(workerOnly),
+    workerKey: safeWorkerId(workerKey || `swarm-worker-${crypto.randomBytes(6).toString("hex")}`),
+    assignedCloneId: ""
+  };
+}
+
+function ensureWorkerAssignment(context) {
+  if (!context?.workerOnly) throw new Error("Only swarm workers receive private maze instances.");
+  if (!SWARM_REQUIRED) throw new Error("Private worker instances require agent swarm mode.");
+  if (primaryPauseRequest()) {
+    throw new Error("The user is pausing this run. Stop worker exploration and report back to the lead now.");
+  }
+  if (context.assignedCloneId) return context.assignedCloneId;
+  const worker = createWorker(context.workerKey, {
+    workerOnly: true,
+    ownerAgentId: context.workerKey,
+    label: context.workerKey
+  });
+  context.assignedCloneId = worker.id;
+  return worker.id;
+}
+
+function normalizedToolCall(name, input = {}, { workerOnly = false } = {}) {
+  if (!RESTRICTED_MODE) {
+    const allowedNames = new Set(
+      (workerOnly ? WORKER_TOOLS : LEAD_TOOLS).map((tool) => tool.name)
+    );
+    if (!allowedNames.has(name)) throw new Error(`Unknown game control "${name}".`);
+    const allowedKeys = name === "maze_action" ? new Set(["action"]) : new Set();
+    const extraKey = Object.keys(input).find((key) => !allowedKeys.has(key));
+    if (extraKey) throw new Error(`Unsupported argument "${extraKey}" for ${name}.`);
+    return { name, input: name === "maze_action" ? { action: input.action } : {} };
+  }
   if (!/^game_(start|observe|action)$/.test(name)) {
     throw new Error(`Unknown game control "${name}".`);
   }
@@ -487,19 +608,24 @@ function normalizedToolCall(name, input = {}) {
   };
 }
 
-function callTool(name, input = {}, { workerOnly = WORKER_ONLY } = {}) {
+function callTool(name, input = {}, context = createRequestContext({ workerOnly: WORKER_ONLY })) {
+  const workerOnly = Boolean(context?.workerOnly);
+  const cloneId = workerOnly ? ensureWorkerAssignment(context) : "";
+  const effectiveInput = cloneId ? { ...input, clone_id: cloneId } : input;
   if (!workerOnly && name !== "maze_start") synchronizePrimarySessionBudget();
   if (name === "maze_start") {
-    if (workerOnly) throw new Error("Workers cannot start or reset the primary maze. Call maze_clone instead.");
+    if (workerOnly) return runHelper(["observe", "--state", sessionFor(cloneId)]);
     return startMaze();
   }
   if (name === "maze_observe") {
-    if (workerOnly && !input.clone_id) throw new Error("Workers must supply their clone_id.");
-    return runHelper(["observe", "--state", sessionFor(input.clone_id)]);
+    return runHelper(["observe", "--state", sessionFor(effectiveInput.clone_id)]);
   }
   if (name === "maze_action") {
     if (!String(input.action || "").trim()) throw new Error("action is required.");
-    if (!input.clone_id && primaryPauseBoundary()) {
+    if (workerOnly && primaryPauseRequest()) {
+      throw new Error("The user is pausing this run. Stop worker exploration and report back to the lead now.");
+    }
+    if (!effectiveInput.clone_id && primaryPauseBoundary()) {
       throw new Error("The user paused this run after the previous completed action. End your response now; the same thread will resume later.");
     }
     if (!ALLOW_QUIT && String(input.action).trim().toLowerCase() === "quit") {
@@ -509,23 +635,15 @@ function callTool(name, input = {}, { workerOnly = WORKER_ONLY } = {}) {
           : "Quit is disabled by the user for this run. Continue playing until the budget is exhausted or the user stops the run."
       );
     }
-    if (workerOnly && !input.clone_id) throw new Error("Workers must supply their clone_id and cannot act on the primary maze.");
-    if (
-      !input.clone_id &&
-      SWARM_REQUIRED &&
-      !listWorkers().some((worker) => !worker.owner_kind || worker.owner_kind === "subagent")
-    ) {
-      throw new Error("Spawn a provider subagent first. Only a worker can call maze_clone and unlock primary moves.");
-    }
     if (
       PRIMARY_MOVE_BUDGET != null &&
-      !input.clone_id &&
+      !effectiveInput.clone_id &&
       sessionActionCount(PRIMARY_SESSION) - PRIMARY_INITIAL_ACTION_COUNT >= PRIMARY_MOVE_BUDGET
     ) {
       throw new Error(`The primary move budget of ${PRIMARY_MOVE_BUDGET} action(s) is exhausted. Finish the run.`);
     }
-    const result = runHelper(["action", "--state", sessionFor(input.clone_id), String(input.action)]);
-    if (!input.clone_id) {
+    const result = runHelper(["action", "--state", sessionFor(effectiveInput.clone_id), String(input.action)]);
+    if (!effectiveInput.clone_id) {
       const pauseRequest = primaryPauseRequest();
       const actionCount = sessionActionCount(PRIMARY_SESSION);
       const requestedAfter = Math.max(0, Number(pauseRequest?.requested_after_turn) || 0);
@@ -547,17 +665,6 @@ function callTool(name, input = {}, { workerOnly = WORKER_ONLY } = {}) {
       }
     }
     return result;
-  }
-  if (name === "maze_clone") {
-    if (!workerOnly && !LEAD_CLONES_ALLOWED) {
-      throw new Error("Private maze branches are available to swarm workers and offline tool runs only.");
-    }
-    return createWorker(input.worker_id, {
-      sourceCloneId: input.source_clone_id,
-      ownerAgentId: input.owner_agent_id,
-      label: input.label,
-      workerOnly
-    });
   }
   if (name === "maze_workers") return listWorkers();
   throw new Error(`Unknown tool \"${name}\".`);
@@ -589,8 +696,10 @@ function failure(send, id, error) {
 
 function toolsFor(workerOnly) {
   if (RESTRICTED_MODE) return RESTRICTED_TOOLS;
-  if (workerOnly) return TOOLS.filter((tool) => tool.name !== "maze_start");
-  return LEAD_CLONES_ALLOWED ? TOOLS : TOOLS.filter((tool) => tool.name !== "maze_clone");
+  if (workerOnly) return SWARM_REQUIRED ? WORKER_TOOLS : [];
+  return SWARM_REQUIRED
+    ? LEAD_TOOLS
+    : LEAD_TOOLS.filter((tool) => tool.name !== "maze_workers");
 }
 
 function publicToolValue(value) {
@@ -664,7 +773,12 @@ function appendToolActivity(entry) {
   appendJsonLine(ACTIVITY_LOG, entry);
 }
 
-async function handle(request, send = stdioSend, { workerOnly = WORKER_ONLY } = {}) {
+async function handle(
+  request,
+  send = stdioSend,
+  context = createRequestContext({ workerOnly: WORKER_ONLY })
+) {
+  const workerOnly = Boolean(context?.workerOnly);
   if (!request || request.jsonrpc !== "2.0") return;
   if (request.method === "notifications/initialized" || request.method === "notifications/cancelled") return;
   if (request.method === "initialize") {
@@ -688,21 +802,37 @@ async function handle(request, send = stdioSend, { workerOnly = WORKER_ONLY } = 
     let name;
     let input;
     try {
-      ({ name, input } = normalizedToolCall(requestedName, request.params?.arguments || {}));
+      ({ name, input } = normalizedToolCall(
+        requestedName,
+        request.params?.arguments || {},
+        { workerOnly }
+      ));
     } catch (error) {
       failure(send, request.id, error);
       return;
     }
+    let effectiveInput = input;
+    try {
+      if (workerOnly) {
+        effectiveInput = { ...input, clone_id: ensureWorkerAssignment(context) };
+      }
+    } catch (error) {
+      success(send, request.id, {
+        content: [{ type: "text", text: safeErrorMessage(error) }],
+        isError: true
+      });
+      return;
+    }
     const startedAt = new Date();
-    const movesBefore = actionCountForInput(input);
+    const movesBefore = actionCountForInput(effectiveInput);
     const activityId = crypto.randomUUID();
-    const instanceId = String(input.clone_id || "primary");
-    const instanceMetadata = readWorkerMetadata(input.clone_id);
+    const instanceId = String(effectiveInput.clone_id || "primary");
+    const instanceMetadata = readWorkerMetadata(effectiveInput.clone_id);
     appendToolActivity({
       id: activityId,
       tool: name,
-      actor: workerOnly ? "worker" : input.clone_id ? "tool" : "lead",
-      clone_id: String(input.clone_id || ""),
+      actor: workerOnly ? "worker" : "lead",
+      clone_id: String(effectiveInput.clone_id || ""),
       action: String(input.action || ""),
       started_at: startedAt.toISOString(),
       status: "running",
@@ -711,15 +841,15 @@ async function handle(request, send = stdioSend, { workerOnly = WORKER_ONLY } = 
       moves_after: movesBefore
     });
     try {
-      const value = callTool(name, input, { workerOnly });
+      const value = callTool(name, input, context);
       success(send, request.id, toolContent(value));
       const completedAt = new Date();
-      const movesAfter = actionCountForInput(input);
+      const movesAfter = actionCountForInput(effectiveInput);
       appendToolActivity({
         id: activityId,
         tool: name,
         actor: workerOnly ? "worker" : "lead",
-        clone_id: String(input.clone_id || value?.id || ""),
+        clone_id: String(effectiveInput.clone_id || ""),
         action: String(input.action || ""),
         started_at: startedAt.toISOString(),
         completed_at: completedAt.toISOString(),
@@ -729,27 +859,27 @@ async function handle(request, send = stdioSend, { workerOnly = WORKER_ONLY } = 
         moves_before: movesBefore,
         moves_after: movesAfter
       });
-      if (name === "maze_action" && (!input.clone_id || instanceMetadata)) {
+      if (name === "maze_action" && (!effectiveInput.clone_id || instanceMetadata)) {
         const instanceEvent = {
           type: "instance.action",
           id: activityId,
           at: completedAt.toISOString(),
           instance_id: instanceId,
           parent_instance_id: instanceMetadata?.parent_instance_id || null,
-          owner_kind: instanceMetadata?.owner_kind || (workerOnly ? "subagent" : input.clone_id ? "tool" : "lead"),
+          owner_kind: instanceMetadata?.owner_kind || (workerOnly ? "subagent" : "lead"),
           owner_agent_id: instanceMetadata?.owner_agent_id || "",
           action: String(input.action || ""),
           attempted: true,
           applied: movesAfter > movesBefore,
           action_count_before: movesBefore,
           action_count_after: movesAfter,
-          own_action_count: input.clone_id
+          own_action_count: effectiveInput.clone_id
             ? Math.max(0, movesAfter - Number(instanceMetadata?.fork_action_count || 0))
             : movesAfter,
           status: compactStatus(value)
         };
         appendJsonLine(INSTANCE_EVENTS_LOG, instanceEvent);
-        updateInstanceTelemetry(input, instanceEvent);
+        updateInstanceTelemetry(effectiveInput, instanceEvent);
       }
     } catch (error) {
       success(send, request.id, {
@@ -757,12 +887,12 @@ async function handle(request, send = stdioSend, { workerOnly = WORKER_ONLY } = 
         isError: true
       });
       const completedAt = new Date();
-      const movesAfter = actionCountForInput(input);
+      const movesAfter = actionCountForInput(effectiveInput);
       appendToolActivity({
         id: activityId,
         tool: name,
         actor: workerOnly ? "worker" : "lead",
-        clone_id: String(input.clone_id || ""),
+        clone_id: String(effectiveInput.clone_id || ""),
         action: String(input.action || ""),
         started_at: startedAt.toISOString(),
         completed_at: completedAt.toISOString(),
@@ -773,28 +903,28 @@ async function handle(request, send = stdioSend, { workerOnly = WORKER_ONLY } = 
         moves_after: movesAfter,
         error: safeErrorMessage(error)
       });
-      if (name === "maze_action" && (!input.clone_id || instanceMetadata)) {
+      if (name === "maze_action" && (!effectiveInput.clone_id || instanceMetadata)) {
         const instanceEvent = {
           type: "instance.action",
           id: activityId,
           at: completedAt.toISOString(),
           instance_id: instanceId,
           parent_instance_id: instanceMetadata?.parent_instance_id || null,
-          owner_kind: instanceMetadata?.owner_kind || (workerOnly ? "subagent" : input.clone_id ? "tool" : "lead"),
+          owner_kind: instanceMetadata?.owner_kind || (workerOnly ? "subagent" : "lead"),
           owner_agent_id: instanceMetadata?.owner_agent_id || "",
           action: String(input.action || ""),
           attempted: true,
           applied: movesAfter > movesBefore,
           action_count_before: movesBefore,
           action_count_after: movesAfter,
-          own_action_count: input.clone_id
+          own_action_count: effectiveInput.clone_id
             ? Math.max(0, movesAfter - Number(instanceMetadata?.fork_action_count || 0))
             : movesAfter,
           error: safeErrorMessage(error),
           status: movesAfter > movesBefore ? lastStatusForInput(input) : null
         };
         appendJsonLine(INSTANCE_EVENTS_LOG, instanceEvent);
-        updateInstanceTelemetry(input, instanceEvent);
+        updateInstanceTelemetry(effectiveInput, instanceEvent);
       }
     }
     return;
@@ -814,13 +944,21 @@ function parseHttpMode(argv) {
 
 function startHttpServer({ portFile }) {
   if (!HTTP_TOKEN) throw new Error("MAZEBENCH_MCP_HTTP_TOKEN is required in HTTP mode.");
+  const leadContext = createRequestContext({ workerOnly: false, workerKey: "lead" });
+  const workerSessions = new Map();
   const server = http.createServer((request, response) => {
     const match = String(request.url || "").match(/^\/([^/]+)\/(lead|worker)$/);
     if (!match || match[1] !== HTTP_TOKEN) {
       response.writeHead(404).end();
       return;
     }
+    const workerOnly = match[2] === "worker";
+    const requestedSessionId = String(request.headers["mcp-session-id"] || "");
     if (request.method === "DELETE") {
+      if (workerOnly && requestedSessionId) {
+        finishWorkerContext(workerSessions.get(requestedSessionId));
+        workerSessions.delete(requestedSessionId);
+      }
       response.writeHead(200).end();
       return;
     }
@@ -839,9 +977,28 @@ function startHttpServer({ portFile }) {
       try {
         const payload = JSON.parse(body || "null");
         const requests = Array.isArray(payload) ? payload : [payload];
+        let sessionId = requestedSessionId;
+        let context = leadContext;
+        if (workerOnly) {
+          if (!SWARM_REQUIRED) throw new Error("Worker MCP sessions require agent swarm mode.");
+          if (!sessionId) {
+            if (!requests.some((message) => message?.method === "initialize")) {
+              throw new Error("Initialize a worker MCP session before calling worker tools.");
+            }
+            sessionId = crypto.randomUUID();
+            context = createRequestContext({
+              workerOnly: true,
+              workerKey: `swarm-worker-${sessionId.slice(0, 12)}`
+            });
+            workerSessions.set(sessionId, context);
+          } else {
+            context = workerSessions.get(sessionId);
+            if (!context) throw new Error("Unknown or expired worker MCP session.");
+          }
+        }
         const replies = [];
         for (const message of requests) {
-          await handle(message, (reply) => replies.push(reply), { workerOnly: match[2] === "worker" });
+          await handle(message, (reply) => replies.push(reply), context);
         }
         if (!replies.length) {
           response.writeHead(202).end();
@@ -850,7 +1007,7 @@ function startHttpServer({ portFile }) {
         response.writeHead(200, {
           "Content-Type": "application/json",
           "Cache-Control": "no-store",
-          "Mcp-Session-Id": HTTP_TOKEN
+          ...(workerOnly ? { "Mcp-Session-Id": sessionId } : {})
         });
         response.end(JSON.stringify(Array.isArray(payload) ? replies : replies[0]));
       } catch (error) {
@@ -867,7 +1024,11 @@ function startHttpServer({ portFile }) {
       "utf8"
     );
   });
-  const shutdown = () => server.close(() => process.exit(0));
+  const shutdown = () => {
+    for (const context of workerSessions.values()) finishWorkerContext(context);
+    workerSessions.clear();
+    server.close(() => process.exit(0));
+  };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
 }
@@ -877,21 +1038,28 @@ if (require.main === module) {
   if (httpMode) {
     startHttpServer(httpMode);
   } else {
+    const stdioContext = createRequestContext({
+      workerOnly: WORKER_ONLY,
+      workerKey: process.env.MAZEBENCH_WORKER_KEY || ""
+    });
     const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
     input.on("line", (line) => {
       if (!line.trim()) return;
       try {
-        handle(JSON.parse(line));
+        handle(JSON.parse(line), stdioSend, stdioContext);
       } catch (error) {
         failure(stdioSend, null, error);
       }
     });
+    input.on("close", () => finishWorkerContext(stdioContext));
   }
 }
 
 module.exports = {
   callTool,
+  createRequestContext,
   createWorker,
+  finishWorkerContext,
   listWorkers,
   safeWorkerId,
   sessionFor,

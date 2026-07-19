@@ -27,6 +27,7 @@ const baseConfig = {
   hostAccess: false,
   inContainer: false,
   levelId: "level_HxI",
+  maxSwarmWorkers: 8,
   mcpEnabled: true,
   mcpUrl: "http://127.0.0.1:1234/private",
   mode: "text",
@@ -90,9 +91,20 @@ assert.doesNotMatch(toolsOnPrompt, /maze_scorecard/);
 
 const swarmPrompt = buildMcpPrompt({ ...toolsOnConfig, swarm: true });
 assert.match(swarmPrompt, /SWARM IS ENABLED/);
-assert.match(swarmPrompt, /Spawn as many sub-agents as\s+you like/);
+assert.match(swarmPrompt, /spawn at most\s+8 workers/i);
+assert.match(swarmPrompt, /exactly one private maze instance/i);
 assert.match(swarmPrompt, /delegation is optional/);
 assert.doesNotMatch(swarmPrompt, /Spawn at least one worker/);
+assert.doesNotMatch(swarmPrompt, /maze_clone|clone_id/i);
+
+assert.deepEqual(
+  codexMcpConfigArgs(toolsOnConfig).filter((value) => value.includes("enabled_tools")),
+  ['mcp_servers.mazebench.enabled_tools=["maze_start","maze_observe","maze_action"]']
+);
+assert.deepEqual(
+  codexMcpConfigArgs({ ...toolsOnConfig, swarm: true }).filter((value) => value.includes("enabled_tools")),
+  ['mcp_servers.mazebench.enabled_tools=["maze_start","maze_observe","maze_action","maze_workers"]']
+);
 
 const codexConfig = { ...baseConfig, model: "codex" };
 const codex = agentCommand(codexConfig, buildMcpPrompt(codexConfig));
