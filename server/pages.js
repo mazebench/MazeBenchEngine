@@ -86,7 +86,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css?v=20260719-build-card-gems-1">
-    <link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-2">
+    <link rel="stylesheet" href="/local-site.css?v=20260719-launch-transition-1">
     ${extraHeadHtml}`
     })}
   </head>
@@ -258,7 +258,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css?v=${PLAY_ASSET_VERSION}">
-    <link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-2">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260719-launch-transition-1">`;
   }
 
   function renderPlayPage(game, level) {
@@ -468,7 +468,7 @@ function createPageRenderer({
     ${includeRuntimeStyles ? '<link rel="stylesheet" href="/styles.css">' : ""}
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260718-run-favorites-2">' : ""}`;
+    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260719-launch-transition-1">' : ""}`;
   }
 
   function renderAuthorPage(game, level) {
@@ -851,6 +851,10 @@ function createPageRenderer({
       main: `<div class="page-head agent-page-head">
           <h1>Agent</h1>
           <p id="agent-status" class="author-status" role="status" aria-live="polite"></p>
+          <div id="agent-launch-status" class="agent-launch-status" role="status" aria-live="polite" aria-atomic="true" hidden>
+            <span class="agent-launch-status__spinner" aria-hidden="true"></span>
+            <span>Launching run</span>
+          </div>
         </div>
         <section class="panel agent-composer" aria-label="Launch a run">
           <div class="composer-head">
@@ -1129,7 +1133,7 @@ function createPageRenderer({
           </div>
         </div>
         <script>window.__AGENT_DATA__ = ${serializeForScript(agentData)};</script>
-        <script src="/agent.js?v=20260718-run-favorites-2" defer></script>`
+        <script src="/agent.js?v=20260719-launch-transition-1" defer></script>`
     });
   }
 

@@ -8,6 +8,7 @@
     remote: {}
   };
   const statusEl = document.getElementById("agent-status");
+  const launchStatusEl = document.getElementById("agent-launch-status");
   const runsEl = document.getElementById("agent-runs");
 
   // Harnesses are a small data registry on purpose: Prime can add another
@@ -88,6 +89,8 @@
   const resizeAnimations = new WeakMap();
   const visibilityAnimations = new WeakMap();
   const selectionTargets = new WeakMap();
+  let pendingLaunches = 0;
+  let launchStatusHideTimer = null;
 
   const state = {
     execution: "prime",
@@ -125,6 +128,33 @@
     if (!statusEl) return;
     statusEl.textContent = message || "";
     statusEl.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function syncLaunchStatus() {
+    if (!launchStatusEl) return;
+    window.clearTimeout(launchStatusHideTimer);
+    if (pendingLaunches > 0) {
+      launchStatusEl.hidden = false;
+      window.requestAnimationFrame(() => {
+        if (pendingLaunches > 0) launchStatusEl.classList.add("is-visible");
+      });
+      return;
+    }
+
+    launchStatusEl.classList.remove("is-visible");
+    launchStatusHideTimer = window.setTimeout(() => {
+      if (pendingLaunches === 0) launchStatusEl.hidden = true;
+    }, 220);
+  }
+
+  function beginLaunch() {
+    pendingLaunches += 1;
+    syncLaunchStatus();
+  }
+
+  function finishLaunch() {
+    pendingLaunches = Math.max(0, pendingLaunches - 1);
+    syncLaunchStatus();
   }
 
   async function api(path, options = {}) {
@@ -466,7 +496,7 @@
     if (note) {
       note.textContent = state.harness === "custom"
         ? "Prime harnesses run in disposable sandboxes while game state and scoring stay on the trusted evaluator."
-        : state.harness !== "none" && state.execution === "prime"
+        : state.harness && state.harness !== "none" && state.execution === "prime"
         ? `${state.harness === "codex" ? "Codex" : "Claude Code"} is hosted by Prime and connected to MazeBench's isolated game controls.`
         : state.execution === "prime"
           ? "Prime supplies inference through the isolated Verifiers environment."
@@ -1586,6 +1616,39 @@
     return state.modelId || "";
   }
 
+  function resetComposerForNextRun() {
+    localAvailabilityRequest += 1;
+    primeAvailabilityRequest += 1;
+    state.execution = "prime";
+    state.harness = null;
+    state.modelId = null;
+    state.customModel = "";
+    state.modelQuery = "";
+    state.reasoning = null;
+    state.reasoningChosen = false;
+    state.worldId = null;
+    state.levelId = null;
+    state.localAvailability = "idle";
+
+    const modelSearchInput = document.getElementById("model-search-input");
+    if (modelSearchInput) modelSearchInput.value = "";
+    const customModelInput = document.getElementById("model-custom-input");
+    if (customModelInput) customModelInput.value = "";
+    const levelPicker = document.getElementById("level-picker");
+    if (levelPicker) levelPicker.hidden = true;
+    const fastSwitch = document.getElementById("run-codex-fast");
+    if (fastSwitch) fastSwitch.checked = false;
+
+    resetRunOptions();
+    renderHarnesses();
+    renderCustomHarnessPicker();
+    renderExecutionPicker();
+    renderWorlds(null, false);
+    renderLevelSummary();
+    renderReasoning();
+    syncComposerSteps();
+  }
+
   document.getElementById("launch-run")?.addEventListener("click", async () => {
     if (!runReady()) return;
     if (state.modelId === "__custom__" && !resolvedModelName() && (state.catalogs[catalogKey()]?.models || []).length) {
@@ -1643,18 +1706,30 @@
         };
 
     body.count = 1;
+    beginLaunch();
+    setStatus("");
+    resetComposerForNextRun();
 
     try {
-      if (state.execution === "prime") {
-        const environment = await checkPrimeAvailability();
-        if (!environment?.prime) return;
+      if (body.kind === "prime") {
+        const environment = await refreshEnvironment();
+        if (!environment?.prime) {
+          setStatus(
+            environment?.prime_installed ? "Prime sign-in is needed." : "Prime CLI setup is needed.",
+            true
+          );
+          showPrimeSetup(environment);
+          return;
+        }
       }
-      setStatus("Launching…");
       const payload = await api(data.apiUrl, { method: "POST", body: JSON.stringify(body) });
       setStatus(payload.message);
-      window.location.href = payload.run.url;
+      runsView.page = 1;
+      void refreshRuns();
     } catch (error) {
       setStatus(error.message, true);
+    } finally {
+      finishLaunch();
     }
   });
 
