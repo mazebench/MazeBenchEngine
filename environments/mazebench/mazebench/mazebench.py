@@ -11,6 +11,7 @@ import signal
 import shlex
 import subprocess
 import threading
+from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
 from string import Template
@@ -89,6 +90,10 @@ LIVE_ACTIONS_PATH_ENV = "MAZEBENCH_LIVE_ACTIONS_PATH"
 PRIME_RESUME_CHECKPOINT_VERSION = 1
 
 
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 def write_live_actions(actions: list[dict[str, Any]]) -> None:
     path = str(os.environ.get(LIVE_ACTIONS_PATH_ENV) or "").strip()
     if not path:
@@ -103,6 +108,7 @@ def write_live_actions(actions: list[dict[str, Any]]) -> None:
             json.dumps(
                 {
                     "turn": turn,
+                    "timestamp": action.get("timestamp"),
                     "command_text": action.get("command") or action.get("raw_response") or "",
                     "valid": action.get("valid", True),
                     "error": action.get("error"),
@@ -1284,6 +1290,7 @@ def record_maze_action(
     error: str | None = None,
     raw_response: str = "",
     status: dict[str, Any] | None = None,
+    timestamp: str | None = None,
 ) -> None:
     action_args = action_args or {}
     current_actions = (
@@ -1293,6 +1300,7 @@ def record_maze_action(
     )
     record = {
         "turn": len(current_actions or []) + 1,
+        "timestamp": timestamp or _utc_timestamp(),
         "valid": error is None,
         "raw_response": raw_response.strip(),
         "command": (
@@ -1505,6 +1513,7 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
                         error=str(saved.get("error") or "invalid response"),
                         raw_response=raw_response,
                         status=status,
+                        timestamp=str(saved.get("timestamp") or "") or None,
                     )
                 else:
                     command, action_args = parse_text_action(raw_response)
@@ -1518,6 +1527,7 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
                         command=command,
                         raw_response=raw_response,
                         status=status,
+                        timestamp=str(saved.get("timestamp") or "") or None,
                     )
                 expected_hash = str(saved.get("status", {}).get("board_state_hash") or "")
                 actual_hash = str(status.get("board_state_hash") or "")

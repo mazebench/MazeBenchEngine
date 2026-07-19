@@ -79,6 +79,18 @@ function fileHasContent(filePath) {
   }
 }
 
+function normalizeEventTimestamp(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const trimmed = typeof value === "string" ? value.trim() : value;
+  const numeric = typeof trimmed === "number" || /^\d+(?:\.\d+)?$/.test(String(trimmed))
+    ? Number(trimmed)
+    : Number.NaN;
+  const date = Number.isFinite(numeric)
+    ? new Date(numeric < 1e12 ? numeric * 1000 : numeric)
+    : new Date(String(trimmed));
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
 // Agent Mode backend: launches scripts/maze-agent-local.js (Codex CLI / Claude
 // Code) or `prime eval run` as detached child processes, one directory per run
 // under outputs/maze-local/site/. The runner writes actions.jsonl + session.json
@@ -1771,7 +1783,7 @@ function createAgentRunService({
         }
         records.push({
         turn: record.turn,
-        timestamp: record.timestamp || record.recorded_at || record.created_at || null,
+        timestamp: normalizeEventTimestamp(record.timestamp || record.recorded_at || record.created_at),
         board_state_hash: record.status?.board_state_hash || null,
         command_text: record.command_text,
         moved: record.status?.moved,
@@ -2554,20 +2566,43 @@ function createAgentRunService({
     );
 
     if (model === "prime") {
-      if (finalReasoning.length) return alignToMoves(finalReasoning);
       const livePath = path.join(runDir, "prime-reasoning.jsonl");
-      if (!fs.existsSync(livePath)) return [];
-      return alignToMoves(fs
-        .readFileSync(livePath, "utf8")
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .flatMap((line) => {
-          try {
-            return [JSON.parse(line)];
-          } catch (_error) {
-            return [];
-          }
-        }));
+      const liveReasoning = fs.existsSync(livePath)
+        ? fs.readFileSync(livePath, "utf8")
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .flatMap((line) => {
+            try {
+              return [JSON.parse(line)];
+            } catch (_error) {
+              return [];
+            }
+          })
+        : [];
+      const selected = finalReasoning.length ? finalReasoning : liveReasoning;
+      const usageByMove = new Map(readJsonLineTail(path.join(runDir, "prime-usage.jsonl"))
+        .map((entry) => [Number(entry?.turn ?? entry?.move), entry])
+        .filter(([move]) => Number.isFinite(move) && move > 0));
+      const selectedMoves = new Set();
+      const withTimestamps = selected.map((entry) => {
+        const move = Number(entry?.move);
+        if (Number.isFinite(move) && move > 0) selectedMoves.add(move);
+        return {
+          ...entry,
+          timestamp: normalizeEventTimestamp(
+            entry?.timestamp || usageByMove.get(move)?.recorded_at || entry?.recorded_at
+          )
+        };
+      });
+      usageByMove.forEach((usage, move) => {
+        if (!selectedMoves.has(move)) {
+          withTimestamps.push({
+            move,
+            timestamp: normalizeEventTimestamp(usage?.recorded_at || usage?.timestamp)
+          });
+        }
+      });
+      return alignToMoves(withTimestamps.sort((left, right) => Number(left.move) - Number(right.move)));
     }
 
     const eventsPath = path.join(runDir, "agent-events.jsonl");
@@ -3853,6 +3888,12 @@ function createAgentRunService({
       }
     }
     const reasoning = readReasoning(runId, summary.model, summary.status);
+    const reasoningTimestamps = new Map(reasoning
+      .filter((entry) => entry?.timestamp)
+      .map((entry) => [Number(entry.move), entry.timestamp]));
+    actions.forEach((action) => {
+      action.timestamp ||= reasoningTimestamps.get(Number(action.turn)) || null;
+    });
     const tokenUsage = readTokenUsage(runId, summary);
     const incrementalTokenUsage = cursor > 0 && Array.isArray(tokenUsage?.actions)
       ? {

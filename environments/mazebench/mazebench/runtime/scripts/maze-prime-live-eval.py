@@ -16,6 +16,7 @@ import re
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from openai.types.responses.response_usage import InputTokensDetails
@@ -88,6 +89,10 @@ def _append_jsonl(path: str, record: dict) -> None:
             stream.flush()
 
 
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 def _export_synchronized_actions(trace) -> None:
     if not LIVE_ACTIONS_PATH:
         return
@@ -100,6 +105,7 @@ def _export_synchronized_actions(trace) -> None:
             LIVE_ACTIONS_PATH,
             {
                 "turn": action.get("turn"),
+                "timestamp": action.get("timestamp") or _utc_timestamp(),
                 "command_text": action.get("command") or action.get("raw_response") or "",
                 "valid": action.get("valid", True),
                 "error": action.get("error"),
@@ -132,7 +138,7 @@ def _export_agent_actions(pending: PendingTurn) -> None:
                 LIVE_ACTIONS_PATH,
                 {
                     "turn": action.get("turn"),
-                    "timestamp": action.get("timestamp"),
+                    "timestamp": action.get("timestamp") or _utc_timestamp(),
                     "command_text": action.get("command_text") or "",
                     "valid": action.get("valid", True),
                     "error": action.get("error"),

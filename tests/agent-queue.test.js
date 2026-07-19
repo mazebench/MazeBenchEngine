@@ -230,19 +230,24 @@ try {
       ]
     })}\n`
   );
+  const livePrimeRecordedAt = Date.parse("2026-07-19T00:39:10.000Z") / 1000;
   fs.writeFileSync(
     path.join(livePrimeRunDir, "prime-usage.jsonl"),
     `${JSON.stringify({
       turn: 1,
       input_tokens: 10,
       completion_tokens: 2,
-      recorded_at: Date.now() / 1000
+      recorded_at: livePrimeRecordedAt
     })}\n`
   );
   const livePrimeProgress = service.getRunProgress(livePrime.id);
   assert.equal(livePrimeProgress.actions[0].level, "ASCII:observe");
   assert.equal(livePrimeProgress.initial_board_state_hash, "state-0");
   assert.equal(livePrimeProgress.actions[0].board_state_hash, "state-1");
+  assert.equal(livePrimeProgress.actions[0].timestamp, "2026-07-19T00:39:10.000Z");
+  assert.deepEqual(livePrimeProgress.reasoning, [
+    { move: 1, timestamp: "2026-07-19T00:39:10.000Z" }
+  ]);
   assert.deepEqual(livePrimeProgress.initial_player, { x: 0, y: 8, elevation: 0 });
   assert.deepEqual(livePrimeProgress.actions[0].player, { x: 1, y: 8, elevation: 0 });
   assert.equal(

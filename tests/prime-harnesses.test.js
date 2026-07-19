@@ -35,6 +35,10 @@ try {
     path.join(root, "environments", "mazebench", "mazebench_tools", "__init__.py"),
     "utf8"
   );
+  const mazeTasksetSource = fs.readFileSync(
+    path.join(root, "environments", "mazebench", "mazebench", "mazebench.py"),
+    "utf8"
+  );
   const project = fs.readFileSync(path.join(root, "environments", "mazebench", "pyproject.toml"), "utf8");
   const appSource = fs.readFileSync(path.join(root, "server", "app.js"), "utf8");
   const runsSource = fs.readFileSync(path.join(root, "server", "agent-runs.js"), "utf8");
@@ -116,6 +120,9 @@ try {
   assert.match(runSource, /MAZEBENCH_PRIME_HARNESS: opts\.harness/);
   assert.match(liveSource, /_patch_prime_usage_schema/);
   assert.match(liveSource, /cache_write_tokens/);
+  assert.match(liveSource, /"timestamp": action\.get\("timestamp"\) or _utc_timestamp\(\)/);
+  assert.match(mazeTasksetSource, /"timestamp": timestamp or _utc_timestamp\(\)/);
+  assert.match(mazeTasksetSource, /"timestamp": action\.get\("timestamp"\)/);
 
   assert.match(project, /verifiers @ git\+https:\/\/github\.com\/PrimeIntellect-ai\/verifiers\.git@653bb14003b87e39588bde308fa8626d1038ce15/);
   assert.match(tasksetSource, /__all__ = \["MazeBenchAgentTaskset"\]/);
