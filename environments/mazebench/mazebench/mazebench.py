@@ -1237,6 +1237,7 @@ def slim_status(status: dict[str, Any] | None) -> dict[str, Any]:
         "action_count",
         "allowed_commands",
         "board_state_hash",
+        "board_state_hash_version",
         "collected_gems",
         "collected_this_action",
         "current_room",

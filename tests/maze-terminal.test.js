@@ -26,6 +26,7 @@ const { evaluateAutoQuit } = require(path.join(ROOT_DIR, "shared", "auto-quit.js
 const { asciiGlyphPalette } = require(path.join(ROOT_DIR, "shared", "maze-ascii-palette.js"));
 const {
   applyMove,
+  BOARD_STATE_HASH_VERSION,
   boardStateHash,
   buildJsonObservation,
   buildScorecard,
@@ -1493,6 +1494,7 @@ function syntheticFloor(width, height) {
 
   assert.equal(initial.action, "observe");
   assert.equal(initial.action_count, 0);
+  assert.equal(initial.board_state_hash_version, BOARD_STATE_HASH_VERSION);
   assert.equal(initial.current_room, "level_HxI");
   assert.equal(initial.current_view, "diagonal");
   assert.equal(initial.gem_count, 0);

@@ -39,6 +39,7 @@ const {
   evaluateAutoQuit,
   normalizeAutoQuitConfig
 } = require("../shared/auto-quit");
+const { BOARD_STATE_HASH_VERSION } = require("../shared/board-state");
 const {
   CHECKPOINT_FILE: PRIME_RESUME_CHECKPOINT_FILE,
   writePrimeResumeCheckpoint
@@ -1785,6 +1786,7 @@ function createAgentRunService({
         turn: record.turn,
         timestamp: normalizeEventTimestamp(record.timestamp || record.recorded_at || record.created_at),
         board_state_hash: record.status?.board_state_hash || null,
+        board_state_hash_version: Number(record.status?.board_state_hash_version) || null,
         command_text: record.command_text,
         moved: record.status?.moved,
         gem_count: record.status?.gem_count,
@@ -1842,6 +1844,13 @@ function createAgentRunService({
     return String(status?.board_state_hash || "");
   }
 
+  function readInitialBoardStateHashVersion(runId) {
+    const runDir = runDirFor(runId);
+    const initialStatus = loadJson(path.join(runDir, "initial-status.json"), null);
+    const status = initialStatus || loadJson(path.join(runDir, "session.json"), null)?.initial || null;
+    return Number(status?.board_state_hash_version) || 0;
+  }
+
   function primeResumeCheckpointPath(runId) {
     return path.join(runDirFor(runId), PRIME_RESUME_CHECKPOINT_FILE);
   }
@@ -1872,6 +1881,7 @@ function createAgentRunService({
     return {
       allowed_commands: payload.allowedCommands || [],
       board_state_hash: payload.boardStateHash || null,
+      board_state_hash_version: Number(payload.boardStateHashVersion) || BOARD_STATE_HASH_VERSION,
       current_room: payload.levelId || meta.level_id || "level_HxI",
       current_view: payload.view || "top-diagonal",
       gem_count: 0,
@@ -1936,7 +1946,22 @@ function createAgentRunService({
     const actions = readActions(runId);
     const last = actions[actions.length - 1];
     if (last?.game_won || last?.quit) return null;
-    return evaluateAutoQuit(readInitialBoardStateHash(runId), actions, config);
+    let initialHash = readInitialBoardStateHash(runId);
+    let evaluationActions = actions;
+    const legacyBoardStateHashes = readInitialBoardStateHashVersion(runId) !== BOARD_STATE_HASH_VERSION ||
+      actions.some((action) => action.board_state_hash_version !== BOARD_STATE_HASH_VERSION);
+    if (legacyBoardStateHashes) {
+      const reconstructed = reconstructBoardStateTimeline(runId, meta);
+      if (reconstructed) {
+        initialHash = reconstructed.initial_hash;
+        evaluationActions = actions.map((action) => ({
+          ...action,
+          board_state_hash: reconstructed.hashes.get(Number(action.turn)) || action.board_state_hash,
+          board_state_hash_version: reconstructed.hash_version
+        }));
+      }
+    }
+    return evaluateAutoQuit(initialHash, evaluationActions, config);
   }
 
   function forceAutoQuitShutdown(runId) {
@@ -3691,7 +3716,13 @@ function createAgentRunService({
         if (hash) hashes.set(turn, hash);
         if (player) players.set(turn, player);
       });
-      const timeline = { initial_hash: initialHash, initial_player: initialPlayer, hashes, players };
+      const timeline = {
+        hash_version: BOARD_STATE_HASH_VERSION,
+        initial_hash: initialHash,
+        initial_player: initialPlayer,
+        hashes,
+        players
+      };
       if (reconstructedBoardStateTimelineCache.size >= 32) {
         reconstructedBoardStateTimelineCache.delete(reconstructedBoardStateTimelineCache.keys().next().value);
       }
@@ -3881,18 +3912,28 @@ function createAgentRunService({
       }
     }
     let initialBoardStateHash = readInitialBoardStateHash(runId);
+    let initialBoardStateHashVersion = readInitialBoardStateHashVersion(runId);
     let initialPlayer = readInitialPlayer(runId);
+    const legacyBoardStateHashes = initialBoardStateHashVersion !== BOARD_STATE_HASH_VERSION ||
+      actions.some((action) => action.board_state_hash_version !== BOARD_STATE_HASH_VERSION);
     if (
+      legacyBoardStateHashes ||
       !initialBoardStateHash ||
       !initialPlayer ||
       actions.some((action) => !action.board_state_hash || !action.player)
     ) {
       const reconstructed = reconstructBoardStateTimeline(runId, summary);
       if (reconstructed) {
-        initialBoardStateHash ||= reconstructed.initial_hash;
+        if (legacyBoardStateHashes || !initialBoardStateHash) {
+          initialBoardStateHash = reconstructed.initial_hash;
+          initialBoardStateHashVersion = reconstructed.hash_version;
+        }
         initialPlayer ||= reconstructed.initial_player;
         actions.forEach((action) => {
-          action.board_state_hash ||= reconstructed.hashes.get(Number(action.turn)) || null;
+          if (legacyBoardStateHashes || !action.board_state_hash) {
+            action.board_state_hash = reconstructed.hashes.get(Number(action.turn)) || null;
+            action.board_state_hash_version = reconstructed.hash_version;
+          }
           action.player ||= reconstructed.players.get(Number(action.turn)) || null;
         });
       }

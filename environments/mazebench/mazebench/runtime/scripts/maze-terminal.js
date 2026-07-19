@@ -12,6 +12,7 @@ const {
   getLevel,
   getLevelState
 } = require("../server/app");
+const { BOARD_STATE_HASH_VERSION } = require("../shared/board-state");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const DEFAULT_TERMINAL_REPLAY_ROOT = path.join(ROOT_DIR, "outputs", "maze-terminal");
@@ -3158,7 +3159,7 @@ function boardStateHash(context, collectedGemIds = context?.stats?.collectedGemI
     return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
   });
   const payload = {
-    version: 2,
+    version: BOARD_STATE_HASH_VERSION,
     game: playData.gameId || context?.game?.id || "maze",
     level: context?.level?.id || playData.levelId || "",
     actors,
@@ -3182,6 +3183,7 @@ async function buildJsonPayload(context) {
     inputMoves: context.options.moves || "",
     levelId: context.level.id,
     boardStateHash: boardStateHash(context),
+    boardStateHashVersion: BOARD_STATE_HASH_VERSION,
     pitch: context.options.pitch,
     player,
     playerDead,
@@ -3716,6 +3718,7 @@ if (require.main === module) {
 
 module.exports = {
   applyMove,
+  BOARD_STATE_HASH_VERSION,
   boardStateHash,
   buildJsonObservation,
   buildJsonPayload,
