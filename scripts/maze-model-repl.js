@@ -267,8 +267,6 @@ function noticeText(snapshot, resultText) {
   const notices = [];
   const text = String(resultText || "");
   if (text.startsWith("Previous response was invalid:")) notices.push(text);
-  const warningStart = text.indexOf("AUTO-QUIT WARNING:");
-  if (warningStart >= 0) notices.push(text.slice(warningStart));
   if (snapshot.player_dead) notices.push(snapshot.death_message || DEATH_MESSAGE);
   return [...new Set(notices)].join("\n\n");
 }

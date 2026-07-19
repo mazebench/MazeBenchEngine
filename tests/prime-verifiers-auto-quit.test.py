@@ -29,7 +29,6 @@ class AutoQuitParityTests(unittest.TestCase):
                 "threshold": 10.0,
                 "mode": "rolling",
                 "window": 100,
-                "warning_moves": 10,
             },
         )
 
@@ -54,31 +53,6 @@ class AutoQuitParityTests(unittest.TestCase):
         self.assertEqual(result["action_count"], 9)
         self.assertEqual(result["percentage"], 10.0)
 
-    def test_cumulative_warning_is_conditional_countdown(self) -> None:
-        initial_warning = auto_quit.projected_auto_quit_warning(
-            "A",
-            [],
-            enabled=True,
-            threshold=10,
-            mode="cumulative",
-            warning_moves=10,
-        )
-        self.assertIsNotNone(initial_warning)
-        assert initial_warning is not None
-        self.assertEqual(initial_warning["moves_remaining"], 9)
-
-        one_move_warning = auto_quit.projected_auto_quit_warning(
-            "A",
-            actions(*(["A"] * 8)),
-            enabled=True,
-            threshold=10,
-            mode="cumulative",
-            warning_moves=10,
-        )
-        self.assertIsNotNone(one_move_warning)
-        assert one_move_warning is not None
-        self.assertEqual(one_move_warning["moves_remaining"], 1)
-
     def test_new_state_raises_cumulative_novelty(self) -> None:
         result = auto_quit.evaluate_auto_quit(
             "A",
@@ -100,19 +74,6 @@ class AutoQuitParityTests(unittest.TestCase):
                 window=3,
             )
         )
-        warning = auto_quit.projected_auto_quit_warning(
-            "A",
-            actions("B", "C", "C"),
-            enabled=True,
-            threshold=0,
-            mode="rolling",
-            window=3,
-            warning_moves=10,
-        )
-        self.assertIsNotNone(warning)
-        assert warning is not None
-        self.assertEqual(warning["moves_remaining"], 2)
-
         result = auto_quit.evaluate_auto_quit(
             "A",
             actions("B", "C", "C", "C", "C"),
@@ -137,25 +98,11 @@ class AutoQuitParityTests(unittest.TestCase):
             )
         )
 
-    def test_direct_hashes_invalid_actions_and_warning_copy(self) -> None:
+    def test_direct_hashes_are_supported(self) -> None:
         self.assertEqual(
             auto_quit.board_state_hash({"board_state_hash": " direct "}),
             "direct",
         )
-        invalid_actions = [
-            {"valid": False, "status": {"board_state_hash": "A"}}
-            for _ in range(8)
-        ]
-        warning = auto_quit.auto_quit_warning_text(
-            "A",
-            invalid_actions,
-            enabled=True,
-            threshold=10,
-            mode="cumulative",
-            warning_moves=10,
-        )
-        self.assertIn("next 1 action", warning)
-        self.assertIn("revisit previously observed board states", warning)
 
     def test_disabled_and_normalized_configuration(self) -> None:
         self.assertIsNone(
@@ -171,14 +118,12 @@ class AutoQuitParityTests(unittest.TestCase):
                 threshold=101,
                 mode="ROLLING",
                 window=20_000,
-                warning_moves=-1,
             ),
             {
                 "enabled": True,
                 "threshold": 100.0,
                 "mode": "rolling",
                 "window": 10_000,
-                "warning_moves": 0,
             },
         )
 

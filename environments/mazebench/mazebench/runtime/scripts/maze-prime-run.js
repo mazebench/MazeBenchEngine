@@ -86,7 +86,6 @@ function parseArgs(argv) {
     autoQuitThreshold: 10,
     autoQuitMode: "cumulative",
     autoQuitWindow: 100,
-    autoQuitWarningMoves: 10,
     video: true
   };
 
@@ -150,9 +149,6 @@ function parseArgs(argv) {
     }
     else if (arg === "--auto-quit-window") {
       opts.autoQuitWindow = Math.max(1, Math.min(10_000, Math.round(Number(next()) || 100)));
-    }
-    else if (arg === "--auto-quit-warning-moves") {
-      opts.autoQuitWarningMoves = Math.max(0, Math.min(10_000, Math.round(Number(next()) || 0)));
     }
     else if (arg === "--no-video") opts.video = false;
   }
@@ -288,7 +284,6 @@ function hostedEvalArgs(opts) {
     auto_quit_threshold: opts.autoQuitThreshold,
     auto_quit_mode: opts.autoQuitMode,
     auto_quit_window: opts.autoQuitWindow,
-    auto_quit_warning_moves: opts.autoQuitWarningMoves,
     observation_mode: opts.observationMode
   };
   if (opts.unlimited) envArgs.unlimited = true;
@@ -718,9 +713,7 @@ function runEval(opts) {
       "--taskset.auto-quit-mode",
       opts.autoQuitMode,
       "--taskset.auto-quit-window",
-      String(opts.autoQuitWindow),
-      "--taskset.auto-quit-warning-moves",
-      String(opts.autoQuitWarningMoves)
+      String(opts.autoQuitWindow)
     );
   }
 

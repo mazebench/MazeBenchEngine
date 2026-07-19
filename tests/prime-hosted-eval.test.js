@@ -188,7 +188,6 @@ print("chat blank retry ready")`
     auto_quit_threshold: 10,
     auto_quit_mode: "cumulative",
     auto_quit_window: 100,
-    auto_quit_warning_moves: 10,
     observation_mode: "ascii"
   });
   const sampling = JSON.parse(argv[argv.indexOf("-S") + 1]);
@@ -218,8 +217,7 @@ print("chat blank retry ready")`
     "--auto-quit",
     "--auto-quit-threshold", "7.5",
     "--auto-quit-mode", "rolling",
-    "--auto-quit-window", "80",
-    "--auto-quit-warning-moves", "10"
+    "--auto-quit-window", "80"
   ]);
   const autoQuitArgv = hostedEvalArgs(autoQuitOptions);
   const autoQuitEnvArgs = JSON.parse(autoQuitArgv[autoQuitArgv.indexOf("-a") + 1]);
@@ -227,7 +225,6 @@ print("chat blank retry ready")`
   assert.equal(autoQuitEnvArgs.auto_quit_threshold, 7.5);
   assert.equal(autoQuitEnvArgs.auto_quit_mode, "rolling");
   assert.equal(autoQuitEnvArgs.auto_quit_window, 80);
-  assert.equal(autoQuitEnvArgs.auto_quit_warning_moves, 10);
   assert(autoQuitArgv[autoQuitArgv.indexOf("--state-columns") + 1].includes("maze_auto_quit"));
 
   const hiddenAsciiOptions = parseArgs([

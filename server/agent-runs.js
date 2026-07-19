@@ -4605,9 +4605,7 @@ function createAgentRunService({
         "--auto-quit-mode",
         autoQuit.mode,
         "--auto-quit-window",
-        String(autoQuit.window),
-        "--auto-quit-warning-moves",
-        "10"
+        String(autoQuit.window)
       );
     }
 

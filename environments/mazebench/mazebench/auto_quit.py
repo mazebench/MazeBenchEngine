@@ -16,7 +16,6 @@ from typing import Any, Literal
 AUTO_QUIT_DEFAULT_THRESHOLD = 10.0
 AUTO_QUIT_DEFAULT_MODE: Literal["cumulative", "rolling"] = "rolling"
 AUTO_QUIT_DEFAULT_WINDOW = 100
-AUTO_QUIT_DEFAULT_WARNING_MOVES = 10
 AUTO_QUIT_MAX_WINDOW = 10_000
 
 
@@ -60,7 +59,6 @@ def normalize_auto_quit_config(
     threshold: object = AUTO_QUIT_DEFAULT_THRESHOLD,
     mode: object = AUTO_QUIT_DEFAULT_MODE,
     window: object = AUTO_QUIT_DEFAULT_WINDOW,
-    warning_moves: object = AUTO_QUIT_DEFAULT_WARNING_MOVES,
 ) -> dict[str, Any]:
     normalized_mode = str(mode or "").strip().lower()
     return {
@@ -80,12 +78,6 @@ def normalize_auto_quit_config(
             window,
             AUTO_QUIT_DEFAULT_WINDOW,
             1,
-            AUTO_QUIT_MAX_WINDOW,
-        ),
-        "warning_moves": _integer_in_range(
-            warning_moves,
-            AUTO_QUIT_DEFAULT_WARNING_MOVES,
-            0,
             AUTO_QUIT_MAX_WINDOW,
         ),
     }
@@ -208,105 +200,13 @@ def evaluate_auto_quit(
     return {**snapshot, "threshold": config["threshold"]}
 
 
-def projected_auto_quit_warning(
-    initial_state_hash: object,
-    actions: object,
-    *,
-    enabled: object = False,
-    threshold: object = AUTO_QUIT_DEFAULT_THRESHOLD,
-    mode: object = AUTO_QUIT_DEFAULT_MODE,
-    window: object = AUTO_QUIT_DEFAULT_WINDOW,
-    warning_moves: object = AUTO_QUIT_DEFAULT_WARNING_MOVES,
-) -> dict[str, Any] | None:
-    """Project a cutoff assuming each subsequent action revisits a known state."""
-
-    config = normalize_auto_quit_config(
-        enabled=enabled,
-        threshold=threshold,
-        mode=mode,
-        window=window,
-        warning_moves=warning_moves,
-    )
-    if not config["enabled"] or config["warning_moves"] <= 0:
-        return None
-    if evaluate_auto_quit(
-        initial_state_hash,
-        actions,
-        enabled=True,
-        threshold=config["threshold"],
-        mode=config["mode"],
-        window=config["window"],
-    ) is not None:
-        return None
-
-    initial_hash, hashes, novelty, action_count = _novelty_series(initial_state_hash, actions)
-    # Without an observed state there is nothing that a future action can revisit.
-    if not initial_hash and not hashes:
-        return None
-
-    for moves_remaining in range(1, config["warning_moves"] + 1):
-        projected_hashes = [*hashes, *([hashes[-1] if hashes else initial_hash] * moves_remaining)]
-        projected_novelty = [*novelty, *([0] * moves_remaining)]
-        snapshot = _novelty_snapshot(
-            initial_hash,
-            projected_hashes,
-            projected_novelty,
-            mode=config["mode"],
-            window=config["window"],
-            action_count=action_count + moves_remaining,
-        )
-        if snapshot is not None and snapshot["percentage"] <= config["threshold"]:
-            return {
-                **snapshot,
-                "threshold": config["threshold"],
-                "moves_remaining": moves_remaining,
-            }
-    return None
-
-
-def auto_quit_warning_text(
-    initial_state_hash: object,
-    actions: object,
-    *,
-    enabled: object = False,
-    threshold: object = AUTO_QUIT_DEFAULT_THRESHOLD,
-    mode: object = AUTO_QUIT_DEFAULT_MODE,
-    window: object = AUTO_QUIT_DEFAULT_WINDOW,
-    warning_moves: object = AUTO_QUIT_DEFAULT_WARNING_MOVES,
-) -> str:
-    projection = projected_auto_quit_warning(
-        initial_state_hash,
-        actions,
-        enabled=enabled,
-        threshold=threshold,
-        mode=mode,
-        window=window,
-        warning_moves=warning_moves,
-    )
-    if projection is None:
-        return ""
-
-    moves_remaining = int(projection["moves_remaining"])
-    action_word = "action" if moves_remaining == 1 else "actions"
-    return (
-        "AUTO-QUIT WARNING: If the next "
-        f"{moves_remaining} {action_word} revisit previously observed board states, "
-        f"this rollout will stop at {projection['percentage']:.1f}% new states "
-        f"(threshold: {projection['threshold']:g}%). Reach a new state to raise "
-        "the novelty rate."
-    )
-
-
 __all__ = [
     "AUTO_QUIT_DEFAULT_MODE",
     "AUTO_QUIT_DEFAULT_THRESHOLD",
-    "AUTO_QUIT_DEFAULT_WARNING_MOVES",
     "AUTO_QUIT_DEFAULT_WINDOW",
     "AUTO_QUIT_MAX_WINDOW",
-    "auto_quit_warning_text",
     "board_state_hash",
     "evaluate_auto_quit",
     "is_camera_rotation_action",
     "normalize_auto_quit_config",
-    "projected_auto_quit_warning",
 ]

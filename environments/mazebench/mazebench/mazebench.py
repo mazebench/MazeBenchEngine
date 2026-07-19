@@ -24,10 +24,8 @@ import verifiers.v1 as vf
 from .auto_quit import (
     AUTO_QUIT_DEFAULT_MODE,
     AUTO_QUIT_DEFAULT_THRESHOLD,
-    AUTO_QUIT_DEFAULT_WARNING_MOVES,
     AUTO_QUIT_DEFAULT_WINDOW,
     AUTO_QUIT_MAX_WINDOW,
-    auto_quit_warning_text,
     evaluate_auto_quit,
 )
 
@@ -1183,8 +1181,7 @@ def load_prime_resume_checkpoint(file_path: str) -> dict[str, Any]:
 
 def prime_resume_prompt(checkpoint: dict[str, Any]) -> vf.Messages:
     task = checkpoint.get("task") or {}
-    actions = checkpoint.get("actions") or []
-    latest = actions[-1]
+    latest = (checkpoint.get("actions") or [])[-1]
     status = latest.get("status") or {}
     if str(status.get("board_state_hash") or "") != str(
         checkpoint.get("final_board_state_hash") or ""
@@ -1197,17 +1194,6 @@ def prime_resume_prompt(checkpoint: dict[str, Any]) -> vf.Messages:
             command=str(latest.get("command_text") or ""),
             status=status,
         )
-    warning = auto_quit_warning_text(
-        str(checkpoint.get("initial_board_state_hash") or ""),
-        actions,
-        enabled=bool(task.get("auto_quit")),
-        threshold=float(task.get("auto_quit_threshold") or 0),
-        mode="rolling" if task.get("auto_quit_mode") == "rolling" else "cumulative",
-        window=max(1, int(task.get("auto_quit_window") or 100)),
-        warning_moves=max(0, int(task.get("auto_quit_warning_moves") or 0)),
-    )
-    if warning:
-        result_text = f"{result_text}\n\n{warning}"
     target_text = target_text_for_row(
         {
             "game_won_gem_count": int(task.get("game_won_gem_count") or GAME_WON_GEM_COUNT),
@@ -1341,7 +1327,6 @@ class MazeBenchTaskData(vf.TaskData):
     auto_quit_threshold: float = AUTO_QUIT_DEFAULT_THRESHOLD
     auto_quit_mode: Literal["cumulative", "rolling"] = AUTO_QUIT_DEFAULT_MODE
     auto_quit_window: int = AUTO_QUIT_DEFAULT_WINDOW
-    auto_quit_warning_moves: int = AUTO_QUIT_DEFAULT_WARNING_MOVES
     game_id: str = DEFAULT_GAME_ID
     game_won_gem_count: int = GAME_WON_GEM_COUNT
     level_id: str = DEFAULT_START_LEVEL_ID
@@ -1395,14 +1380,6 @@ class MazeBenchConfig(vf.TasksetConfig):
     auto_quit_window: int = Field(
         env_int("MAZEBENCH_AUTO_QUIT_WINDOW", AUTO_QUIT_DEFAULT_WINDOW, minimum=1),
         ge=1,
-        le=AUTO_QUIT_MAX_WINDOW,
-    )
-    auto_quit_warning_moves: int = Field(
-        env_int(
-            "MAZEBENCH_AUTO_QUIT_WARNING_MOVES",
-            AUTO_QUIT_DEFAULT_WARNING_MOVES,
-        ),
-        ge=0,
         le=AUTO_QUIT_MAX_WINDOW,
     )
     level_ids: str | list[str] | None = None
@@ -1555,18 +1532,6 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
             window=task.auto_quit_window,
         )
 
-    def auto_quit_warning(self) -> str:
-        task = self.task
-        return auto_quit_warning_text(
-            self.state.maze_initial_board_state_hash,
-            self.state.maze_actions,
-            enabled=task.auto_quit,
-            threshold=task.auto_quit_threshold,
-            mode=task.auto_quit_mode,
-            window=task.auto_quit_window,
-            warning_moves=task.auto_quit_warning_moves,
-        )
-
     async def vision_frame_data_url(self) -> str:
         task = self.task
         actions = valid_action_commands(self.state.maze_actions)
@@ -1597,9 +1562,6 @@ class MazeBenchUser(vf.User[vf.UserConfig, MazeBenchState]):
     async def build_user_message(self, status: dict[str, Any], result_text: str) -> vf.Messages:
         task = self.task
         target_text = target_text_for_row(task.model_dump())
-        warning = self.auto_quit_warning()
-        if warning:
-            result_text = f"{result_text}\n\n{warning}"
         if task.observation_mode == "ascii":
             return [
                 {
@@ -1959,7 +1921,6 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig]):
                     "auto_quit_threshold": float(self.config.auto_quit_threshold),
                     "auto_quit_mode": self.config.auto_quit_mode,
                     "auto_quit_window": int(self.config.auto_quit_window),
-                    "auto_quit_warning_moves": int(self.config.auto_quit_warning_moves),
                 }
                 for key, value in expected.items():
                     if checkpoint_task.get(key) != value:
@@ -1981,7 +1942,6 @@ class MazeBenchTaskset(vf.Taskset[MazeBenchTask, MazeBenchConfig]):
                 auto_quit_threshold=float(self.config.auto_quit_threshold),
                 auto_quit_mode=self.config.auto_quit_mode,
                 auto_quit_window=int(self.config.auto_quit_window),
-                auto_quit_warning_moves=int(self.config.auto_quit_warning_moves),
                 game_id=str(row["game_id"]),
                 game_won_gem_count=int(row["game_won_gem_count"]),
                 level_id=str(row["level_id"]),

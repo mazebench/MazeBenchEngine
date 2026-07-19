@@ -18,7 +18,7 @@ Models navigate a real JavaScript maze world one action at a time, preserve stat
 | JSON object observations | Supported | Supported |
 | Gem, room, and block rewards | Supported | Supported |
 | Configurable start room, view, yaw, and action limit | Supported | Supported |
-| State-novelty auto-quit with advance warnings | Supported | Supported |
+| State-novelty auto-quit | Supported | Supported |
 | Replay state and per-action metadata | Supported | Supported |
 | Perspective image observations | Not yet self-contained | Experimental |
 | All built-in harnesses in the pinned Verifiers revision | Not part of Hosted Training | Discovered and routed through isolated MCP or CLI controls |
@@ -157,7 +157,6 @@ auto_quit = true
 auto_quit_threshold = 10.0
 auto_quit_mode = "rolling"
 auto_quit_window = 100
-auto_quit_warning_moves = 10
 ```
 
 Launch it from a CPU machine; Prime hosts the training infrastructure:
@@ -217,7 +216,6 @@ Prime CLI 0.6.x passes these settings under `[env.args]` to MazeBench's hosted c
 | `auto_quit_threshold` | number | `10.0` | New-state percentage at or below which auto-quit fires. |
 | `auto_quit_mode` | `cumulative` or `rolling` | `rolling` | Measure novelty across the whole rollout or a rolling action window. |
 | `auto_quit_window` | integer | `100` | Rolling-mode action window. Rolling mode waits until this window is full. |
-| `auto_quit_warning_moves` | integer | `10` | Warn when this many repeated-state actions would reach the threshold. `0` disables warnings. |
 | `target_gems` | integer | `0` | Optional gem-score normalization target. `0` uses raw gem count. |
 | `observation_mode` | `ascii`, `json`, or `vision` | `ascii` | Observation surface. Hosted Training supports `ascii` and `json`. |
 | `omniscient` | boolean | `false` | JSON mode includes every object in the current room instead of only ASCII-visible objects. |

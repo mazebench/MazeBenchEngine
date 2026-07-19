@@ -21,9 +21,7 @@ from verifiers.utils.message_utils import concat_messages, normalize_messages
 from .auto_quit import (
     AUTO_QUIT_DEFAULT_MODE,
     AUTO_QUIT_DEFAULT_THRESHOLD,
-    AUTO_QUIT_DEFAULT_WARNING_MOVES,
     AUTO_QUIT_DEFAULT_WINDOW,
-    auto_quit_warning_text,
     evaluate_auto_quit,
     normalize_auto_quit_config,
 )
@@ -186,7 +184,6 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
         auto_quit_threshold: float,
         auto_quit_mode: str,
         auto_quit_window: int,
-        auto_quit_warning_moves: int,
         observation_mode: str,
         omniscient: bool,
         hide_names: bool,
@@ -201,13 +198,11 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
             threshold=auto_quit_threshold,
             mode=auto_quit_mode,
             window=auto_quit_window,
-            warning_moves=auto_quit_warning_moves,
         )
         self.auto_quit = bool(auto_quit_config["enabled"])
         self.auto_quit_threshold = float(auto_quit_config["threshold"])
         self.auto_quit_mode = str(auto_quit_config["mode"])
         self.auto_quit_window = int(auto_quit_config["window"])
-        self.auto_quit_warning_moves = int(auto_quit_config["warning_moves"])
         self.observation_mode = str(observation_mode)
         self.omniscient = bool(omniscient)
         self.hide_names = bool(hide_names)
@@ -222,22 +217,6 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
             mode=self.auto_quit_mode,
             window=self.auto_quit_window,
         )
-
-    def result_with_auto_quit_warning(
-        self,
-        state: vf.State,
-        result_text: str,
-    ) -> str:
-        warning = auto_quit_warning_text(
-            state.get("maze_initial_board_state_hash"),
-            state.get("maze_actions"),
-            enabled=self.auto_quit,
-            threshold=self.auto_quit_threshold,
-            mode=self.auto_quit_mode,
-            window=self.auto_quit_window,
-            warning_moves=self.auto_quit_warning_moves,
-        )
-        return f"{result_text}\n\n{warning}" if warning else result_text
 
     def status_prompt(
         self,
@@ -311,7 +290,7 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
                 "content": self.status_prompt(
                     row,
                     status,
-                    self.result_with_auto_quit_warning(state, "Start of run."),
+                    "Start of run.",
                 ),
             }
         ]
@@ -406,7 +385,7 @@ class LegacyMazeEnv(vf.MultiTurnEnv):
                     content=self.status_prompt(
                         row,
                         status,
-                        self.result_with_auto_quit_warning(state, result_text),
+                        result_text,
                     )
                 )
             ]
@@ -477,7 +456,6 @@ def load_environment(
     auto_quit_threshold: float | None = None,
     auto_quit_mode: str | None = None,
     auto_quit_window: int | None = None,
-    auto_quit_warning_moves: int | None = None,
     observation_mode: str | None = None,
     omniscient: bool = False,
     hide_names: bool = False,
@@ -539,14 +517,6 @@ def load_environment(
                 minimum=1,
             )
         ),
-        warning_moves=(
-            auto_quit_warning_moves
-            if auto_quit_warning_moves is not None
-            else env_int(
-                "MAZEBENCH_AUTO_QUIT_WARNING_MOVES",
-                AUTO_QUIT_DEFAULT_WARNING_MOVES,
-            )
-        ),
     )
     weights = {
         "gems": float(
@@ -605,7 +575,6 @@ def load_environment(
         auto_quit_threshold=float(auto_quit_config["threshold"]),
         auto_quit_mode=str(auto_quit_config["mode"]),
         auto_quit_window=int(auto_quit_config["window"]),
-        auto_quit_warning_moves=int(auto_quit_config["warning_moves"]),
         observation_mode=mode,
         omniscient=bool(omniscient),
         hide_names=bool(hide_names),

@@ -31,9 +31,6 @@ def config_for_checkpoint(path: Path) -> MazeBenchConfig:
             "rolling" if task.get("auto_quit_mode") == "rolling" else "cumulative"
         ),
         auto_quit_window=max(1, int(task.get("auto_quit_window") or 100)),
-        auto_quit_warning_moves=max(
-            0, int(task.get("auto_quit_warning_moves") or 0)
-        ),
         start_level_id=str(task.get("level_id") or "level_HxI"),
         game_won_gem_count=max(1, int(task.get("game_won_gem_count") or 69)),
         observation_mode=str(task.get("observation_mode") or "ascii"),
@@ -104,7 +101,6 @@ def self_test() -> None:
                         "auto_quit_threshold": 10,
                         "auto_quit_mode": "rolling",
                         "auto_quit_window": 100,
-                        "auto_quit_warning_moves": 10,
                         "game_id": "maze",
                         "game_won_gem_count": 70,
                         "level_id": "level_HxI",
