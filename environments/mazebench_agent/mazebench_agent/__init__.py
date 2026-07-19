@@ -192,6 +192,7 @@ def _slim_status(value: Any) -> dict[str, Any]:
     keep = (
         "allowed_commands",
         "board_state_hash",
+        "board_state_hash_version",
         "current_room",
         "current_view",
         "game_won",

@@ -12,6 +12,7 @@ const {
   getLevel,
   getLevelState
 } = require("../server/app");
+const { BOARD_STATE_HASH_VERSION } = require("../shared/board-state");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const DEFAULT_TERMINAL_REPLAY_ROOT = path.join(ROOT_DIR, "outputs", "maze-terminal");
@@ -3130,22 +3131,38 @@ function renderScreen(context) {
 // deliberately excluded: rotating the view does not create a new board state.
 // Actor elevation is the z coordinate; the terrain/lift arrays cover mutable
 // board objects whose positions are implicit in their stable cell indexes.
+// Room transitions can rebuild an equivalent actor list in a different order,
+// so each actor carries its gameplay-relevant authored identity and the list is
+// sorted before hashing.
 function boardStateHash(context, collectedGemIds = context?.stats?.collectedGemIds) {
   const state = context?.state || {};
   const engine = context?.engine || {};
   const playData = context?.playData || {};
   const actorCount = Math.max(0, Number(engine.actorCount) || 0);
-  const payload = {
-    version: 1,
-    game: playData.gameId || context?.game?.id || "maze",
-    level: context?.level?.id || playData.levelId || "",
-    actors: Array.from({ length: actorCount }, (_, index) => [
-      engine.actorTypes?.[index] || playData.actors?.[index]?.type || "unknown",
+  const actors = Array.from({ length: actorCount }, (_, index) => {
+    const actor = playData.actors?.[index] || {};
+    return [
+      engine.actorTypes?.[index] || actor.type || "unknown",
+      String(engine.actorGroupIds?.[index] ?? actor.groupId ?? ""),
+      String(actor.direction || actor.facing || ""),
+      String(actor.shape || ""),
+      actor.raised === true ? 1 : 0,
+      String(actor.collectionId || ""),
       Number(state.actorX?.[index]) || 0,
       Number(state.actorY?.[index]) || 0,
       Number(state.actorElevation?.[index]) || 0,
       state.actorRemoved?.[index] ? 1 : 0
-    ]),
+    ];
+  }).sort((left, right) => {
+    const leftKey = JSON.stringify(left);
+    const rightKey = JSON.stringify(right);
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  });
+  const payload = {
+    version: BOARD_STATE_HASH_VERSION,
+    game: playData.gameId || context?.game?.id || "maze",
+    level: context?.level?.id || playData.levelId || "",
+    actors,
     terrain: Array.from(state.terrain || []),
     lifts: Array.from(state.liftRaised || []),
     collected_gems: Array.from(collectedGemIds || [], String).sort()
@@ -3166,6 +3183,7 @@ async function buildJsonPayload(context) {
     inputMoves: context.options.moves || "",
     levelId: context.level.id,
     boardStateHash: boardStateHash(context),
+    boardStateHashVersion: BOARD_STATE_HASH_VERSION,
     pitch: context.options.pitch,
     player,
     playerDead,
@@ -3700,6 +3718,7 @@ if (require.main === module) {
 
 module.exports = {
   applyMove,
+  BOARD_STATE_HASH_VERSION,
   boardStateHash,
   buildJsonObservation,
   buildJsonPayload,

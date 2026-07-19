@@ -26,6 +26,7 @@ const { evaluateAutoQuit } = require(path.join(ROOT_DIR, "shared", "auto-quit.js
 const { asciiGlyphPalette } = require(path.join(ROOT_DIR, "shared", "maze-ascii-palette.js"));
 const {
   applyMove,
+  BOARD_STATE_HASH_VERSION,
   boardStateHash,
   buildJsonObservation,
   buildScorecard,
@@ -477,6 +478,41 @@ function syntheticFloor(width, height) {
     boardStateHash(context, new Set(["level_AxA:gem:1,1,0"])),
     initialHash,
     "world-level collected objects are part of canonical state"
+  );
+}
+
+{
+  const actors = [
+    { type: "player", x: 3, y: 0, elevation: 0, removed: false },
+    { type: "weightless_box", groupId: "M0", x: 1, y: 0, elevation: 0, removed: false },
+    { type: "weightless_box", groupId: "M0", x: 2, y: 0, elevation: 0, removed: false }
+  ];
+  const playData = {
+    actors,
+    gameId: "maze",
+    height: 1,
+    levelId: "board_state_hash_actor_order",
+    terrain: syntheticFloor(4, 1),
+    width: 4
+  };
+  const reorderedPlayData = {
+    ...playData,
+    actors: [actors[1], actors[2], actors[0]]
+  };
+  assert.equal(
+    boardStateHash(syntheticContext(reorderedPlayData), new Set()),
+    boardStateHash(syntheticContext(playData), new Set()),
+    "equivalent actor lists hash identically regardless of engine array order"
+  );
+
+  const regroupedPlayData = {
+    ...playData,
+    actors: actors.map((actor, index) => index === 1 ? { ...actor, groupId: "M1" } : actor)
+  };
+  assert.notEqual(
+    boardStateHash(syntheticContext(regroupedPlayData), new Set()),
+    boardStateHash(syntheticContext(playData), new Set()),
+    "gameplay-relevant actor group identity remains part of the canonical state"
   );
 }
 
@@ -1458,6 +1494,7 @@ function syntheticFloor(width, height) {
 
   assert.equal(initial.action, "observe");
   assert.equal(initial.action_count, 0);
+  assert.equal(initial.board_state_hash_version, BOARD_STATE_HASH_VERSION);
   assert.equal(initial.current_room, "level_HxI");
   assert.equal(initial.current_view, "diagonal");
   assert.equal(initial.gem_count, 0);

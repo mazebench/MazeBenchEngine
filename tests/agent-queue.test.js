@@ -57,6 +57,7 @@ readline.createInterface({ input: process.stdin, terminal: false }).on("line", (
         ok: true,
         action: message.command,
         board_state_hash: "state-" + boardState,
+        board_state_hash_version: 2,
         player: { x: boardState, y: 8, elevation: 0 },
         level: observationMode === "text" ? "ASCII:" + message.command : undefined,
         json_observation: { mode: "json", omniscient, hide_names: hideNames, objects: [] }
@@ -206,12 +207,12 @@ try {
       turn: 1,
       command_text: "up",
       valid: true,
-      status: { board_state_hash: "state-1", current_room: "level_HxI" }
+      status: { board_state_hash: "legacy-state-1", current_room: "level_HxI" }
     })}\n`
   );
   fs.writeFileSync(
     path.join(livePrimeRunDir, "initial-status.json"),
-    `${JSON.stringify({ board_state_hash: "state-0", current_room: "level_HxI" })}\n`
+    `${JSON.stringify({ board_state_hash: "legacy-state-0", current_room: "level_HxI" })}\n`
   );
   fs.mkdirSync(path.join(livePrimeRunDir, "eval-output"), { recursive: true });
   fs.writeFileSync(
@@ -244,6 +245,7 @@ try {
   assert.equal(livePrimeProgress.actions[0].level, "ASCII:observe");
   assert.equal(livePrimeProgress.initial_board_state_hash, "state-0");
   assert.equal(livePrimeProgress.actions[0].board_state_hash, "state-1");
+  assert.equal(livePrimeProgress.actions[0].board_state_hash_version, 2);
   assert.equal(livePrimeProgress.actions[0].timestamp, "2026-07-19T00:39:10.000Z");
   assert.deepEqual(livePrimeProgress.reasoning, [
     { move: 1, timestamp: "2026-07-19T00:39:10.000Z" }
@@ -324,13 +326,13 @@ try {
   const autoQuitDir = path.join(rootDir, "outputs", "maze-local", "site", autoQuitPrime.id);
   fs.writeFileSync(
     path.join(autoQuitDir, "initial-status.json"),
-    `${JSON.stringify({ board_state_hash: "repeat-state" })}\n`
+    `${JSON.stringify({ board_state_hash: "repeat-state", board_state_hash_version: 2 })}\n`
   );
   fs.writeFileSync(
     path.join(autoQuitDir, "actions.jsonl"),
     `${[
-      { turn: 1, command_text: "up", status: { board_state_hash: "repeat-state" } },
-      { turn: 2, command_text: "down", status: { board_state_hash: "repeat-state" } }
+      { turn: 1, command_text: "up", status: { board_state_hash: "repeat-state", board_state_hash_version: 2 } },
+      { turn: 2, command_text: "down", status: { board_state_hash: "repeat-state", board_state_hash_version: 2 } }
     ].map(JSON.stringify).join("\n")}\n`
   );
   const autoQuitDeadline = Date.now() + 4000;

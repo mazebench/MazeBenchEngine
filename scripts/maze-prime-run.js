@@ -18,6 +18,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFile, spawn, spawnSync } = require("node:child_process");
 const { writePrimeResumeCheckpoint } = require("../server/prime-resume");
+const { BOARD_STATE_HASH_VERSION } = require("../shared/board-state");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const EXPORT_REPLAY = path.join(ROOT_DIR, "scripts", "maze-export-replay.js");
@@ -257,6 +258,7 @@ function writeInitialStatus(opts) {
     writeJsonAtomic(path.join(opts.outDir, "initial-status.json"), {
       allowed_commands: payload.allowedCommands || [],
       board_state_hash: payload.boardStateHash || null,
+      board_state_hash_version: Number(payload.boardStateHashVersion) || BOARD_STATE_HASH_VERSION,
       current_room: payload.levelId || opts.levelId,
       current_view: payload.view || "top-diagonal",
       gem_count: 0,

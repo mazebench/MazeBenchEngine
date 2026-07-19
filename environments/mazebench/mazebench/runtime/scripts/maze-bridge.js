@@ -4,6 +4,7 @@ const readline = require("node:readline");
 
 const {
   applyMove,
+  BOARD_STATE_HASH_VERSION,
   boardStateHash,
   buildJsonObservation,
   buildScorecard,
@@ -447,6 +448,7 @@ function sessionSnapshot(session, extra = {}) {
     action_count: session.actionCount,
     allowed_commands: allowedCommandsForContext(context),
     board_state_hash: boardStateHash(context, session.collectedGemIds),
+    board_state_hash_version: BOARD_STATE_HASH_VERSION,
     collected_gems: Array.from(session.collectedGemIds),
     current_room: context.level.id,
     current_view: currentView,
