@@ -3033,9 +3033,8 @@ function createAgentRunService({
     return withSwarmAgentStatus(withCatalogApiEstimate(value));
   }
 
-  // The rendered image the human watches: in vision mode the agent's own frames
-  // (frames/frame-NNN.png) already exist; in text mode the run page asks the
-  // frame endpoint to render one on demand.
+  // Vision mode already records the exact image the agent saw. Text mode uses
+  // a cheap colored ASCII bitmap and reserves 3D frames for manual replay.
   function latestVisionFrame(runId) {
     const framesDir = path.join(runDirFor(runId), "frames");
 
@@ -3288,7 +3287,7 @@ function createAgentRunService({
   // instead of booting a browser and replaying the whole run per frame.
 
   const liveRenderers = new Map();
-  const LIVE_RENDERER_IDLE_MS = 3 * 60 * 1000;
+  const LIVE_RENDERER_IDLE_MS = 30 * 1000;
 
   function stopLiveRenderer(runId, { force = false } = {}) {
     const entry = liveRenderers.get(runId);
@@ -3441,11 +3440,11 @@ function createAgentRunService({
     });
   }
 
-  // Render a maze image for the human watching a text-mode run (vision runs
-  // already have real frames). Syncs the run's persistent renderer to the first
-  // `turn` actions, caches the PNG, and returns its url. One render per run at
-  // a time so requests never pile up behind a slow frame.
-  async function renderLiveFrame(runId, turn) {
+  // Render an exact 3D history frame after a deliberate replay request (vision
+  // runs already have real frames). Syncs the run's persistent renderer to the
+  // first `turn` actions, caches the PNG, and returns its url. One render per
+  // run at a time so requests never pile up behind a slow frame.
+  async function renderLiveFrame(runId, turn, { manual = false } = {}) {
     const runDir = runDirFor(runId);
     const framesDir = path.join(runDir, "frames");
     const checkpoint = loadJson(path.join(runDir, "current-render-state.json"), null);
@@ -3473,6 +3472,17 @@ function createAgentRunService({
     }
 
     const runMeta = readRunMeta(runId);
+    // The live text observation is already rendered as a cheap colored bitmap.
+    // Starting a full headless Three.js/SwiftShader browser can consume several
+    // CPU cores per watched run, so only deliberate replay scrubbing may create
+    // a 3D snapshot. This also protects against already-open pages running an
+    // older client script that still requests automatic frames.
+    if (!manual) {
+      return fallback
+        ? { ...fallback, deferred: true, stale: true }
+        : { url: null, deferred: true };
+    }
+
     if (["paused", "stopping", "stopped"].includes(runMeta?.status)) {
       return fallback
         ? { ...fallback, suspended: true }

@@ -7,12 +7,31 @@ const runScript = fs.readFileSync(path.join(root, "public", "agent-run.js"), "ut
 const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "utf8");
 const pages = fs.readFileSync(path.join(root, "server", "pages.js"), "utf8");
 const agentRuns = fs.readFileSync(path.join(root, "server", "agent-runs.js"), "utf8");
+const threeRenderer = fs.readFileSync(path.join(root, "public", "play-render-three.js"), "utf8");
+const { asciiGlyphPalette } = require(path.join(root, "shared", "maze-ascii-palette"));
 
 assert.match(runScript, /type="number" min="1" max="60" step="1"[^>]+data-replay-rate/);
 assert.match(runScript, />FPS<\/span>/);
 assert.doesNotMatch(runScript, /<select data-replay-rate/);
 assert.match(runScript, /function updateReplayControlsInPlace\(container, viewId\)/);
 assert.match(runScript, /function fitAsciiBoard\(\)/);
+assert.match(runScript, /function drawAsciiBitmap\(board, turn = null\)/);
+assert.match(pages, /id="run-live-bitmap" class="run-live__bitmap"/);
+assert.match(pages, /ascii_palette: asciiGlyphPalette/);
+assert.match(siteTheme, /\.run-live__bitmap \{[\s\S]*?image-rendering: pixelated/);
+const terrainColorSource = threeRenderer.match(/function terrainColor\(type\) \{([\s\S]*?)\n    \}/)?.[1] || "";
+const actorColorSource = threeRenderer.match(/function actorColor\(actor\) \{([\s\S]*?)\n    \}/)?.[1] || "";
+const literalPalette = asciiGlyphPalette();
+[
+  ["W", terrainColorSource], ["T", terrainColorSource], ["S", terrainColorSource],
+  ["&", terrainColorSource], ["I", terrainColorSource], ["O", terrainColorSource],
+  ["Y", terrainColorSource], ["L", terrainColorSource], ["A", terrainColorSource],
+  ["P", actorColorSource], ["C", actorColorSource], ["U", actorColorSource],
+  ["F", actorColorSource], ["G", actorColorSource], ["Z", actorColorSource],
+  ["B", actorColorSource]
+].forEach(([glyph, source]) => {
+  assert.ok(source.includes(literalPalette[glyph]), `${glyph} bitmap color must match the 3D renderer`);
+});
 assert.match(runScript, /Model request \$\{inferenceAction\} in flight/);
 assert.match(agentRuns, /function reconstructAsciiObservation\(/);
 assert.match(agentRuns, /latest\.level = reconstructAsciiObservation/);

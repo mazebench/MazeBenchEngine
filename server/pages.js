@@ -1,5 +1,6 @@
 const { escapeHtml, serializeForScript } = require("./support");
 const { accountActionsHtml, pageHead, siteFooter, topbar } = require("./page-chrome");
+const { asciiGlyphPalette } = require("../shared/maze-ascii-palette");
 
 // Gamepad 2, Blocks, Bot, and Brain Circuit from Lucide Icons (ISC License).
 // https://lucide.dev/
@@ -1124,6 +1125,15 @@ function createPageRenderer({
 
   function renderAgentRunPage(run) {
     const isPrime = run.kind === "prime" || run.model === "prime";
+    const clientRun = run.mode === "text"
+      ? {
+          ...run,
+          ascii_palette: asciiGlyphPalette({
+            hideNames: Boolean(run.hide_names),
+            hideNamesSeed: String(run.hide_names_seed || "1")
+          })
+        }
+      : run;
     const runGame = getGame(run.game_id);
     const runWorld = runGame?.worldMap ? agentWorldOption(runGame) : null;
     const tokenSection = `<section class="panel run-tokens" id="run-token-section">
@@ -1344,6 +1354,7 @@ function createPageRenderer({
             <div class="run-live__viewer">
               <figure class="run-live__frame">
                 <img id="run-live-image" alt="Live maze view" hidden>
+                <canvas id="run-live-bitmap" class="run-live__bitmap" width="64" height="64" aria-label="Live colored ASCII view" hidden></canvas>
                 <div id="run-live-placeholder" class="run-live__placeholder">
                   <span class="inline-spinner" aria-hidden="true"></span>
                   <span>Loading move 0…</span>
@@ -1414,8 +1425,8 @@ function createPageRenderer({
           <pre id="run-log" class="agent-log"></pre>
         </section>
         ${replayExportSection}
-        <script>window.__AGENT_RUN__ = ${serializeForScript(run)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260718-run-notes-2" defer></script>`
+        <script>window.__AGENT_RUN__ = ${serializeForScript(clientRun)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
+        <script src="/agent-run.js?v=20260718-ascii-bitmap-1" defer></script>`
     });
   }
 

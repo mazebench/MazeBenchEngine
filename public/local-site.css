@@ -2272,11 +2272,17 @@ body.play-body {
   width: 100%;
 }
 
-.run-live__frame img {
+.run-live__frame img,
+.run-live__bitmap {
   display: block;
   height: 100%;
   object-fit: contain;
   width: 100%;
+}
+
+.run-live__bitmap {
+  background: #050608;
+  image-rendering: pixelated;
 }
 
 .run-live__placeholder {

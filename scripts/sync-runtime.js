@@ -68,6 +68,7 @@ const MIRRORED_FILES = [
   "public/styles.css",
   "shared/auto-quit.js",
   "shared/default-world-template.js",
+  "shared/maze-ascii-palette.js",
   "scripts/maze-agent-local.js",
   "scripts/maze-bridge.js",
   "scripts/codex-play.js",
