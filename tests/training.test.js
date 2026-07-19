@@ -51,6 +51,12 @@ assert.match(pagesSource, /id="train-prime-setup-modal"/);
 assert.match(pagesSource, /src="\/logos\/prime\.png"/);
 
 const starterConfig = fs.readFileSync(path.join(ROOT_DIR, "configs", "rl", "mazebench.toml"), "utf8");
+const primeSystemPrompt = fs.readFileSync(
+  path.join(ROOT_DIR, "environments", "mazebench", "mazebench", "prompts", "multiturn_system.txt"),
+  "utf8"
+);
+assert.doesNotMatch(primeSystemPrompt, /If you are unsure[\s\S]*respond with `up`/);
+assert.match(primeSystemPrompt, /If it says `Moved: false`, that movement was blocked/);
 assert.match(starterConfig, /max_steps = 10/);
 assert.match(starterConfig, /batch_size = 32/);
 assert.match(starterConfig, /rollouts_per_example = 4/);
@@ -139,16 +145,35 @@ const observationPolicyProbe = execFileSync(
     "python",
     "-c",
     [
-      "from mazebench.mazebench import action_result_text,render_json_user_prompt,render_multiturn_user_prompt,render_vision_user_prompt",
+      "from mazebench.mazebench import action_result_text,render_json_user_prompt,render_multiturn_user_prompt,render_vision_user_prompt,slim_status",
       "s={'allowed_commands':['up'],'current_room':'level_HxI','current_view':'top-diagonal','gem_count':0,'json_observation':{'objects':{'player':[[4,15,0]]}},'level':'P..','player':{'x':4,'y':15,'elevation':0},'scorecard':{'current_position':{'x':4,'y':15,'elevation':0}},'visited_levels':['level_HxI'],'yaw':0}",
       "t=render_multiturn_user_prompt(status=s,target_text='play',result_text='start')",
       "v=render_vision_user_prompt(status=s,target_text='play',result_text='start')",
       "j=render_json_user_prompt(status=s,target_text='play',result_text='start')",
+      "blocked_result=action_result_text(command='move',status={**s,'action':'move','direction':'up','moved':False})",
+      "blocked=render_multiturn_user_prompt(status=s,target_text='play',result_text=blocked_result)",
+      "successful_result=action_result_text(command='move',status={**s,'action':'move','direction':'right','moved':True})",
+      "successful=render_multiturn_user_prompt(status=s,target_text='play',result_text=successful_result)",
+      "progress_result=action_result_text(command='move',status={**s,'action':'move','direction':'right','moved':True,'room_changed':True,'current_room':'level_IxI','collected_this_action':['gem-1']})",
+      "progress=render_multiturn_user_prompt(status=s,target_text='play',result_text=progress_result)",
+      "invalid=render_multiturn_user_prompt(status=s,target_text='play',result_text=action_result_text(error='bad command'))",
+      "warning=render_multiturn_user_prompt(status=s,target_text='play',result_text=blocked_result+'\\n\\nAUTO-QUIT WARNING: change course')",
+      "dead_status={**s,'player_dead':True}",
+      "dead_result=action_result_text(command='move',status={**dead_status,'action':'move','direction':'up','moved':False})",
+      "dead=render_multiturn_user_prompt(status=dead_status,target_text='play',result_text=dead_result)",
       "assert 'Player:' not in t and 'elevation=0' not in t",
       "assert 'Current room:' not in t and 'Current view:' not in t and 'Yaw:' not in t",
       "assert 'Gems collected:' not in t and 'Visited rooms:' not in t",
       "assert 'level_HxI' not in t and 'scorecard' not in t.lower()",
       "assert 'P..' in t",
+      "assert 'Previous action: move. Direction: up. Moved: false.' in blocked",
+      "assert 'Previous action: move. Direction: right. Moved: true.' in successful",
+      "assert 'Entered room: level_IxI.' in progress and 'Collected gems: gem-1.' in progress",
+      "assert 'Previous response was invalid: bad command' in invalid",
+      "assert warning.count('AUTO-QUIT WARNING: change course') == 1",
+      "assert dead.count('The player died, you must now undo or reset or go to a level.') == 1",
+      "assert 'scorecard' not in blocked.lower() and 'x=4' not in blocked and 'y=15' not in blocked",
+      "assert slim_status({'direction':'up'})['direction'] == 'up'",
       "assert 'Player:' not in v and 'elevation=0' not in v",
       "assert 'Player: x=4 y=15 elevation=0' in j",
       "assert 'scorecard' not in action_result_text(command='quit',status={**s,'quit':True}).lower()",

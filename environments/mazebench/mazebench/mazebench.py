@@ -410,14 +410,10 @@ def render_multiturn_user_prompt(
     target_text: str,
     result_text: str,
 ) -> str:
-    notice_parts: list[str] = []
-    if result_text.startswith("Previous response was invalid:"):
-        notice_parts.append(result_text)
-    warning_start = result_text.find("AUTO-QUIT WARNING:")
-    if warning_start >= 0:
-        notice_parts.append(result_text[warning_start:])
+    normalized_result = str(result_text or "").strip()
+    notice_parts: list[str] = [normalized_result] if normalized_result else []
     death = death_text(status)
-    if death:
+    if death and death not in normalized_result:
         notice_parts.append(death)
     return render_prompt_file(
         MULTITURN_USER_PROMPT_FILE,
@@ -1261,6 +1257,7 @@ def slim_status(status: dict[str, Any] | None) -> dict[str, Any]:
         "current_view",
         "death_message",
         "destination_room",
+        "direction",
         "game_lost",
         "game_won",
         "gem_count",
