@@ -7,6 +7,9 @@ const source = fs.readFileSync(path.join(root, "public", "flyover.js"), "utf8");
 const pages = fs.readFileSync(path.join(root, "server", "pages.js"), "utf8");
 const theme = fs.readFileSync(path.join(root, "public", "local-site.css"), "utf8");
 const runtimeTheme = fs.readFileSync(path.join(root, "public", "styles.css"), "utf8");
+const flyoverPageStart = pages.indexOf("function renderFlyoverPage");
+const flyoverPageEnd = pages.indexOf("function editorChromeHead", flyoverPageStart);
+const flyoverPage = pages.slice(flyoverPageStart, flyoverPageEnd);
 
 for (const id of [
   "flyover-tilt-up",
@@ -33,6 +36,7 @@ assert.match(pages, /id="flyover-edge-toggle"/);
 assert.match(pages, /id="flyover-title-toggle"/);
 assert.match(pages, /id="flyover-social-title"/);
 assert.match(pages, /<h1>MAZE BENCH<\/h1>/);
+assert.doesNotMatch(flyoverPage, /class="play-header-meta"/);
 assert.match(pages, /<circle cx="11" cy="11" r="8"><\/circle>/);
 assert.match(pages, /<line x1="11" x2="11" y1="8" y2="14"><\/line>/);
 assert.match(pages, /<path d="M7 12h10"><\/path>/);

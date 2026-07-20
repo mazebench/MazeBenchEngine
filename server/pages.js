@@ -447,10 +447,7 @@ function createPageRenderer({
     ${playChromeHead(`${game.name} Flyover — Maze Bench`)}
   </head>
   <body class="play-body play-mode flyover-body">
-    ${topbar({
-      rightHtml: accountActionsHtml(remoteStatusSafe()),
-      extraHtml: `<div class="play-header"><div class="play-header-meta"><p>${escapeHtml(game.name)} flyover</p></div></div>`
-    })}
+    ${topbar({ rightHtml: accountActionsHtml(remoteStatusSafe()) })}
     ${boardMarkup}
   </body>
 </html>`;
