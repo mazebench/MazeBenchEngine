@@ -212,19 +212,28 @@
     );
   }
 
+  function resultWithContinuation(result, continuation) {
+    Object.defineProperty(result, "continuation", {
+      configurable: false,
+      enumerable: false,
+      value: continuation,
+      writable: false
+    });
+
+    return result;
+  }
+
   async function solveWithAStar(engine, options = {}) {
     throwIfSolverAborted(options.signal);
-    const algorithm = solverAlgorithmOption(options.algorithm);
-    const directions = Array.isArray(options.directions) ? options.directions : defaultDirections;
-    const maxExpandedStates = numericOption(
-      options.maxExpandedStates,
-      defaultMaxExpandedStates
-    );
-    const progressYieldStateInterval = numericOption(
+    const continuation = options.continuation?.type === "astar" ? options.continuation : null;
+    const algorithm = continuation?.algorithm || solverAlgorithmOption(options.algorithm);
+    const directions = continuation?.directions ||
+      (Array.isArray(options.directions) ? options.directions : defaultDirections);
+    const progressYieldStateInterval = continuation?.progressYieldStateInterval || numericOption(
       options.progressYieldStateInterval,
       defaultProgressYieldStateInterval
     );
-    const nonPlayerMoveRewardCap = numericOption(
+    const nonPlayerMoveRewardCap = continuation?.nonPlayerMoveRewardCap || numericOption(
       options.nonPlayerMoveRewardCap,
       defaultNonPlayerMoveRewardCap
     );
@@ -242,13 +251,18 @@
       algorithm === "weighted_astar" && typeof engine.heuristicDistance === "function"
         ? engine.heuristicDistance
         : engine.heuristic;
-    const open = new SolverHeap();
-    const bestCostByKey = new Map();
-    const nodePool = new SolverNodePool();
+    const open = continuation?.open || new SolverHeap();
+    const bestCostByKey = continuation?.bestCostByKey || new Map();
+    const nodePool = continuation?.nodePool || new SolverNodePool();
     const reportProgressFn =
       typeof options.onProgress === "function" ? options.onProgress : null;
-    let order = 0;
-    let expanded = 0;
+    let order = continuation?.order || 0;
+    let expanded = continuation?.expanded || 0;
+    const additionalExpandedStates = numericOption(
+      options.additionalExpandedStates,
+      numericOption(options.maxExpandedStates, defaultMaxExpandedStates)
+    );
+    const maxExpandedStates = expanded + additionalExpandedStates;
 
     // Compact node states: one live working buffer + per-node snapshots of
     // the actor arrays plus terrain/lift DIFFS versus the initial state.
@@ -256,11 +270,11 @@
     // arrays) alive per open node — hundreds of MB on large searches, and a
     // full-buffer memcpy per pushed child. Snapshots are ~10-30x smaller and
     // restore in O(actors + diffs).
-    const initialState = engine.initialState;
-    const live = engine.cloneState(initialState);
-    const snapArrayPool = [];
-    let liveTerrainDiffs = null;
-    let liveLiftDiffs = null;
+    const initialState = continuation?.initialState || engine.initialState;
+    const live = continuation?.live || engine.cloneState(initialState);
+    const snapArrayPool = continuation?.snapArrayPool || [];
+    let liveTerrainDiffs = continuation?.liveTerrainDiffs || null;
+    let liveLiftDiffs = continuation?.liveLiftDiffs || null;
 
     function acquireSnapArrays() {
       return (
@@ -383,24 +397,57 @@
       live.hashValid = snap.hashValid;
     }
 
-    const initialKey = engine.stateKey(live);
+    if (!continuation) {
+      const initialKey = engine.stateKey(live);
 
-    bestCostByKey.set(initialKey, 0);
-    open.push(nodePool.acquire({
-      state: makeSnap(live, null, null),
-      key: initialKey,
-      cost: 0,
-      searchReward: 0,
-      path: "",
-      priority: heuristicWeight * heuristicFn(live),
-      order: order
-    }));
-    order += 1;
+      bestCostByKey.set(initialKey, 0);
+      open.push(nodePool.acquire({
+        state: makeSnap(live, null, null),
+        key: initialKey,
+        cost: 0,
+        searchReward: 0,
+        path: "",
+        priority: heuristicWeight * heuristicFn(live),
+        order: order
+      }));
+      order += 1;
+    }
 
     await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
 
     while (open.size > 0) {
       throwIfSolverAborted(options.signal);
+
+      if (expanded >= maxExpandedStates) {
+        await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
+
+        return resultWithContinuation(
+          {
+            status: "capped",
+            expanded,
+            maxExpanded: maxExpandedStates
+          },
+          {
+            algorithm,
+            bestCostByKey,
+            directions,
+            engine,
+            expanded,
+            initialState,
+            live,
+            liveLiftDiffs,
+            liveTerrainDiffs,
+            nodePool,
+            nonPlayerMoveRewardCap,
+            open,
+            order,
+            progressYieldStateInterval,
+            snapArrayPool,
+            type: "astar"
+          }
+        );
+      }
+
       const current = open.pop();
 
       if (current.cost !== bestCostByKey.get(current.key)) {
@@ -426,16 +473,6 @@
 
       if (expanded % progressYieldStateInterval === 0) {
         await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size);
-      }
-
-      if (expanded >= maxExpandedStates) {
-        await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
-
-        return {
-          status: "capped",
-          expanded,
-          maxExpanded: maxExpandedStates
-        };
       }
 
       for (const direction of directions) {
@@ -549,44 +586,78 @@
 
   async function findHardestGemPlacement(engine, options = {}) {
     throwIfSolverAborted(options.signal);
-    const directions = Array.isArray(options.directions) ? options.directions : defaultDirections;
-    const maxExpandedStates = numericOption(
-      options.maxExpandedStates,
-      defaultMaxExpandedStates
-    );
-    const progressYieldStateInterval = numericOption(
+    const continuation = options.continuation?.type === "hardest_gem" ? options.continuation : null;
+    const directions = continuation?.directions ||
+      (Array.isArray(options.directions) ? options.directions : defaultDirections);
+    const progressYieldStateInterval = continuation?.progressYieldStateInterval || numericOption(
       options.progressYieldStateInterval,
       defaultProgressYieldStateInterval
     );
-    const canPlaceGemAt =
-      typeof options.canPlaceGemAt === "function" ? options.canPlaceGemAt : () => true;
-    const open = new SolverHeap();
-    const bestCostByKey = new Map();
-    const bestCandidateByCell = new Map();
-    const statePool = new SolverStatePool(engine);
-    const nodePool = new SolverNodePool();
+    const canPlaceGemAt = continuation?.canPlaceGemAt ||
+      (typeof options.canPlaceGemAt === "function" ? options.canPlaceGemAt : () => true);
+    const open = continuation?.open || new SolverHeap();
+    const bestCostByKey = continuation?.bestCostByKey || new Map();
+    const bestCandidateByCell = continuation?.bestCandidateByCell || new Map();
+    const statePool = continuation?.statePool || new SolverStatePool(engine);
+    const nodePool = continuation?.nodePool || new SolverNodePool();
     const reportProgressFn =
       typeof options.onProgress === "function" ? options.onProgress : null;
-    let order = 0;
-    let expanded = 0;
-    const initialState = statePool.acquire(engine.initialState);
-    const initialKey = engine.stateKey(initialState);
+    let order = continuation?.order || 0;
+    let expanded = continuation?.expanded || 0;
+    const additionalExpandedStates = numericOption(
+      options.additionalExpandedStates,
+      numericOption(options.maxExpandedStates, defaultMaxExpandedStates)
+    );
+    const maxExpandedStates = expanded + additionalExpandedStates;
 
-    bestCostByKey.set(initialKey, 0);
-    open.push(nodePool.acquire({
-      state: initialState,
-      key: initialKey,
-      cost: 0,
-      path: "",
-      priority: 0,
-      order
-    }));
-    order += 1;
+    if (!continuation) {
+      const initialState = statePool.acquire(engine.initialState);
+      const initialKey = engine.stateKey(initialState);
+
+      bestCostByKey.set(initialKey, 0);
+      open.push(nodePool.acquire({
+        state: initialState,
+        key: initialKey,
+        cost: 0,
+        path: "",
+        priority: 0,
+        order
+      }));
+      order += 1;
+    }
 
     await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
 
     while (open.size > 0) {
       throwIfSolverAborted(options.signal);
+
+      if (expanded >= maxExpandedStates) {
+        await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
+
+        return resultWithContinuation(
+          {
+            status: "capped",
+            candidate: hardestGemPlacementCandidate(bestCandidateByCell),
+            expanded,
+            maxExpanded: maxExpandedStates
+          },
+          {
+            bestCandidateByCell,
+            bestCostByKey,
+            canPlaceGemAt,
+            directions,
+            engine,
+            expanded,
+            nodePool,
+            open,
+            order,
+            progressYieldStateInterval,
+            statePool,
+            type: "hardest_gem"
+          }
+        );
+      }
+
       const current = open.pop();
 
       if (current.cost !== bestCostByKey.get(current.key)) {
@@ -599,17 +670,6 @@
 
       if (expanded % progressYieldStateInterval === 0) {
         await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size);
-      }
-
-      if (expanded >= maxExpandedStates) {
-        await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
-
-        return {
-          status: "capped",
-          candidate: hardestGemPlacementCandidate(bestCandidateByCell),
-          expanded,
-          maxExpanded: maxExpandedStates
-        };
       }
 
       for (const direction of directions) {
@@ -717,43 +777,84 @@
   // the open set becomes empty.
   async function findReachablePositions(engine, targets, options = {}) {
     throwIfSolverAborted(options.signal);
-    const normalizedTargets = normalizedPositionTargets(targets);
-    const directions = Array.isArray(options.directions) ? options.directions : defaultDirections;
-    const maxExpandedStates = numericOption(options.maxExpandedStates, Number.MAX_SAFE_INTEGER);
-    const progressYieldStateInterval = numericOption(
+    const continuation = options.continuation?.type === "reachable_positions"
+      ? options.continuation
+      : null;
+    const normalizedTargets = continuation?.normalizedTargets || normalizedPositionTargets(targets);
+    const directions = continuation?.directions ||
+      (Array.isArray(options.directions) ? options.directions : defaultDirections);
+    const progressYieldStateInterval = continuation?.progressYieldStateInterval || numericOption(
       options.progressYieldStateInterval,
       defaultProgressYieldStateInterval
     );
     const reportProgressFn = typeof options.onProgress === "function" ? options.onProgress : null;
-    const open = new SolverHeap();
-    const bestCostByKey = new Map();
-    const reachedById = new Map();
-    const targetsByPosition = new Map();
-    for (const target of normalizedTargets) {
-      const key = target.x + "," + target.y + "," + target.elevation;
-      if (!targetsByPosition.has(key)) targetsByPosition.set(key, []);
-      targetsByPosition.get(key).push(target);
-    }
-    const statePool = new SolverStatePool(engine);
-    const nodePool = new SolverNodePool();
-    const initialState = statePool.acquire(engine.initialState);
-    const initialKey = engine.stateKey(initialState);
-    let order = 0;
-    let expanded = 0;
+    const open = continuation?.open || new SolverHeap();
+    const bestCostByKey = continuation?.bestCostByKey || new Map();
+    const reachedById = continuation?.reachedById || new Map();
+    const targetsByPosition = continuation?.targetsByPosition || new Map();
+    const statePool = continuation?.statePool || new SolverStatePool(engine);
+    const nodePool = continuation?.nodePool || new SolverNodePool();
+    let order = continuation?.order || 0;
+    let expanded = continuation?.expanded || 0;
+    const additionalExpandedStates = numericOption(
+      options.additionalExpandedStates,
+      numericOption(options.maxExpandedStates, Number.MAX_SAFE_INTEGER)
+    );
+    const maxExpandedStates = expanded + additionalExpandedStates;
 
-    bestCostByKey.set(initialKey, 0);
-    open.push(nodePool.acquire({
-      state: initialState,
-      key: initialKey,
-      cost: 0,
-      path: "",
-      priority: 0,
-      order: order++
-    }));
+    if (!continuation) {
+      for (const target of normalizedTargets) {
+        const key = target.x + "," + target.y + "," + target.elevation;
+        if (!targetsByPosition.has(key)) targetsByPosition.set(key, []);
+        targetsByPosition.get(key).push(target);
+      }
+      const initialState = statePool.acquire(engine.initialState);
+      const initialKey = engine.stateKey(initialState);
+
+      bestCostByKey.set(initialKey, 0);
+      open.push(nodePool.acquire({
+        state: initialState,
+        key: initialKey,
+        cost: 0,
+        path: "",
+        priority: 0,
+        order: order++
+      }));
+    }
     await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
 
     while (open.size > 0) {
       throwIfSolverAborted(options.signal);
+
+      if (expanded >= maxExpandedStates) {
+        await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
+
+        return resultWithContinuation(
+          {
+            status: "capped",
+            expanded,
+            maxExpanded: maxExpandedStates,
+            reachable: Array.from(reachedById.values()),
+            unreachable: normalizedTargets.filter((target) => !reachedById.has(target.id))
+          },
+          {
+            bestCostByKey,
+            directions,
+            engine,
+            expanded,
+            nodePool,
+            normalizedTargets,
+            open,
+            order,
+            progressYieldStateInterval,
+            reachedById,
+            statePool,
+            targetsByPosition,
+            type: "reachable_positions"
+          }
+        );
+      }
+
       const current = open.pop();
       if (current.cost !== bestCostByKey.get(current.key)) {
         statePool.release(current.state);
@@ -784,19 +885,6 @@
       if (expanded % progressYieldStateInterval === 0) {
         await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size);
       }
-      if (expanded >= maxExpandedStates) {
-        statePool.release(current.state);
-        nodePool.release(current);
-        await reportProgress(reportProgressFn, expanded, maxExpandedStates, open.size, true);
-        return {
-          status: "capped",
-          expanded,
-          maxExpanded: maxExpandedStates,
-          reachable: Array.from(reachedById.values()),
-          unreachable: normalizedTargets.filter((target) => !reachedById.has(target.id))
-        };
-      }
-
       for (const direction of directions) {
         const moveResult = engine.moveForSearch(current.state, direction.dx, direction.dy);
         if (!moveResult?.moved) continue;

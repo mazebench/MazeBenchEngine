@@ -4,6 +4,8 @@
 //
 // Protocol
 //   in : { type: "run", id, op: "solve" | "place_gem", playData, options }
+//   in : { type: "continue", id, continuationId, options }
+//   in : { type: "discard", continuationId }
 //         options.solve     -> { algorithm, maxExpandedStates }
 //         options.placeGem  -> { maxExpandedStates,
 //                                surfaces: { valid: [], blocked: [], width, height } }
@@ -15,6 +17,7 @@ self.window = self;
 importScripts("maze-engine.js", "maze-solver.js");
 
 const PROGRESS_POST_INTERVAL_MS = 66;
+const continuations = new Map();
 
 function createProgressPoster(id) {
   let lastPostAt = 0;
@@ -53,41 +56,84 @@ function createGemSurfacePredicate(surfaces) {
 }
 
 async function runJob(message) {
-  const engine = self.MazeEngine.createEngine(message.playData);
   const options = message.options || {};
   const onProgress = createProgressPoster(message.id);
+  let continuationId = "";
+  let engine;
+  let op;
+  let solverContinuation = null;
 
-  if (message.op === "solve") {
-    return self.MazeSolver.solveWithAStar(engine, {
+  if (message.type === "continue") {
+    continuationId = String(message.continuationId || "");
+    const saved = continuations.get(continuationId);
+
+    if (!saved) {
+      throw new Error("The saved solver search is no longer available.");
+    }
+
+    engine = saved.engine;
+    op = saved.op;
+    solverContinuation = saved.continuation;
+  } else {
+    continuations.clear();
+    continuationId = "author-solver-" + Number(message.id || 0);
+    engine = self.MazeEngine.createEngine(message.playData);
+    op = message.op;
+  }
+
+  let result;
+
+  if (op === "solve") {
+    result = await self.MazeSolver.solveWithAStar(engine, {
       algorithm: options.algorithm,
+      additionalExpandedStates: options.additionalExpandedStates,
+      continuation: solverContinuation,
       maxExpandedStates: options.maxExpandedStates,
       onProgress,
       progressYieldStateInterval: options.progressYieldStateInterval
     });
-  }
-
-  if (message.op === "place_gem") {
-    return self.MazeSolver.findHardestGemPlacement(engine, {
+  } else if (op === "place_gem") {
+    result = await self.MazeSolver.findHardestGemPlacement(engine, {
+      additionalExpandedStates: options.additionalExpandedStates,
       canPlaceGemAt: createGemSurfacePredicate(options.surfaces),
+      continuation: solverContinuation,
       maxExpandedStates: options.maxExpandedStates,
       onProgress,
       progressYieldStateInterval: options.progressYieldStateInterval
     });
+  } else {
+    throw new Error("Unknown solver worker op: " + op + ".");
   }
 
-  throw new Error("Unknown solver worker op: " + message.op + ".");
+  if (result?.status === "capped" && result.continuation) {
+    continuations.set(continuationId, {
+      continuation: result.continuation,
+      engine,
+      op
+    });
+  } else {
+    continuations.delete(continuationId);
+    continuationId = "";
+  }
+
+  return { result: { ...result }, continuationId };
 }
 
 self.onmessage = function (event) {
   const message = event.data || {};
 
-  if (message.type !== "run") {
+  if (message.type === "discard") {
+    continuations.delete(String(message.continuationId || ""));
+    return;
+  }
+
+  if (message.type !== "run" && message.type !== "continue") {
     return;
   }
 
   runJob(message)
-    .then((result) => {
-      self.postMessage({ type: "done", id: message.id, result });
+    .then(({ continuationId, result }) => {
+      self.postMessage({ type: "done", id: message.id, continuationId, result });
     })
     .catch((error) => {
       self.postMessage({

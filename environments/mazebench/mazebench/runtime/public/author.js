@@ -530,6 +530,7 @@
       authorData.defaultWallToken || authorData.palette[0]?.token || authorData.defaultFloorToken,
     solutionPlaybackAbortController: null,
     solverAbortController: null,
+    solverContinuation: null,
     solverExportFormat: null,
     solverGhostVisible: false,
     solverMode: null,
@@ -880,6 +881,8 @@
     }
     if (solverDock.harderButton) solverDock.harderButton.disabled = locked || exporting;
     if (solverDock.harderInfoButton) solverDock.harderInfoButton.disabled = locked || exporting;
+    if (solverDock.continueInput) solverDock.continueInput.disabled = locked || exporting;
+    if (solverDock.continueButton) solverDock.continueButton.disabled = locked || exporting;
     if (solverDock.exportFormat) solverDock.exportFormat.disabled = locked || exporting || !playable;
     if (solverDock.exportButton) {
       solverDock.exportButton.disabled = locked || exporting || !playable;
@@ -1210,7 +1213,10 @@
       : Date.now();
   }
 
-  function beginSolverRun(label) {
+  function beginSolverRun(label, options = {}) {
+    if (options.preserveContinuation !== true) {
+      clearSolverContinuation();
+    }
     clearSolverGhostOverlay();
     state.solverAbortController = createSolverAbortController();
     state.isSolverBusy = true;
@@ -1273,6 +1279,9 @@
     actions: null,
     bar: null,
     cancelButton: null,
+    continueButton: null,
+    continueGroup: null,
+    continueInput: null,
     elapsed: null,
     element: null,
     exportBar: null,
@@ -1396,6 +1405,13 @@
     ".solver-dock__path:empty { display: none; }",
     ".solver-dock__actions { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; }",
     ".solver-dock__actions[hidden] { display: none; }",
+    ".solver-dock__continue { align-items: center; display: inline-flex; flex-wrap: wrap; gap: 7px; }",
+    ".solver-dock__continue[hidden] { display: none; }",
+    ".solver-dock__continue label { align-items: center; color: var(--muted, #9aa3c7); display: inline-flex; font: 11px var(--font-mono, monospace); gap: 6px; }",
+    ".solver-dock__continue-input { background: rgba(10, 13, 31, 0.72); border: 1px solid rgba(var(--cyan-rgb, 84, 240, 255), 0.42); border-radius: 9px; color: var(--ink, #e7eaff); font: 11px var(--font-mono, monospace); height: 34px; padding: 0 9px; width: 112px; }",
+    ".solver-dock__continue-button { background: rgba(var(--green-rgb, 88, 255, 178), 0.1); border: 1px solid rgba(var(--green-rgb, 88, 255, 178), 0.58); border-radius: 9px; color: var(--ink, #e7eaff); cursor: pointer; font: inherit; font-size: 12px; font-weight: 750; min-height: 34px; padding: 6px 12px; }",
+    ".solver-dock__continue-button:hover:not(:disabled), .solver-dock__continue-button:focus-visible { border-color: rgba(var(--green-rgb, 88, 255, 178), 0.95); box-shadow: 0 0 14px rgba(var(--green-rgb, 88, 255, 178), 0.24); outline: none; }",
+    ".solver-dock__continue-input:disabled, .solver-dock__continue-button:disabled { cursor: default; opacity: 0.48; }",
     ".solver-dock__playback { background: rgba(var(--cyan-rgb, 84, 240, 255), 0.14); border: 1px solid rgba(var(--cyan-rgb, 84, 240, 255), 0.7); border-radius: 9px; color: var(--ink, #e7eaff); cursor: pointer; font: inherit; font-size: 12px; font-weight: 750; min-height: 34px; padding: 6px 12px; }",
     ".solver-dock__playback:hover, .solver-dock__playback:focus-visible { border-color: rgba(var(--cyan-rgb, 84, 240, 255), 1); box-shadow: 0 0 14px rgba(var(--cyan-rgb, 84, 240, 255), 0.27); outline: none; }",
     ".solver-dock__stop-playback { background: rgba(var(--magenta-rgb, 255, 84, 170), 0.09); border: 1px solid rgba(var(--magenta-rgb, 255, 84, 170), 0.58); border-radius: 9px; color: var(--ink, #e7eaff); cursor: pointer; height: 34px; padding: 0; transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease; width: 34px; }",
@@ -1430,7 +1446,7 @@
     ".solver-dock.is-failed { border-color: rgba(var(--magenta-rgb, 255, 84, 170), 0.48); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55), 0 0 22px rgba(var(--magenta-rgb, 255, 84, 170), 0.12); }",
     ".solver-dock.is-minimized { align-items: center; display: flex; gap: 7px; padding: 5px 8px; }",
     ".solver-dock.is-minimized .solver-dock__head, .solver-dock.is-minimized .solver-dock__actions { display: contents; }",
-    ".solver-dock.is-minimized .solver-dock__badge, .solver-dock.is-minimized .solver-dock__elapsed, .solver-dock.is-minimized .solver-dock__track, .solver-dock.is-minimized .solver-dock__text, .solver-dock.is-minimized .solver-dock__path, .solver-dock.is-minimized .solver-dock__ghost, .solver-dock.is-minimized .solver-dock__exports, .solver-dock.is-minimized .solver-dock__harder-group, .solver-dock.is-minimized .solver-dock__export-progress { display: none; }",
+    ".solver-dock.is-minimized .solver-dock__badge, .solver-dock.is-minimized .solver-dock__elapsed, .solver-dock.is-minimized .solver-dock__track, .solver-dock.is-minimized .solver-dock__text, .solver-dock.is-minimized .solver-dock__path, .solver-dock.is-minimized .solver-dock__ghost, .solver-dock.is-minimized .solver-dock__exports, .solver-dock.is-minimized .solver-dock__continue, .solver-dock.is-minimized .solver-dock__harder-group, .solver-dock.is-minimized .solver-dock__export-progress { display: none; }",
     ".solver-dock.is-minimized .solver-dock__title { font-size: 11px; order: 1; white-space: nowrap; }",
     ".solver-dock.is-minimized .solver-dock__playback { min-height: 30px; order: 2; padding: 4px 9px; white-space: nowrap; }",
     ".solver-dock.is-minimized .solver-dock__stop-playback { order: 3; }",
@@ -1473,6 +1489,10 @@
       '<p class="solver-dock__text">Starting search...</p>' +
       '<code class="solver-dock__path"></code>' +
       '<div class="solver-dock__actions" hidden>' +
+      '<span class="solver-dock__continue" hidden>' +
+      '<label>More states <input class="solver-dock__continue-input" type="number" min="1" step="1" inputmode="numeric" aria-label="Additional solver search states"></label>' +
+      '<button class="solver-dock__continue-button" type="button">Continue Search</button>' +
+      '</span>' +
       '<button class="solver-dock__playback" type="button" hidden>Play Solution</button>' +
       '<button class="solver-dock__stop-playback" type="button" aria-label="Stop solution playback" title="Stop solution playback" hidden>' +
       solverStopIconSvg +
@@ -1501,6 +1521,9 @@
     solverDock.actions = dock.querySelector(".solver-dock__actions");
     solverDock.bar = dock.querySelector(".solver-dock__bar");
     solverDock.cancelButton = dock.querySelector(".solver-dock__cancel");
+    solverDock.continueButton = dock.querySelector(".solver-dock__continue-button");
+    solverDock.continueGroup = dock.querySelector(".solver-dock__continue");
+    solverDock.continueInput = dock.querySelector(".solver-dock__continue-input");
     solverDock.elapsed = dock.querySelector(".solver-dock__elapsed");
     solverDock.exportBar = dock.querySelector(".solver-dock__export-bar");
     solverDock.exportButton = dock.querySelector(".solver-dock__export");
@@ -1522,6 +1545,7 @@
       if (state.isSolverBusy) cancelSolverRun();
       else dismissSolverDock();
     });
+    solverDock.continueButton.addEventListener("click", continueSolverSearch);
     solverDock.harderButton.addEventListener("click", makeLevelHarder);
     solverDock.playbackButton.addEventListener("click", playSolution);
     solverDock.stopPlaybackButton.addEventListener("click", stopSolutionPlayback);
@@ -1676,6 +1700,7 @@
     dock.cancelButton.title = "Cancel solver";
     dock.minimizeButton.hidden = true;
     dock.actions.hidden = true;
+    dock.continueGroup.hidden = true;
     dock.exportProgress.hidden = true;
     dock.path.textContent = "";
     dock.status = "running";
@@ -1721,6 +1746,7 @@
 
   function dismissSolverDock() {
     if (!solverDock.element) return;
+    clearSolverContinuation();
     clearSolverGhostOverlay();
     setSolverDockMinimized(false, { animate: false });
     solverDock.element.classList.remove("is-open");
@@ -1743,12 +1769,19 @@
     dock.path.textContent = result.path || "";
     const canPlayback = result.canPlayback === true && hasPlayableSolution();
     const canExport = canPlayback && Boolean(authorData.solutionExportApiUrl);
+    const canContinue = result.canContinue === true && Boolean(state.solverContinuation);
+    dock.continueGroup.hidden = !canContinue;
+    if (canContinue) {
+      dock.continueInput.value = String(
+        Math.max(1, Math.floor(Number(result.additionalStates) || getSolverMaxExpandedStates()))
+      );
+    }
     dock.playbackButton.hidden = !canPlayback;
     dock.ghostButton.hidden = !canPlayback;
     dock.exportGroup.hidden = !canExport;
     dock.minimizeButton.hidden = !canPlayback;
     dock.element.querySelector(".solver-dock__harder-group").hidden = result.canMakeHarder !== true;
-    dock.actions.hidden = !canPlayback && result.canMakeHarder !== true;
+    dock.actions.hidden = !canPlayback && !canContinue && result.canMakeHarder !== true;
     dock.element.classList.toggle("is-failed", result.solved === false);
     syncSolverDockControls();
   }
@@ -1821,7 +1854,12 @@
 
       if (message.type === "done") {
         solverWorkerState.activeJob = null;
-        job.resolve(message.result);
+        job.resolve({
+          ...(message.result || {}),
+          searchContinuation: message.continuationId
+            ? { id: String(message.continuationId), kind: "worker" }
+            : null
+        });
         return;
       }
 
@@ -1864,18 +1902,32 @@
       };
 
       try {
-        worker.postMessage({
-          type: "run",
-          id,
-          op,
-          playData: payload.playData,
-          options: {
-            algorithm: payload.algorithm,
-            maxExpandedStates: payload.maxExpandedStates,
-            progressYieldStateInterval: solverProgressYieldStateInterval,
-            surfaces: payload.surfaces || null
-          }
-        });
+        const continuation = runOptions.continuation;
+
+        if (continuation?.kind === "worker") {
+          worker.postMessage({
+            type: "continue",
+            id,
+            continuationId: continuation.id,
+            options: {
+              additionalExpandedStates: runOptions.additionalExpandedStates,
+              progressYieldStateInterval: solverProgressYieldStateInterval
+            }
+          });
+        } else {
+          worker.postMessage({
+            type: "run",
+            id,
+            op,
+            playData: payload.playData,
+            options: {
+              algorithm: payload.algorithm,
+              maxExpandedStates: payload.maxExpandedStates,
+              progressYieldStateInterval: solverProgressYieldStateInterval,
+              surfaces: payload.surfaces || null
+            }
+          });
+        }
       } catch (error) {
         solverWorkerState.activeJob = null;
         reject(solverWorkerInfrastructureError(error instanceof Error ? error.message : ""));
@@ -1925,22 +1977,36 @@
 
   async function runSolverSearchOnMainThread(op, payload, runOptions) {
     const mazeSolver = getMazeSolver();
-    const engine = createSolverEngine(payload.playData);
+    const saved = runOptions.continuation?.kind === "main"
+      ? runOptions.continuation
+      : null;
+    const engine = saved?.engine || createSolverEngine(payload.playData);
     const options = {
+      additionalExpandedStates: saved ? runOptions.additionalExpandedStates : undefined,
+      continuation: saved?.session || null,
       maxExpandedStates: payload.maxExpandedStates,
       onProgress: createCooperativeSolverReporter(runOptions.onProgress),
       progressYieldStateInterval: solverProgressYieldStateInterval,
       signal: runOptions.signal
     };
 
+    let result;
+
     if (op === "place_gem") {
-      return mazeSolver.findHardestGemPlacement(engine, {
+      result = await mazeSolver.findHardestGemPlacement(engine, {
         ...options,
         canPlaceGemAt: gemSurfacePredicateFromSerialized(payload.surfaces)
       });
+    } else {
+      result = await mazeSolver.solveWithAStar(engine, { ...options, algorithm: payload.algorithm });
     }
 
-    return mazeSolver.solveWithAStar(engine, { ...options, algorithm: payload.algorithm });
+    return {
+      ...result,
+      searchContinuation: result?.continuation
+        ? { engine, kind: "main", session: result.continuation }
+        : null
+    };
   }
 
   // Runs one search. Prefers the dedicated worker (keeps the editor free of
@@ -1960,10 +2026,32 @@
         }
 
         solverWorkerState.broken = true;
+        if (runOptions.continuation?.kind === "worker") {
+          throw new Error("The worker holding the saved search stopped, so that search cannot continue.");
+        }
       }
     }
 
     return runSolverSearchOnMainThread(op, payload, runOptions);
+  }
+
+  function discardSolverSearchContinuation(continuation) {
+    if (continuation?.kind !== "worker" || !continuation.id || !solverWorkerState.worker) {
+      return;
+    }
+
+    solverWorkerState.worker.postMessage({
+      type: "discard",
+      continuationId: continuation.id
+    });
+  }
+
+  function clearSolverContinuation() {
+    discardSolverSearchContinuation(state.solverContinuation?.search);
+    state.solverContinuation = null;
+    if (solverDock.continueGroup) {
+      solverDock.continueGroup.hidden = true;
+    }
   }
 
   function buildEditorRenderPlayData() {
@@ -6918,6 +7006,268 @@
     }
   }
 
+  function rememberCappedSolverSearch(result, details) {
+    if (result?.status !== "capped" || !result.searchContinuation) {
+      clearSolverContinuation();
+      return false;
+    }
+
+    state.solverContinuation = {
+      additionalStates: Math.max(1, Math.floor(Number(details.additionalStates) || 1)),
+      boardSignature: boardSignature(state.width, state.height, state.cells),
+      expanded: Math.max(0, Number(result.expanded) || 0),
+      label: details.label,
+      levelId: state.levelId,
+      op: details.op,
+      payload: details.payload,
+      search: result.searchContinuation
+    };
+    return true;
+  }
+
+  function presentPlaceGemSearchResult(result, details) {
+    if (result.status === "capped") {
+      const canContinue = rememberCappedSolverSearch(result, {
+        ...details,
+        label: "Place Gem",
+        op: "place_gem"
+      });
+      const candidate = result.candidate;
+      const candidateText = candidate
+        ? " Best so far is cell " + (candidate.x + 1) + ", " + (candidate.y + 1) +
+          " at " + candidate.moves + " move" + (candidate.moves === 1 ? "" : "s") + "."
+        : " No reachable placement has been found yet.";
+
+      renderSolverResultCard({
+        additionalStates: details.additionalStates,
+        canContinue,
+        canMakeHarder: false,
+        detail:
+          "Paused after " + formatStateCount(result.expanded) + " states with the search frontier saved." +
+          candidateText,
+        path: candidate ? formatSolverPath(candidate.path) : "",
+        solved: false,
+        title: "Search capped"
+      });
+      setStatus(
+        canContinue
+          ? "Place Gem paused at the state limit. Choose how many more states to search."
+          : "Place Gem reached the state limit.",
+        "warning"
+      );
+      return;
+    }
+
+    clearSolverContinuation();
+    if (result.candidate) {
+      const placedValue = applyGemPlacement(result.candidate);
+      rememberSolverSolution(result.candidate.path);
+      setStatus(
+        "Place Gem: placed hardest spot at cell " +
+          (result.candidate.x + 1) +
+          ", " +
+          (result.candidate.y + 1) +
+          " as " +
+          placedValue +
+          " in " +
+          result.candidate.moves +
+          " move" +
+          (result.candidate.moves === 1 ? "" : "s") +
+          ". UDLR: " +
+          formatSolverPath(result.candidate.path) +
+          ".",
+        "success"
+      );
+      renderSolverResultCard({
+        canMakeHarder: true,
+        canPlayback: true,
+        detail:
+          "Placed at cell " +
+          (result.candidate.x + 1) +
+          ", " +
+          (result.candidate.y + 1) +
+          " after exploring " +
+          formatStateCount(result.expanded) +
+          " states with A*.",
+        path: formatSolverPath(result.candidate.path),
+        solved: true,
+        title:
+          "Gem placed · " +
+          result.candidate.moves +
+          " move" +
+          (result.candidate.moves === 1 ? "" : "s")
+      });
+      return;
+    }
+
+    renderSolverResultCard({
+      canMakeHarder: false,
+      detail:
+        "Explored " +
+        formatStateCount(result.expanded) +
+        " state" +
+        (result.expanded === 1 ? "" : "s") +
+        " with A*, but found no reachable open surface.",
+      solved: false,
+      title: "No gem placement found"
+    });
+    setStatus(
+      "Place Gem: no reachable open surface found. Explored " +
+        formatStateCount(result.expanded) +
+        " state" +
+        (result.expanded === 1 ? "" : "s") +
+        ".",
+      "warning"
+    );
+  }
+
+  function presentSolveSearchResult(result, details) {
+    if (result.status === "solved") {
+      clearSolverContinuation();
+      rememberSolverSolution(result.path);
+      renderSolverResultCard({
+        canMakeHarder: true,
+        canPlayback: true,
+        detail:
+          "Explored " +
+          formatStateCount(result.expanded) +
+          " states with " +
+          details.algorithmLabel +
+          " in " +
+          details.elapsed +
+          ".",
+        path: formatSolverPath(result.path),
+        solved: true,
+        title: "Solved in " + result.moves + " move" + (result.moves === 1 ? "" : "s")
+      });
+      setStatus(
+        "Solver: possible in " + result.moves + " move" + (result.moves === 1 ? "" : "s") + ".",
+        "success"
+      );
+      return;
+    }
+
+    if (result.status === "unsolved") {
+      clearSolverContinuation();
+      clearSolverSolution();
+      renderSolverResultCard({
+        canMakeHarder: false,
+        detail:
+          "Explored " + formatStateCount(result.expanded) +
+          " state" + (result.expanded === 1 ? "" : "s") +
+          " in " + details.elapsed + " — no path reaches a gem.",
+        path: "",
+        solved: false,
+        title: "Not solvable"
+      });
+      setStatus("Solver: not possible.", "warning");
+      return;
+    }
+
+    clearSolverSolution();
+    const canContinue = rememberCappedSolverSearch(result, {
+      ...details,
+      label: details.algorithmLabel,
+      op: "solve"
+    });
+    renderSolverResultCard({
+      additionalStates: details.additionalStates,
+      canContinue,
+      canMakeHarder: false,
+      detail:
+        "Paused after " + formatStateCount(result.expanded) +
+        " states with the search frontier saved. Choose an additional state budget to keep going.",
+      path: "",
+      solved: false,
+      title: "Search capped"
+    });
+    setStatus(
+      canContinue
+        ? "Solver paused at the state limit. Choose how many more states to search."
+        : "Solver reached the state limit.",
+      "warning"
+    );
+  }
+
+  function solverContinuationMatchesBoard(pending) {
+    return Boolean(
+      pending &&
+      pending.levelId === state.levelId &&
+      pending.boardSignature === boardSignature(state.width, state.height, state.cells)
+    );
+  }
+
+  function getAdditionalSolverStates() {
+    const value = Number(solverDock.continueInput?.value);
+    const fallback = Math.max(1, Number(state.solverContinuation?.additionalStates) || 1);
+    const additional = Number.isFinite(value) && value >= 1 ? Math.floor(value) : fallback;
+
+    if (solverDock.continueInput) solverDock.continueInput.value = String(additional);
+    return additional;
+  }
+
+  async function continueSolverSearch() {
+    if (isEditorInteractionLocked()) return;
+    const pending = state.solverContinuation;
+
+    if (!solverContinuationMatchesBoard(pending)) {
+      clearSolverContinuation();
+      renderSolverResultCard({
+        canMakeHarder: false,
+        detail: "The room changed after this search paused. Run a new search for the current room.",
+        solved: false,
+        title: "Saved search expired"
+      });
+      setStatus("The saved solver search no longer matches this room.", "warning");
+      return;
+    }
+
+    const additionalExpandedStates = getAdditionalSolverStates();
+    const targetExpanded = pending.expanded + additionalExpandedStates;
+    state.solverContinuation = null;
+    const signal = beginSolverRun(pending.label + " · continuing", { preserveContinuation: true });
+    renderSolverProgress(pending.label, pending.expanded, targetExpanded);
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    try {
+      const result = await runSolverSearch(pending.op, pending.payload, {
+        additionalExpandedStates,
+        continuation: pending.search,
+        onProgress: (expanded, maxExpanded) =>
+          renderSolverProgress(pending.label, expanded, maxExpanded),
+        signal
+      });
+      const details = {
+        additionalStates: additionalExpandedStates,
+        algorithmLabel: pending.label,
+        elapsed: formatSolverElapsed(performanceNow() - solverDock.startedAt),
+        payload: pending.payload
+      };
+
+      if (pending.op === "place_gem") {
+        presentPlaceGemSearchResult(result, details);
+      } else {
+        presentSolveSearchResult(result, details);
+      }
+    } catch (error) {
+      const cancelled = isSolverCancelError(error);
+      clearSolverContinuation();
+      renderSolverResultCard({
+        canMakeHarder: false,
+        detail: cancelled
+          ? "The saved search was discarded."
+          : error instanceof Error
+            ? error.message
+            : "The saved search could not continue.",
+        solved: false,
+        title: cancelled ? "Search cancelled" : "Search failed"
+      });
+      setStatus(cancelled ? "Solver cancelled." : "The saved search could not continue.", cancelled ? "warning" : "error");
+    } finally {
+      finishSolverRun();
+    }
+  }
+
   async function placeGem() {
     if (isEditorInteractionLocked()) {
       return;
@@ -6936,93 +7286,23 @@
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
+    const payload = {
+      maxExpandedStates,
+      playData: buildEditorPlayData({ includeGems: false }),
+      surfaces: serializeGemSurfaceSets(gemPlacementSurfaceSets())
+    };
+
     try {
       const result = await runSolverSearch(
         "place_gem",
-        {
-          maxExpandedStates,
-          playData: buildEditorPlayData({ includeGems: false }),
-          surfaces: serializeGemSurfaceSets(gemPlacementSurfaceSets())
-        },
+        payload,
         {
           onProgress: (expanded, maxExpanded) =>
             renderSolverProgress("Place Gem", expanded, maxExpanded),
           signal
         }
       );
-
-      if (result.candidate) {
-        const placedValue = applyGemPlacement(result.candidate);
-        rememberSolverSolution(result.candidate.path);
-        const prefix =
-          result.status === "capped"
-            ? "Place Gem: placed best spot before cap at "
-            : "Place Gem: placed hardest spot at ";
-        const suffix =
-          result.status === "capped"
-            ? " Search stopped after " + formatStateCount(result.expanded) + " states."
-            : "";
-
-        setStatus(
-          prefix +
-            "cell " +
-            (result.candidate.x + 1) +
-            ", " +
-            (result.candidate.y + 1) +
-            " as " +
-            placedValue +
-            " in " +
-            result.candidate.moves +
-            " move" +
-            (result.candidate.moves === 1 ? "" : "s") +
-            ". UDLR: " +
-            formatSolverPath(result.candidate.path) +
-            "." +
-            suffix,
-          "success"
-        );
-        renderSolverResultCard({
-          canMakeHarder: true,
-          canPlayback: true,
-          detail:
-            "Placed at cell " +
-            (result.candidate.x + 1) +
-            ", " +
-            (result.candidate.y + 1) +
-            " after exploring " +
-            formatStateCount(result.expanded) +
-            " states with A*." +
-            (result.status === "capped" ? " This was the hardest verified spot before the limit." : ""),
-          path: formatSolverPath(result.candidate.path),
-          solved: true,
-          title:
-            "Gem placed · " +
-            result.candidate.moves +
-            " move" +
-            (result.candidate.moves === 1 ? "" : "s")
-        });
-        return;
-      }
-
-      renderSolverResultCard({
-        canMakeHarder: false,
-        detail:
-          "Explored " +
-          formatStateCount(result.expanded) +
-          " state" +
-          (result.expanded === 1 ? "" : "s") +
-          " with A*, but found no reachable open surface.",
-        solved: false,
-        title: "No gem placement found"
-      });
-      setStatus(
-          "Place Gem: no reachable open surface found. Explored " +
-          formatStateCount(result.expanded) +
-          " state" +
-          (result.expanded === 1 ? "" : "s") +
-          ".",
-        "warning"
-      );
+      presentPlaceGemSearchResult(result, { additionalStates: maxExpandedStates, payload });
     } catch (error) {
       const cancelled = isSolverCancelError(error);
       renderSolverResultCard({
@@ -7078,10 +7358,12 @@
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
+    const payload = { algorithm, maxExpandedStates, playData };
+
     try {
       const result = await runSolverSearch(
         "solve",
-        { algorithm, maxExpandedStates, playData },
+        payload,
         {
           onProgress: (expanded, maxExpanded) =>
             renderSolverProgress(algorithmLabel, expanded, maxExpanded),
@@ -7089,51 +7371,12 @@
         }
       );
       const elapsed = formatSolverElapsed(performanceNow() - solverDock.startedAt);
-
-      if (result.status === "solved") {
-        rememberSolverSolution(result.path);
-        renderSolverResultCard({
-          canMakeHarder: true,
-          canPlayback: true,
-          detail:
-            "Explored " +
-            formatStateCount(result.expanded) +
-            " states with " +
-            algorithmLabel +
-            " in " +
-            elapsed +
-            ".",
-          path: formatSolverPath(result.path),
-          solved: true,
-          title: "Solved in " + result.moves + " move" + (result.moves === 1 ? "" : "s")
-        });
-        setStatus("Solver: possible in " + result.moves + " move" + (result.moves === 1 ? "" : "s") + ".", "success");
-      } else if (result.status === "unsolved") {
-        clearSolverSolution();
-        renderSolverResultCard({
-          canMakeHarder: false,
-          detail:
-            "Explored " + formatStateCount(result.expanded) +
-            " state" + (result.expanded === 1 ? "" : "s") +
-            " in " + elapsed + " — no path reaches a gem.",
-          path: "",
-          solved: false,
-          title: "Not solvable"
-        });
-        setStatus("Solver: not possible.", "warning");
-      } else {
-        clearSolverSolution();
-        renderSolverResultCard({
-          canMakeHarder: false,
-          detail:
-            "No answer within " + formatStateCount(result.maxExpanded) +
-            " states (stopped after " + formatStateCount(result.expanded) + "). Raise the search limit and retry.",
-          path: "",
-          solved: false,
-          title: "Search capped"
-        });
-        setStatus("Solver: no answer within the state limit.", "warning");
-      }
+      presentSolveSearchResult(result, {
+        additionalStates: maxExpandedStates,
+        algorithmLabel,
+        elapsed,
+        payload
+      });
     } catch (error) {
       const cancelled = isSolverCancelError(error);
       if (!cancelled) {

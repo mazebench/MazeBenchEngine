@@ -85,12 +85,16 @@
     let dockStartedAt = 0;
     let dockTickTimer = 0;
     let pauseButton = null;
+    let continueButton = null;
+    let continueGroup = null;
+    let continueInput = null;
     let findGemButton = null;
     let findLocationButton = null;
     let selectingLocation = false;
     let locationTapStart = null;
     let forceStartEntry = false;
     let pendingEntryRecipe = null;
+    let pendingSearch = null;
 
     function app() {
       return typeof options.appProvider === "function" ? options.appProvider() : options.app;
@@ -208,6 +212,8 @@
     function resetWorker() {
       worker?.terminate();
       worker = null;
+      pendingSearch = null;
+      if (continueGroup) continueGroup.hidden = true;
       if (activeWorkerJob) {
         activeWorkerJob.resolve(null);
         activeWorkerJob = null;
@@ -235,7 +241,11 @@
         }
         const job = activeWorkerJob;
         activeWorkerJob = null;
-        job.resolve(message.type === "done" ? message.result || null : null);
+        job.resolve(
+          message.type === "done"
+            ? { ...(message.result || {}), continuationId: String(message.continuationId || "") }
+            : null
+        );
       };
       worker.onerror = () => resetWorker();
       return worker;
@@ -256,6 +266,29 @@
           maxExpandedStates: options.maxExpandedStates || Number.MAX_SAFE_INTEGER
         });
       });
+    }
+
+    function continueInWorker(room, continuationId, additionalExpandedStates) {
+      if (!continuationId || stopped) return Promise.resolve(null);
+      if (activeWorkerJob) resetWorker();
+      const id = ++workerJobId;
+      return new Promise((resolve) => {
+        activeWorkerJob = { id, roomLabel: room.label, resolve };
+        ensureWorker().postMessage({
+          type: "continue_analysis",
+          id,
+          continuationId,
+          additionalExpandedStates
+        });
+      });
+    }
+
+    function discardPendingSearch() {
+      if (pendingSearch?.continuationId && worker) {
+        worker.postMessage({ type: "discard", continuationId: pendingSearch.continuationId });
+      }
+      pendingSearch = null;
+      if (continueGroup) continueGroup.hidden = true;
     }
 
     async function waitForIdle(version, timeoutMs = 7000) {
@@ -600,6 +633,8 @@
         findLocationButton.disabled = running || stopped || completed;
         findLocationButton.setAttribute("aria-pressed", selectingLocation ? "true" : "false");
       }
+      if (continueInput) continueInput.disabled = running || stopped || completed;
+      if (continueButton) continueButton.disabled = running || stopped || completed;
     }
 
     function clearLocationHover() {
@@ -631,6 +666,7 @@
       selectingLocation = false;
       clearLocationHover();
       root?.classList.remove("is-failed");
+      if (continueGroup) continueGroup.hidden = true;
       if (pathElement) pathElement.textContent = "";
       renderDockProgress(0);
       setStatus((label ? label + " · " : "") + "starting search...");
@@ -670,10 +706,15 @@
         return false;
       }
 
+      discardPendingSearch();
       running = true;
       const version = ++loopVersion;
       beginDockRun(label);
       const result = await analyzeInWorker(room, playData, gemTargets, []);
+      return handleTargetSearchResult(result, room, label, reachedLabel, version);
+    }
+
+    async function handleTargetSearchResult(result, room, label, reachedLabel, version) {
       if (!running || stopped || completed || version !== loopVersion) return false;
       if (!result) {
         root?.classList.add("is-failed");
@@ -689,6 +730,32 @@
         0
       );
       renderDockProgress(100);
+
+      if (!result.exhaustive && result.continuationId) {
+        const defaultAdditional = Number.isFinite(Number(options.maxExpandedStates))
+          ? Math.max(1, Math.floor(Number(options.maxExpandedStates)))
+          : 1000000;
+        pendingSearch = {
+          additionalStates: defaultAdditional,
+          continuationId: result.continuationId,
+          expanded,
+          label,
+          reachedLabel,
+          roomId: room.id
+        };
+        if (continueInput) continueInput.value = String(defaultAdditional);
+        if (continueGroup) continueGroup.hidden = false;
+        root?.classList.add("is-failed");
+        setDockIdle(
+          label + " · paused after " + expanded.toLocaleString() +
+          " states with the frontier saved.",
+          { preserveResult: true }
+        );
+        return false;
+      }
+
+      pendingSearch = null;
+      if (continueGroup) continueGroup.hidden = true;
 
       if (!route) {
         root?.classList.add("is-failed");
@@ -709,6 +776,32 @@
       );
       checkCompletion();
       return followed;
+    }
+
+    async function continueTargetSearch() {
+      if (running || stopped || completed || !pendingSearch) return false;
+      const saved = pendingSearch;
+      const room = rooms.get(currentLevelId());
+      if (!room || room.id !== saved.roomId) {
+        discardPendingSearch();
+        setDockIdle("The room changed. Start a new search from the current room.");
+        return false;
+      }
+      const requested = Number(continueInput?.value);
+      const additionalExpandedStates = Number.isFinite(requested) && requested >= 1
+        ? Math.floor(requested)
+        : saved.additionalStates;
+      if (continueInput) continueInput.value = String(additionalExpandedStates);
+      pendingSearch = null;
+      running = true;
+      const version = ++loopVersion;
+      beginDockRun(saved.label + " · continuing");
+      const result = await continueInWorker(
+        room,
+        saved.continuationId,
+        additionalExpandedStates
+      );
+      return handleTargetSearchResult(result, room, saved.label, saved.reachedLabel, version);
     }
 
     function findGem() {
@@ -824,13 +917,14 @@
         ".solver-dock.is-open{opacity:1;transform:translateX(-50%) translateY(0)}.solver-dock__head{align-items:center;display:flex;gap:8px}.solver-dock__title{font-family:var(--font-display,inherit);font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.solver-dock__badge{background:rgba(var(--amber-rgb,255,193,84),.12);border:1px solid rgba(var(--amber-rgb,255,193,84),.65);border-radius:999px;color:var(--amber,#ffc154);font:10px var(--font-mono,monospace);letter-spacing:.1em;padding:2px 8px;text-transform:uppercase}.solver-dock__elapsed{color:var(--muted,#9aa3c7);font:11px var(--font-mono,monospace);margin-left:auto}",
         ".solver-dock__cancel{background:rgba(8,11,26,.85);border:1px solid rgba(var(--magenta-rgb,255,84,170),.55);border-radius:9px;color:var(--ink,#e7eaff);cursor:pointer;font:inherit;font-size:12px;font-weight:600;min-height:0;padding:4px 12px}.solver-dock__cancel:hover:not(:disabled){background:rgba(var(--magenta-rgb,255,84,170),.12);border-color:rgba(var(--magenta-rgb,255,84,170),.9);box-shadow:0 0 14px rgba(var(--magenta-rgb,255,84,170),.3)}.solver-dock__cancel:disabled{opacity:.7}.solver-dock__cancel[hidden]{display:none}",
         ".solver-dock__track{background:rgba(124,143,255,.14);border:1px solid rgba(124,143,255,.3);border-radius:999px;height:10px;overflow:hidden}.solver-dock__bar{background:linear-gradient(90deg,rgba(var(--cyan-rgb,84,240,255),.9),rgba(var(--violet-rgb,124,143,255),.9));border-radius:999px;box-shadow:0 0 12px rgba(var(--cyan-rgb,84,240,255),.5);height:100%;transition:width 120ms linear;width:0}.solver-dock__text{color:var(--ink,#e7eaff);font:11px var(--font-mono,monospace);margin:0}.solver-dock__path{color:var(--cyan,#54f0ff);font:11px/1.5 var(--font-mono,monospace);letter-spacing:.1em;overflow-wrap:anywhere;user-select:all}.solver-dock__path:empty{display:none}.solver-dock.is-failed{border-color:rgba(var(--magenta-rgb,255,84,170),.48);box-shadow:0 14px 40px rgba(0,0,0,.55),0 0 22px rgba(var(--magenta-rgb,255,84,170),.12)}",
-        ".solver-dock__actions{align-items:center;display:flex;gap:7px}.solver-dock__playback{background:rgba(var(--cyan-rgb,84,240,255),.14);border:1px solid rgba(var(--cyan-rgb,84,240,255),.7);border-radius:9px;color:var(--ink,#e7eaff);cursor:pointer;font:inherit;font-size:12px;font-weight:750;min-height:34px;padding:6px 12px;transition:background 160ms ease,border-color 160ms ease,box-shadow 160ms ease}.solver-dock__playback:hover:not(:disabled),.solver-dock__playback:focus-visible{border-color:rgba(var(--cyan-rgb,84,240,255),1);box-shadow:0 0 14px rgba(var(--cyan-rgb,84,240,255),.27);outline:none}.solver-dock__playback[aria-pressed='true']{background:rgba(var(--cyan-rgb,84,240,255),.28);border-color:rgba(var(--cyan-rgb,84,240,255),1);box-shadow:0 0 14px rgba(var(--cyan-rgb,84,240,255),.25)}.solver-dock__playback:disabled{cursor:default;opacity:.48}"
+        ".solver-dock__actions{align-items:center;display:flex;gap:7px}.solver-dock__playback{background:rgba(var(--cyan-rgb,84,240,255),.14);border:1px solid rgba(var(--cyan-rgb,84,240,255),.7);border-radius:9px;color:var(--ink,#e7eaff);cursor:pointer;font:inherit;font-size:12px;font-weight:750;min-height:34px;padding:6px 12px;transition:background 160ms ease,border-color 160ms ease,box-shadow 160ms ease}.solver-dock__playback:hover:not(:disabled),.solver-dock__playback:focus-visible{border-color:rgba(var(--cyan-rgb,84,240,255),1);box-shadow:0 0 14px rgba(var(--cyan-rgb,84,240,255),.27);outline:none}.solver-dock__playback[aria-pressed='true']{background:rgba(var(--cyan-rgb,84,240,255),.28);border-color:rgba(var(--cyan-rgb,84,240,255),1);box-shadow:0 0 14px rgba(var(--cyan-rgb,84,240,255),.25)}.solver-dock__playback:disabled{cursor:default;opacity:.48}",
+        ".solver-dock__continue{align-items:center;display:flex;flex-wrap:wrap;gap:7px}.solver-dock__continue[hidden]{display:none}.solver-dock__continue label{align-items:center;color:var(--muted,#9aa3c7);display:flex;font:11px var(--font-mono,monospace);gap:6px}.solver-dock__continue input{background:rgba(10,13,31,.72);border:1px solid rgba(var(--cyan-rgb,84,240,255),.42);border-radius:9px;color:var(--ink,#e7eaff);font:11px var(--font-mono,monospace);height:34px;padding:0 9px;width:112px}.solver-dock__continue button{background:rgba(var(--green-rgb,88,255,178),.1);border:1px solid rgba(var(--green-rgb,88,255,178),.58);border-radius:9px;color:var(--ink,#e7eaff);cursor:pointer;font:inherit;font-size:12px;font-weight:750;min-height:34px;padding:6px 12px}.solver-dock__continue button:hover:not(:disabled),.solver-dock__continue button:focus-visible{border-color:rgba(var(--green-rgb,88,255,178),.95);box-shadow:0 0 14px rgba(var(--green-rgb,88,255,178),.24);outline:none}.solver-dock__continue input:disabled,.solver-dock__continue button:disabled{opacity:.48}"
       ].join("\n");
       document.head.append(style);
       root = document.createElement("section");
       root.className = "solver-dock";
       root.setAttribute("aria-label", "World Solver run");
-      root.innerHTML = '<div class="solver-dock__head"><span class="solver-dock__title">Solver</span><span class="solver-dock__badge">Experimental</span><span class="solver-dock__elapsed">0.0s</span><button class="solver-dock__cancel" type="button" data-world-solver-pause hidden>Cancel</button></div><div class="solver-dock__track" role="progressbar" aria-label="Solver search progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="solver-dock__bar"></div></div><p class="solver-dock__text" aria-live="polite">Choose what the solver should find.</p><code class="solver-dock__path"></code><div class="solver-dock__actions"><button class="solver-dock__playback" type="button" data-world-solver-find-gem>Find Gem</button><button class="solver-dock__playback" type="button" aria-pressed="false" data-world-solver-find-location>Find Location</button></div>';
+      root.innerHTML = '<div class="solver-dock__head"><span class="solver-dock__title">Solver</span><span class="solver-dock__badge">Experimental</span><span class="solver-dock__elapsed">0.0s</span><button class="solver-dock__cancel" type="button" data-world-solver-pause hidden>Cancel</button></div><div class="solver-dock__track" role="progressbar" aria-label="Solver search progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="solver-dock__bar"></div></div><p class="solver-dock__text" aria-live="polite">Choose what the solver should find.</p><code class="solver-dock__path"></code><div class="solver-dock__continue" hidden><label>More states <input type="number" min="1" step="1" inputmode="numeric" aria-label="Additional world solver search states"></label><button type="button">Continue Search</button></div><div class="solver-dock__actions"><button class="solver-dock__playback" type="button" data-world-solver-find-gem>Find Gem</button><button class="solver-dock__playback" type="button" aria-pressed="false" data-world-solver-find-location>Find Location</button></div>';
       document.body.append(root);
       statusElement = root.querySelector(".solver-dock__text");
       barElement = root.querySelector(".solver-dock__bar");
@@ -838,6 +932,9 @@
       pathElement = root.querySelector(".solver-dock__path");
       elapsedElement = root.querySelector(".solver-dock__elapsed");
       pauseButton = root.querySelector("[data-world-solver-pause]");
+      continueGroup = root.querySelector(".solver-dock__continue");
+      continueInput = continueGroup.querySelector("input");
+      continueButton = continueGroup.querySelector("button");
       findGemButton = root.querySelector("[data-world-solver-find-gem]");
       findLocationButton = root.querySelector("[data-world-solver-find-location]");
       pauseButton.addEventListener("click", () => {
@@ -849,6 +946,7 @@
       });
       findGemButton.addEventListener("click", findGem);
       findLocationButton.addEventListener("click", toggleFindLocation);
+      continueButton.addEventListener("click", continueTargetSearch);
       window.requestAnimationFrame(() => root?.classList.add("is-open"));
       renderMap();
       setDockIdle("Choose what the solver should find.");

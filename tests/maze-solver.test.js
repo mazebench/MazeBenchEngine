@@ -42,6 +42,32 @@ function floorTerrain(width, height) {
   }
 
   {
+    const engine = createEngine({
+      width: 4,
+      height: 1,
+      terrain: floorTerrain(4, 1),
+      actors: [
+        { type: "player", x: 0, y: 0, removed: false },
+        { type: "gem", x: 3, y: 0, removed: false }
+      ]
+    });
+    const capped = await solveWithAStar(engine, { maxExpandedStates: 1 });
+
+    assert.equal(capped.status, "capped");
+    assert.equal(capped.expanded, 1);
+    assert.ok(capped.continuation);
+
+    const continued = await solveWithAStar(engine, {
+      additionalExpandedStates: 100,
+      continuation: capped.continuation
+    });
+
+    assert.equal(continued.status, "solved");
+    assert.equal(continued.path, "RRR");
+    assert.equal(continued.expanded >= capped.expanded, true);
+  }
+
+  {
     // Regression: a gem collected before the engine was created (mid-session
     // state) must not count as an instant solve; the solver has to path to
     // the remaining live gem instead of returning an empty path.
@@ -64,6 +90,31 @@ function floorTerrain(width, height) {
     assert.equal(result.status, "solved");
     assert.equal(result.moves, 2);
     assert.equal(result.path, "RR");
+  }
+
+  {
+    const engine = createEngine({
+      width: 4,
+      height: 1,
+      terrain: floorTerrain(4, 1),
+      actors: [{ type: "player", x: 0, y: 0, removed: false }]
+    });
+    const capped = await findHardestGemPlacement(engine, {
+      canPlaceGemAt: (x, y) => x === 3 && y === 0,
+      maxExpandedStates: 1
+    });
+
+    assert.equal(capped.status, "capped");
+    assert.ok(capped.continuation);
+
+    const continued = await findHardestGemPlacement(engine, {
+      additionalExpandedStates: 100,
+      continuation: capped.continuation
+    });
+
+    assert.equal(continued.status, "found");
+    assert.equal(continued.candidate.x, 3);
+    assert.equal(continued.candidate.path, "RRR");
   }
 
   {
@@ -184,6 +235,28 @@ function floorTerrain(width, height) {
       [{ id: "near", path: "R" }, { id: "far", path: "RR" }]
     );
     assert.deepEqual(result.unreachable.map((target) => target.id), ["blocked"]);
+  }
+
+  {
+    const engine = createEngine({
+      width: 4,
+      height: 1,
+      terrain: floorTerrain(4, 1),
+      actors: [{ type: "player", x: 0, y: 0, removed: false }]
+    });
+    const targets = [{ id: "far", x: 3, y: 0, elevation: 0 }];
+    const capped = await findReachablePositions(engine, targets, { maxExpandedStates: 1 });
+
+    assert.equal(capped.status, "capped");
+    assert.ok(capped.continuation);
+
+    const continued = await findReachablePositions(engine, targets, {
+      additionalExpandedStates: 100,
+      continuation: capped.continuation
+    });
+
+    assert.equal(continued.status, "found_all");
+    assert.equal(continued.reachable[0].path, "RRR");
   }
 
   {

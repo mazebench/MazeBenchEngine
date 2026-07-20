@@ -95,6 +95,47 @@ function floorTerrain(width, height) {
   assert.ok(locationDone);
   assert.equal(locationDone.result.gemResults[0].status, "solved");
   assert.equal(locationDone.result.gemResults[0].path, "RR");
+
+  await context.onmessage({
+    data: {
+      type: "analyze_room",
+      id: 9,
+      maxExpandedStates: 1,
+      playData: {
+        width: 4,
+        height: 1,
+        terrain: floorTerrain(4, 1),
+        actors: [
+          { type: "player", x: 0, y: 0, removed: false },
+          { type: "gem", x: 3, y: 0, removed: false }
+        ]
+      },
+      gemTargets: [{ id: "gem", type: "gem", x: 3, y: 0, elevation: 0 }],
+      positionTargets: []
+    }
+  });
+
+  const capped = messages.find((message) => message.type === "done" && message.id === 9);
+  assert.ok(capped);
+  assert.equal(capped.result.exhaustive, false);
+  assert.equal(capped.result.gemResults[0].status, "capped");
+  assert.ok(capped.continuationId);
+
+  await context.onmessage({
+    data: {
+      type: "continue_analysis",
+      id: 10,
+      continuationId: capped.continuationId,
+      additionalExpandedStates: 100
+    }
+  });
+
+  const continued = messages.find((message) => message.type === "done" && message.id === 10);
+  assert.ok(continued);
+  assert.equal(continued.result.exhaustive, true);
+  assert.equal(continued.result.gemResults[0].status, "solved");
+  assert.equal(continued.result.gemResults[0].path, "RRR");
+  assert.equal(continued.continuationId, "");
   console.log("world-solver-worker: OK — gem, location, and edge routes use the built-in solver.");
 })().catch((error) => {
   console.error(error);
