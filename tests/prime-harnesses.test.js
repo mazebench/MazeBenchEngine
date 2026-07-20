@@ -150,6 +150,105 @@ try {
   assert.match(toolsTasksetSource, /user = None/);
   assert.match(toolsTasksetSource, /trace\.state = trusted_state/);
   assert.match(toolsTasksetSource, /__all__ = \["MazeBenchToolTaskset"\]/);
+  assert.match(toolsTasksetSource, /KIMI_CODE_OBSERVE_INTERVAL = 5/);
+  assert.match(toolsTasksetSource, /next_required_tool.*game_observe/s);
+  assert.match(toolsTasksetSource, /Call game_observe before another game_action/);
+
+  const kimiObserveProbe = spawnSync(
+    "uv",
+    [
+      "run",
+      "--project",
+      path.join(root, "environments", "mazebench"),
+      "python",
+      "-c",
+      `import asyncio
+import os
+from types import SimpleNamespace
+
+import mazebench_tools as module
+
+
+prompt_task = SimpleNamespace(
+    allow_quit=False,
+    max_actions=None,
+    observation_mode="ascii",
+    target_gems=0,
+)
+os.environ["MAZEBENCH_PRIME_HARNESS"] = "kimi-code"
+assert "Kimi Code compatibility rule" in module._tool_prompt(prompt_task)
+os.environ["MAZEBENCH_PRIME_HARNESS"] = "codex"
+assert "Kimi Code compatibility rule" not in module._tool_prompt(prompt_task)
+
+
+async def probe():
+    toolset = module.MazeBenchToolset(config=module.MazeBenchToolsetConfig())
+    toolset.task = SimpleNamespace(
+        allow_quit=True,
+        auto_quit=False,
+        auto_quit_mode="cumulative",
+        auto_quit_threshold=0.0,
+        auto_quit_window=100,
+        game_won_gem_count=999,
+        max_actions=None,
+        observation_mode="ascii",
+    )
+    toolset._lock = asyncio.Lock()
+    toolset._closed = False
+    toolset._actions = []
+    toolset._observe_break_interval = module.KIMI_CODE_OBSERVE_INTERVAL
+    toolset._actions_since_observe = 0
+    toolset._auto_quit = {}
+    toolset._scorecard = {}
+    toolset._status_error = ""
+    toolset._initial_hash = "state-0"
+    toolset._status = {
+        "action_count": 0,
+        "board_state_hash": "state-0",
+        "game_lost": False,
+        "game_won": False,
+        "quit": False,
+        "gem_count": 0,
+    }
+    toolset._session = SimpleNamespace(request=lambda *args, **kwargs: None)
+    toolset._write_snapshot = lambda: None
+
+    async def fake_run_blocking(_func, command, **_kwargs):
+        if command == "observe":
+            return dict(toolset._status)
+        next_action = len(toolset._actions) + 1
+        return {
+            **toolset._status,
+            "action_count": next_action,
+            "board_state_hash": f"state-{next_action}",
+            "moved": True,
+        }
+
+    module.run_blocking = fake_run_blocking
+
+    for _ in range(5):
+        fifth = await toolset.action("up")
+    assert fifth["actions_used"] == 5
+    assert fifth["observe_required"] is True
+    assert fifth["next_required_tool"] == "game_observe"
+
+    blocked = await toolset.action("up")
+    assert blocked["actions_used"] == 5
+    assert blocked["error"] == "Call game_observe before another game_action."
+
+    observed = await toolset.observe()
+    assert "observe_required" not in observed
+    resumed = await toolset.action("up")
+    assert resumed["actions_used"] == 6
+
+
+asyncio.run(probe())
+print("kimi observe break ready")`
+    ],
+    { cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }
+  );
+  assert.equal(kimiObserveProbe.status, 0, kimiObserveProbe.stderr || kimiObserveProbe.stdout);
+  assert.match(kimiObserveProbe.stdout, /kimi observe break ready/);
 
   assert.equal(primeHarnessModelCompatible("openai/gpt-5-codex", "codex"), true);
   assert.equal(primeHarnessModelCompatible("openai/gpt-4.1", "codex"), true);

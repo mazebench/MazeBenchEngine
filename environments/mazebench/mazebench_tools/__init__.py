@@ -38,6 +38,13 @@ from mazebench.mazebench import (
 )
 
 
+KIMI_CODE_OBSERVE_INTERVAL = 5
+
+
+def _prime_harness_id() -> str:
+    return os.environ.get("MAZEBENCH_PRIME_HARNESS", "").strip().lower().replace("-", "_")
+
+
 class MazeBenchToolsetConfig(vf.ToolsetConfig):
     """Private evaluator-owned paths supplied when a rollout tool server starts."""
 
@@ -110,12 +117,20 @@ def _tool_prompt(task: MazeBenchTaskData) -> str:
         else "Quit is disabled; recover with undo or reset after a death and keep playing."
     )
     mode = "structured JSON" if task.observation_mode == "json" else "ASCII"
+    kimi_observe_policy = (
+        "\n\nKimi Code compatibility rule: after five consecutive `game_action` calls, "
+        "you must call `game_observe` once before any further `game_action`. "
+        "The fifth action result reports `observe_required: true`; treat it as mandatory. "
+        "`game_observe` resets the count and does not consume a game action."
+        if _prime_harness_id() == "kimi_code"
+        else ""
+    )
     return f"""Play the hidden 3D grid game using only the supplied game controls.
 
 Call `game_start` exactly once first. Inspect its sanitized {mode} observation, then call
 `game_action` with one action at a time. Use `game_observe` only when you need to inspect the
 current state without consuming an action. Valid actions include up, down, left, right,
-rotate camera left, rotate camera right, undo, reset, and go to level X Y.
+rotate camera left, rotate camera right, undo, reset, and go to level X Y.{kimi_observe_policy}
 
 Collect {int(task.target_gems)} gems and explore as many rooms as possible. {budget} {quit_policy}
 When the returned result says `ended: true`, finish with a short route summary.
@@ -160,6 +175,10 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
         self._lock = asyncio.Lock()
         self._closed = False
         self._actions: list[dict[str, Any]] = []
+        self._observe_break_interval = (
+            KIMI_CODE_OBSERVE_INTERVAL if _prime_harness_id() == "kimi_code" else 0
+        )
+        self._actions_since_observe = 0
         self._auto_quit: dict[str, Any] = {}
         self._scorecard: dict[str, Any] = {}
         self._status_error = ""
@@ -320,6 +339,13 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
             ),
             "ended": self._terminal(),
         }
+        if (
+            not result["ended"]
+            and self._observe_break_interval
+            and self._actions_since_observe >= self._observe_break_interval
+        ):
+            result["observe_required"] = True
+            result["next_required_tool"] = "game_observe"
         if error:
             result["error"] = error
         if self._auto_quit:
@@ -341,6 +367,7 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
         """Return the current sanitized observation without consuming an action."""
 
         async with self._lock:
+            self._actions_since_observe = 0
             return self._result()
 
     @vf.tool
@@ -350,6 +377,15 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
         async with self._lock:
             if self._terminal():
                 return self._result(error="The run has ended; no further action is available.")
+            if (
+                self._observe_break_interval
+                and self._actions_since_observe >= self._observe_break_interval
+            ):
+                return self._result(
+                    error="Call game_observe before another game_action."
+                )
+
+            self._actions_since_observe += 1
 
             raw = str(action or "").strip()
             blocked_quit = False
