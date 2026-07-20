@@ -23,6 +23,7 @@ const router = fs.readFileSync(path.join(root, "server", "router.js"), "utf8");
 const { createRemoteService } = require(path.join(root, "server", "remote.js"));
 const {
   defaultReplayOptions,
+  nativeCaptureGuardFrameCount,
   nativeFrameCountIsAcceptable,
   replayTranscodeArguments,
   rotateAsciiView,
@@ -278,10 +279,16 @@ assert.match(replayExporter, /function startRawVideoEncoder/);
 assert.match(replayExporter, /__advanceMazeReplayFrame__/);
 assert.match(replayExporter, /new MediaRecorder\(stream/);
 assert.match(replayExporter, /Native replay recorder retained/);
+assert.equal(nativeCaptureGuardFrameCount(0), 0);
+assert.equal(nativeCaptureGuardFrameCount(120), 8);
+assert.equal(nativeCaptureGuardFrameCount(3902), 20);
 assert.equal(nativeFrameCountIsAcceptable(2698, 2698), true);
-assert.equal(nativeFrameCountIsAcceptable(2697, 2698), true);
-assert.equal(nativeFrameCountIsAcceptable(2696, 2698), false);
+assert.equal(nativeFrameCountIsAcceptable(2697, 2698), false);
 assert.equal(nativeFrameCountIsAcceptable(2699, 2698), false);
+assert.equal(nativeFrameCountIsAcceptable(2699, 2698, 14), true);
+assert.equal(nativeFrameCountIsAcceptable(2712, 2698, 14), true);
+assert.equal(nativeFrameCountIsAcceptable(2713, 2698, 14), false);
+assert.match(replayExporter, /"-frames:v",\s*String\(frameIndex\)/);
 const expectedVisionTilts = [0, 18.43494882292201, 45, 71.56505117707799, 90];
 ["top", "top-diagonal", "diagonal", "side-diagonal", "side"].forEach((view, index) => {
   assert.ok(

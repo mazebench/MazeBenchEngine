@@ -1812,14 +1812,21 @@ function countedVideoFrames(videoPath) {
   return count;
 }
 
-function nativeFrameCountIsAcceptable(retainedFrames, requestedFrames) {
+function nativeCaptureGuardFrameCount(requestedFrames) {
+  if (!Number.isInteger(requestedFrames) || requestedFrames <= 0) return 0;
+  return Math.max(8, Math.ceil(requestedFrames / 200));
+}
+
+function nativeFrameCountIsAcceptable(retainedFrames, requestedFrames, guardFrames = 0) {
   return (
     Number.isInteger(retainedFrames) &&
     Number.isInteger(requestedFrames) &&
+    Number.isInteger(guardFrames) &&
     retainedFrames > 0 &&
     requestedFrames > 0 &&
-    retainedFrames <= requestedFrames &&
-    requestedFrames - retainedFrames <= 1
+    guardFrames >= 0 &&
+    retainedFrames >= requestedFrames &&
+    retainedFrames <= requestedFrames + guardFrames
   );
 }
 
@@ -1978,6 +1985,7 @@ async function renderReplayVideo(
   let estimatedBytes = estimatedVideoBytes(estimatedFrames, options);
   let captureProgress = null;
   let frameIndex = 0;
+  let nativeGuardFrames = 0;
   let lastFrameBuffer = null;
   const diagnosticsEnabled = process.env.MAZE_REPLAY_DIAGNOSTICS === "1";
   const replayManifest = {
@@ -3184,6 +3192,15 @@ async function renderReplayVideo(
 
     await duplicateLastFrame(Math.round(options.tailSeconds * options.fps));
     if (useNativeRecorder) {
+      // captureStream(0) can occasionally coalesce requested frames. Record a
+      // small tail reserve, then trim it after capture so the final MP4 still
+      // contains exactly frameIndex frames without rerendering the whole run.
+      nativeGuardFrames = nativeCaptureGuardFrameCount(frameIndex);
+      await page.evaluate(async (guardFrameCount) => {
+        for (let index = 0; index < guardFrameCount; index += 1) {
+          await window.__captureMazeReplayFrame__();
+        }
+      }, nativeGuardFrames);
       await page.evaluate(() => window.__finishMazeReplayNativeRecorder__());
       if (!fs.existsSync(recordedVideoPath) || fs.statSync(recordedVideoPath).size === 0) {
         throw new Error("Native replay recorder did not produce an MP4");
@@ -3221,20 +3238,17 @@ async function renderReplayVideo(
 
   if (useNativeRecorder) {
     const nativeFrameCount = countedVideoFrames(recordedVideoPath);
-    // captureStream(0) + MediaRecorder can coalesce one request at a media-tick
-    // boundary even though every requested canvas state was rendered. Losing a
-    // single video frame is at most one frame interval and is not evidence of a
-    // truncated replay; larger mismatches still fall back to the exact renderers.
-    if (!nativeFrameCountIsAcceptable(nativeFrameCount, frameIndex)) {
+    if (!nativeFrameCountIsAcceptable(nativeFrameCount, frameIndex, nativeGuardFrames)) {
       fs.rmSync(recordedVideoPath, { force: true });
       throw new Error(
-        `Native replay recorder retained ${nativeFrameCount}/${frameIndex} requested frames`
+        `Native replay recorder retained ${nativeFrameCount}/${frameIndex + nativeGuardFrames} ` +
+          `total requested frames; at least ${frameIndex} replay frames are required`
       );
     }
     if (nativeFrameCount !== frameIndex) {
       console.warn(
-        `Native replay recorder coalesced one frame (${nativeFrameCount}/${frameIndex}); ` +
-          "using the completed native recording."
+        `Native replay recorder retained ${nativeFrameCount} frames; trimming ` +
+          `${nativeFrameCount - frameIndex} guard frames from the completed recording.`
       );
     }
     const retimedPath = path.join(
@@ -3257,6 +3271,8 @@ async function renderReplayVideo(
       "error",
       "-i",
       recordedVideoPath,
+      "-frames:v",
+      String(frameIndex),
       "-an",
       "-c:v",
       "copy",
@@ -3271,6 +3287,14 @@ async function renderReplayVideo(
       fs.rmSync(recordedVideoPath, { force: true });
       throw new Error(retime.stderr || "Could not retime native replay video");
     }
+    const retimedFrameCount = countedVideoFrames(retimedPath);
+    if (retimedFrameCount !== frameIndex) {
+      fs.rmSync(retimedPath, { force: true });
+      fs.rmSync(recordedVideoPath, { force: true });
+      throw new Error(
+        `Retimed native replay contains ${retimedFrameCount}/${frameIndex} expected frames`
+      );
+    }
     try {
       await optimizeNativeReplayVideo(
         retimedPath,
@@ -3278,6 +3302,13 @@ async function renderReplayVideo(
         options,
         frameIndex / options.fps
       );
+      const optimizedFrameCount = countedVideoFrames(videoPath);
+      if (optimizedFrameCount !== frameIndex) {
+        fs.rmSync(videoPath, { force: true });
+        throw new Error(
+          `Optimized native replay contains ${optimizedFrameCount}/${frameIndex} expected frames`
+        );
+      }
     } finally {
       fs.rmSync(retimedPath, { force: true });
       fs.rmSync(recordedVideoPath, { force: true });
@@ -3332,6 +3363,15 @@ async function renderReplayVideo(
   }
 
   await capReplayVideoSize(videoPath, options, frameIndex / options.fps);
+  if (useNativeRecorder) {
+    const finalFrameCount = countedVideoFrames(videoPath);
+    if (finalFrameCount !== frameIndex) {
+      fs.rmSync(videoPath, { force: true });
+      throw new Error(
+        `Final native replay contains ${finalFrameCount}/${frameIndex} expected frames`
+      );
+    }
+  }
 
   if (!options.keepFrames) {
     fs.rmSync(framesDir, { force: true, recursive: true });
@@ -3506,6 +3546,7 @@ module.exports = {
   extractAsciiFrames,
   humanSize,
   inferReplayPrefixCommands,
+  nativeCaptureGuardFrameCount,
   nativeFrameCountIsAcceptable,
   replayTranscodeArguments,
   resolveInput,
