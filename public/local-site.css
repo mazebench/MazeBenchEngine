@@ -1299,28 +1299,84 @@ body.play-body {
 }
 
 .flyover-controls .flyover-zoom-button,
-.flyover-controls .flyover-edge-toggle {
+.flyover-controls .flyover-edge-toggle,
+.flyover-controls .flyover-title-toggle {
   flex-basis: 46px;
   height: 46px;
   min-width: 46px;
   width: 46px;
 }
 
-.flyover-controls .flyover-edge-toggle[aria-pressed="true"] {
+.flyover-controls :is(.flyover-edge-toggle, .flyover-title-toggle)[aria-pressed="true"] {
   background: rgba(var(--cyan-rgb), 0.2);
   border-color: var(--cyan, #54f0ff);
   box-shadow: 0 0 18px rgba(var(--cyan-rgb), 0.38);
   color: var(--cyan, #54f0ff);
 }
 
+.flyover-social-title {
+  align-items: center;
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  pointer-events: none;
+  position: absolute;
+  z-index: 20;
+}
+
+.flyover-social-title[hidden] {
+  display: none;
+}
+
+.flyover-social-title::before {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(1, 5, 18, 0.96) 0%,
+    rgba(2, 8, 24, 0.86) 34%,
+    rgba(2, 8, 24, 0.48) 56%,
+    rgba(2, 8, 24, 0) 76%
+  );
+  content: "";
+  filter: blur(12px);
+  height: min(34vw, 340px);
+  max-height: 44vh;
+  min-height: 180px;
+  position: absolute;
+  width: min(88vw, 960px);
+}
+
+.flyover-social-title h1 {
+  color: #f3fbff;
+  font-family: var(--font-display, "Orbitron", sans-serif);
+  font-size: clamp(3rem, 9vw, 9rem);
+  font-weight: 900;
+  letter-spacing: 0.075em;
+  line-height: 0.9;
+  margin: 0;
+  padding-left: 0.075em;
+  position: relative;
+  text-align: center;
+  text-shadow:
+    0 7px 4px rgba(0, 0, 0, 0.88),
+    0 18px 44px rgba(0, 0, 0, 0.98),
+    0 0 18px rgba(var(--cyan-rgb), 0.68),
+    0 0 44px rgba(var(--cyan-rgb), 0.32);
+  white-space: nowrap;
+}
+
 @media (max-width: 620px), (max-height: 560px) {
   .flyover-zoom-controls { bottom: max(10px, env(safe-area-inset-bottom)); }
   .flyover-controls .flyover-zoom-button,
-  .flyover-controls .flyover-edge-toggle {
+  .flyover-controls .flyover-edge-toggle,
+  .flyover-controls .flyover-title-toggle {
     flex-basis: 40px;
     height: 40px;
     min-width: 40px;
     width: 40px;
+  }
+
+  .flyover-social-title h1 {
+    font-size: clamp(2.2rem, 9vw, 5rem);
   }
 }
 
