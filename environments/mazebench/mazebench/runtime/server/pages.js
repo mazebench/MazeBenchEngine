@@ -418,7 +418,8 @@ function createPageRenderer({
               </div>
               <div class="flyover-zoom-controls" aria-label="Zoom controls">
                 <button id="flyover-zoom-out" class="control-button play-icon-button flyover-zoom-button" type="button" aria-label="Zoom out" title="Zoom out"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"></circle><line x1="21" x2="16.65" y1="21" y2="16.65"></line><line x1="8" x2="14" y1="11" y2="11"></line></svg></button>
-                <button id="flyover-edge-toggle" class="control-button play-icon-button flyover-edge-toggle" type="button" aria-label="Blue edge mode" aria-pressed="false" title="Blue edge mode"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M7 12h10"></path></svg></button>
+                <button id="flyover-edge-toggle" class="control-button play-icon-button flyover-edge-toggle" type="button" aria-label="Blue glow and fuzzy overlay" aria-pressed="false" title="Blue glow and fuzzy overlay"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M7 12h10"></path></svg></button>
+                <button id="flyover-title-toggle" class="control-button play-icon-button flyover-title-toggle" type="button" aria-label="Show Maze Bench title" aria-pressed="false" title="Show Maze Bench title"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 6h14"></path><path d="M12 6v12"></path><path d="M8 18h8"></path></svg></button>
                 <button id="flyover-zoom-in" class="control-button play-icon-button flyover-zoom-button" type="button" aria-label="Zoom in" title="Zoom in"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"></circle><line x1="21" x2="16.65" y1="21" y2="16.65"></line><line x1="11" x2="11" y1="8" y2="14"></line><line x1="8" x2="14" y1="11" y2="11"></line></svg></button>
               </div>
               <div class="control-pad flyover-pad flyover-pad--move" aria-label="Movement controls">
@@ -429,6 +430,9 @@ function createPageRenderer({
                 <button id="flyover-move-backward" class="control-button dpad-button flyover-pad-button" type="button" data-move="down" aria-label="Fly backward"></button>
               </div>
             </nav>
+            <div id="flyover-social-title" class="flyover-social-title" aria-hidden="true" hidden>
+              <h1>MAZE BENCH</h1>
+            </div>
           </section>
         </div>
       </main>

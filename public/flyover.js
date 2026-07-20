@@ -113,12 +113,15 @@
   };
   let vectorThemeFrameId = 0;
   let edgeModeEnabled = true;
+  let titleEnabled = false;
 
   function syncEdgeModeToggle() {
     const button = document.getElementById("flyover-edge-toggle");
     if (!button) return;
     button.setAttribute("aria-pressed", edgeModeEnabled ? "true" : "false");
-    button.title = edgeModeEnabled ? "Use full color" : "Use blue edge mode";
+    button.title = edgeModeEnabled
+      ? "Use full color without fuzz"
+      : "Use blue glow and fuzzy overlay";
   }
 
   function setFlyoverEdgeMode(enabled, options = {}) {
@@ -128,6 +131,8 @@
     const to = nextEnabled ? 1 : 0;
     edgeModeEnabled = nextEnabled;
     syncEdgeModeToggle();
+    app.state.effects.fuzzyEnabled = nextEnabled;
+    app.syncNoiseTicker();
     if (vectorThemeFrameId) window.cancelAnimationFrame(vectorThemeFrameId);
     vectorThemeFrameId = 0;
     app.homeVectorTheme = true;
@@ -160,6 +165,24 @@
       }
     };
     vectorThemeFrameId = window.requestAnimationFrame(step);
+  }
+
+  function syncTitleToggle() {
+    const button = document.getElementById("flyover-title-toggle");
+    const title = document.getElementById("flyover-social-title");
+    button?.setAttribute("aria-pressed", titleEnabled ? "true" : "false");
+    if (button) {
+      button.title = titleEnabled ? "Hide Maze Bench title" : "Show Maze Bench title";
+    }
+    if (title) {
+      title.hidden = !titleEnabled;
+      title.setAttribute("aria-hidden", titleEnabled ? "false" : "true");
+    }
+  }
+
+  function setFlyoverTitle(enabled) {
+    titleEnabled = enabled === true;
+    syncTitleToggle();
   }
 
   function revealLoadedFlyoverWorld() {
@@ -1564,7 +1587,11 @@
   document.getElementById("flyover-edge-toggle")?.addEventListener("click", () => {
     setFlyoverEdgeMode(!edgeModeEnabled);
   });
+  document.getElementById("flyover-title-toggle")?.addEventListener("click", () => {
+    setFlyoverTitle(!titleEnabled);
+  });
   syncEdgeModeToggle();
+  syncTitleToggle();
 
   function cameraControlForKey(key) {
     if (key === "a") {
