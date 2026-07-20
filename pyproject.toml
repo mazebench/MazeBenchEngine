@@ -1,13 +1,13 @@
 [project]
 name = "mazebench"
 version = "0.2.10"
-description = "MazeBench: ice-maze puzzle site, world editor, and coding-agent benchmark runner. `mazebench launch` serves the website locally."
+description = "Build and play persistent 3D worlds, then benchmark coding agents and Prime Intellect Verifiers against them."
 readme = "README.md"
 license = "MIT"
 # The CLI is a stdlib-only launcher (it shells out to Node), so it runs on any
 # modern Python. No upper bound: future Python releases should install fine.
 requires-python = ">=3.9"
-keywords = ["maze", "benchmark", "agents", "game", "puzzle"]
+keywords = ["maze", "benchmark", "agents", "world-building", "reinforcement-learning"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -20,7 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "Topic :: Games/Entertainment :: Puzzle Games",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Testing",
 ]
 # The `mazebench` CLI is a launcher that shells out to the bundled Node runtime

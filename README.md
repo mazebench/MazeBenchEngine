@@ -1,9 +1,13 @@
 # MazeBench
 
-The MazeBench env can run in the browser, in the terminal, driven by a local
-coding agent (Codex CLI or Claude Code), and through Prime Intellect Verifiers
-v1. The Verifiers integration includes both normal multi-turn chat-model runs
-and Codex CLI runs.
+MazeBench is a world-building, play, and AI-agent benchmarking platform. Create
+persistent multi-room 3D worlds, navigate them yourself in the browser or
+terminal, and run coding agents or Prime Intellect Verifiers against the same
+JavaScript engine.
+
+Local agent runs support Codex CLI and Claude Code. The Verifiers v1
+integration supports both normal multi-turn chat-model runs and coding-agent
+harnesses.
 
 ## Install from PyPI and launch
 

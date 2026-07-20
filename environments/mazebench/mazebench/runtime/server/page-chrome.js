@@ -43,7 +43,7 @@ const TOPBAR_NAV_SCRIPT = `(() => {
 function pageHead({ title, description = "", extraHeadHtml = "" } = {}) {
   const safeTitle = escapeHtml(title || "Maze Bench");
   const safeDescription = escapeHtml(
-    description || "Maze Bench — ice-maze puzzles, a world editor, and coding-agent benchmark runs."
+    description || "Maze Bench — build and play persistent 3D worlds, then benchmark coding agents against them."
   );
 
   return `<meta charset="utf-8">
