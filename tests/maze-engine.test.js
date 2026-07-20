@@ -4642,6 +4642,60 @@ for (const ownerType of ["weightless_box", "clone"]) {
 }
 
 {
+  // level_AxA regression: two adjacent Box slopes at the same elevation
+  // behave like two adjacent terrain slopes. The upper collision band of the
+  // second wedge blocks the first wedge's exit, so the player bounces home;
+  // it must not settle underneath and lift the connected group into the air.
+  const terrain = floorTerrain(1, 4);
+  terrain[3][0] = iceFloorLayer(0);
+  const { engine, state } = createState({
+    width: 1,
+    height: 4,
+    terrain,
+    actors: [
+      { type: "player", x: 0, y: 3, elevation: 0, removed: false },
+      {
+        type: "weightless_box",
+        groupId: "M1",
+        shape: "slope",
+        direction: "up",
+        x: 0,
+        y: 2,
+        elevation: 0,
+        removed: false
+      },
+      {
+        type: "weightless_box",
+        groupId: "M1",
+        shape: "slope",
+        direction: "up",
+        x: 0,
+        y: 1,
+        elevation: 0,
+        removed: false
+      }
+    ]
+  });
+
+  const result = engine.move(state, 0, -1);
+
+  assert.equal(result.moved, false);
+  assert.deepEqual(
+    [state.actorX[0], state.actorY[0], state.actorElevation[0]],
+    [0, 3, 0],
+    "player bounces home from adjacent same-height box slopes"
+  );
+  assert.deepEqual(
+    [
+      [state.actorY[1], state.actorElevation[1]],
+      [state.actorY[2], state.actorElevation[2]]
+    ],
+    [[2, 0], [1, 0]],
+    "connected box slopes keep their authored positions and elevations"
+  );
+}
+
+{
   const { engine, state } = createState({
     width: 5,
     height: 1,

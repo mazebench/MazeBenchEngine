@@ -345,7 +345,15 @@
   const slopeFamiliesBySuffix = new Map();
   // These are core building tools, not optional discoveries from whichever
   // directional entries happen to be present in the page palette payload.
-  const permanentToolboxSlopeTokens = ["Sr", "Sr#", "SrO"];
+  const numberedBoxSlopeToolTokens = [0, 1, 2, 3, 4].map((id) => "SrM" + id);
+  const numberedCloneSlopeToolTokens = [0, 1, 2].map((id) => "Src" + id);
+  const permanentToolboxSlopeTokens = [
+    "Sr",
+    "Sr#",
+    "SrO",
+    ...numberedBoxSlopeToolTokens,
+    ...numberedCloneSlopeToolTokens
+  ];
 
   function slopeTokenStyleSuffix(token) {
     const match = /^S[rlud](.*)$/.exec(String(token || ""));
@@ -2457,14 +2465,28 @@
   }
 
   // ---- Toolbox (inventory) + bottom hotbar ----
+  function isIceSlopeInventoryTool(tool) {
+    return (
+      slopeTokenStyleSuffix(tool?.token) !== null ||
+      tool?.token === blueSlopePromptToken ||
+      tool?.token === yellowSlopePromptToken
+    );
+  }
+
   const INVENTORY_GROUPS = [
-    { match: (tool) => ["select_only", "eraser", "floor", "ice", "wall", "ice_block"].includes(tool.name), name: "Basics" },
+    { match: (tool) => ["select_only", "eraser", "floor", "ice", "wall", "ice_block", "gem"].includes(tool.name), name: "Basics" },
     {
       match: (tool) =>
-        ["ice_slope", "orange_ice_slope", "player_gate", "player_lift", "orange_wall", "orange_button", "puncher", "floating_floor", "weightless_box"].includes(tool.name),
+        !isIceSlopeInventoryTool(tool) &&
+        ["player_gate", "player_lift", "orange_wall", "orange_button", "puncher", "floating_floor", "weightless_box"].includes(tool.name),
       name: "Mechanisms"
     },
-    { match: (tool) => ["player", "clone", "gem"].includes(tool.name), name: "Players & Goals" },
+    {
+      match: (tool) =>
+        !isIceSlopeInventoryTool(tool) && ["player", "circle_player", "clone"].includes(tool.name),
+      name: "Players & Clones"
+    },
+    { match: isIceSlopeInventoryTool, name: "Ice Slopes" },
     { match: () => true, name: "Scenery" }
   ];
 
@@ -2474,8 +2496,13 @@
     if (slopeSuffix === "") return 0;
     if (slopeSuffix === "#") return 1;
     if (slopeSuffix === "O") return 2;
-    if (tool?.token === blueSlopePromptToken) return 3;
-    if (tool?.token === yellowSlopePromptToken) return 4;
+    const boxSlopeMatch = /^M([0-4])$/.exec(slopeSuffix || "");
+    const cloneSlopeMatch = /^c([0-2])$/.exec(slopeSuffix || "");
+
+    if (boxSlopeMatch) return 10 + Number(boxSlopeMatch[1]);
+    if (tool?.token === blueSlopePromptToken) return 15;
+    if (cloneSlopeMatch) return 20 + Number(cloneSlopeMatch[1]);
+    if (tool?.token === yellowSlopePromptToken) return 23;
     return 100;
   }
   const INVENTORY_DEMO_CLASSES = [
