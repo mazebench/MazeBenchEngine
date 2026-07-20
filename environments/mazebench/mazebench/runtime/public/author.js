@@ -320,6 +320,22 @@
     return null;
   }
 
+  function ownedSlopePalettePreviewSpec(token, promptPreview = null) {
+    const match = /^Sr([Mc])(\d+)$/.exec(String(token || ""));
+
+    if (!match) {
+      return null;
+    }
+
+    const groupId = match[1] + match[2];
+
+    return {
+      actorToken: groupId,
+      groupId: promptPreview?.groupId || groupId,
+      type: match[1] === "M" ? "weightless_box" : "clone"
+    };
+  }
+
   // ---- Slope families ----
   // Every slope styling family — plain, black "#", orange "O", and the
   // open-ended blue "M<N>" / yellow "c<N>" tints — collapses to ONE toolbox
@@ -3849,11 +3865,16 @@
     const slopeSuffix = slopeTokenStyleSuffix(directionalPreviewToken);
     const previewToken = slopeSuffix === null ? directionalPreviewToken : "Sr" + slopeSuffix;
     const slopePortrait = slopeSuffix !== null;
+    const ownedSlopePreview = ownedSlopePalettePreviewSpec(previewToken, promptPreview);
+    // Build owned-slope portraits from their owning actor, then turn that
+    // actor into a wedge below. This keeps stale or custom palette entries
+    // from resolving SrM<N>/Src<N> as a plain tan terrain slope.
+    const previewCellToken = ownedSlopePreview?.actorToken || previewToken;
 
     cells[0][0] =
       kind === "orange_button"
-        ? appendCellToken(authorData.defaultFloorToken, previewToken)
-        : previewToken;
+        ? appendCellToken(authorData.defaultFloorToken, previewCellToken)
+        : previewCellToken;
 
     const playData = buildPlayData({
         cameraView: { width, height },
@@ -3872,16 +3893,21 @@
         width
       });
 
-    if (promptPreview) {
+    if (ownedSlopePreview) {
+      playData.actors.forEach((actor) => {
+        if (actor.type !== ownedSlopePreview.type) {
+          return;
+        }
+
+        actor.direction = "right";
+        actor.groupId = ownedSlopePreview.groupId;
+        actor.shape = "slope";
+        actor.styleKey = ownedSlopePreview.groupId;
+      });
+    } else if (promptPreview) {
       playData.actors.forEach((actor) => {
         if (actor.type === "weightless_box" || actor.type === "clone") {
           actor.groupId = promptPreview.groupId;
-          if (actor.shape === "slope") {
-            // Keep the generic N portrait in its numbered family all the way
-            // through rendering. Otherwise a stale/legacy actor definition
-            // can fall through to the tan floating-floor material.
-            actor.styleKey = promptPreview.groupId;
-          }
         }
       });
     }
