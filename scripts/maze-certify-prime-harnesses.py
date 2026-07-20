@@ -41,9 +41,10 @@ class RecordingRuntime:
     def __init__(self) -> None:
         self.argv: list[str] = []
         self.env: dict[str, str] = {}
+        self.writes: dict[str, bytes] = {}
 
     async def write(self, path: str, data: bytes) -> None:
-        del path, data
+        self.writes[path] = data
 
     async def run(self, argv: list[str], env: dict[str, str]) -> ProgramResult:
         del argv, env
@@ -214,7 +215,40 @@ async def certify() -> dict:
     command = "\n".join(runtime.argv)
     assert "mcp_servers.mazebench.url" in command
     assert 'enabled_tools=["start","observe","action"]' in command
-    assert "--disable\napps\n--disable\nplugins" in command
+    assert "--ephemeral" in runtime.argv
+    assert "--ignore-user-config" in runtime.argv
+    assert "--ignore-rules" in runtime.argv
+    assert 'web_search="disabled"' in runtime.argv
+    assert "tools.web_search=false" in runtime.argv
+    for feature in (
+        "apps",
+        "browser_use",
+        "computer_use",
+        "goals",
+        "image_generation",
+        "in_app_browser",
+        "memories",
+        "multi_agent",
+        "plugins",
+        "remote_plugin",
+        "shell_tool",
+        "standalone_web_search",
+        "tool_search",
+        "tool_suggest",
+        "workspace_dependencies",
+    ):
+        index = runtime.argv.index(feature)
+        assert index > 0 and runtime.argv[index - 1] == "--disable"
+    assert any("hooks.PreToolUse" in value for value in runtime.argv)
+    guard_source = next(
+        data.decode()
+        for path, data in runtime.writes.items()
+        if path.startswith(".vf-codex-game-only-")
+    )
+    assert "mcp__mazebench__start" in guard_source
+    assert "mcp__mazebench__observe" in guard_source
+    assert "mcp__mazebench__action" in guard_source
+    assert "External tools are disabled" in guard_source
     assert str(ROOT) not in command
 
     return {

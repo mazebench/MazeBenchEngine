@@ -20,6 +20,24 @@ from verifiers.v1.types import TextContentPart
 
 logger = logging.getLogger(__name__)
 
+GAME_ONLY_DISABLED_FEATURES = (
+    "apps",
+    "browser_use",
+    "computer_use",
+    "goals",
+    "image_generation",
+    "in_app_browser",
+    "memories",
+    "multi_agent",
+    "plugins",
+    "remote_plugin",
+    "shell_tool",
+    "standalone_web_search",
+    "tool_search",
+    "tool_suggest",
+    "workspace_dependencies",
+)
+
 
 class MazeBenchCodexHarness(CodexHarness):
     SUPPORTS_MCP = True
@@ -78,10 +96,40 @@ class MazeBenchCodexHarness(CodexHarness):
             prompt = "\n\n".join(part for part in (system_prompt, prompt) if part)
 
         env = {**self.config.resolved_env, KEY_VAR: secret}
+        allowed_tools = [
+            f"mcp__{name}__{tool}"
+            for name in mcp_urls
+            for tool in ("start", "observe", "action")
+        ]
+        guard_path = f".vf-codex-game-only-{trace.id}.js"
+        guard_source = f"""const allowed = new Set({json.dumps(allowed_tools)});
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {{ input += chunk; }});
+process.stdin.on("end", () => {{
+  let event = {{}};
+  try {{ event = JSON.parse(input); }} catch (_error) {{
+    process.stderr.write("Game-only mode rejected an unreadable tool request.\\n");
+    process.exitCode = 2;
+    return;
+  }}
+  if (!allowed.has(String(event.tool_name || ""))) {{
+    process.stderr.write("External tools are disabled; use only the game controls.\\n");
+    process.exitCode = 2;
+  }}
+}});
+"""
+        await runtime.write(guard_path, guard_source.encode())
+        guard_command = json.dumps(f"node {guard_path}")
         tool_config = [
             arg
             for tool in self.config.disabled_tools or []
             for arg in ("--disable", tool)
+        ]
+        restricted_features = [
+            arg
+            for feature in GAME_ONLY_DISABLED_FEATURES
+            for arg in ("--disable", feature)
         ]
         mcp_config: list[str] = []
         for name, url in mcp_urls.items():
@@ -103,14 +151,19 @@ class MazeBenchCodexHarness(CodexHarness):
         argv = [
             CODEX_BIN,
             "exec",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
             "--dangerously-bypass-approvals-and-sandbox",
+            "--dangerously-bypass-hook-trust",
             "--skip-git-repo-check",
-            "--disable",
-            "apps",
-            "--disable",
-            "plugins",
-            "--disable",
-            "multi_agent",
+            "-c",
+            'web_search="disabled"',
+            "-c",
+            "tools.web_search=false",
+            "-c",
+            f'hooks.PreToolUse=[{{ matcher=".*", hooks=[{{ type="command", command={guard_command}, timeout=5, statusMessage="Enforcing game-only mode" }}] }}]',
+            *restricted_features,
             "-c",
             f"features.multi_agent_v2.enabled={str(self.config.multi_agent).lower()}",
             "-m",
@@ -136,6 +189,10 @@ class MazeBenchCodexHarness(CodexHarness):
         try:
             return await runtime.run_program(argv, env)
         finally:
+            try:
+                await runtime.run(["rm", "-f", guard_path], {})
+            except Exception:
+                logger.warning("failed to clean up Codex tool guard", exc_info=True)
             if image_args:
                 try:
                     await runtime.run(["rm", "-rf", image_dir], {})
