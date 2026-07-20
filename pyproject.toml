@@ -2,7 +2,7 @@
 name = "mazebench"
 version = "0.2.10"
 description = "Build and play persistent 3D worlds, then benchmark coding agents and Prime Intellect Verifiers against them."
-readme = "README.md"
+readme = "README_PYPI.md"
 license = "MIT"
 # The CLI is a stdlib-only launcher (it shells out to Node), so it runs on any
 # modern Python. No upper bound: future Python releases should install fine.
@@ -57,5 +57,5 @@ packages = ["mazebench_cli"]
 artifacts = ["mazebench_cli/_runtime/**"]
 
 [tool.hatch.build.targets.sdist]
-include = ["mazebench_cli/**", "README.md", "LICENSE"]
+include = ["mazebench_cli/**", "README.md", "README_PYPI.md", "LICENSE"]
 artifacts = ["mazebench_cli/_runtime/**"]
