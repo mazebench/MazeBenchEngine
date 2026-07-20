@@ -101,8 +101,11 @@ const previewSection = sourceSection(
 assert.match(previewSection, /const width = 1/);
 assert.match(previewSection, /"__palette_preview_"/);
 assert.match(previewSection, /const promptPreview = promptToolPreviewSpec\(tool\.token\)/);
-assert.match(previewSection, /actor\.groupId = promptPreview\.groupId/);
-assert.match(previewSection, /actor\.styleKey = promptPreview\.groupId/);
+assert.match(previewSection, /const ownedSlopePreview = ownedSlopePalettePreviewSpec\(previewToken, promptPreview\)/);
+assert.match(previewSection, /const previewCellToken = ownedSlopePreview\?\.actorToken \|\| previewToken/);
+assert.match(previewSection, /actor\.groupId = ownedSlopePreview\.groupId/);
+assert.match(previewSection, /actor\.shape = "slope"/);
+assert.match(previewSection, /actor\.styleKey = ownedSlopePreview\.groupId/);
 assert.match(previewSection, /const puncherPortrait = kind === "puncher"/);
 assert.match(previewSection, /const slopeSuffix = slopeTokenStyleSuffix\(directionalPreviewToken\)/);
 assert.match(previewSection, /slopeSuffix === null \? directionalPreviewToken : "Sr" \+ slopeSuffix/);
@@ -212,6 +215,44 @@ assert.match(cameraSlopeSection, /slopeFamilyForToken\(state\.selectedToken\)/);
 assert.match(source, /function promptToolPreviewSpec/);
 assert.match(source, /return \{ groupId: "MN", token: "M0" \}/);
 assert.match(source, /return \{ groupId: "cN", token: "c0" \}/);
+
+const ownedSlopePreviewSource = sourceSection(
+  "function ownedSlopePalettePreviewSpec",
+  "// ---- Slope families ----"
+).trim();
+const ownedSlopePalettePreviewSpec = vm.runInNewContext(`(${ownedSlopePreviewSource})`);
+
+assert.deepEqual(
+  { ...ownedSlopePalettePreviewSpec("SrM7") },
+  { actorToken: "M7", groupId: "M7", type: "weightless_box" }
+);
+assert.deepEqual(
+  { ...ownedSlopePalettePreviewSpec("Src2") },
+  { actorToken: "c2", groupId: "c2", type: "clone" }
+);
+assert.deepEqual(
+  { ...ownedSlopePalettePreviewSpec("SrM0", { groupId: "MN" }) },
+  { actorToken: "M0", groupId: "MN", type: "weightless_box" }
+);
+assert.equal(ownedSlopePalettePreviewSpec("Sr"), null);
+
+const threeRenderSource = fs.readFileSync(
+  path.join(__dirname, "..", "public", "play-render-three.js"),
+  "utf8"
+);
+const actorContextSection = threeRenderSource.slice(
+  threeRenderSource.indexOf("function renderActorContextKey"),
+  threeRenderSource.indexOf("function invalidateSceneCache")
+);
+const actorSignatureSection = threeRenderSource.slice(
+  threeRenderSource.indexOf("function actorSignature"),
+  threeRenderSource.indexOf("function levelStateSignature")
+);
+
+assert.match(actorContextSection, /actor\?\.shape \|\| ""/);
+assert.match(actorContextSection, /actor\?\.styleKey \|\| ""/);
+assert.match(actorSignatureSection, /actor\.shape \|\| ""/);
+assert.match(actorSignatureSection, /actor\.styleKey \|\| ""/);
 
 const dirtyStateSection = sourceSection(
   "function syncEditorDirtyState",

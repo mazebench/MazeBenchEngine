@@ -162,6 +162,8 @@
       return [
         actor?.type || "",
         actor?.groupId || "",
+        actor?.shape || "",
+        actor?.styleKey || "",
         actor?.direction || actor?.facing || "",
         actor?.x,
         actor?.y,
@@ -9019,6 +9021,8 @@
       return [
         actor.type,
         actor.groupId || "",
+        actor.shape || "",
+        actor.styleKey || "",
         actor.modelUrl || "",
         actor.direction || actor.facing || "",
         actor.removed ? 1 : 0,
