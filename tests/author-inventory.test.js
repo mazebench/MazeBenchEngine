@@ -191,7 +191,12 @@ assert.match(source, /return eraserToolIconSvg/);
 assert.doesNotMatch(source, /promptToolIconSvg/);
 assert.match(source, /if \(slopeSuffix === "#"\) return 1/);
 assert.match(source, /if \(slopeSuffix === "O"\) return 2/);
-assert.match(source, /const permanentToolboxSlopeTokens = \["Sr", "Sr#", "SrO"\]/);
+assert.match(source, /const numberedBoxSlopeToolTokens = \[0, 1, 2, 3, 4\]/);
+assert.match(source, /const numberedCloneSlopeToolTokens = \[0, 1, 2\]/);
+assert.match(
+  source,
+  /const permanentToolboxSlopeTokens = \[[\s\S]*?\.\.\.numberedBoxSlopeToolTokens[\s\S]*?\.\.\.numberedCloneSlopeToolTokens/
+);
 assert.match(source, /\["r", "l", "u", "d"\]\.forEach\(\(directionChar\) =>/);
 assert.match(
   source,
@@ -215,6 +220,22 @@ assert.match(cameraSlopeSection, /slopeFamilyForToken\(state\.selectedToken\)/);
 assert.match(source, /function promptToolPreviewSpec/);
 assert.match(source, /return \{ groupId: "MN", token: "M0" \}/);
 assert.match(source, /return \{ groupId: "cN", token: "c0" \}/);
+
+const inventoryGroupsSection = sourceSection(
+  "function isIceSlopeInventoryTool",
+  "const INVENTORY_DEMO_CLASSES"
+);
+assert.match(inventoryGroupsSection, /"ice_block", "gem"/);
+assert.match(inventoryGroupsSection, /name: "Players & Clones"/);
+assert.match(inventoryGroupsSection, /name: "Ice Slopes"/);
+assert.ok(
+  inventoryGroupsSection.indexOf('name: "Players & Clones"') <
+    inventoryGroupsSection.indexOf('name: "Ice Slopes"')
+);
+assert.match(inventoryGroupsSection, /\^M\(\[0-4\]\)\$/);
+assert.match(inventoryGroupsSection, /\^c\(\[0-2\]\)\$/);
+assert.match(inventoryGroupsSection, /blueSlopePromptToken\) return 15/);
+assert.match(inventoryGroupsSection, /yellowSlopePromptToken\) return 23/);
 
 const ownedSlopePreviewSource = sourceSection(
   "function ownedSlopePalettePreviewSpec",
