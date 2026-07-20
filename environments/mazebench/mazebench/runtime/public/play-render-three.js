@@ -11670,7 +11670,7 @@
 
           attachWorldViewRoomEntry(entry, view);
 
-          if (!legacyBrightnessBuilds) {
+          if (!legacyBrightnessBuilds || app.isFlyoverMode) {
             applyWorldViewRoomShadow(entry, worldViewRoomEntryShadowFactor(entry, shadowFactor));
           }
 
@@ -11724,7 +11724,7 @@
         worldViewRoomGroups.set(pending.view.levelId, entry);
         attachWorldViewRoomEntry(entry, pending.view);
 
-        if (!legacyBrightnessBuilds) {
+        if (!legacyBrightnessBuilds || app.isFlyoverMode) {
           applyWorldViewRoomShadow(entry, worldViewRoomEntryShadowFactor(entry, shadowFactor));
         }
 
@@ -11752,7 +11752,9 @@
       // per-room groups buys nothing. Play mode (including wide transitions)
       // keeps per-room groups so the camera frustum culls off-screen rooms.
       const wantsWorldConsolidation =
-        ((app.isFlyoverMode && app.flyoverWholeWorld === true) ||
+        ((app.isFlyoverMode &&
+            app.flyoverWholeWorld === true &&
+            currentVectorGlow() <= 0.001) ||
           (!app.isFlyoverMode && app.worldViewConsolidate === true && isWorldViewPlayMode())) &&
         // An anchor-mismatched retained snapshot must not be clobbered by a
         // live rebuild — keep drawing per-room groups until the anchor is

@@ -234,6 +234,19 @@
       renderCompositor.drawScene(now);
 
       if (app.isFlyoverMode && app.threeRenderer?.usesDirectCanvas?.()) {
+        const settings = app.getEffectSettings();
+        const directCanvas = app.threeRenderer.threeCanvas;
+        const usePostProcessing = app.state.effects.fuzzyEnabled === true;
+
+        app.mazeFrame?.classList.toggle("is-flyover-postprocessed", usePostProcessing);
+        app.canvas.style.display = usePostProcessing ? "block" : "none";
+
+        if (usePostProcessing && directCanvas) {
+          if (!app.renderWithShader(directCanvas, settings)) {
+            app.renderFallback(directCanvas);
+          }
+        }
+
         return;
       }
 

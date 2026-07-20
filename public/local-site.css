@@ -1235,6 +1235,19 @@ body.play-body {
   background: #03050d;
 }
 
+.flyover-body .flyover-frame .maze-canvas {
+  inset: 0;
+  position: absolute;
+}
+
+.flyover-body .flyover-frame .flyover-direct-canvas {
+  z-index: 1;
+}
+
+.flyover-body .flyover-frame #maze-canvas {
+  z-index: 2;
+}
+
 .flyover-loading {
   align-items: center;
   background: #03050d;
@@ -1275,6 +1288,29 @@ body.play-body {
 .flyover-controls {
   opacity: 1;
   transition: opacity 220ms ease;
+}
+
+.flyover-body .topbar {
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.flyover-body.is-flyover-presentation .topbar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-100%);
+  visibility: hidden;
+}
+
+.flyover-body.is-flyover-presentation #game-root .play-shell {
+  height: 100dvh;
+  top: 0;
+}
+
+.flyover-body.is-flyover-presentation .flyover-controls,
+.flyover-body.is-flyover-presentation .flyover-hud {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
 }
 
 #game-root.is-flyover-revealing .flyover-controls,

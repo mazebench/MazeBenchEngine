@@ -114,6 +114,7 @@
   let vectorThemeFrameId = 0;
   let edgeModeEnabled = true;
   let titleEnabled = false;
+  let presentationModeEnabled = false;
 
   function syncEdgeModeToggle() {
     const button = document.getElementById("flyover-edge-toggle");
@@ -183,6 +184,25 @@
   function setFlyoverTitle(enabled) {
     titleEnabled = enabled === true;
     syncTitleToggle();
+    setFlyoverPresentationMode(titleEnabled);
+  }
+
+  function syncPresentationLayout() {
+    window.requestAnimationFrame(() => {
+      app.syncPlayLayout();
+      app.setupCanvas();
+      app.syncCameraTarget(true);
+      app.threeRenderer?.invalidateSceneCache?.();
+      app.render();
+    });
+  }
+
+  function setFlyoverPresentationMode(enabled) {
+    const nextEnabled = enabled === true;
+    if (presentationModeEnabled === nextEnabled) return;
+    presentationModeEnabled = nextEnabled;
+    document.body.classList.toggle("is-flyover-presentation", presentationModeEnabled);
+    syncPresentationLayout();
   }
 
   function revealLoadedFlyoverWorld() {
@@ -1590,6 +1610,12 @@
   document.getElementById("flyover-title-toggle")?.addEventListener("click", () => {
     setFlyoverTitle(!titleEnabled);
   });
+  document.querySelector(".flyover-stage")?.addEventListener("click", (event) => {
+    if (!presentationModeEnabled) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    setFlyoverPresentationMode(false);
+  }, true);
   syncEdgeModeToggle();
   syncTitleToggle();
 
