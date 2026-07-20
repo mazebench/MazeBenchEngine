@@ -4362,26 +4362,46 @@
       return canMoveInto(state, x, y, occupied, gateState, orangeButtonsPressed, elevation);
     }
 
-    function iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal) {
+    function iceSlopeTraversalExitIsOccupied(state, occupied, traversal, nextTraversal) {
       const slopeActor = nextTraversal?.slopeLayer?.slopeActorIndex;
 
       // A slope-shaped actor occupies the voxel containing its own inclined
       // face. When that face continues a ramp chain, exempt only that actor;
       // any other occupant still blocks exactly as it would on terrain ramps.
-      return Number.isInteger(slopeActor)
-        ? isOccupiedAtElevationByOtherThan(
-            occupied,
-            traversal.exitX,
-            traversal.exitY,
-            traversal.exitElevation,
-            slopeActor
-          )
-        : isOccupiedAtElevation(
-            occupied,
-            traversal.exitX,
-            traversal.exitY,
-            traversal.exitElevation
-          );
+      if (Number.isInteger(slopeActor)) {
+        return isOccupiedAtElevationByOtherThan(
+          occupied,
+          traversal.exitX,
+          traversal.exitY,
+          traversal.exitElevation,
+          slopeActor
+        );
+      }
+
+      // Like a terrain ramp, an owned slope also fills its upper collision
+      // band. A same-height wedge at the previous wedge's uphill exit is not
+      // a continuation: it blocks and bounces the traversal. Without this,
+      // the player could enter that upper band, settle underneath the wedge,
+      // and lift the entire connected Box/Clone slope group one elevation.
+      const exitSlopeActor = slopeActorAtCell(
+        state,
+        traversal.exitX,
+        traversal.exitY
+      );
+
+      if (
+        exitSlopeActor !== -1 &&
+        actorElevation(state, exitSlopeActor) + 1 === traversal.exitElevation
+      ) {
+        return true;
+      }
+
+      return isOccupiedAtElevation(
+        occupied,
+        traversal.exitX,
+        traversal.exitY,
+        traversal.exitElevation
+      );
     }
 
     function resolveIceSlopeTraversal(
@@ -4445,7 +4465,7 @@
         // compatible continuation before treating their upper band as empty.
         if (
           nextTraversal &&
-          !iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal)
+          !iceSlopeTraversalExitIsOccupied(state, occupied, traversal, nextTraversal)
         ) {
           if (
             traversal.exitElevation < traversal.entryElevation &&
@@ -4456,6 +4476,12 @@
           traversal = nextTraversal;
           appendPathPoints(path, iceSlopeTraversalPathPoints(traversal));
           continue;
+        }
+
+        if (
+          iceSlopeTraversalExitIsOccupied(state, occupied, traversal, nextTraversal)
+        ) {
+          return null;
         }
 
         if (
@@ -4531,11 +4557,17 @@
 
         if (
           nextTraversal &&
-          !iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal)
+          !iceSlopeTraversalExitIsOccupied(state, occupied, traversal, nextTraversal)
         ) {
           traversal = nextTraversal;
           appendPathPoints(path, iceSlopeTraversalPathPoints(traversal));
           continue;
+        }
+
+        if (
+          iceSlopeTraversalExitIsOccupied(state, occupied, traversal, nextTraversal)
+        ) {
+          return path.map((point) => ({ ...point }));
         }
 
         if (
@@ -4601,7 +4633,7 @@
         );
 
         if (nextTraversal) {
-          if (iceSlopeTraversalExitIsOccupied(occupied, traversal, nextTraversal)) {
+          if (iceSlopeTraversalExitIsOccupied(state, occupied, traversal, nextTraversal)) {
             return null;
           }
 
@@ -10635,6 +10667,15 @@
             moves.length = moveCount;
             return false;
           };
+          const entersIceSlope = iceSlopeTraversalForEntry(
+            state,
+            targetX,
+            targetY,
+            stepDx,
+            stepDy,
+            travelElevation,
+            orangeButtonsPressed
+          ) !== null;
           let slopeTraversal = resolveIceSlopeTraversal(
             state,
             targetX,
@@ -10750,7 +10791,10 @@
           const pushingRaisedAttachedDevice = attachedDeviceCarrier !== -1;
           const actorToPush = blockingActor !== -1 ? blockingActor : attachedDeviceCarrier;
           const canAttemptInitialPush =
-            actorToPush !== -1 && isInitialStep && isPushableActor(actorToPush);
+            actorToPush !== -1 &&
+            isInitialStep &&
+            !entersIceSlope &&
+            isPushableActor(actorToPush);
           let pushedFollowPath = null;
           let pushedFollowTargetX = moveTargetX;
           let pushedFollowTargetY = moveTargetY;
