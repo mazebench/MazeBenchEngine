@@ -200,6 +200,84 @@ function createState(playData) {
   assert.deepEqual([state.actorX[1], state.actorY[1]], [1, 0]);
 }
 
+for (const { name, dx, dy } of [
+  { name: "left", dx: -1, dy: 0 },
+  { name: "right", dx: 1, dy: 0 },
+  { name: "up", dx: 0, dy: -1 },
+  { name: "down", dx: 0, dy: 1 }
+]) {
+  // A rigid clone formation may surround the main player. Every player-type
+  // actor receives the same input, so the clone group and player must vacate
+  // one another's cells atomically instead of deadlocking on their starting
+  // occupancy.
+  const actors = [];
+
+  for (let y = 1; y <= 3; y += 1) {
+    for (let x = 1; x <= 3; x += 1) {
+      actors.push(
+        x === 2 && y === 2
+          ? { type: "player", x, y, removed: false }
+          : { type: "clone", groupId: "c0", x, y, removed: false }
+      );
+    }
+  }
+
+  const { engine, state } = createState({
+    width: 5,
+    height: 5,
+    terrain: floorTerrain(5, 5),
+    actors
+  });
+  const beforeKey = engine.stateKey(state);
+  const result = engine.move(state, dx, dy);
+
+  assert.equal(result.moved, true, `surrounded player formation moves ${name}`);
+  actors.forEach((actor, index) => {
+    assert.deepEqual(
+      [state.actorX[index], state.actorY[index]],
+      [actor.x + dx, actor.y + dy],
+      `${actor.type} translates with the ${name} formation`
+    );
+  });
+  assert.equal(
+    result.moves.filter((move) => !move.visualOnly).length,
+    actors.length,
+    `every formation member records one ${name} move`
+  );
+
+  engine.undoMove(state, result);
+  assert.equal(engine.stateKey(state), beforeKey, `${name} formation move undoes exactly`);
+}
+
+{
+  // Interlocked occupancy is not permission to cross terrain or board edges:
+  // the same formation remains wholly stationary when its front face is
+  // blocked.
+  const actors = [];
+
+  for (let y = 1; y <= 3; y += 1) {
+    for (let x = 0; x <= 2; x += 1) {
+      actors.push(
+        x === 1 && y === 2
+          ? { type: "player", x, y, removed: false }
+          : { type: "clone", groupId: "c0", x, y, removed: false }
+      );
+    }
+  }
+
+  const { engine, state } = createState({
+    width: 5,
+    height: 5,
+    terrain: floorTerrain(5, 5),
+    actors
+  });
+  const beforeKey = engine.stateKey(state);
+  const result = engine.move(state, -1, 0);
+
+  assert.equal(result.moved, false);
+  assert.equal(engine.stateKey(state), beforeKey, "edge-blocked formation stays intact");
+}
+
 {
   const { engine, state } = createState({
     width: 3,

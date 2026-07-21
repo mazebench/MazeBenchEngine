@@ -10038,6 +10038,63 @@
       });
     }
 
+    function interlockedMainPlayersForCloneMove(state, members, dx, dy, alreadyVacated) {
+      if (!Array.isArray(members) || members.length === 0) {
+        return [];
+      }
+
+      const memberCells = new Set();
+      const targetCells = new Set();
+
+      members.forEach((member) => {
+        const elevation = actorElevation(state, member);
+        memberCells.add(
+          occupiedElevationKey(state.actorX[member], state.actorY[member], elevation)
+        );
+        targetCells.add(
+          occupiedElevationKey(
+            state.actorX[member] + dx,
+            state.actorY[member] + dy,
+            elevation
+          )
+        );
+      });
+
+      const interlockedPlayers = [];
+
+      for (let actor = 0; actor < actorCount; actor += 1) {
+        if (
+          !isMainPlayerActor(actor) ||
+          state.actorRemoved[actor] ||
+          alreadyVacated?.has(actor)
+        ) {
+          continue;
+        }
+
+        const elevation = actorElevation(state, actor);
+        const currentCell = occupiedElevationKey(
+          state.actorX[actor],
+          state.actorY[actor],
+          elevation
+        );
+        const targetCell = occupiedElevationKey(
+          state.actorX[actor] + dx,
+          state.actorY[actor] + dy,
+          elevation
+        );
+
+        // The clone group wants the player's current cell while the player
+        // wants one of the group's current cells. Since both receive the same
+        // input, this is a simultaneous translation dependency rather than a
+        // collision (for example, a player enclosed by a rigid clone ring).
+        if (targetCells.has(currentCell) && memberCells.has(targetCell)) {
+          interlockedPlayers.push(actor);
+        }
+      }
+
+      return interlockedPlayers;
+    }
+
     // Whether the destination elevation of a lift toggle is blocked by any
     // terrain layer OTHER than the lift itself (whose state the toggle is
     // about to change) — e.g. a bridge layer authored above the lift.
@@ -10371,6 +10428,7 @@
       originalActorElevation.set(state.actorElevation);
       const continuePunchSlide = options.continuePunchSlide === true;
       const carriedPlayers = new Set();
+      const preRemovedPlayerOccupancy = new Set();
 
       orderedPlayers.forEach((player) => {
         if (carriedPlayers.has(player)) {
@@ -10396,6 +10454,14 @@
           const moveStartIndex = moves.length;
           const ignoredActors = new Set(members);
           carriedRiders.forEach((rider) => ignoredActors.add(rider.actorIndex));
+          const interlockedMainPlayers = interlockedMainPlayersForCloneMove(
+            state,
+            members,
+            dx,
+            dy,
+            preRemovedPlayerOccupancy
+          );
+          interlockedMainPlayers.forEach((actor) => ignoredActors.add(actor));
           const attemptSnapshot = captureAttemptBefore(state);
           const attemptJournalMark = journalMark();
           const clonePushCluster = collectWeightlessPushCluster(
@@ -10441,6 +10507,15 @@
             });
             carriedRiders.forEach((rider) => {
               removeOccupiedAtElevation(occupied, rider.fromX, rider.fromY, rider.fromElevation);
+            });
+            interlockedMainPlayers.forEach((actor) => {
+              removeOccupiedAtElevation(
+                occupied,
+                state.actorX[actor],
+                state.actorY[actor],
+                actorElevation(state, actor)
+              );
+              preRemovedPlayerOccupancy.add(actor);
             });
 
             for (const blocker of clonePushCluster.blockers) {
@@ -10519,11 +10594,16 @@
 
           journalRollback(state, attemptJournalMark);
           occupancyRebuild(state);
+          interlockedMainPlayers.forEach((actor) => preRemovedPlayerOccupancy.delete(actor));
           moves.length = moveStartIndex;
           return;
         }
 
-        removeOccupiedAtElevation(occupied, fromX, fromY, fromElevation);
+        if (preRemovedPlayerOccupancy.has(player)) {
+          preRemovedPlayerOccupancy.delete(player);
+        } else {
+          removeOccupiedAtElevation(occupied, fromX, fromY, fromElevation);
+        }
 
         let nextX = fromX;
         let nextY = fromY;
