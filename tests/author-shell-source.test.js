@@ -70,6 +70,7 @@ assert.match(theme, /\.author-tool-icon--eraser \{/);
 assert.match(theme, /\.author-world-map-overlay\.is-open/);
 assert.match(theme, /\.author-world-map-swap\[aria-pressed="true"\]/);
 assert.match(theme, /\.author-world-map-stage \.author-level-pill\.is-swap-source/);
+assert.match(theme, /\.is-swap-source::after \{[\s\S]*border: 5px solid #ff334f/);
 assert.match(shell, /Math\.max\(\s*8,[\s\S]*availableWidth \/ columns[\s\S]*availableHeight \/ rows/);
 assert.match(shell, /mazebench:author-world-map-closed/);
 assert.match(theme, /\.author-start-room-grid \{/);
