@@ -264,6 +264,9 @@ try {
   assert.equal(jsonStatus.json_observation.omniscient, true);
   assert.equal(jsonStatus.json_observation.hide_names, true);
   assert.equal(jsonStatus.json_observation.objects.player.length > 0, true);
+  assert.equal(jsonStatus.moved, undefined);
+  assert.equal(jsonStatus.board_state_hash, undefined);
+  assert.equal(jsonStatus.board_state_hash_version, undefined);
   assert.equal(
     JSON.parse(fs.readFileSync(path.join(jsonDir, "session.json"), "utf8")).hideNamesSeed,
     "mcp-repeatable-seed"
@@ -387,8 +390,8 @@ try {
       `process.env.MAZEBENCH_RUN_DIR=${JSON.stringify(runDir)};` +
         `process.env.MAZEBENCH_MODE="text";` +
         `const {toolContent}=require(${JSON.stringify(path.join(rootDir, "scripts", "maze-mcp-server.js"))});` +
-        `const alive=toolContent({status:{level:"P",moved:false,player_dead:false,visited_levels:["level_HxH"]}}).structuredContent;` +
-        `const dead=toolContent({status:{level:".",moved:true,player_dead:true,death_message:"The player died, you must now undo or reset or go to a level.",allowed_commands:["undo","reset","go to level X Y"],visited_levels:["level_HxH","level_HxI"]}}).structuredContent;` +
+        `const alive=toolContent({status:{level:"P",moved:false,board_state_hash:"alive-hash",board_state_hash_version:1,player_dead:false,visited_levels:["level_HxH"]}}).structuredContent;` +
+        `const dead=toolContent({status:{level:".",moved:true,board_state_hash:"dead-hash",board_state_hash_version:1,player_dead:true,death_message:"The player died, you must now undo or reset or go to a level.",allowed_commands:["undo","reset","go to level X Y"],visited_levels:["level_HxH","level_HxI"]}}).structuredContent;` +
         `process.stdout.write(JSON.stringify({alive,dead}));`
     ],
     { cwd: rootDir, encoding: "utf8" }
@@ -438,6 +441,9 @@ try {
     assert.equal(toolResult?.content?.[1]?.mimeType, "image/png");
     assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "level"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "json_observation"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "moved"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "board_state_hash"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "board_state_hash_version"), false);
     assert.doesNotMatch(toolResult?.content?.[0]?.text || "", new RegExp(rootDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert(fs.existsSync(path.join(visionDir, "frames", "frame-000.png")));

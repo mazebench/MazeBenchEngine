@@ -351,6 +351,9 @@ function assertMove(move, yaw, expected) {
       scorecard: { actions: { total: 9 }, gems: { collected: 1 } }
     },
     current_room: "level_HxI",
+    moved: false,
+    board_state_hash: "model-secret-state-hash",
+    board_state_hash_version: 1,
     frame_image: "/tmp/frame.png"
   };
   const redacted = redactVisionStatus(source);
@@ -359,12 +362,17 @@ function assertMove(move, yaw, expected) {
   assert.equal(redacted.current_room, "level_HxI");
   assert.equal(redacted.frame_image, "/tmp/frame.png");
   assert.equal(Object.prototype.hasOwnProperty.call(redacted, "player"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(redacted, "moved"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(redacted, "board_state_hash"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(redacted, "board_state_hash_version"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(redacted.nested, "scorecard"), false);
 
   const text = redactAgentStatus(source, { mode: "text" });
   assert.equal(text.level, secretBoard);
   assert.equal(Object.prototype.hasOwnProperty.call(text, "player"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(text, "_render_state"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(text, "moved"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(text, "board_state_hash"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(text.nested, "json_observation"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(text.nested, "scorecard"), false);
 
@@ -372,7 +380,14 @@ function assertMove(move, yaw, expected) {
   assert.deepEqual(json.player, { x: 1, y: 2, elevation: 0 });
   assert.deepEqual(json.nested.json_observation.objects.player, [[1, 2, 0]]);
   assert.equal(Object.prototype.hasOwnProperty.call(json, "level"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(json, "moved"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(json, "board_state_hash"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(json.nested, "scorecard"), false);
+
+  const internal = redactAgentStatus(source, { mode: "json", includeInternalSignals: true });
+  assert.equal(internal.moved, false);
+  assert.equal(internal.board_state_hash, "model-secret-state-hash");
+  assert.equal(internal.board_state_hash_version, 1);
 
   const unfinished = {
     actions: [{ command: "up" }],

@@ -139,7 +139,10 @@ def _tool_prompt(task: MazeBenchTaskData) -> str:
 Call `game_start` exactly once first. Inspect its sanitized {mode} observation, then call
 `game_action` with one action at a time. Use `game_observe` only when you need to inspect the
 current state without consuming an action. Valid actions include up, down, left, right,
-rotate camera left, rotate camera right, undo, reset, and go to level X Y.{kimi_observe_policy}
+rotate camera up, rotate camera down, rotate camera left, rotate camera right, undo, reset,
+and go to level X Y.{kimi_observe_policy}
+The controls do not report whether a movement was blocked; infer its effect only from the
+returned observation.
 
 {objective} Explore as many rooms as possible. {budget} {quit_policy}
 Finish with a short route summary only after a game result says `ended: true`. A belief that

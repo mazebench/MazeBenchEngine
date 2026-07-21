@@ -137,7 +137,7 @@ def self_test() -> None:
         resumed_prompt = prime_resume_prompt(checkpoint)[-1]["content"]
         assert "Previous action: move." in resumed_prompt
         assert "Direction: up." in resumed_prompt
-        assert "Moved: true." in resumed_prompt
+        assert "Moved:" not in resumed_prompt
         result = asyncio.run(verify(checkpoint_path))
         assert result["action_count"] == 1
 

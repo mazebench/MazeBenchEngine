@@ -133,14 +133,20 @@ function applyQuitPolicy(response, session) {
 // vision observations also omit explicit player coordinates; JSON intentionally
 // retains them as part of its structured observation contract. Vision removes
 // every text/JSON board representation as well.
-function redactAgentStatus(value, { mode = "text" } = {}) {
-  if (Array.isArray(value)) return value.map((item) => redactAgentStatus(item, { mode }));
+function redactAgentStatus(value, { mode = "text", includeInternalSignals = false } = {}) {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactAgentStatus(item, { mode, includeInternalSignals }));
+  }
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value)
       .filter(([key]) => {
         const normalized = String(key).toLowerCase();
         if (normalized.includes("scorecard")) return false;
+        if (
+          !includeInternalSignals &&
+          (normalized === "moved" || normalized.includes("board_state_hash"))
+        ) return false;
         if (normalized === "_render_state") return false;
         if (mode !== "json" && EXPLICIT_PLAYER_POSITION_KEYS.has(normalized)) return false;
         if (mode === "text" && normalized === "json_observation") return false;
@@ -148,7 +154,10 @@ function redactAgentStatus(value, { mode = "text" } = {}) {
         if (mode === "vision" && VISION_TEXT_BOARD_KEYS.has(normalized)) return false;
         return true;
       })
-      .map(([key, nested]) => [key, redactAgentStatus(nested, { mode })])
+      .map(([key, nested]) => [
+        key,
+        redactAgentStatus(nested, { mode, includeInternalSignals })
+      ])
   );
 }
 
@@ -157,7 +166,10 @@ function redactVisionStatus(value) {
 }
 
 function storedStatus(session, status) {
-  return redactAgentStatus(status, { mode: session?.observationMode || "text" });
+  return redactAgentStatus(status, {
+    mode: session?.observationMode || "text",
+    includeInternalSignals: true
+  });
 }
 
 function requiredActionsRemaining(session) {

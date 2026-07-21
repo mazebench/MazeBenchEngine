@@ -191,7 +191,7 @@ function migrateSeedSessionObservation(config) {
     omniscient: config.mode === "json" && config.omniscient,
     hideNames: config.mode !== "vision" && config.hideNames,
     hideNamesSeed
-  }, { mode: config.mode });
+  }, { mode: config.mode, includeInternalSignals: true });
   delete next.bridgeCheckpoint;
 
   const temporary = `${config.sessionFile}.observation-${process.pid}.tmp`;
@@ -250,10 +250,12 @@ their elevation coordinate drops by one while an orange button is pressed. ${
     ? "The observation is omniscient and contains every object in the current room, so camera rotation is not needed for visibility."
     : "Only objects with at least one character visible in the equivalent ASCII view are included, so rotate the camera to reveal occluded objects."
 } Object type names are literal.`
-      : `This is ASCII mode. Observations contain only the current room's ASCII
-board in the level field.${config.hideNames
+      : `This is ASCII mode. Observations contain the current room's ASCII
+board in the level field and the complete visited_levels list.${config.hideNames
   ? " Every glyph except player P and gem G is assigned a stable random identity for this run. Infer meanings only from observations and interactions in this run."
   : ""}`;
+  const movementFeedback = `The controls do not report whether a movement was
+blocked. Infer its effect only from the returned observation.`;
   const capability = config.toolUse === "offline"
     ? config.hostAccess
       ? `TOOLS-ON mode. You may use the local file, coding, and execution tools
@@ -319,6 +321,7 @@ session JSON directly or create, select, or branch game instances yourself.`;
   return `${intro}
 
 ${observation}
+${movementFeedback}
 ${capability}
 ${swarm}
 ${quitPolicy}

@@ -68,8 +68,9 @@ for (const mode of ["text", "json", "vision"]) {
   assert.match(prompt, /do not read any\s+files/);
   assert.match(prompt, /do not spawn any sub-agents/);
   assert.doesNotMatch(prompt, /(?:game|maze)_scorecard/);
+  assert.match(prompt, /do not report whether a movement was\s+blocked/i);
   if (mode === "text") {
-    assert.match(prompt, /only the current room's ASCII/);
+    assert.match(prompt, /current room's ASCII[\s\S]*complete visited_levels list/);
     assert.doesNotMatch(prompt, /ASCII board in the level\s+field plus the current status/);
   }
   if (mode !== "json") assert.doesNotMatch(prompt, /player position|x\/y\/elevation/i);
@@ -192,10 +193,10 @@ assert.equal(directGame.status, 0);
   const resumeDir = fs.mkdtempSync(path.join(os.tmpdir(), "maze-resume-policy-"));
   const sessionFile = path.join(resumeDir, "session.json");
   const session = {
-    actions: [{ turn: 1, status: { level: "P..", player: { x: 4, y: 15, elevation: 0 }, scorecard: { secret: true } } }],
+    actions: [{ turn: 1, status: { level: "P..", moved: true, board_state_hash: "state-1", player: { x: 4, y: 15, elevation: 0 }, scorecard: { secret: true } } }],
     bridgeCheckpoint: { player: { x: 4, y: 15, elevation: 0 } },
-    initial: { level: "P..", player: { x: 4, y: 15, elevation: 0 } },
-    lastStatus: { level: ".P.", player: { x: 5, y: 15, elevation: 0 } },
+    initial: { level: "P..", board_state_hash: "state-0", player: { x: 4, y: 15, elevation: 0 } },
+    lastStatus: { level: ".P.", moved: true, board_state_hash: "state-1", player: { x: 5, y: 15, elevation: 0 } },
     scorecard: { current_position: { x: 5, y: 15, elevation: 0 } }
   };
   fs.writeFileSync(sessionFile, `${JSON.stringify(session, null, 2)}\n`);
@@ -217,6 +218,10 @@ assert.equal(directGame.status, 0);
   assert.equal(Object.prototype.hasOwnProperty.call(sanitized.initial, "player"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(sanitized.lastStatus, "player"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(sanitized.actions[0].status, "scorecard"), false);
+  assert.equal(sanitized.initial.board_state_hash, "state-0");
+  assert.equal(sanitized.lastStatus.board_state_hash, "state-1");
+  assert.equal(sanitized.lastStatus.moved, true);
+  assert.equal(sanitized.actions[0].status.board_state_hash, "state-1");
   assert.equal(fs.existsSync(path.join(resumeDir, "scorecard.json")), false);
   assert.equal(fs.existsSync(path.join(resumeDir, "maze_scorecard.json")), false);
   assert.equal(fs.existsSync(path.join(resumeDir, "current-render-state.json")), false);

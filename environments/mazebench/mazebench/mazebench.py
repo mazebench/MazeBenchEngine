@@ -1142,8 +1142,6 @@ def action_result_text(
 
     if "direction" in status:
         details.append(f"Direction: {status['direction']}.")
-    if "moved" in status:
-        details.append(f"Moved: {str(bool(status['moved'])).lower()}.")
     if status.get("room_changed"):
         details.append(f"Entered room: {status.get('current_room')}.")
     if status.get("destination_room"):

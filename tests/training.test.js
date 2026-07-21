@@ -56,7 +56,8 @@ const primeSystemPrompt = fs.readFileSync(
   "utf8"
 );
 assert.doesNotMatch(primeSystemPrompt, /If you are unsure[\s\S]*respond with `up`/);
-assert.match(primeSystemPrompt, /If it says `Moved: false`, that movement was blocked/);
+assert.doesNotMatch(primeSystemPrompt, /Moved: (?:true|false)/);
+assert.match(primeSystemPrompt, /does not explicitly report whether movement was blocked/);
 assert.match(starterConfig, /max_steps = 10/);
 assert.match(starterConfig, /batch_size = 32/);
 assert.match(starterConfig, /rollouts_per_example = 4/);
@@ -146,7 +147,7 @@ const observationPolicyProbe = execFileSync(
     "-c",
     [
       "from mazebench.mazebench import action_result_text,render_json_user_prompt,render_multiturn_user_prompt,render_vision_user_prompt,slim_status",
-      "s={'allowed_commands':['up'],'current_room':'level_HxI','current_view':'top-diagonal','gem_count':0,'json_observation':{'objects':{'player':[[4,15,0]]}},'level':'P..','player':{'x':4,'y':15,'elevation':0},'scorecard':{'current_position':{'x':4,'y':15,'elevation':0}},'visited_levels':['level_HxI'],'yaw':0}",
+      "s={'allowed_commands':['up'],'board_state_hash':'model-secret-state-hash','board_state_hash_version':1,'current_room':'level_HxI','current_view':'top-diagonal','gem_count':0,'json_observation':{'objects':{'player':[[4,15,0]]}},'level':'P..','player':{'x':4,'y':15,'elevation':0},'scorecard':{'current_position':{'x':4,'y':15,'elevation':0}},'visited_levels':['level_HxI'],'yaw':0}",
       "t=render_multiturn_user_prompt(status=s,target_text='play',result_text='start')",
       "v=render_vision_user_prompt(status=s,target_text='play',result_text='start')",
       "j=render_json_user_prompt(status=s,target_text='play',result_text='start')",
@@ -165,8 +166,8 @@ const observationPolicyProbe = execFileSync(
       "assert 'Gems collected:' not in t and 'Visited rooms:' not in t",
       "assert 'level_HxI' not in t and 'scorecard' not in t.lower()",
       "assert 'P..' in t",
-      "assert 'Previous action: move. Direction: up. Moved: false.' in blocked",
-      "assert 'Previous action: move. Direction: right. Moved: true.' in successful",
+      "assert 'Previous action: move. Direction: up.' in blocked and 'Moved:' not in blocked",
+      "assert 'Previous action: move. Direction: right.' in successful and 'Moved:' not in successful",
       "assert 'Entered room: level_IxI.' in progress and 'Collected gems: gem-1.' in progress",
       "assert 'Previous response was invalid: bad command' in invalid",
       "assert dead.count('The player died, you must now undo or reset or go to a level.') == 1",
@@ -174,6 +175,7 @@ const observationPolicyProbe = execFileSync(
       "assert slim_status({'direction':'up'})['direction'] == 'up'",
       "assert 'Player:' not in v and 'elevation=0' not in v",
       "assert 'Player: x=4 y=15 elevation=0' in j",
+      "assert 'model-secret-state-hash' not in t and 'model-secret-state-hash' not in v and 'model-secret-state-hash' not in j",
       "assert 'scorecard' not in action_result_text(command='quit',status={**s,'quit':True}).lower()",
       "print('model observation policy ready')"
     ].join("; ")

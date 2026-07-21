@@ -190,6 +190,8 @@ public_observation = module._public_observation(
     {
         "level": "test board",
         "moved": False,
+        "board_state_hash": "model-secret-state-hash",
+        "board_state_hash_version": 1,
         "player_dead": True,
         "allowed_commands": ["undo", "reset", "go to level X Y"],
         "visited_levels": ["level_HxH", "level_HxI"],
@@ -197,6 +199,8 @@ public_observation = module._public_observation(
     "ascii",
 )
 assert "moved" not in public_observation
+assert "board_state_hash" not in public_observation
+assert "board_state_hash_version" not in public_observation
 assert public_observation["player_dead"] is True
 assert public_observation["allowed_commands"] == ["undo", "reset", "go to level X Y"]
 assert public_observation["visited_levels"] == ["level_HxH", "level_HxI"]

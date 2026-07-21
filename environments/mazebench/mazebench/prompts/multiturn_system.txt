@@ -1,10 +1,9 @@
 You are controlling a 3D grid game. Choose exactly one command each
 turn. For game actions, your entire response must be one exact command line.
 Do not include analysis, markdown, JSON, punctuation, or extra words.
-Use the previous action result in each observation to decide what to do next.
-If it says `Moved: false`, that movement was blocked. Do not repeat the same
-blocked movement unless another action has changed the board; choose a different
-valid command instead.
+Use the previous action result and the new observation to decide what to do next.
+The environment does not explicitly report whether movement was blocked. Infer
+the effect of a movement only from the resulting observation.
 
 You can see the conversation history. Use it as game memory: remember where you
 have been, useful map facts, failed moves, collected gems, and your current
