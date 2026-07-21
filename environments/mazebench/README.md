@@ -20,12 +20,12 @@ Models navigate a real JavaScript maze world one action at a time, preserve stat
 | Configurable start room, view, yaw, and action limit | Supported | Supported |
 | State-novelty auto-quit | Supported | Supported |
 | Replay state and per-action metadata | Supported | Supported |
-| Perspective image observations | Not yet self-contained | Experimental |
+| Perspective image observations | Not yet self-contained | Supported by image-capable MCP harnesses |
 | All built-in harnesses in the pinned Verifiers revision | Not part of Hosted Training | Discovered and routed through isolated MCP or CLI controls |
 | Codex and Claude Code hosted by Prime | Not part of Hosted Training | Supported |
 | Claude Code, Docker/full-access, tools, and swarm modes | Not part of this environment | Available through the separate local Agent runner |
 
-The package brings its own Node runtime for the JavaScript maze engine. Perspective vision additionally needs `playwright-core` and a compatible Chromium binary, which Prime's current Hosted Training image does not provide. Until that renderer is self-contained and tested, use ASCII mode for Hosted Training.
+The package brings its own Node runtime for the JavaScript maze engine. Perspective vision additionally needs `playwright-core` and a compatible Chromium binary, which Prime's current Hosted Training image does not provide. Until that renderer is self-contained and tested, use ASCII mode for Hosted Training. Prime-hosted agentic runs use the evaluator-owned renderer instead: Bash, Claude Code, Codex, Kimi Code, Null, and Pi receive each frame as an MCP image result. RLM and the isolated CLI-gateway harnesses remain text-only.
 
 ## The task
 
@@ -46,6 +46,8 @@ The default objective is to collect **100 unique gems** across the world. A roll
 
 Movement remains screen-relative after camera rotation. `go to level` is restricted to rooms already present in `visited_levels`.
 
+Every model-facing observation uses the same metadata contract: observation mode, current room and view, yaw, total gem count, the complete list of visited rooms, and terminal state. ASCII adds `level`, JSON adds `json_observation`, and vision adds an MCP PNG image. A blocked movement is never reported explicitly. If the player dies, the observation does report `player_dead`, a death message, and the only valid recovery commands. Board-state hashes, movement flags, push counters, and exact collected-gem IDs remain evaluator-only.
+
 ## Rewards
 
 MazeBench exposes three independent deterministic reward signals:
@@ -58,7 +60,7 @@ MazeBench exposes three independent deterministic reward signals:
 
 These are final rollout scores calculated from authoritative game state. Reward weights shape learning without changing the semantic win condition.
 
-Additional metrics include:
+Evaluator-only metrics saved after the rollout include:
 
 - `collected_gems`
 - `visited_level_count`

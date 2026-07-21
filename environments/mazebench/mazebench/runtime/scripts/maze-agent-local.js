@@ -233,7 +233,7 @@ function buildMcpPrompt(config) {
     ? `This is VISION mode. Every observation includes the current PNG as an
 image attachment. Inspect that image before choosing a move; there is no
 ASCII board. The status also includes the room, gems, game state, and
-allowed commands.`
+the recovery commands after a death.`
     : config.mode === "json"
       ? config.hideNames
         ? `This is JSON mode. Read json_observation.objects instead of an ASCII

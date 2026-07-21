@@ -15,7 +15,8 @@
       "boundary": "isolated-game-gateway",
       "observation_modes": [
         "text",
-        "json"
+        "json",
+        "vision"
       ],
       "supports_mcp": true,
       "supports_message_prompt": true,
@@ -55,7 +56,8 @@
       "boundary": "isolated-game-gateway",
       "observation_modes": [
         "text",
-        "json"
+        "json",
+        "vision"
       ],
       "supports_mcp": true,
       "supports_message_prompt": false,
@@ -89,7 +91,8 @@
       "boundary": "isolated-game-gateway",
       "observation_modes": [
         "text",
-        "json"
+        "json",
+        "vision"
       ],
       "supports_mcp": false,
       "supports_message_prompt": true,
@@ -129,7 +132,8 @@
       "boundary": "isolated-game-gateway",
       "observation_modes": [
         "text",
-        "json"
+        "json",
+        "vision"
       ],
       "supports_mcp": true,
       "supports_message_prompt": false,
@@ -149,8 +153,8 @@
           }
         }
       },
-      "adapter": "native_mcp",
-      "runtime_harness_id": "kimi_code"
+      "adapter": "kimi_mcp",
+      "runtime_harness_id": "mazebench_kimi_harness"
     },
     {
       "id": "mini_swe_agent",
@@ -196,7 +200,8 @@
       "boundary": "isolated-game-gateway",
       "observation_modes": [
         "text",
-        "json"
+        "json",
+        "vision"
       ],
       "supports_mcp": true,
       "supports_message_prompt": true,
@@ -219,7 +224,8 @@
       "boundary": "isolated-game-gateway",
       "observation_modes": [
         "text",
-        "json"
+        "json",
+        "vision"
       ],
       "supports_mcp": true,
       "supports_message_prompt": true,
@@ -358,5 +364,5 @@
       "upstream_id": "terminus_2"
     }
   ],
-  "catalog_fingerprint": "b0c66721c79d49eda5519dd1171140c33bc496a39b2f28585dbfb6baa4769263"
+  "catalog_fingerprint": "8a39b95ad663a65af65eb4e2cca271f8461d0ea7d7075d88b7ee04e09e8ca565"
 }

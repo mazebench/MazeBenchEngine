@@ -354,6 +354,12 @@ function assertMove(move, yaw, expected) {
     moved: false,
     board_state_hash: "model-secret-state-hash",
     board_state_hash_version: 1,
+    collected_gems: ["gem-secret"],
+    collected_this_action: ["gem-secret"],
+    push_count: 4,
+    pushes_this_action: 1,
+    novel_push_count: 3,
+    novel_pushes_this_action: 1,
     frame_image: "/tmp/frame.png"
   };
   const redacted = redactVisionStatus(source);
@@ -365,6 +371,12 @@ function assertMove(move, yaw, expected) {
   assert.equal(Object.prototype.hasOwnProperty.call(redacted, "moved"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(redacted, "board_state_hash"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(redacted, "board_state_hash_version"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(redacted, "collected_gems"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(redacted, "collected_this_action"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(redacted, "push_count"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(redacted, "pushes_this_action"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(redacted, "novel_push_count"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(redacted, "novel_pushes_this_action"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(redacted.nested, "scorecard"), false);
 
   const text = redactAgentStatus(source, { mode: "text" });
@@ -388,6 +400,8 @@ function assertMove(move, yaw, expected) {
   assert.equal(internal.moved, false);
   assert.equal(internal.board_state_hash, "model-secret-state-hash");
   assert.equal(internal.board_state_hash_version, 1);
+  assert.deepEqual(internal.collected_gems, ["gem-secret"]);
+  assert.equal(internal.push_count, 4);
 
   const unfinished = {
     actions: [{ command: "up" }],
@@ -1717,7 +1731,7 @@ function syntheticFloor(width, height) {
     assert.equal(Object.prototype.hasOwnProperty.call(initial, "level"), false);
     assert.equal(initial.json_observation.omniscient, true);
     assert.equal(initial.json_observation.hide_names, true);
-    assert.equal(Number.isFinite(initial.player.x), true);
+    assert.equal(Object.prototype.hasOwnProperty.call(initial, "player"), false);
     assert.equal(initial.json_observation.objects.player.length > 0, true);
     assert.equal(Object.prototype.hasOwnProperty.call(initial, "scorecard"), false);
     assert.deepEqual(initial.json_observation.objects, observed.json_observation.objects);
@@ -2117,7 +2131,7 @@ function syntheticFloor(width, height) {
   }, null, 2)}\n`);
   const observed = runCodexPlay(["observe", "--state", checkpointState]);
   assert.equal(observed.current_room, "level_LxD");
-  assert.equal(observed.action_count, 3065);
+  assert.equal(Object.prototype.hasOwnProperty.call(observed, "action_count"), false);
   assert.deepEqual(observed.visited_levels, checkpoint.visited_levels);
   fs.rmSync(checkpointDir, { recursive: true, force: true });
 }
@@ -2138,12 +2152,12 @@ function syntheticFloor(width, height) {
   assert.match(output, /--- USER ---/);
   assert.match(output, /Objective: Collect at least 1 unique gem\./);
   assert.doesNotMatch(output, /\$notice_text/);
-  assert.doesNotMatch(output, /Current room:/);
-  assert.doesNotMatch(output, /Current view:/);
-  assert.doesNotMatch(output, /Gems collected:/);
-  assert.doesNotMatch(output, /Visited rooms:/);
+  assert.match(output, /Current room: level_HxI/);
+  assert.match(output, /Current view: top-diagonal/);
+  assert.match(output, /Gems collected: 0/);
+  assert.match(output, /Visited rooms: level_HxI/);
   assert.doesNotMatch(output, /Player:/);
-  assert.doesNotMatch(output, /level_HxI/);
+  assert.match(output, /Player dead: false/);
   assert.match(output, /- up/);
   assert.match(output, /- rotate camera left/);
   assert.match(output, /- reset/);
@@ -2182,8 +2196,8 @@ function syntheticFloor(width, height) {
   assert.doesNotMatch(output, /"result":/);
   assert.doesNotMatch(output, /"gems":/);
   assert.doesNotMatch(output, /=== NEXT MODEL TURN ===/);
-  assert.doesNotMatch(output, /Current room: `level_AxA`/);
-  assert.doesNotMatch(output, /Current view: top/);
+  assert.match(output, /Current room: level_AxA/);
+  assert.match(output, /Current view: top/);
   assert.doesNotMatch(output, /"observation":/);
   assert.doesNotMatch(output, /"current_level":/);
   assert.doesNotMatch(output, /"view":/);

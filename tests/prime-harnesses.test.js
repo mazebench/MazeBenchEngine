@@ -36,6 +36,10 @@ try {
     path.join(root, "environments", "mazebench", "mazebench_tools", "__init__.py"),
     "utf8"
   );
+  const kimiHarnessSource = fs.readFileSync(
+    path.join(root, "environments", "mazebench", "mazebench_harnesses", "kimi.py"),
+    "utf8"
+  );
   const mazeTasksetSource = fs.readFileSync(
     path.join(root, "environments", "mazebench", "mazebench", "mazebench.py"),
     "utf8"
@@ -153,6 +157,17 @@ try {
   assert.match(toolsTasksetSource, /KIMI_CODE_OBSERVE_INTERVAL = 5/);
   assert.match(toolsTasksetSource, /next_required_tool.*game_observe/s);
   assert.match(toolsTasksetSource, /Call game_observe before another game_action/);
+  assert.match(kimiHarnessSource, /KIMI_MODEL_CAPABILITIES/);
+  assert.match(kimiHarnessSource, /capabilities\.append\("image_in"\)/);
+
+  const kimiCatalogEntry = harnessCatalog.harnesses.find((harness) => harness.id === "kimi_code");
+  assert.equal(kimiCatalogEntry.adapter, "kimi_mcp");
+  assert.equal(kimiCatalogEntry.runtime_harness_id, "mazebench_kimi_harness");
+  assert.equal(kimiCatalogEntry.observation_modes.includes("vision"), true);
+  assert.equal(
+    harnessCatalog.harnesses.find((harness) => harness.id === "rlm").observation_modes.includes("vision"),
+    false
+  );
 
   const kimiObserveProbe = spawnSync(
     "uv",
@@ -189,10 +204,22 @@ assert "Kimi Code compatibility rule" not in module._tool_prompt(prompt_task)
 public_observation = module._public_observation(
     {
         "level": "test board",
+        "current_room": "level_HxI",
+        "current_view": "top-diagonal",
+        "yaw": 3,
+        "gem_count": 1,
         "moved": False,
         "board_state_hash": "model-secret-state-hash",
         "board_state_hash_version": 1,
+        "collected_gems": ["gem-secret"],
+        "collected_this_action": ["gem-secret"],
+        "push_count": 4,
+        "pushes_this_action": 1,
+        "novel_push_count": 3,
+        "novel_pushes_this_action": 1,
         "player_dead": True,
+        "game_won": False,
+        "game_lost": False,
         "allowed_commands": ["undo", "reset", "go to level X Y"],
         "visited_levels": ["level_HxH", "level_HxI"],
     },
@@ -201,9 +228,39 @@ public_observation = module._public_observation(
 assert "moved" not in public_observation
 assert "board_state_hash" not in public_observation
 assert "board_state_hash_version" not in public_observation
+assert "collected_gems" not in public_observation
+assert "collected_this_action" not in public_observation
+assert "push_count" not in public_observation
+assert "pushes_this_action" not in public_observation
+assert "novel_push_count" not in public_observation
+assert "novel_pushes_this_action" not in public_observation
+assert public_observation["observation_mode"] == "ascii"
+assert public_observation["current_room"] == "level_HxI"
+assert public_observation["current_view"] == "top-diagonal"
+assert public_observation["yaw"] == 3
+assert public_observation["gem_count"] == 1
 assert public_observation["player_dead"] is True
 assert public_observation["allowed_commands"] == ["undo", "reset", "go to level X Y"]
 assert public_observation["visited_levels"] == ["level_HxH", "level_HxI"]
+
+vision_result = module._vision_tool_result(
+    {
+        "observation": module._public_observation(
+            {
+                "current_room": "level_HxI",
+                "current_view": "perspective",
+                "visited_levels": ["level_HxI"],
+            },
+            "vision",
+        ),
+        "ended": False,
+    },
+    "data:image/png;base64,iVBORw0KGgo=",
+)
+assert vision_result.structuredContent["observation"]["frame_image"] == "attached:image/png"
+assert vision_result.content[0].type == "text"
+assert vision_result.content[1].type == "image"
+assert vision_result.content[1].mimeType == "image/png"
 
 
 async def probe():

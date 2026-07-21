@@ -24,6 +24,7 @@ include = [
     "mazebench_harnesses/**/*.py",
     "mazebench_codex_harness.py",
     "mazebench_cli_harness.py",
+    "mazebench_kimi_harness.py",
     "README.md",
     "pyproject.toml",
 ]

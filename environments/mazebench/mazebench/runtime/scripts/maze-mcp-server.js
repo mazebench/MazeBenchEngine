@@ -12,7 +12,7 @@ const http = require("node:http");
 const path = require("node:path");
 const readline = require("node:readline");
 const { spawnSync } = require("node:child_process");
-const { redactAgentStatus } = require("./codex-play");
+const { publicObservationStatus, redactAgentStatus } = require("./codex-play");
 
 const REPO_ROOT = path.resolve(process.env.MAZEBENCH_REPO_ROOT || path.join(__dirname, ".."));
 const HELPER = path.join(REPO_ROOT, "scripts", "codex-play.js");
@@ -703,40 +703,21 @@ function toolsFor(workerOnly) {
 }
 
 function publicToolValue(value) {
-  value = redactAgentStatus(value, {
-    mode: ["json", "vision"].includes(process.env.MAZEBENCH_MODE)
-      ? process.env.MAZEBENCH_MODE
-      : "text"
-  });
-  if (process.env.MAZEBENCH_MODE !== "json" && process.env.MAZEBENCH_MODE !== "vision") {
-    const status = value?.status && typeof value.status === "object" ? value.status : value;
-    const level = status && typeof status === "object"
-      ? status.level || status.observation
-      : "";
-    if (typeof level === "string" && level.length > 0) {
-      const printable = {
-        level,
-        visited_levels: Array.isArray(status.visited_levels)
-          ? status.visited_levels.map(String)
-          : []
-      };
-      if (status.player_dead === true) {
-        printable.player_dead = true;
-        printable.death_message = String(
-          status.death_message || "The player died, you must now undo or reset or go to a level."
-        );
-        printable.allowed_commands = Array.isArray(status.allowed_commands)
-          ? status.allowed_commands.map(String)
-          : ["undo", "reset", "go to level X Y"];
-      }
-      if (status.user_pause_requested === true) {
-        printable.user_pause_requested = true;
-        printable.pause_message = String(status.pause_message || "");
-        printable.allowed_commands = [];
-      }
-      return printable;
-    }
+  const mode = ["json", "vision"].includes(process.env.MAZEBENCH_MODE)
+    ? process.env.MAZEBENCH_MODE
+    : "text";
+  const status = value?.status && typeof value.status === "object" ? value.status : value;
+  const hasObservation = status && typeof status === "object" && (
+    typeof status.level === "string" ||
+    status.json_observation ||
+    status.frame_image
+  );
+  if (hasObservation) {
+    const printable = publicObservationStatus(status, { mode });
+    if (printable.frame_image) printable.frame_image = "attached:image/png";
+    return printable;
   }
+  value = redactAgentStatus(value, { mode });
   if (Array.isArray(value)) return value.map(publicToolValue);
   if (!value || typeof value !== "object") return value;
   const printable = {};

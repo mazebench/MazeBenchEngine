@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_fingerprint": "b0c66721c79d49eda5519dd1171140c33bc496a39b2f28585dbfb6baa4769263",
+  "catalog_fingerprint": "8a39b95ad663a65af65eb4e2cca271f8461d0ea7d7075d88b7ee04e09e8ca565",
   "verifiers_version": "0.2.1.dev62",
   "verifiers_revision": "653bb14003b87e39588bde308fa8626d1038ce15",
   "boundary": {
@@ -58,13 +58,14 @@
     },
     {
       "id": "kimi_code",
-      "adapter": "native_mcp",
-      "runtime_harness_id": "kimi_code",
+      "adapter": "kimi_mcp",
+      "runtime_harness_id": "mazebench_kimi_harness",
       "checks": [
         "upstream-load",
         "effective-mcp-pairing",
         "external-task-boundary",
-        "config-validation"
+        "config-validation",
+        "kimi-image-capability"
       ],
       "status": "certified"
     },

@@ -28,6 +28,15 @@ const EXPLICIT_PLAYER_POSITION_KEYS = new Set([
   "player_x",
   "player_y"
 ]);
+const MODEL_PRIVATE_STATUS_KEYS = new Set([
+  "collected_gems",
+  "collected_this_action",
+  "moved",
+  "novel_push_count",
+  "novel_pushes_this_action",
+  "push_count",
+  "pushes_this_action"
+]);
 
 function readJson(file, fallback) {
   try {
@@ -143,10 +152,8 @@ function redactAgentStatus(value, { mode = "text", includeInternalSignals = fals
       .filter(([key]) => {
         const normalized = String(key).toLowerCase();
         if (normalized.includes("scorecard")) return false;
-        if (
-          !includeInternalSignals &&
-          (normalized === "moved" || normalized.includes("board_state_hash"))
-        ) return false;
+        if (!includeInternalSignals && MODEL_PRIVATE_STATUS_KEYS.has(normalized)) return false;
+        if (!includeInternalSignals && normalized.includes("board_state_hash")) return false;
         if (normalized === "_render_state") return false;
         if (mode !== "json" && EXPLICIT_PLAYER_POSITION_KEYS.has(normalized)) return false;
         if (mode === "text" && normalized === "json_observation") return false;
@@ -163,6 +170,48 @@ function redactAgentStatus(value, { mode = "text", includeInternalSignals = fals
 
 function redactVisionStatus(value) {
   return redactAgentStatus(value, { mode: "vision" });
+}
+
+function publicObservationStatus(value, { mode = "text" } = {}) {
+  const status = value?.status && typeof value.status === "object" ? value.status : value;
+  const source = redactAgentStatus(status, { mode });
+  const observationMode = mode === "text" ? "ascii" : mode;
+  const observation = {
+    observation_mode: observationMode,
+    current_room: String(source?.current_room || ""),
+    current_view: String(source?.current_view || ""),
+    yaw: Number.isInteger(source?.yaw) ? source.yaw : 0,
+    gem_count: Math.max(0, Number(source?.gem_count) || 0),
+    visited_levels: Array.isArray(source?.visited_levels)
+      ? source.visited_levels.map(String)
+      : [],
+    player_dead: source?.player_dead === true,
+    game_won: source?.game_won === true,
+    game_lost: source?.game_lost === true
+  };
+
+  if (observationMode === "ascii") {
+    observation.level = String(source?.level || source?.observation || "");
+  } else if (observationMode === "json") {
+    observation.json_observation = source?.json_observation || {};
+  } else if (observationMode === "vision" && source?.frame_image) {
+    observation.frame_image = String(source.frame_image);
+  }
+
+  if (observation.player_dead) {
+    observation.death_message = String(
+      source?.death_message || "The player died, you must now undo or reset or go to a level."
+    );
+    observation.allowed_commands = Array.isArray(source?.allowed_commands)
+      ? source.allowed_commands.map(String)
+      : ["undo", "reset", "go to level X Y"];
+  }
+  if (source?.user_pause_requested === true) {
+    observation.user_pause_requested = true;
+    observation.pause_message = String(source.pause_message || "");
+    observation.allowed_commands = [];
+  }
+  return observation;
 }
 
 function storedStatus(session, status) {
@@ -627,18 +676,17 @@ async function emitStatus(session, response, turnIndex, stateFile) {
   const status = response.status || response;
 
   if (session.observationMode === "json") {
-    const printable = { ...redactAgentStatus(status, { mode: "json" }), observation_mode: "json" };
-    delete printable.level;
+    const printable = publicObservationStatus(status, { mode: "json" });
     console.log(JSON.stringify(printable, null, 2));
     return true;
   }
 
   if (!session.vision) {
-    console.log(JSON.stringify(redactAgentStatus(status, { mode: "text" }), null, 2));
+    console.log(JSON.stringify(publicObservationStatus(status, { mode: "text" }), null, 2));
     return true;
   }
 
-  const printable = { ...redactVisionStatus(status), observation_mode: "vision" };
+  const printable = publicObservationStatus(status, { mode: "vision" });
   try {
     printable.frame_image = await renderVisionFrame(session, turnIndex, stateFile);
   } catch (error) {
@@ -818,6 +866,7 @@ if (require.main === module || invokedThroughMazePlay) {
 }
 
 module.exports = {
+  publicObservationStatus,
   redactAgentStatus,
   redactVisionStatus,
   requiredActionsRemaining

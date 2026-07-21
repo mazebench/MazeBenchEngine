@@ -221,17 +221,11 @@ function actionResultText(status) {
   if (status.direction) {
     details.push(`Direction: ${status.direction}.`);
   }
-  if (Object.prototype.hasOwnProperty.call(status, "moved")) {
-    details.push(`Moved: ${Boolean(status.moved)}.`);
-  }
   if (status.room_changed) {
     details.push(`Entered room: ${status.current_room}.`);
   }
   if (status.destination_room) {
     details.push(`Jumped to room: ${status.destination_room}.`);
-  }
-  if (Array.isArray(status.collected_this_action) && status.collected_this_action.length > 0) {
-    details.push(`Collected gems: ${status.collected_this_action.join(", ")}.`);
   }
   if (status.player_dead) {
     details.push(status.death_message || DEATH_MESSAGE);
@@ -273,11 +267,17 @@ function noticeText(snapshot, resultText) {
 
 function renderUserMessage(snapshot, options, resultText = "Start of run.") {
   return renderTemplate(readPrompt("multiturn_user.txt"), {
+    current_room: snapshot.current_room || "",
+    current_view: snapshot.current_view || "",
+    gem_count: Math.max(0, Number(snapshot.gem_count) || 0),
     level: snapshot.level || screenFromSnapshot(snapshot).split("\n").slice(1).join("\n"),
     notice_text: noticeText(snapshot, resultText),
+    player_dead: snapshot.player_dead === true,
     response_instruction: responseInstruction(snapshot),
     target_text: targetText(options.targetGems),
     terminal_note: snapshot.player_dead ? "" : "Typing quit ends the run as a loss.",
+    visited_levels: Array.isArray(snapshot.visited_levels) ? snapshot.visited_levels.join(", ") : "",
+    yaw: Number.isInteger(snapshot.yaw) ? snapshot.yaw : 0
   });
 }
 

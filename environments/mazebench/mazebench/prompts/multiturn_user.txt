@@ -2,6 +2,14 @@ $notice_text
 
 Objective: $target_text
 
+Observation metadata:
+- Current room: $current_room
+- Current view: $current_view
+- Yaw: $yaw
+- Gems collected: $gem_count
+- Visited rooms: $visited_levels
+- Player dead: $player_dead
+
 ```text
 $level
 ```

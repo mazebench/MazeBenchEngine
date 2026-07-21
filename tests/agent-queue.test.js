@@ -118,6 +118,7 @@ try {
   );
   assert.equal(harnessRegistry.harnesses.find((harness) => harness.id === "codex").adapter, "codex_mcp");
   assert.equal(harnessRegistry.harnesses.find((harness) => harness.id === "claude_code").adapter, "native_mcp");
+  assert.equal(harnessRegistry.harnesses.find((harness) => harness.id === "kimi_code").adapter, "kimi_mcp");
   assert.equal(harnessRegistry.harnesses.find((harness) => harness.id === "mini_swe_agent").adapter, "cli_gateway");
   const [customPrime] = service.launchRuns({
     kind: "prime",
@@ -137,7 +138,7 @@ try {
   assert.equal(customPrimeMeta.harness_source, "pinned-prime-verifiers");
   assert.deepEqual(customPrimeMeta.harness_config, { version: "0.15.0" });
   assert.equal(customPrimeMeta.harness_boundary, "isolated-game-gateway");
-  assert.equal(customPrimeMeta.harness_adapter, "native_mcp");
+  assert.equal(customPrimeMeta.harness_adapter, "kimi_mcp");
   assert.equal(customPrimeMeta.harness_taskset, "mazebench-tools");
   assert.equal(customPrimeMeta.verifiers_revision, "653bb14003b87e39588bde308fa8626d1038ce15");
   assert.match(customPrimeMeta.harness_catalog_fingerprint, /^[0-9a-f]{64}$/);

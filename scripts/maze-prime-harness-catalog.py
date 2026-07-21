@@ -43,6 +43,11 @@ def adapter_for(harness_id: str, harness_type: type[vf.Harness]) -> dict[str, An
             "adapter": "codex_mcp",
             "runtime_harness_id": "mazebench_codex_harness",
         }
+    if harness_id == "kimi_code":
+        return {
+            "adapter": "kimi_mcp",
+            "runtime_harness_id": "mazebench_kimi_harness",
+        }
     if harness_type.SUPPORTS_MCP:
         return {"adapter": "native_mcp", "runtime_harness_id": harness_id}
     return {
@@ -77,6 +82,7 @@ def discover() -> dict[str, Any]:
         configurable = sorted(set(properties) - COMMON_CONFIG_FIELDS)
         defaults = config.model_dump(exclude=COMMON_CONFIG_FIELDS)
         adapter = adapter_for(harness_id, harness_type)
+        vision_harnesses = {"bash", "claude_code", "codex", "kimi_code", "null", "pi"}
         harnesses.append(
             {
                 "id": harness_id,
@@ -88,7 +94,11 @@ def discover() -> dict[str, Any]:
                 "status": "compatible",
                 "reason": "",
                 "boundary": "isolated-game-gateway",
-                "observation_modes": ["text", "json"],
+                "observation_modes": [
+                    "text",
+                    "json",
+                    *(["vision"] if harness_id in vision_harnesses else []),
+                ],
                 "supports_mcp": bool(harness_type.SUPPORTS_MCP),
                 "supports_message_prompt": bool(harness_type.SUPPORTS_MESSAGE_PROMPT),
                 "supports_user_sim": bool(harness_type.SUPPORTS_USER_SIM),
