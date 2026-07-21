@@ -319,8 +319,8 @@ assert.equal(
 sideStartState.selectedToken = "W";
 assert.match(
   dragPlaneSection,
-  /const justPaintedVoxelKey[\s\S]*paintStrokePaintedVoxelKeys\.clear\(\)[\s\S]*target\.face !== "top"/,
-  "the immediately painted side guard must be consumed by the next pointer sample"
+  /const justPaintedVoxelKey[\s\S]*highlightedVoxelKey === justPaintedVoxelKey[\s\S]*paintStrokePaintedVoxelKeys\.clear\(\)/,
+  "the immediately painted voxel guard must remain latched until the highlight moves to another voxel"
 );
 const paintOnceSection = sourceSection(
   authorSource,
@@ -380,17 +380,26 @@ const sameLayerSideTarget = {
 assert.equal(canDragPaintTarget(sameLayerSideTarget), true);
 dragState.paintStrokePaintedVoxelKeys.add("1:1:2");
 assert.equal(canDragPaintTarget(sameLayerSideTarget), false);
+assert.equal(dragState.paintStrokePaintedVoxelKeys.size, 1);
+assert.equal(
+  canDragPaintTarget(sameLayerSideTarget),
+  false,
+  "repeated samples on the newly painted side must remain blocked"
+);
+assert.equal(
+  canDragPaintTarget({
+    ...sameLayerSideTarget,
+    paintLayer: 1,
+    sourceX: 3
+  }),
+  false,
+  "a different highlighted voxel releases the latch even when that sample is off-plane"
+);
 assert.equal(dragState.paintStrokePaintedVoxelKeys.size, 0);
 assert.equal(
   canDragPaintTarget(sameLayerSideTarget),
   true,
-  "a rejected immediate side hit must not poison the rest of the swipe"
-);
-dragState.paintStrokePaintedVoxelKeys.add("3:1:2");
-assert.equal(
-  canDragPaintTarget(sameLayerSideTarget),
-  true,
-  "an older painted voxel becomes a valid source after the stroke paints somewhere else"
+  "the previously painted voxel becomes a valid source after the highlight has left it"
 );
 dragState.paintStrokePaintedVoxelKeys.add("3:1:2");
 assert.equal(
@@ -402,19 +411,22 @@ assert.equal(
   false,
   "the immediately preceding painted voxel cannot grow another voxel from its side"
 );
-dragState.paintStrokePaintedVoxelKeys.add("1:1:2");
-assert.equal(canDragPaintTarget({ ...sameLayerSideTarget, paintLayer: 1 }), false);
+assert.equal(dragState.paintStrokePaintedVoxelKeys.size, 1);
 assert.equal(
-  dragState.paintStrokePaintedVoxelKeys.size,
-  0,
-  "even an off-plane next sample must consume the one-sample side guard"
+  canDragPaintTarget({
+    ...sameLayerSideTarget,
+    face: "top",
+    paintX: 3,
+    sourceX: 3
+  }),
+  false,
+  "the top face of the newly painted voxel must be blocked just like a side face"
 );
-dragState.paintStrokePaintedVoxelKeys.add("1:1:2");
 assert.equal(canDragPaintTarget(null), false);
 assert.equal(
   dragState.paintStrokePaintedVoxelKeys.size,
-  0,
-  "a raycast miss must also consume the next-sample guard"
+  1,
+  "a raycast miss must not release the latch before another voxel is highlighted"
 );
 
 const puncherPlacementSection = sourceSection(

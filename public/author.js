@@ -5532,15 +5532,25 @@
       return false;
     }
 
-    // This guard belongs to one pointer sample, not the whole remainder of
-    // the stroke. Consume it before evaluating the new target so a rejected
-    // side hit cannot deadlock every later move.
+    // A successful placement can move the yellow highlight onto the voxel it
+    // just created without the pointer actually leaving that block. Keep the
+    // guard latched until the picker highlights a different source voxel;
+    // repeated samples on the new block must not grow or stack more blocks.
     const justPaintedVoxelKey =
       state.paintStrokePaintedVoxelKeys.values().next().value || "";
-    state.paintStrokePaintedVoxelKeys.clear();
 
     if (!target || target.kind === "levelSwitch") {
       return false;
+    }
+
+    if (justPaintedVoxelKey) {
+      const highlightedVoxelKey = paintVoxelKeyForTarget(target, true);
+
+      if (!highlightedVoxelKey || highlightedVoxelKey === justPaintedVoxelKey) {
+        return false;
+      }
+
+      state.paintStrokePaintedVoxelKeys.clear();
     }
 
     const layer = paintGestureLayerForTarget(target);
@@ -5554,17 +5564,6 @@
     }
 
     if (!isInsideEditorCell(target.paintX, target.paintY)) {
-      return false;
-    }
-
-    // Side faces can continue a swipe onto their adjacent voxel when it is
-    // on the frozen layer. Do not chain outward from a block created by this
-    // immediately preceding paint sample; that would let a single pointer
-    // sample grow multiple blocks. Older painted cells are valid sources.
-    if (
-      target.face !== "top" &&
-      justPaintedVoxelKey === paintVoxelKeyForTarget(target, true)
-    ) {
       return false;
     }
 
