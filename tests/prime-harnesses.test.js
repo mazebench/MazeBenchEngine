@@ -186,6 +186,21 @@ assert "completion_allowed: false" in prompt
 os.environ["MAZEBENCH_PRIME_HARNESS"] = "codex"
 assert "Kimi Code compatibility rule" not in module._tool_prompt(prompt_task)
 
+public_observation = module._public_observation(
+    {
+        "level": "test board",
+        "moved": False,
+        "player_dead": True,
+        "allowed_commands": ["undo", "reset", "go to level X Y"],
+        "visited_levels": ["level_HxH", "level_HxI"],
+    },
+    "ascii",
+)
+assert "moved" not in public_observation
+assert public_observation["player_dead"] is True
+assert public_observation["allowed_commands"] == ["undo", "reset", "go to level X Y"]
+assert public_observation["visited_levels"] == ["level_HxH", "level_HxI"]
+
 
 async def probe():
     toolset = module.MazeBenchToolset(config=module.MazeBenchToolsetConfig())

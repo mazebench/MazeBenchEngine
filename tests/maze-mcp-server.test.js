@@ -376,6 +376,29 @@ try {
   assert.equal(imageResult.content[1].type, "image");
   assert.equal(imageResult.content[1].mimeType, "image/png");
 
+  const asciiStatusProbe = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `process.env.MAZEBENCH_RUN_DIR=${JSON.stringify(runDir)};` +
+        `process.env.MAZEBENCH_MODE="text";` +
+        `const {toolContent}=require(${JSON.stringify(path.join(rootDir, "scripts", "maze-mcp-server.js"))});` +
+        `const alive=toolContent({status:{level:"P",moved:false,player_dead:false,visited_levels:["level_HxH"]}}).structuredContent;` +
+        `const dead=toolContent({status:{level:".",moved:true,player_dead:true,death_message:"The player died, you must now undo or reset or go to a level.",allowed_commands:["undo","reset","go to level X Y"],visited_levels:["level_HxH","level_HxI"]}}).structuredContent;` +
+        `process.stdout.write(JSON.stringify({alive,dead}));`
+    ],
+    { cwd: rootDir, encoding: "utf8" }
+  );
+  assert.equal(asciiStatusProbe.status, 0, asciiStatusProbe.stderr);
+  const asciiStatuses = JSON.parse(asciiStatusProbe.stdout);
+  assert.deepEqual(asciiStatuses.alive, { level: "P" });
+  assert.deepEqual(asciiStatuses.dead, {
+    level: ".",
+    player_dead: true,
+    death_message: "The player died, you must now undo or reset or go to a level.",
+    allowed_commands: ["undo", "reset", "go to level X Y"]
+  });
+
   const visionDir = path.join(runDir, "restricted-vision");
   fs.mkdirSync(visionDir, { recursive: true });
   const visionSession = path.join(visionDir, "session.json");

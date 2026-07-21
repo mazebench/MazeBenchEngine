@@ -715,6 +715,15 @@ function publicToolValue(value) {
       : "";
     if (typeof level === "string" && level.length > 0) {
       const printable = { level };
+      if (status.player_dead === true) {
+        printable.player_dead = true;
+        printable.death_message = String(
+          status.death_message || "The player died, you must now undo or reset or go to a level."
+        );
+        printable.allowed_commands = Array.isArray(status.allowed_commands)
+          ? status.allowed_commands.map(String)
+          : ["undo", "reset", "go to level X Y"];
+      }
       if (status.user_pause_requested === true) {
         printable.user_pause_requested = true;
         printable.pause_message = String(status.pause_message || "");

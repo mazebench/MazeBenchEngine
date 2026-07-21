@@ -89,7 +89,6 @@ def _public_observation(status: dict[str, Any], mode: str) -> dict[str, Any]:
             "game_lost",
             "game_won",
             "gem_count",
-            "moved",
             "player_dead",
             "quit",
             "room_changed",
