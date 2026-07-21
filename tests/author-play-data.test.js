@@ -535,6 +535,42 @@ console.log("author play data tests passed");
 // Owner feature (2026-07): open-ended token families resolve through
 // maze-token-patterns — arbitrary box/clone ids and colored ice slopes.
 {
+  const directionalTokensByChar = {
+    r: ["pr", "Sr", "Sr#", "SrO", "SrM12", "Src9"],
+    l: ["pl", "Sl", "Sl#", "SlO", "SlM12", "Slc9"],
+    u: ["pu", "Su", "Su#", "SuO", "SuM12", "Suc9"],
+    d: ["pd", "Sd", "Sd#", "SdO", "SdM12", "Sdc9"]
+  };
+  const directionCharsByTransform = {
+    "rotate-left": { r: "u", u: "l", l: "d", d: "r" },
+    "rotate-right": { r: "d", d: "l", l: "u", u: "r" },
+    "flip-horizontal": { r: "l", l: "r", u: "u", d: "d" },
+    "flip-vertical": { r: "r", l: "l", u: "d", d: "u" }
+  };
+
+  Object.entries(directionCharsByTransform).forEach(([transformType, directionMap]) => {
+    Object.entries(directionalTokensByChar).forEach(([directionChar, tokens]) => {
+      const expectedTokens = directionalTokensByChar[directionMap[directionChar]];
+
+      tokens.forEach((token, index) => {
+        assert.equal(
+          window.MazeTokenPatterns.transformDirectionalToken(token, transformType),
+          expectedTokens[index],
+          `${transformType} must reorient ${token}`
+        );
+      });
+    });
+  });
+  assert.equal(
+    window.MazeTokenPatterns.transformDirectionalCellValue(
+      ".+pr+Sl#+SuO+SdM12+Src9+p",
+      "+",
+      "rotate-left"
+    ),
+    ".+pu+Sd#+SlO+SrM12+Suc9+p",
+    "every directional layer in a stacked cell must transform while ordinary tokens stay unchanged"
+  );
+
   const patternAdapter = window.AuthorPlayData.createAdapter(authorData);
   const playData = patternAdapter.buildPlayData({
     cameraView: { width: 6, height: 1 },

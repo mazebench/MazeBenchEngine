@@ -44,6 +44,13 @@
     down: "Down"
   };
 
+  const DIRECTION_CHARS_BY_TRANSFORM = {
+    "rotate-left": { r: "u", u: "l", l: "d", d: "r" },
+    "rotate-right": { r: "d", d: "l", l: "u", u: "r" },
+    "flip-horizontal": { r: "l", l: "r", u: "u", d: "d" },
+    "flip-vertical": { r: "r", l: "l", u: "d", d: "u" }
+  };
+
   const BOX_PATTERN = /^M(\d+)$/;
   const CLONE_PATTERN = /^c(\d+)$/;
   const BLUE_SLOPE_PATTERN = /^S([rlud])M(\d+)$/;
@@ -166,11 +173,45 @@
     return "S" + direction.charAt(0) + "c" + String(id);
   }
 
+  function transformDirectionalToken(token, transformType) {
+    const value = String(token ?? "");
+    const directionChars = DIRECTION_CHARS_BY_TRANSFORM[transformType];
+
+    if (!directionChars) {
+      return value;
+    }
+
+    const puncherMatch = /^p([rlud])$/.exec(value);
+
+    if (puncherMatch) {
+      return "p" + directionChars[puncherMatch[1]];
+    }
+
+    const slopeMatch = /^S([rlud])(.*)$/.exec(value);
+
+    if (slopeMatch) {
+      return "S" + directionChars[slopeMatch[1]] + slopeMatch[2];
+    }
+
+    return value;
+  }
+
+  function transformDirectionalCellValue(cellValue, blockAdder, transformType) {
+    const separator = typeof blockAdder === "string" && blockAdder ? blockAdder : "+";
+
+    return String(cellValue ?? "")
+      .split(separator)
+      .map((token) => transformDirectionalToken(token, transformType))
+      .join(separator);
+  }
+
   return {
     resolvePatternToken,
     boxToken,
     cloneToken,
     blueSlopeToken,
-    yellowSlopeToken
+    yellowSlopeToken,
+    transformDirectionalToken,
+    transformDirectionalCellValue
   };
 });

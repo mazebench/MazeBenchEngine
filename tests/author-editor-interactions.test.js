@@ -73,6 +73,22 @@ function assertBefore(source, firstMarker, secondMarker, message) {
   assert.ok(first < second, message || `${firstMarker} must precede ${secondMarker}`);
 }
 
+const transformLevelSection = sourceSection(
+  authorSource,
+  "function transformLevel",
+  "function applySelectedCellValue"
+);
+assert.match(
+  transformLevelSection,
+  /tokenPatternHelpers\.transformDirectionalCellValue\([\s\S]*cell,[\s\S]*authorData\.blockAdder,[\s\S]*transformType/
+);
+assertBefore(
+  transformLevelSection,
+  "tokenPatternHelpers.transformDirectionalCellValue",
+  "pushUndoSnapshot()",
+  "directional tokens must be reoriented before the transformed board is committed"
+);
+
 const currentPlayerForWorldActionSource = sourceSection(
   gameplaySource,
   "function currentPlayerForWorldAction",

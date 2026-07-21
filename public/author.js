@@ -5858,6 +5858,18 @@
       return;
     }
 
+    if (typeof tokenPatternHelpers?.transformDirectionalCellValue === "function") {
+      nextCells = nextCells.map((row) =>
+        row.map((cell) =>
+          tokenPatternHelpers.transformDirectionalCellValue(
+            cell,
+            authorData.blockAdder,
+            transformType
+          )
+        )
+      );
+    }
+
     pushUndoSnapshot();
     state.width = nextWidth;
     state.height = nextHeight;
