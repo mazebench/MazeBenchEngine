@@ -6812,7 +6812,7 @@
             gateState,
             orangeButtonsPressed,
             predictedSupports,
-            { allowEmptyPitEntry: carriedRiders.length > 0 }
+            { allowEmptyPitEntry: true }
           )
         ) {
           break;
@@ -10360,7 +10360,9 @@
       const occupied = buildOccupiedMap(state);
       const raisedPlayerGates = computeRaisedPlayerGateSet(state);
       const orangeButtonsPressed = computeRaisedOrangeTerrainCells(state, raisedPlayerGates);
-      const orderedPlayers = sortPlayersForMove(state, dx, dy);
+      const orderedPlayers = sortPlayersForMove(state, dx, dy).filter(
+        (player) => options.suppressCloneInput !== true || !isCloneActor(player)
+      );
       const moves = [];
       const collectedGems = new Set();
       const pendingLiftToggles = [];

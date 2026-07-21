@@ -73,6 +73,58 @@ function assertBefore(source, firstMarker, secondMarker, message) {
   assert.ok(first < second, message || `${firstMarker} must precede ${secondMarker}`);
 }
 
+const currentPlayerForWorldActionSource = sourceSection(
+  gameplaySource,
+  "function currentPlayerForWorldAction",
+  "function worldActionLevelSnapshot"
+);
+const worldActionPlayer = { type: "player", removed: false };
+const roomClone = { type: "clone", removed: false };
+const currentPlayerForWorldAction = vm.runInNewContext(
+  `(${currentPlayerForWorldActionSource.trim()})`,
+  {
+    app: {
+      isMainPlayerActor: (actor) => actor.type === "player",
+      isPlayerActor: (actor) => actor.type === "player" || actor.type === "clone"
+    },
+    state: { actors: [worldActionPlayer, roomClone] }
+  }
+);
+assert.equal(
+  currentPlayerForWorldAction(),
+  worldActionPlayer,
+  "a clone in the room must not disqualify the main player from smooth cross-room movement"
+);
+
+const restoreCrossRoomUndoStateSource = sourceSection(
+  gameplaySource,
+  "function restoreCrossRoomUndoState",
+  "function restoreGroupedUndoEntry"
+);
+const historicalRoom = { levelId: "level_CxA", actors: [{ type: "clone", x: 6, y: 12 }] };
+const resetEntry = { levelId: "level_CxA", actors: [{ type: "clone", x: 6, y: 9 }] };
+const undoRestoreCalls = [];
+const restoreCrossRoomUndoState = vm.runInNewContext(
+  `(${restoreCrossRoomUndoStateSource.trim()})`,
+  {
+    applyLevelState: (snapshot) => undoRestoreCalls.push(["apply", snapshot]),
+    app: {
+      restoreLevelEntryState: (snapshot) => undoRestoreCalls.push(["entry", snapshot]),
+      rememberHorizontalNeighborLevelState: (snapshot) => undoRestoreCalls.push(["cache", snapshot])
+    }
+  }
+);
+restoreCrossRoomUndoState(historicalRoom, resetEntry);
+assert.deepEqual(
+  undoRestoreCalls,
+  [
+    ["apply", historicalRoom],
+    ["entry", resetEntry],
+    ["cache", resetEntry]
+  ],
+  "cross-room undo must restore historical actors live without replacing the room reset cache"
+);
+
 const iceSlopeMergeSolidTypeSection = sourceSection(
   rendererSource,
   "function iceSlopeMergeSolidType",

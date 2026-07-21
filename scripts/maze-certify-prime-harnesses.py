@@ -20,6 +20,7 @@ from verifiers.v1.runtimes import ProgramResult
 from mazebench_harnesses.cli import MazeBenchCLIHarness, MazeBenchCLIHarnessConfig
 from mazebench_harnesses.common import cli_source
 from mazebench_harnesses.codex import MazeBenchCodexHarness
+from mazebench_harnesses.kimi import MazeBenchKimiCodeHarness
 from mazebench_tools import MazeBenchToolConfig, MazeBenchToolTaskset
 
 
@@ -150,6 +151,15 @@ def effective_harness(entry: dict) -> vf.Harness:
             }
         )
         return MazeBenchCodexHarness(config)
+    if route == "kimi_mcp":
+        config = harness_config_type(entry["runtime_harness_id"]).model_validate(
+            {
+                "id": entry["runtime_harness_id"],
+                "runtime": RUNTIME,
+                **entry["default_config"],
+            }
+        )
+        return MazeBenchKimiCodeHarness(config)
     if route == "cli_gateway":
         config = MazeBenchCLIHarnessConfig.model_validate(
             {
@@ -196,6 +206,7 @@ async def certify() -> dict:
                     "config-validation",
                     *(["capability-cli-protocol"] if entry["adapter"] == "cli_gateway" else []),
                     *(["codex-mcp-argv"] if entry["adapter"] == "codex_mcp" else []),
+                    *(["kimi-image-capability"] if entry["adapter"] == "kimi_mcp" else []),
                 ],
                 "status": "certified",
             }
@@ -250,6 +261,23 @@ async def certify() -> dict:
     assert "mcp__mazebench__action" in guard_source
     assert "External tools are disabled" in guard_source
     assert str(ROOT) not in command
+
+    kimi_entry = next(h for h in catalog["harnesses"] if h["id"] == "kimi_code")
+    kimi = effective_harness(kimi_entry)
+    vision_task = task.data.model_copy(update={"observation_mode": "vision"})
+    vision_trace = vf.Trace(
+        task=vf.TraceTask(type="MazeBenchToolTask", data=vision_task)
+    )
+    kimi_runtime = RecordingRuntime()
+    await kimi.launch(
+        SimpleNamespace(model="moonshotai/kimi-k3"),
+        vision_trace,
+        kimi_runtime,
+        "https://interception.invalid/v1",
+        "test-secret",
+        {"mazebench": "https://capability.invalid/mcp/token"},
+    )
+    assert kimi_runtime.env["KIMI_MODEL_CAPABILITIES"] == "tool_use,image_in"
 
     return {
         "schema_version": 1,

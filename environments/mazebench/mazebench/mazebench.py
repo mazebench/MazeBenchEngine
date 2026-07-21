@@ -415,11 +415,17 @@ def render_multiturn_user_prompt(
         notice_parts.append(death)
     return render_prompt_file(
         MULTITURN_USER_PROMPT_FILE,
+        current_room=status.get("current_room") or "",
+        current_view=status.get("current_view") or "",
+        gem_count=max(0, int(status.get("gem_count") or 0)),
         level=status.get("level") or status.get("observation") or "",
         notice_text="\n\n".join(dict.fromkeys(notice_parts)),
+        player_dead=status_player_dead(status),
         response_instruction=response_instruction(status),
         target_text=target_text,
         terminal_note=terminal_note_text(status),
+        visited_levels=", ".join(str(room) for room in status.get("visited_levels") or []),
+        yaw=int(status.get("yaw") or 0),
     )
 
 
@@ -1142,18 +1148,10 @@ def action_result_text(
 
     if "direction" in status:
         details.append(f"Direction: {status['direction']}.")
-    if "moved" in status:
-        details.append(f"Moved: {str(bool(status['moved'])).lower()}.")
     if status.get("room_changed"):
         details.append(f"Entered room: {status.get('current_room')}.")
     if status.get("destination_room"):
         details.append(f"Jumped to room: {status.get('destination_room')}.")
-    if status.get("collected_this_action"):
-        details.append(
-            "Collected gems: "
-            + ", ".join(str(gem) for gem in status["collected_this_action"])
-            + "."
-        )
     if status_player_dead(status):
         details.append(DEATH_MESSAGE)
     return " ".join(details)

@@ -1114,7 +1114,7 @@
     resumeButton.hidden = !run.resumable;
     continueButton.hidden = !run.continuable;
     const renderingVideo = run.video_status === "rendering";
-    const canGenerateVideo = ["paused", "finished", "stopped"].includes(run.status) && !run.has_video;
+    const canGenerateVideo = ["paused", "finished", "stopped", "failed"].includes(run.status) && !run.has_video;
     generateVideoButton.disabled = renderingVideo;
     generateVideoButton.hidden = !canGenerateVideo && !renderingVideo;
     generateVideoButton.classList.toggle("is-rendering", renderingVideo);

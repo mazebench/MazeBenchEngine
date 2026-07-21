@@ -2133,26 +2133,34 @@
       app.render();
     }
 
+    function restoreCrossRoomUndoState(levelSnapshot, entrySnapshot) {
+      applyLevelState(levelSnapshot, {
+        updateUrl: true,
+        immediateCamera: true
+      });
+
+      if (entrySnapshot && typeof app.restoreLevelEntryState === "function") {
+        app.restoreLevelEntryState(entrySnapshot);
+      }
+
+      // Undo restores the historical live room, but a later normal re-entry
+      // must still load the room-entry reset state rather than that history.
+      if (
+        entrySnapshot &&
+        typeof app.rememberHorizontalNeighborLevelState === "function"
+      ) {
+        app.rememberHorizontalNeighborLevelState(entrySnapshot);
+      }
+    }
+
     function restoreGroupedUndoEntry(firstEntry, options = {}) {
       if (firstEntry?.kind === "level-transition") {
-        applyLevelState(firstEntry.level, {
-          updateUrl: true,
-          immediateCamera: true
-        });
-        if (typeof app.restoreLevelEntryState === "function") {
-          app.restoreLevelEntryState(firstEntry.entry);
-        }
+        restoreCrossRoomUndoState(firstEntry.level, firstEntry.entry);
       } else if (firstEntry?.levelSnapshot) {
-        applyLevelState(firstEntry.levelSnapshot, {
-          updateUrl: true,
-          immediateCamera: true
-        });
-        if (
-          firstEntry.levelEntrySnapshot &&
-          typeof app.restoreLevelEntryState === "function"
-        ) {
-          app.restoreLevelEntryState(firstEntry.levelEntrySnapshot);
-        }
+        restoreCrossRoomUndoState(
+          firstEntry.levelSnapshot,
+          firstEntry.levelEntrySnapshot
+        );
       } else {
         restoreTerrainState(firstEntry.terrain);
       }
@@ -2182,7 +2190,13 @@
     }
 
     function currentPlayerForWorldAction() {
-      const players = state.actors.filter((actor) => app.isPlayerActor(actor) && !actor.removed);
+      const isWorldActionPlayer =
+        typeof app.isMainPlayerActor === "function"
+          ? app.isMainPlayerActor
+          : app.isPlayerActor;
+      const players = state.actors.filter(
+        (actor) => isWorldActionPlayer(actor) && !actor.removed
+      );
 
       return players.length === 1 ? players[0] : null;
     }
@@ -2671,7 +2685,10 @@
             animate: false,
             continuePunchSlide,
             recordHistory: false,
-            startOnCurrentSlope
+            startOnCurrentSlope,
+            // The keypress belongs to the source room. After crossing a room
+            // boundary, only the main player is continuing that motion.
+            suppressCloneInput: crossedLevel
           });
 
           if (!supportsWorldActionMoveResult(moveResult)) {
@@ -3523,28 +3540,16 @@
       }
 
       if (previousState.kind === "level-transition") {
-        applyLevelState(previousState.level, {
-          updateUrl: true,
-          immediateCamera: true
-        });
-        if (typeof app.restoreLevelEntryState === "function") {
-          app.restoreLevelEntryState(previousState.entry);
-        }
+        restoreCrossRoomUndoState(previousState.level, previousState.entry);
         finishRestoredUndo(options);
         return;
       }
 
       if (previousState.levelSnapshot && !previousState.actors) {
-        applyLevelState(previousState.levelSnapshot, {
-          updateUrl: true,
-          immediateCamera: true
-        });
-        if (
-          previousState.levelEntrySnapshot &&
-          typeof app.restoreLevelEntryState === "function"
-        ) {
-          app.restoreLevelEntryState(previousState.levelEntrySnapshot);
-        }
+        restoreCrossRoomUndoState(
+          previousState.levelSnapshot,
+          previousState.levelEntrySnapshot
+        );
         finishRestoredUndo(options);
         return;
       }

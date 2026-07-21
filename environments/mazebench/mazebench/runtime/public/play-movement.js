@@ -324,6 +324,7 @@
       const moveResult = engine.move(engineState, dx, dy, {
         continuePunchSlide: options.continuePunchSlide === true,
         startOnCurrentSlope: options.startOnCurrentSlope === true,
+        suppressCloneInput: options.suppressCloneInput === true,
         edgeFalls: edgeFallsEnabledFor(dx, dy)
       });
       const moves = moveResult.moves.map(moveFromEngineRecord).filter(Boolean);

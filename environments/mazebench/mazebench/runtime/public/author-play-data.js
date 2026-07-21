@@ -244,6 +244,21 @@
       return isBaseSurfaceTool(resolveTool(String(token || "").trim()));
     }
 
+    function actorPlacementValueForEmptyCell(currentValue, normalizedToken) {
+      if (
+        normalizeCellValue(currentValue) !== emptyCellToken ||
+        !isActorTool(resolveTool(normalizedToken))
+      ) {
+        return null;
+      }
+
+      // The canonical empty cell is just the layer separator. Keep that
+      // leading separator when placing an actor at elevation zero: it is the
+      // explicit base-void marker that prevents the runtime from supplying
+      // the legacy implicit floor beneath a bare actor token.
+      return blockAdder + normalizedToken;
+    }
+
     function normalizeTokenRows(tokens) {
       const trimmedTokens = trimTrailingAirTokens(tokens.slice());
 
@@ -330,6 +345,15 @@
         return setBottomSurfaceToken(currentValue, normalizedToken);
       }
 
+      const emptyActorPlacement = actorPlacementValueForEmptyCell(
+        currentValue,
+        normalizedToken
+      );
+
+      if (emptyActorPlacement !== null) {
+        return emptyActorPlacement;
+      }
+
       const tokens = enforceBottomSurfaceRows(getCellTokens(currentValue));
 
       if (tokens.length === 0 || isAirToken(tokens[0])) {
@@ -355,6 +379,15 @@
 
       if (isBaseSurfaceToken(normalizedToken)) {
         return setBottomSurfaceToken(currentValue, normalizedToken);
+      }
+
+      const emptyActorPlacement = actorPlacementValueForEmptyCell(
+        currentValue,
+        normalizedToken
+      );
+
+      if (emptyActorPlacement !== null) {
+        return emptyActorPlacement;
       }
 
       const tokens = enforceBottomSurfaceRows(getCellTokens(currentValue));
@@ -747,6 +780,15 @@
 
       if (isBaseSurfaceTool(tool)) {
         return setCellElevationToken(currentValue, normalizedToken, elevation);
+      }
+
+      const emptyActorPlacement =
+        elevation === 0
+          ? actorPlacementValueForEmptyCell(currentValue, normalizedToken)
+          : null;
+
+      if (emptyActorPlacement !== null) {
+        return emptyActorPlacement;
       }
 
       const tokens = enforceBottomSurfaceRows(getCellTokens(currentValue));

@@ -42,8 +42,22 @@ try {
   assert.equal(result.status, 0, result.stderr);
   const responses = result.stdout.trim().split("\n").map((line) => JSON.parse(line));
   const firstObservation = responses.find((response) => response.id === 2)?.result?.structuredContent;
-  assert.deepEqual(Object.keys(firstObservation || {}), ["level"]);
+  assert.deepEqual(Object.keys(firstObservation || {}), [
+    "observation_mode",
+    "current_room",
+    "current_view",
+    "yaw",
+    "gem_count",
+    "visited_levels",
+    "player_dead",
+    "game_won",
+    "game_lost",
+    "level"
+  ]);
+  assert.equal(firstObservation.observation_mode, "ascii");
   assert.match(firstObservation.level, /P|p/);
+  assert.equal(firstObservation.visited_levels.length, 1);
+  assert.match(firstObservation.visited_levels[0], /^level_[A-P]x[A-P]$/);
   assert.equal(Object.prototype.hasOwnProperty.call(firstObservation, "player"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(firstObservation, "scorecard"), false);
   const listedTools = responses.find((response) => response.id === 10)?.result?.tools || [];
@@ -162,8 +176,22 @@ try {
   );
   assert.doesNotMatch(JSON.stringify(restrictedTools), /MazeBench|clone_id|worker/i);
   const restrictedObservation = restrictedResponses.find((response) => response.id === 92)?.result?.structuredContent;
-  assert.deepEqual(Object.keys(restrictedObservation || {}), ["level"]);
+  assert.deepEqual(Object.keys(restrictedObservation || {}), [
+    "observation_mode",
+    "current_room",
+    "current_view",
+    "yaw",
+    "gem_count",
+    "visited_levels",
+    "player_dead",
+    "game_won",
+    "game_lost",
+    "level"
+  ]);
+  assert.equal(restrictedObservation.observation_mode, "ascii");
   assert.match(restrictedObservation.level, /P|p/);
+  assert.equal(restrictedObservation.visited_levels.length, 1);
+  assert.match(restrictedObservation.visited_levels[0], /^level_[A-P]x[A-P]$/);
   for (const id of [93, 94, 95, 96]) {
     assert(restrictedResponses.find((response) => response.id === id)?.error, `restricted request ${id} must fail closed`);
   }
@@ -260,6 +288,9 @@ try {
   assert.equal(jsonStatus.json_observation.omniscient, true);
   assert.equal(jsonStatus.json_observation.hide_names, true);
   assert.equal(jsonStatus.json_observation.objects.player.length > 0, true);
+  assert.equal(jsonStatus.moved, undefined);
+  assert.equal(jsonStatus.board_state_hash, undefined);
+  assert.equal(jsonStatus.board_state_hash_version, undefined);
   assert.equal(
     JSON.parse(fs.readFileSync(path.join(jsonDir, "session.json"), "utf8")).hideNamesSeed,
     "mcp-repeatable-seed"
@@ -363,6 +394,7 @@ try {
     [
       "-e",
       `process.env.MAZEBENCH_RUN_DIR=${JSON.stringify(runDir)};` +
+        `process.env.MAZEBENCH_MODE="vision";` +
         `const {toolContent}=require(${JSON.stringify(path.join(rootDir, "scripts", "maze-mcp-server.js"))});` +
         `process.stdout.write(JSON.stringify(toolContent({ok:true,session:"/trusted/session.json",workspace:"/trusted/work",frame_image:${JSON.stringify(framePath)}})));`
     ],
@@ -375,6 +407,48 @@ try {
   assert.equal(imageResult.structuredContent.workspace, undefined);
   assert.equal(imageResult.content[1].type, "image");
   assert.equal(imageResult.content[1].mimeType, "image/png");
+
+  const asciiStatusProbe = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `process.env.MAZEBENCH_RUN_DIR=${JSON.stringify(runDir)};` +
+        `process.env.MAZEBENCH_MODE="text";` +
+        `const {toolContent}=require(${JSON.stringify(path.join(rootDir, "scripts", "maze-mcp-server.js"))});` +
+        `const alive=toolContent({status:{level:"P",current_room:"level_HxH",current_view:"top-diagonal",yaw:0,gem_count:1,moved:false,board_state_hash:"alive-hash",board_state_hash_version:1,collected_gems:["gem-secret"],collected_this_action:["gem-secret"],push_count:2,pushes_this_action:1,novel_push_count:2,novel_pushes_this_action:1,player_dead:false,game_won:false,game_lost:false,visited_levels:["level_HxH"]}}).structuredContent;` +
+        `const dead=toolContent({status:{level:".",current_room:"level_HxI",current_view:"top-diagonal",yaw:1,gem_count:1,moved:true,board_state_hash:"dead-hash",board_state_hash_version:1,collected_gems:["gem-secret"],push_count:2,player_dead:true,game_won:false,game_lost:false,death_message:"The player died, you must now undo or reset or go to a level.",allowed_commands:["undo","reset","go to level X Y"],visited_levels:["level_HxH","level_HxI"]}}).structuredContent;` +
+        `process.stdout.write(JSON.stringify({alive,dead}));`
+    ],
+    { cwd: rootDir, encoding: "utf8" }
+  );
+  assert.equal(asciiStatusProbe.status, 0, asciiStatusProbe.stderr);
+  const asciiStatuses = JSON.parse(asciiStatusProbe.stdout);
+  assert.deepEqual(asciiStatuses.alive, {
+    observation_mode: "ascii",
+    current_room: "level_HxH",
+    current_view: "top-diagonal",
+    yaw: 0,
+    gem_count: 1,
+    visited_levels: ["level_HxH"],
+    player_dead: false,
+    game_won: false,
+    game_lost: false,
+    level: "P"
+  });
+  assert.deepEqual(asciiStatuses.dead, {
+    observation_mode: "ascii",
+    current_room: "level_HxI",
+    current_view: "top-diagonal",
+    yaw: 1,
+    gem_count: 1,
+    visited_levels: ["level_HxH", "level_HxI"],
+    player_dead: true,
+    game_won: false,
+    game_lost: false,
+    level: ".",
+    death_message: "The player died, you must now undo or reset or go to a level.",
+    allowed_commands: ["undo", "reset", "go to level X Y"]
+  });
 
   const visionDir = path.join(runDir, "restricted-vision");
   fs.mkdirSync(visionDir, { recursive: true });
@@ -410,6 +484,15 @@ try {
     assert.equal(toolResult?.content?.[1]?.mimeType, "image/png");
     assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "level"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "json_observation"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "moved"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "board_state_hash"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "board_state_hash_version"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "collected_gems"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "collected_this_action"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "push_count"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "pushes_this_action"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "novel_push_count"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(toolResult?.structuredContent || {}, "novel_pushes_this_action"), false);
     assert.doesNotMatch(toolResult?.content?.[0]?.text || "", new RegExp(rootDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert(fs.existsSync(path.join(visionDir, "frames", "frame-000.png")));

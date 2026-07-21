@@ -5629,8 +5629,8 @@ function createAgentRunService({
       throw new Error(`Unknown run "${runId}".`);
     }
 
-    if (!["paused", "finished", "stopped"].includes(meta.status)) {
-      throw new Error("Pause or finish the run before generating a replay video.");
+    if (!["paused", "finished", "stopped", "failed"].includes(meta.status)) {
+      throw new Error("Pause or end the run before generating a replay video.");
     }
 
     const runDir = runDirFor(runId);
@@ -5814,8 +5814,8 @@ function createAgentRunService({
   function regenerateRunVideo(runId) {
     const meta = readRunMeta(runId);
     if (!meta) throw new Error(`Unknown run "${runId}".`);
-    if (!["paused", "finished", "stopped"].includes(meta.status)) {
-      throw new Error("Pause or finish the run before regenerating its replay video.");
+    if (!["paused", "finished", "stopped", "failed"].includes(meta.status)) {
+      throw new Error("Pause or end the run before regenerating its replay video.");
     }
     discardRunVideo(runId, meta);
     return generateRunVideo(runId);

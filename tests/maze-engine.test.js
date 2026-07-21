@@ -96,6 +96,27 @@ function createState(playData) {
 }
 
 {
+  // Cross-room movement continues the main player's motion in the next room,
+  // but must not replay the source-room input against clones already there.
+  const { engine, state } = createState({
+    width: 4,
+    height: 1,
+    terrain: floorTerrain(4, 1),
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false },
+      { type: "clone", groupId: "c0", x: 2, y: 0, removed: false }
+    ]
+  });
+
+  const result = engine.move(state, 1, 0, { suppressCloneInput: true });
+
+  assert.equal(result.moved, true);
+  assert.deepEqual([state.actorX[0], state.actorY[0]], [1, 0]);
+  assert.deepEqual([state.actorX[1], state.actorY[1]], [2, 0]);
+  assert.equal(result.moves.some((move) => move.actorType === "clone"), false);
+}
+
+{
   const { engine, state } = createState({
     width: 2,
     height: 1,
@@ -250,8 +271,12 @@ function createState(playData) {
 
   const result = engine.move(state, 1, 0);
 
-  assert.equal(result.moved, false);
-  assert.deepEqual([state.actorX[0], state.actorElevation[0]], [0, 0]);
+  assert.equal(result.moved, true);
+  assert.deepEqual(
+    [state.actorX[0], state.actorElevation[0], state.actorRemoved[0]],
+    [1, -1, 1]
+  );
+  assert.equal(result.moves[0].toRemoved, true);
 }
 
 {

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import atexit
 import asyncio
+import base64
 import json
 import os
 import tempfile
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import verifiers.v1 as vf
+from mcp.types import CallToolResult, ImageContent, TextContent
 from pydantic import Field
 
 from mazebench.mazebench import (
@@ -26,6 +28,7 @@ from mazebench.mazebench import (
     MazeBenchTaskData,
     MazeBenchTaskset,
     MazeSession,
+    VisionSession,
     apply_quit_policy,
     evaluate_auto_quit,
     find_bridge_root,
@@ -35,6 +38,7 @@ from mazebench.mazebench import (
     run_blocking,
     slim_status,
     target_text_for_row,
+    valid_action_commands,
     write_live_actions,
 )
 
@@ -79,31 +83,54 @@ def _atomic_json(path: str, value: dict[str, Any]) -> None:
 def _public_observation(status: dict[str, Any], mode: str) -> dict[str, Any]:
     """Return only the observation fields intended for the model."""
 
-    common = {
-        key: status[key]
-        for key in (
-            "action_count",
-            "allowed_commands",
-            "current_room",
-            "current_view",
-            "game_lost",
-            "game_won",
-            "gem_count",
-            "moved",
-            "player_dead",
-            "quit",
-            "room_changed",
-            "solved",
-            "visited_levels",
-            "yaw",
-        )
-        if key in status
+    observation_mode = "ascii" if mode in {"ascii", "text"} else mode
+    common: dict[str, Any] = {
+        "observation_mode": observation_mode,
+        "current_room": str(status.get("current_room") or ""),
+        "current_view": str(status.get("current_view") or ""),
+        "yaw": int(status.get("yaw") or 0),
+        "gem_count": max(0, int(status.get("gem_count") or 0)),
+        "visited_levels": [str(level) for level in status.get("visited_levels") or []],
+        "player_dead": bool(status.get("player_dead")),
+        "game_won": bool(status.get("game_won")),
+        "game_lost": bool(status.get("game_lost")),
     }
-    if mode == "json":
+    if observation_mode == "json":
         common["json_observation"] = status.get("json_observation") or {}
-    else:
+    elif observation_mode == "ascii":
         common["level"] = str(status.get("level") or "")
+    if common["player_dead"]:
+        common["death_message"] = str(
+            status.get("death_message")
+            or "The player died, you must now undo or reset or go to a level."
+        )
+        common["allowed_commands"] = [
+            str(command)
+            for command in status.get("allowed_commands")
+            or ["undo", "reset", "go to level X Y"]
+        ]
     return common
+
+
+def _vision_tool_result(result: dict[str, Any], frame: str) -> CallToolResult:
+    prefix = "data:image/png;base64,"
+    if not frame.startswith(prefix):
+        raise RuntimeError("MazeBench vision renderer did not return a PNG image")
+    encoded = frame[len(prefix) :]
+    base64.b64decode(encoded, validate=True)
+    result["observation"]["frame_image"] = "attached:image/png"
+    return CallToolResult(
+        content=[
+            TextContent(type="text", text=json.dumps(result, indent=2)),
+            ImageContent(
+                type="image",
+                data=encoded,
+                mimeType="image/png",
+            ),
+        ],
+        structuredContent=result,
+        isError=False,
+    )
 
 
 def _tool_prompt(task: MazeBenchTaskData) -> str:
@@ -117,7 +144,19 @@ def _tool_prompt(task: MazeBenchTaskData) -> str:
         if task.allow_quit
         else "Quit is disabled; recover with undo or reset after a death and keep playing."
     )
-    mode = "structured JSON" if task.observation_mode == "json" else "ASCII"
+    if task.observation_mode == "json":
+        mode = "structured JSON"
+        vision_policy = ""
+    elif task.observation_mode == "vision":
+        mode = "perspective image"
+        vision_policy = (
+            " Each result includes an MCP image block containing the complete board "
+            "observation for that turn. Inspect that image before choosing the next action; "
+            "there is no ASCII or JSON board fallback."
+        )
+    else:
+        mode = "ASCII"
+        vision_policy = ""
     objective = target_text_for_row(
         {
             "game_won_gem_count": task.game_won_gem_count,
@@ -140,7 +179,10 @@ def _tool_prompt(task: MazeBenchTaskData) -> str:
 Call `game_start` exactly once first. Inspect its sanitized {mode} observation, then call
 `game_action` with one action at a time. Use `game_observe` only when you need to inspect the
 current state without consuming an action. Valid actions include up, down, left, right,
-rotate camera left, rotate camera right, undo, reset, and go to level X Y.{kimi_observe_policy}
+rotate camera up, rotate camera down, rotate camera left, rotate camera right, undo, reset,
+and go to level X Y.{vision_policy}{kimi_observe_policy}
+The controls do not report whether a movement was blocked; infer its effect only from the
+returned observation.
 
 {objective} Explore as many rooms as possible. {budget} {quit_policy}
 Finish with a short route summary only after a game result says `ended: true`. A belief that
@@ -194,6 +236,7 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
         self._auto_quit: dict[str, Any] = {}
         self._scorecard: dict[str, Any] = {}
         self._status_error = ""
+        self._vision_session: VisionSession | None = None
         self._session = MazeSession(
             game_won_gem_count=task.game_won_gem_count,
             level_id=task.level_id,
@@ -220,11 +263,21 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
             await self._restore_checkpoint(self.config.resume_checkpoint_path)
         self._write_snapshot()
 
-    def close_session(self) -> None:
+    def close_game_session(self) -> None:
         session = getattr(self, "_session", None)
         if isinstance(session, MazeSession):
             session.close()
             self._session = None
+
+    def close_vision_session(self) -> None:
+        session = getattr(self, "_vision_session", None)
+        if isinstance(session, VisionSession):
+            session.close()
+            self._vision_session = None
+
+    def close_session(self) -> None:
+        self.close_game_session()
+        self.close_vision_session()
         callback = getattr(self, "_atexit_callback", None)
         if callback is not None:
             atexit.unregister(callback)
@@ -338,7 +391,7 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
         except Exception as error:  # evaluator detail stays out of the tool result
             self._status_error = str(error)
         finally:
-            await run_blocking(self.close_session)
+            await run_blocking(self.close_game_session)
 
     def _result(self, *, error: str = "") -> dict[str, Any]:
         result = {
@@ -366,34 +419,54 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
             }
         return result
 
+    async def _tool_response(self, result: dict[str, Any]) -> Any:
+        if self.task.observation_mode != "vision":
+            return result
+        try:
+            if not isinstance(self._vision_session, VisionSession):
+                self._vision_session = await run_blocking(VisionSession, task=self.task)
+            frame = await run_blocking(
+                self._vision_session.frame_for_actions,
+                valid_action_commands(self._actions),
+            )
+        except Exception as error:
+            await run_blocking(self.close_vision_session)
+            raise RuntimeError("MazeBench vision renderer is unavailable") from error
+        response = _vision_tool_result(result, frame)
+        if result.get("ended"):
+            await run_blocking(self.close_vision_session)
+        return response
+
     @vf.tool
-    async def start(self) -> dict[str, Any]:
+    async def start(self) -> Any:
         """Start the game and return the current sanitized observation. This is idempotent."""
 
         async with self._lock:
-            return self._result()
+            return await self._tool_response(self._result())
 
     @vf.tool
-    async def observe(self) -> dict[str, Any]:
+    async def observe(self) -> Any:
         """Return the current sanitized observation without consuming an action."""
 
         async with self._lock:
             self._actions_since_observe = 0
-            return self._result()
+            return await self._tool_response(self._result())
 
     @vf.tool
-    async def action(self, action: str) -> dict[str, Any]:
+    async def action(self, action: str) -> Any:
         """Apply one allowed game action, such as up, down, left, right, undo, reset, or rotate camera left."""
 
         async with self._lock:
             if self._terminal():
-                return self._result(error="The run has ended; no further action is available.")
+                return await self._tool_response(
+                    self._result(error="The run has ended; no further action is available.")
+                )
             if (
                 self._observe_break_interval
                 and self._actions_since_observe >= self._observe_break_interval
             ):
-                return self._result(
-                    error="Call game_observe before another game_action."
+                return await self._tool_response(
+                    self._result(error="Call game_observe before another game_action.")
                 )
 
             self._actions_since_observe += 1
@@ -453,7 +526,7 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
                     self._auto_quit = evaluation
             await self._finish_if_needed()
             self._write_snapshot()
-            return self._result(error=error)
+            return await self._tool_response(self._result(error=error))
 
 
 class MazeBenchToolTaskConfig(MazeBenchTaskConfig):
