@@ -1247,31 +1247,30 @@ function createPageRenderer({
           </div>
         </section>`;
     const heatmapSection = `<section class="panel run-heatmap" id="run-heatmap-section">
-          <div id="run-board-state-chart" class="run-metric-chart run-board-state-chart" hidden>
+          <div id="run-board-state-panel" class="run-board-state-panel" hidden>
+            <div class="run-board-state-chart__controls">
+              <select id="run-board-state-basis" class="run-board-state-chart__scope" aria-label="Novelty chart observation">
+                <option value="state" selected>Board state</option>
+                <option value="position">Player world position</option>
+              </select>
+              <select id="run-board-state-scope" class="run-board-state-chart__scope" aria-label="State novelty chart range">
+                <option value="cumulative">Cumulative</option>
+                <option value="last-100" selected>Last 100 moves</option>
+                <option value="last-n">Last N moves</option>
+              </select>
+              <label id="run-board-state-custom-window" class="run-board-state-chart__custom-window" hidden>
+                <span>N =</span>
+                <input id="run-board-state-window" type="number" min="1" max="10000" step="1" value="100" aria-label="Custom novelty window in moves">
+              </label>
+            </div>
+            <div id="run-board-state-chart" class="run-metric-chart run-board-state-chart">
             <div class="run-metric-chart__head">
-              <div>
-                <h3 class="run-board-state-chart__title">Novelty rate</h3>
-                <p id="run-board-state-description">A state is new only on its first appearance in the run; camera angle excluded.</p>
-              </div>
-              <div class="run-board-state-chart__controls">
-                <select id="run-board-state-basis" class="run-board-state-chart__scope" aria-label="Novelty chart observation">
-                  <option value="state" selected>Board state</option>
-                  <option value="position">Player world position</option>
-                </select>
-                <select id="run-board-state-scope" class="run-board-state-chart__scope" aria-label="State novelty chart range">
-                  <option value="cumulative">Cumulative</option>
-                  <option value="last-100" selected>Last 100 moves</option>
-                  <option value="last-n">Last N moves</option>
-                </select>
-                <label id="run-board-state-custom-window" class="run-board-state-chart__custom-window" hidden>
-                  <span>N =</span>
-                  <input id="run-board-state-window" type="number" min="1" max="10000" step="1" value="100" aria-label="Custom novelty window in moves">
-                </label>
-                <strong id="run-board-state-latest">—</strong>
-              </div>
+              <h3 class="run-board-state-chart__title">Novelty rate</h3>
+              <strong id="run-board-state-latest">—</strong>
             </div>
             <canvas id="run-board-state-canvas" class="run-metric-chart__canvas run-board-state-chart__canvas" role="img" aria-label="Rolling state novelty rate by action"></canvas>
             <div id="run-board-state-tooltip" class="run-metric-chart__tooltip" role="tooltip" hidden></div>
+            </div>
           </div>
           <div class="run-heatmap__head">
             <h2>Heatmap</h2>

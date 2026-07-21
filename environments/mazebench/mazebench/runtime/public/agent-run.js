@@ -67,11 +67,11 @@
   const heatmapSummary = document.getElementById("run-heatmap-summary");
   const heatmapLegend = document.getElementById("run-heatmap-legend");
   const heatmapEmpty = document.getElementById("run-heatmap-empty");
+  const boardStatePanel = document.getElementById("run-board-state-panel");
   const boardStateChart = document.getElementById("run-board-state-chart");
   const boardStateCanvas = document.getElementById("run-board-state-canvas");
   const boardStateLatest = document.getElementById("run-board-state-latest");
   const boardStateTooltip = document.getElementById("run-board-state-tooltip");
-  const boardStateDescription = document.getElementById("run-board-state-description");
   const boardStateBasis = document.getElementById("run-board-state-basis");
   const boardStateScope = document.getElementById("run-board-state-scope");
   const boardStateCustomWindow = document.getElementById("run-board-state-custom-window");
@@ -1140,6 +1140,16 @@
     return `${scaled.toLocaleString(undefined, { maximumFractionDigits: 1 })}${unit[1]}`;
   }
 
+  function moveAxisLabels(firstAction, lastAction) {
+    const labels = [];
+    const firstHundred = Math.max(100, Math.ceil(firstAction / 100) * 100);
+    for (let action = firstHundred; action <= lastAction; action += 100) {
+      labels.push(action);
+    }
+    if (!labels.includes(lastAction)) labels.push(lastAction);
+    return labels;
+  }
+
   function drawContextChart() {
     const canvas = tokenChart.querySelector(".run-context-chart__canvas");
     const points = state.contextPoints;
@@ -1154,11 +1164,15 @@
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, width, height);
 
-    const padding = { top: 14, right: 14, bottom: 27, left: 48 };
+    const padding = { top: 14, right: 14, bottom: 38, left: 48 };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
     const ceiling = Math.max(1, ...points.map((point) => point.context)) * 1.08;
-    const x = (index) => padding.left + (points.length === 1 ? plotWidth / 2 : (index / (points.length - 1)) * plotWidth);
+    const firstAction = points[0].action;
+    const lastAction = points[points.length - 1].action;
+    const x = (action) => padding.left + (lastAction === firstAction
+      ? plotWidth / 2
+      : ((action - firstAction) / (lastAction - firstAction)) * plotWidth);
     const y = (value) => padding.top + plotHeight - (value / ceiling) * plotHeight;
 
     context.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -1181,19 +1195,19 @@
     fill.addColorStop(1, "rgba(169, 153, 255, 0)");
     context.beginPath();
     points.forEach((point, index) => {
-      if (index === 0) context.moveTo(x(index), y(point.context));
-      else context.lineTo(x(index), y(point.context));
+      if (index === 0) context.moveTo(x(point.action), y(point.context));
+      else context.lineTo(x(point.action), y(point.context));
     });
-    context.lineTo(x(points.length - 1), padding.top + plotHeight);
-    context.lineTo(x(0), padding.top + plotHeight);
+    context.lineTo(x(lastAction), padding.top + plotHeight);
+    context.lineTo(x(firstAction), padding.top + plotHeight);
     context.closePath();
     context.fillStyle = fill;
     context.fill();
 
     context.beginPath();
     points.forEach((point, index) => {
-      if (index === 0) context.moveTo(x(index), y(point.context));
-      else context.lineTo(x(index), y(point.context));
+      if (index === 0) context.moveTo(x(point.action), y(point.context));
+      else context.lineTo(x(point.action), y(point.context));
     });
     context.strokeStyle = "#a999ff";
     context.lineWidth = 2.25;
@@ -1207,7 +1221,7 @@
     points.forEach((point, index) => {
       if (!point.compacted && index !== points.length - 1) return;
       context.beginPath();
-      context.arc(x(index), y(point.context), point.compacted ? 4 : 3.5, 0, Math.PI * 2);
+      context.arc(x(point.action), y(point.context), point.compacted ? 4 : 3.5, 0, Math.PI * 2);
       context.fillStyle = point.compacted ? "#ff9d82" : "#65f3d4";
       context.fill();
       context.strokeStyle = "#070811";
@@ -1215,12 +1229,15 @@
       context.stroke();
     });
 
-    const labelIndexes = [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])];
+    const actionLabels = moveAxisLabels(firstAction, lastAction);
     context.fillStyle = "rgba(154, 163, 199, 0.76)";
     context.textBaseline = "alphabetic";
-    labelIndexes.forEach((index, labelIndex) => {
-      context.textAlign = labelIndex === 0 ? "left" : labelIndex === labelIndexes.length - 1 ? "right" : "center";
-      context.fillText(String(points[index].action), x(index), height - 7);
+    actionLabels.forEach((action, index) => {
+      const isFinal = action === lastAction;
+      const previousAction = actionLabels[index - 1];
+      const staggerFinal = isFinal && previousAction !== undefined && x(action) - x(previousAction) < 36;
+      context.textAlign = isFinal ? "right" : "center";
+      context.fillText(String(action), x(action), padding.top + plotHeight + (staggerFinal ? 25 : 15));
     });
   }
 
@@ -1335,7 +1352,7 @@
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, width, height);
 
-    const padding = { top: 15, right: 14, bottom: 28, left: 42 };
+    const padding = { top: 15, right: 14, bottom: 38, left: 42 };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
     const firstAction = points[0].action;
@@ -1426,12 +1443,15 @@
       ? `Click a highlighted change to show its exact frame (${jumpTargets.length} change${jumpTargets.length === 1 ? "" : "s"})`
       : `No ${key} changes yet`;
 
-    const actionLabels = [...new Set([firstAction, Math.round((firstAction + lastAction) / 2), lastAction])];
+    const actionLabels = moveAxisLabels(firstAction, lastAction);
     context.fillStyle = "rgba(154, 163, 199, 0.76)";
     context.textBaseline = "alphabetic";
     actionLabels.forEach((action, index) => {
-      context.textAlign = index === 0 ? "left" : index === actionLabels.length - 1 ? "right" : "center";
-      context.fillText(String(action), x(action), height - 7);
+      const isFinal = action === lastAction;
+      const previousAction = actionLabels[index - 1];
+      const staggerFinal = isFinal && previousAction !== undefined && x(action) - x(previousAction) < 36;
+      context.textAlign = isFinal ? "right" : "center";
+      context.fillText(String(action), x(action), padding.top + plotHeight + (staggerFinal ? 25 : 15));
     });
   }
 
@@ -1575,7 +1595,12 @@
 
   function drawBoardStateChart() {
     const points = state.boardStatePoints;
-    if (!boardStateCanvas || !points.length || boardStateChart?.hidden) return;
+    if (
+      !boardStateCanvas ||
+      !points.length ||
+      boardStatePanel?.hidden ||
+      (!boardStatePanel && boardStateChart?.hidden)
+    ) return;
     const width = Math.max(280, Math.floor(boardStateCanvas.clientWidth));
     const height = Math.max(170, Math.floor(boardStateCanvas.clientHeight));
     const ratio = Math.min(2, window.devicePixelRatio || 1);
@@ -1586,7 +1611,7 @@
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, width, height);
 
-    const padding = { top: 15, right: 15, bottom: 28, left: 48 };
+    const padding = { top: 15, right: 15, bottom: 44, left: 64 };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
     const firstAction = points[0].action;
@@ -1650,13 +1675,27 @@
     }));
     boardStateCanvas._replayJumpTargets = targets;
 
-    const actionLabels = [...new Set([firstAction, Math.round((firstAction + lastAction) / 2), lastAction])];
+    const actionLabels = moveAxisLabels(firstAction, lastAction);
     context.fillStyle = "rgba(154, 163, 199, 0.76)";
     context.textBaseline = "alphabetic";
     actionLabels.forEach((action, index) => {
-      context.textAlign = index === 0 ? "left" : index === actionLabels.length - 1 ? "right" : "center";
-      context.fillText(String(action), x(action), height - 7);
+      const isFinal = action === lastAction;
+      const previousAction = actionLabels[index - 1];
+      const staggerFinal = isFinal && previousAction !== undefined && x(action) - x(previousAction) < 36;
+      context.textAlign = isFinal ? "right" : "center";
+      context.fillText(String(action), x(action), padding.top + plotHeight + (staggerFinal ? 25 : 15));
     });
+
+    context.fillStyle = "rgba(190, 198, 226, 0.88)";
+    context.font = "10px ui-monospace, SFMono-Regular, Menlo, monospace";
+    context.textAlign = "center";
+    context.fillText("Moves", padding.left + plotWidth / 2, height - 4);
+    context.save();
+    context.translate(12, padding.top + plotHeight / 2);
+    context.rotate(-Math.PI / 2);
+    context.textBaseline = "middle";
+    context.fillText("Board-state novelty", 0, 0);
+    context.restore();
   }
 
   function renderBoardStateChart() {
@@ -1664,16 +1703,12 @@
     const settings = boardStateMetricSettings();
     const points = boardStateNoveltyPoints();
     state.boardStatePoints = points;
-    boardStateChart.hidden = points.length === 0;
+    if (boardStatePanel) boardStatePanel.hidden = points.length === 0;
+    else boardStateChart.hidden = points.length === 0;
     if (!points.length) return;
     const latest = points[points.length - 1];
     const subject = settings.basis === "position" ? "player world positions" : "board states";
     boardStateLatest.textContent = `${latest.percentage.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
-    if (boardStateDescription) {
-      boardStateDescription.textContent = settings.mode === "cumulative"
-        ? `All observed ${subject} from the start of the run; camera angle excluded.`
-        : `Globally new ${subject} among the latest ${settings.windowLimit.toLocaleString()} moves; camera angle excluded.`;
-    }
     boardStateCanvas.setAttribute(
       "aria-label",
       settings.mode === "cumulative"

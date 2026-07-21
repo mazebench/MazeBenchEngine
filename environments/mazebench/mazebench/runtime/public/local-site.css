@@ -3389,6 +3389,10 @@ body.play-body {
   opacity: 0.62;
 }
 
+.run-board-state-panel[hidden] {
+  display: none;
+}
+
 .run-board-state-chart {
   background:
     radial-gradient(circle at 8% 0%, rgba(101, 243, 212, 0.08), transparent 38%),
@@ -3396,12 +3400,8 @@ body.play-body {
   margin-bottom: 18px;
 }
 
-.run-board-state-chart[hidden] {
-  display: none;
-}
-
 .run-board-state-chart .run-metric-chart__head {
-  align-items: flex-start;
+  align-items: center;
   flex-wrap: wrap;
   gap: 12px;
 }
@@ -3415,12 +3415,6 @@ body.play-body {
   text-transform: uppercase;
 }
 
-.run-board-state-chart p {
-  color: var(--muted, #9aa3c7);
-  font-size: 9px;
-  margin: 4px 0 0;
-}
-
 .run-board-state-chart__controls {
   align-items: center;
   display: flex;
@@ -3428,6 +3422,7 @@ body.play-body {
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
+  margin-bottom: 10px;
   max-width: 100%;
 }
 
@@ -3494,7 +3489,7 @@ body.play-body {
 }
 
 .run-board-state-chart__canvas {
-  height: 190px;
+  height: 220px;
 }
 
 #run-board-state-latest {
