@@ -977,11 +977,11 @@ function createPageRenderer({
                 </div>
               </article>
               <article class="setting-card setting-card--tool-use is-gated" inert aria-hidden="true">
-                <div class="setting-card__head"><span>Tool-use (Not guaranteed)</span></div>
-                <div class="animated-segmented" id="tool-use-picker" role="radiogroup" aria-label="Tool-use (Not guaranteed)">
+                <div class="setting-card__head"><span>Tool use</span></div>
+                <div class="animated-segmented" id="tool-use-picker" role="radiogroup" aria-label="Tool use">
                   <span class="segmented__glider" aria-hidden="true"></span>
                   <button type="button" class="segmented__option" data-tool-use="read-only" aria-pressed="false"><span class="segmented__icon">NO</span><span>No Tools</span></button>
-                  <button type="button" class="segmented__option" data-tool-use="offline" aria-pressed="false"><span class="segmented__icon">CLI</span><span>Tools</span></button>
+                  <button type="button" class="segmented__option" data-tool-use="offline" aria-pressed="false" title="Isolated Python scratchpad; no host files or network"><span class="segmented__icon">PY</span><span>Tools</span></button>
                 </div>
               </article>
               <article class="setting-card setting-card--orchestration is-gated" inert aria-hidden="true">

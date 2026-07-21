@@ -684,6 +684,11 @@ function createAgentRunService({
     return path.join(runsDir, runId);
   }
 
+  function agentWorkspaceRootFor(runId) {
+    const key = crypto.createHash("sha256").update(runDirFor(runId)).digest("hex").slice(0, 24);
+    return path.join(os.tmpdir(), "mazebench-agent-workspaces", key);
+  }
+
   function runMetaPath(runId) {
     return path.join(runDirFor(runId), "run.json");
   }
@@ -5899,6 +5904,7 @@ function createAgentRunService({
   function deleteRun(runId) {
     const meta = readRunMeta(runId);
     const runDir = runDirFor(runId);
+    const agentWorkspaceRoot = agentWorkspaceRootFor(runId);
 
     const primeSync = primeSyncChildren.get(runId);
     if (primeSync?.pid) {
@@ -5966,6 +5972,7 @@ function createAgentRunService({
     for (const filePath of jsonLineIndexes.keys()) {
       if (filePath.startsWith(`${runDir}${path.sep}`)) jsonLineIndexes.delete(filePath);
     }
+    fs.rmSync(agentWorkspaceRoot, { recursive: true, force: true });
     fs.rmSync(runDir, { recursive: true, force: true });
     if (meta?.model === "claude") startNextWaitingClaudeRun();
     return { id: runId, deleted: true };

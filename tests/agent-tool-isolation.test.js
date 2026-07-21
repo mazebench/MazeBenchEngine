@@ -17,6 +17,7 @@ const workspace = path.join(os.tmpdir(), "game-only-agent-test");
 const baseConfig = {
   agentSwarmWorkspaceDir: path.join(workspace, "swarm-workspaces"),
   agentWorkspaceDir: workspace,
+  agentCodexRuntimeDir: path.join(workspace, "codex-runtime"),
   allowQuit: false,
   claudeBin: "claude",
   codexBin: "codex",
@@ -35,6 +36,9 @@ const baseConfig = {
   moves: 2,
   omniscient: false,
   outDir: workspace,
+  codexRuntimeDir: path.join(workspace, "codex-runtime"),
+  pythonBin: "",
+  pythonSandboxStateDir: path.join(workspace, "python-sandbox"),
   reasoning: "low",
   resume: "",
   seed: false,
@@ -85,8 +89,12 @@ const toolsOnConfig = {
   tools: true
 };
 const toolsOnPrompt = buildMcpPrompt(toolsOnConfig);
-assert.match(toolsOnPrompt, /TOOLS-ON mode/);
-assert.match(toolsOnPrompt, /tool availability is not guaranteed/);
+assert.match(toolsOnPrompt, /TOOLS mode/);
+assert.match(toolsOnPrompt, /python_exec/);
+assert.match(toolsOnPrompt, /cannot read MazeBench source, repositories/);
+assert.match(toolsOnPrompt, /Shell, file-browser, editor, web, app, and connector tools are disabled/);
+assert.doesNotMatch(toolsOnPrompt, /tool availability is not guaranteed/);
+assert.doesNotMatch(toolsOnPrompt, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 assert.doesNotMatch(toolsOnPrompt, /TOOLS-OFF mode/);
 assert.doesNotMatch(toolsOnPrompt, /maze_scorecard/);
 
@@ -100,11 +108,11 @@ assert.doesNotMatch(swarmPrompt, /maze_clone|clone_id/i);
 
 assert.deepEqual(
   codexMcpConfigArgs(toolsOnConfig).filter((value) => value.includes("enabled_tools")),
-  ['mcp_servers.mazebench.enabled_tools=["maze_start","maze_observe","maze_action"]']
+  ['mcp_servers.mazebench.enabled_tools=["maze_start","maze_observe","maze_action","python_exec"]']
 );
 assert.deepEqual(
   codexMcpConfigArgs({ ...toolsOnConfig, swarm: true }).filter((value) => value.includes("enabled_tools")),
-  ['mcp_servers.mazebench.enabled_tools=["maze_start","maze_observe","maze_action","maze_workers"]']
+  ['mcp_servers.mazebench.enabled_tools=["maze_start","maze_observe","maze_action","maze_workers","python_exec"]']
 );
 
 const codexConfig = { ...baseConfig, model: "codex" };
@@ -116,10 +124,16 @@ assert.match(codexArgs, /skills\.include_instructions=false/);
 assert.match(codexArgs, /skills\.bundled\.enabled=false/);
 assert.match(codexArgs, /web_search="disabled"/);
 assert.match(codexArgs, /hooks\.PreToolUse/);
-for (const feature of ["apps", "plugins", "memories", "multi_agent", "tool_search"]) {
+for (const feature of ["apps", "plugins", "memories", "multi_agent", "tool_search", "shell_tool", "computer_use"]) {
   const index = codex.argv.indexOf(feature);
   assert(index > 0 && codex.argv[index - 1] === "--disable", `${feature} must be disabled`);
 }
+assert.match(codexArgs, /default_permissions="mazebench_agent"/);
+assert.match(codexArgs, /permissions\.mazebench_agent\.network\.enabled=false/);
+assert.match(codexArgs, new RegExp(`${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*deny`));
+assert.equal(codex.argv.includes("--sandbox"), false, "permission profiles must not be mixed with legacy sandbox mode");
+assert.equal(codex.argv.includes("--add-dir"), false, "the repository must never be added to the agent workspace");
+assert.doesNotMatch(codexArgs, /sandbox_mode|sandbox_workspace_write/);
 assert.deepEqual(
   codexMcpConfigArgs(codexConfig).filter((value) => value.includes("enabled_tools")),
   ['mcp_servers.game.enabled_tools=["game_start","game_observe","game_action"]']
@@ -164,6 +178,7 @@ for (const denied of [
 const claudeSettings = JSON.parse(claudeSandboxSettings(claudeConfig));
 assert.deepEqual(claudeSettings.sandbox.network.allowedDomains, []);
 assert.equal(claudeSettings.sandbox.failIfUnavailable, true);
+assert.deepEqual(claudeSettings.sandbox.filesystem.allowWrite, []);
 assert.deepEqual(
   new Set(claudeSettings.permissions.allow),
   new Set([
@@ -175,6 +190,27 @@ assert.deepEqual(
 assert.equal(needsPrivateMcpServer(claudeConfig), true, "host Claude runs need a prestarted MCP service");
 assert.equal(needsPrivateMcpServer(codexConfig), false, "host Codex can use its synchronous stdio MCP startup");
 assert.equal(needsPrivateMcpServer({ ...codexConfig, inContainer: true }), true);
+
+const claudeToolsOn = agentCommand(
+  { ...toolsOnConfig, model: "claude", modelName: "claude-test" },
+  toolsOnPrompt
+);
+const claudeToolsOnAllowed = new Set(
+  claudeToolsOn.argv[claudeToolsOn.argv.indexOf("--allowedTools") + 1].split(",")
+);
+assert.deepEqual(claudeToolsOnAllowed, new Set([
+  "mcp__mazebench__maze_start",
+  "mcp__mazebench__maze_observe",
+  "mcp__mazebench__maze_action",
+  "mcp__mazebench__python_exec"
+]));
+for (const builtin of ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch"]) {
+  assert(
+    claudeToolsOn.argv[claudeToolsOn.argv.indexOf("--disallowedTools") + 1].split(",").includes(builtin),
+    `${builtin} must remain unavailable in tools mode`
+  );
+}
+assert.equal(claudeToolsOn.argv.includes("--add-dir"), false);
 
 const guard = path.join(root, "scripts", "maze-codex-tool-guard.js");
 const blocked = spawnSync(process.execPath, [guard], {

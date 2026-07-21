@@ -17,7 +17,8 @@
 //   image        container image tag                         (default mazebench-agent)
 //   docker_bin   container runtime                           (default docker)
 //   codex_auth / claude_auth   host auth dir to mount read-only (subscription logins)
-//   tool_use     read-only (game controls only) | offline    (default read-only)
+//   tool_use     read-only (game controls only) | offline (isolated Python)
+//                                                            (default read-only)
 //   tools        legacy boolean alias (false=game-only, true=offline)
 //   swarm        true lets an offline lead spawn identical-model workers
 //   max_swarm_workers  hard cap on workers/private instances   (default 8)
@@ -57,6 +58,11 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { spawn, spawnSync } = require("node:child_process");
 const { redactAgentStatus } = require("./codex-play");
+const {
+  canonicalPath,
+  inlinePermissionTable,
+  preflightPythonSandbox
+} = require("./maze-python-sandbox");
 const DEFAULT_MAX_SWARM_WORKERS = 8;
 
 // Claude Code discovers MCP tools only when its default tool registry is
@@ -257,14 +263,11 @@ board in the level field and the complete visited_levels list.${config.hideNames
   const movementFeedback = `The controls do not report whether a movement was
 blocked. Infer its effect only from the returned observation.`;
   const capability = config.toolUse === "offline"
-    ? config.hostAccess
-      ? `TOOLS-ON mode. You may use the local file, coding, and execution tools
-made available to you; tool availability is not guaranteed. Work in ${ROOT_DIR}
-and keep run-specific notes in ${config.workspaceDir}. Outbound network access
-is disabled. Host access is less isolated than Docker.`
-      : `TOOLS-ON mode. You may use the local file, coding, and execution tools
-made available to you; tool availability is not guaranteed. Work inside the
-persistent Docker workspace at ${config.agentWorkspaceDir}. Outbound network access is disabled.
+    ? `TOOLS mode. In addition to the game controls, you have exactly one
+general-purpose computation tool: python_exec. It runs Python in a fresh,
+persistent scratch workspace. It cannot read MazeBench source, repositories,
+run artifacts, host files, credentials, or prior runs, and it has no network
+access. Shell, file-browser, editor, web, app, and connector tools are disabled.
 Only genuine swarm workers receive private game instances, and each worker is
 permanently bound to exactly one instance.`
     : `Do not use any external tools. Do not search the web, do not read any
@@ -279,7 +282,7 @@ named below and your current conversation memory.`;
     ? "Use the Codex collaboration spawn tool to spawn the custom maze-worker agent without a full-history fork. Its model and reasoning effort are pinned to yours."
     : "Use the Task/Agent tool to spawn the configured maze-worker subagent type. The subagent creates its own branch. Its model and effort are pinned to yours.";
   const workerCapability = config.toolUse === "offline"
-    ? "may write and execute local code in its private workspace"
+    ? "may use python_exec in its private isolated scratch workspace"
     : "is read-only and must not write files or execute general-purpose code";
   const swarm = config.swarm
     ? `
@@ -451,6 +454,10 @@ function mcpEnvironment(config, workerOnly = false) {
     MAZEBENCH_SWARM_DIR: config.swarmDir,
     MAZEBENCH_SWARM_WORKSPACES_DIR: config.swarmWorkspaceDir,
     MAZEBENCH_AGENT_SWARM_WORKSPACES_DIR: config.agentSwarmWorkspaceDir,
+    MAZEBENCH_AGENT_WORKSPACE_DIR: config.workspaceDir,
+    MAZEBENCH_PYTHON_SANDBOX_STATE_DIR: config.pythonSandboxStateDir || path.join(config.outDir, ".python-sandbox"),
+    MAZEBENCH_CODEX_BIN: config.codexBin,
+    MAZEBENCH_PYTHON_BIN: config.pythonBin || "",
     MAZEBENCH_TOOL_ACTIVITY_FILE: path.join(config.outDir, "tool-activity.jsonl"),
     MAZEBENCH_INSTANCE_EVENTS_FILE: path.join(config.outDir, "maze-instance-events.jsonl"),
     MAZEBENCH_GAME_ID: config.gameId,
@@ -486,11 +493,20 @@ function tomlString(value) {
   return JSON.stringify(String(value));
 }
 
-function codexWritableRoots(config) {
+function codexPermissionConfigArgs(config) {
+  const permissions = { ":minimal": "read" };
+  if (config.toolUse === "offline") {
+    permissions[canonicalPath(config.agentWorkspaceDir)] = "write";
+    permissions[canonicalPath(config.agentSwarmWorkspaceDir)] = "write";
+  }
+  permissions[canonicalPath(ROOT_DIR)] = "deny";
+  permissions[canonicalPath(config.outDir)] = "deny";
+  permissions[canonicalPath(config.inContainer ? "/home" : os.homedir())] = "deny";
+  const profile = "mazebench_agent";
   return [
-    config.agentWorkspaceDir,
-    config.agentSwarmWorkspaceDir,
-    ...(config.hostAccess && config.toolUse === "offline" ? [ROOT_DIR] : [])
+    "-c", `default_permissions=${tomlString(profile)}`,
+    "-c", `permissions.${profile}.filesystem=${inlinePermissionTable(permissions)}`,
+    "-c", `permissions.${profile}.network.enabled=false`
   ];
 }
 
@@ -500,8 +516,8 @@ function codexMcpConfigArgs(config) {
   const enabledTools = restricted
     ? '["game_start","game_observe","game_action"]'
     : config.swarm
-      ? '["maze_start","maze_observe","maze_action","maze_workers"]'
-      : '["maze_start","maze_observe","maze_action"]';
+      ? '["maze_start","maze_observe","maze_action","maze_workers","python_exec"]'
+      : '["maze_start","maze_observe","maze_action","python_exec"]';
   if (config.mcpUrl) {
     return [
       "-c", `${prefix}.url=${tomlString(config.mcpUrl)}`,
@@ -538,15 +554,23 @@ function codexWorkerConfig(config, name) {
   if (config.modelName) rows.push(`model = ${tomlString(config.modelName)}`);
   if (config.reasoning) rows.push(`model_reasoning_effort = ${tomlString(config.reasoning)}`);
   rows.push(
-    `sandbox_mode = ${tomlString(offline ? "workspace-write" : "read-only")}`,
+    `default_permissions = ${tomlString("mazebench_worker")}`,
     `developer_instructions = ${tomlString(
       "You are a grid-game swarm worker. Use the identical model and reasoning effort inherited from the lead. " +
       "You have exactly one private maze instance. Call maze_start once, then use maze_observe and maze_action without an instance id. " +
       (offline
-        ? "Explore only your private maze, write and execute any useful local code in the returned workspace, and report findings to the lead. "
+        ? "Explore only your private maze, use python_exec for isolated local computation, and report findings to the lead. "
         : "Explore only your private maze without writing files or executing general-purpose code, and report findings to the lead. ") +
       "Never act on the primary maze and never change your model or reasoning effort."
     )}`,
+    "",
+    "[permissions.mazebench_worker.filesystem]",
+    `${tomlString(":minimal")} = "read"`,
+    `${tomlString(canonicalPath(ROOT_DIR))} = "deny"`,
+    `${tomlString(canonicalPath(config.outDir))} = "deny"`,
+    "",
+    "[permissions.mazebench_worker.network]",
+    "enabled = false",
     "",
     "[mcp_servers.mazebench]",
     ...(config.mcpWorkerUrl
@@ -557,6 +581,9 @@ function codexWorkerConfig(config, name) {
           `env = { ${Object.entries(mcpEnvironment(config, true)).map(([key, value]) => `${key} = ${tomlString(value)}`).join(", ")} }`
         ]),
     'default_tools_approval_mode = "approve"',
+    `enabled_tools = ${offline
+      ? '["maze_start","maze_observe","maze_action","python_exec"]'
+      : '["maze_start","maze_observe","maze_action"]'}`,
     "startup_timeout_sec = 15",
     "tool_timeout_sec = 300"
   );
@@ -565,7 +592,7 @@ function codexWorkerConfig(config, name) {
 
 function prepareCodexRuntime(config) {
   if (config.toolUse === "read-only") {
-    const codexDir = path.join(config.workspaceDir, ".codex");
+    const codexDir = config.codexRuntimeDir || path.join(config.outDir, ".codex-runtime");
     fs.mkdirSync(codexDir, { recursive: true });
     fs.copyFileSync(CODEX_TOOL_GUARD, path.join(codexDir, "tool-guard.js"));
     fs.writeFileSync(
@@ -577,7 +604,7 @@ function prepareCodexRuntime(config) {
     // Project-scoped agent profiles keep host runs from modifying the user's
     // global ~/.codex configuration. The CLI still uses its normal auth and
     // session store, which is required for true Continue.
-    const agentsDir = path.join(config.workspaceDir, ".codex", "agents");
+    const agentsDir = path.join(config.codexRuntimeDir || path.join(config.outDir, ".codex-runtime"), "agents");
     fs.mkdirSync(agentsDir, { recursive: true });
     for (const name of ["default", "worker", "explorer", "maze-worker"]) {
       fs.writeFileSync(path.join(agentsDir, `${name}.toml`), codexWorkerConfig(config, name));
@@ -589,7 +616,7 @@ function codexAgentConfigArgs(config) {
   if (!config.swarm) return [];
   return ["default", "worker", "explorer", "maze-worker"].flatMap((name) => [
     "-c", `agents.${name}.description=${tomlString("An identical-model grid-game worker controlled by the lead.")}`,
-    "-c", `agents.${name}.config_file=${tomlString(path.posix.join(config.agentWorkspaceDir, ".codex", "agents", `${name}.toml`))}`
+    "-c", `agents.${name}.config_file=${tomlString(path.posix.join(config.agentCodexRuntimeDir || config.codexRuntimeDir || path.join(config.outDir, ".codex-runtime"), "agents", `${name}.toml`))}`
   ]);
 }
 
@@ -607,7 +634,13 @@ function claudeMcpConfig(config) {
 function claudeSandboxSettings(config) {
   const offline = config.toolUse === "offline";
   const leadAllow = offline
-    ? []
+    ? [
+        "mcp__mazebench__maze_start",
+        "mcp__mazebench__maze_observe",
+        "mcp__mazebench__maze_action",
+        "mcp__mazebench__python_exec",
+        ...(config.swarm ? ["mcp__mazebench__maze_workers"] : [])
+      ]
     : [
         "mcp__game__game_start",
         "mcp__game__game_observe",
@@ -615,23 +648,23 @@ function claudeSandboxSettings(config) {
       ];
   const workerAllow = config.swarm
     ? [
-        ...(offline ? ["Bash(*)", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "Skill"] : ["Read", "Glob", "Grep"]),
         "mcp__mazebench_worker__maze_start",
         "mcp__mazebench_worker__maze_observe",
-        "mcp__mazebench_worker__maze_action"
+        "mcp__mazebench_worker__maze_action",
+        ...(offline ? ["mcp__mazebench_worker__python_exec"] : [])
       ]
     : [];
   const home = config.inContainer ? "/home/pwuser" : process.env.HOME || "/home/pwuser";
   const denyRead = [
     process.env.CODEX_HOME || path.join(home, ".codex"),
     process.env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"),
+    ROOT_DIR,
+    config.outDir,
     ...(config.hostAccess
       ? ["~/.ssh", "~/.aws", "~/.gnupg", "~/.kube", "~/.config/gcloud"]
       : [])
   ];
-  const allowWrite = offline
-    ? [config.agentWorkspaceDir, config.agentSwarmWorkspaceDir, ...(config.hostAccess ? [ROOT_DIR] : [])]
-    : [];
+  const allowWrite = [];
   return JSON.stringify({
     sandbox: {
       enabled: true,
@@ -659,9 +692,9 @@ function claudeSandboxSettings(config) {
       allow: [...leadAllow, ...workerAllow],
       deny: [
         "WebFetch", "WebSearch",
-        ...(offline
-          ? []
-          : CLAUDE_RESTRICTED_BUILTIN_TOOLS),
+        ...CLAUDE_RESTRICTED_BUILTIN_TOOLS.filter(
+          (tool) => !config.swarm || !["Task", "Agent"].includes(tool)
+        ),
         ...denyRead.map((entry) => `Read(${entry}/**)`)
       ]
     }
@@ -671,28 +704,25 @@ function claudeSandboxSettings(config) {
 function claudeAgents(config) {
   if (!config.swarm) return "";
   const offline = config.toolUse === "offline";
-  const localTools = offline
-    ? ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "Skill", "TaskOutput", "TaskStop"]
-    : ["Read", "Glob", "Grep"];
   const worker = {
     description: offline
-      ? "Explore a private game clone, use offline coding tools, and report to the lead."
+      ? "Explore a private game clone, use isolated Python, and report to the lead."
       : "Explore a private game clone read-only and report to the lead.",
     prompt:
       "You are a grid-game swarm worker controlled by the superior lead. You have exactly one private maze instance. " +
-      "Call maze_start once, then use maze_observe and maze_action without an instance id. Work only in your private workspace and report findings to the lead. " +
+      "Call maze_start once, then use maze_observe and maze_action without an instance id. Report findings to the lead. " +
       (offline
-        ? "You may write and execute local code in that workspace. "
+        ? "You may use python_exec for isolated computation in your private scratch workspace. "
         : "Do not write files or execute general-purpose code. ") +
       "Never act on the primary maze and never switch model or reasoning effort.",
     model: config.modelName || "inherit",
     permissionMode: "dontAsk",
     background: true,
     tools: [
-      ...localTools,
       "mcp__mazebench_worker__maze_start",
       "mcp__mazebench_worker__maze_observe",
-      "mcp__mazebench_worker__maze_action"
+      "mcp__mazebench_worker__maze_action",
+      ...(offline ? ["mcp__mazebench_worker__python_exec"] : [])
     ],
     mcpServers: [{
       mazebench_worker: config.mcpWorkerUrl
@@ -715,6 +745,23 @@ function prepareAgentRuntime(config) {
   fs.mkdirSync(config.swarmDir, { recursive: true });
   fs.mkdirSync(config.swarmWorkspaceDir, { recursive: true });
   if (config.model === "codex") prepareCodexRuntime(config);
+}
+
+function verifyToolIsolation(config) {
+  if (config.toolUse !== "offline") return null;
+  const report = preflightPythonSandbox({
+    scratchDir: config.workspaceDir,
+    stateDir: config.pythonSandboxStateDir,
+    deniedPaths: [ROOT_DIR, config.outDir, config.inContainer ? "/home" : os.homedir()],
+    codexBin: config.codexBin,
+    pythonBin: config.pythonBin
+  });
+  fs.writeFileSync(
+    path.join(config.outDir, "tool-isolation.json"),
+    `${JSON.stringify(report, null, 2)}\n`,
+    { mode: 0o600 }
+  );
+  return report;
 }
 
 async function startPrivateMcpServer(config) {
@@ -816,6 +863,12 @@ function isolatedDockerAgentCommand(config, command) {
     "--proc", "/proc",
     "--bind", config.workspaceDir, config.agentWorkspaceDir,
     "--bind", config.swarmWorkspaceDir, config.agentSwarmWorkspaceDir,
+    ...(fs.existsSync(config.codexRuntimeDir)
+      ? [
+          "--dir", config.agentCodexRuntimeDir,
+          "--ro-bind", config.codexRuntimeDir, config.agentCodexRuntimeDir
+        ]
+      : []),
     "--chdir", config.agentWorkspaceDir,
     "--setenv", "HOME", "/home/pwuser",
     "--setenv", "USER", "pwuser",
@@ -844,7 +897,6 @@ function agentCommand(config, prompt) {
   const maxTurns = config.unlimited ? "" : String(config.swarm ? config.moves + 30 : config.moves + 10);
 
   if (config.model === "codex") {
-    const sandboxMode = config.toolUse === "offline" ? "workspace-write" : "read-only";
     const commandRoot = config.agentWorkspaceDir;
     // --json streams structured events (agent messages, reasoning, shell calls)
     // on stdout so we can build a per-move reasoning log. `exec resume <id>`
@@ -857,51 +909,48 @@ function agentCommand(config, prompt) {
     // project-scoped worker profiles under this run's workspace.
     argv.push(
       "--ignore-user-config",
+      "--ignore-rules",
+      "--strict-config",
       "-c", 'approval_policy="never"',
-      "-c", `sandbox_mode=${tomlString(sandboxMode)}`,
       "-c", 'web_search="disabled"',
       "-c", "tools.web_search=false",
       "-c", "agents.max_depth=1",
-      "-c", "sandbox_workspace_write.network_access=false",
-      "-c", `sandbox_workspace_write.writable_roots=[${codexWritableRoots(config).map(tomlString).join(", ")}]`,
+      "-c", "project_doc_max_bytes=0",
+      "-c", "memories.use_memories=false",
+      "-c", "memories.generate_memories=false",
+      "-c", "apps._default.enabled=false",
+      "-c", "skills.include_instructions=false",
+      "-c", "skills.bundled.enabled=false",
+      "-c", "include_apps_instructions=false",
+      "-c", "include_collaboration_mode_instructions=false",
+      "-c", "include_environment_context=false",
+      ...codexPermissionConfigArgs(config),
       ...codexAgentConfigArgs(config),
-      ...codexMcpConfigArgs(config)
+      ...codexMcpConfigArgs(config),
+      "--disable", "shell_tool",
+      "--disable", "memories",
+      "--disable", "apps",
+      "--disable", "plugins",
+      "--disable", "enable_mcp_apps",
+      "--disable", "tool_search",
+      "--disable", "tool_suggest",
+      "--disable", "standalone_web_search",
+      "--disable", "image_generation",
+      "--disable", "computer_use",
+      "--disable", "in_app_browser",
+      "--disable", "browser_use",
+      "--disable", "remote_plugin",
+      "--disable", "plugin_sharing"
     );
     if (config.toolUse === "read-only") {
-      const restrictedCodexDir = path.posix.join(config.agentWorkspaceDir, ".codex");
+      const restrictedCodexDir = config.agentCodexRuntimeDir || config.codexRuntimeDir || path.join(config.outDir, ".codex-runtime");
       const guardCommand = `${process.execPath} ${path.posix.join(restrictedCodexDir, "tool-guard.js")}`;
       argv.push(
         "-c", "suppress_unstable_features_warning=true",
         "-c", `model_instructions_file=${tomlString(path.posix.join(restrictedCodexDir, "restricted-instructions.txt"))}`,
-        "-c", "memories.use_memories=false",
-        "-c", "memories.generate_memories=false",
-        "-c", "apps._default.enabled=false",
-        "-c", "skills.include_instructions=false",
-        "-c", "skills.bundled.enabled=false",
-        "-c", "include_apps_instructions=false",
-        "-c", "include_collaboration_mode_instructions=false",
-        "-c", "include_environment_context=false",
-        "-c", 'features.code_mode.enabled=true',
-        "-c", 'features.code_mode.direct_only_tool_namespaces=["mcp__game"]',
-        "-c", 'features.code_mode.excluded_tool_namespaces=["mcp__codex_apps","codex_app","image_gen","web"]',
         "-c", `hooks.PreToolUse=[{ matcher="^exec$", hooks=[{ type="command", command=${tomlString(guardCommand)}, timeout=5, statusMessage="Enforcing game-only mode" }] }]`,
-        "--dangerously-bypass-hook-trust",
-        "--disable", "memories",
-        "--disable", "apps",
-        "--disable", "plugins",
-        "--disable", "enable_mcp_apps",
-        "--disable", "tool_search",
-        "--disable", "standalone_web_search",
-        "--disable", "image_generation",
-        "--disable", "in_app_browser",
-        "--disable", "browser_use",
-        "--disable", "remote_plugin",
-        "--disable", "plugin_sharing"
+        "--dangerously-bypass-hook-trust"
       );
-    }
-    if (!config.resume) argv.push("--sandbox", sandboxMode);
-    if (!config.resume && config.hostAccess && config.toolUse === "offline") {
-      argv.push("--add-dir", ROOT_DIR);
     }
     argv.push(config.swarm ? "--enable" : "--disable", "multi_agent");
     // Ask Codex for fuller reasoning summaries (it emits `reasoning` items in
@@ -955,11 +1004,10 @@ function agentCommand(config, prompt) {
             "mcp__mazebench__maze_start",
             "mcp__mazebench__maze_observe",
             "mcp__mazebench__maze_action",
+            "mcp__mazebench__python_exec",
             ...(config.swarm ? ["mcp__mazebench__maze_workers"] : [])
           ];
-      const localTools = config.toolUse === "offline"
-        ? ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "Skill", "TaskOutput", "TaskStop"]
-        : [];
+      const localTools = [];
       // Claude Code has called this built-in both `Task` and `Agent` across
       // releases. Permit both names so the lead can delegate, while the
       // worker definition itself deliberately omits either tool.
@@ -978,12 +1026,15 @@ function agentCommand(config, prompt) {
         "--allowedTools", [...localTools, ...mcpTools].join(","),
         "--disallowedTools", [
           "WebFetch", "WebSearch",
-          ...(restricted ? CLAUDE_RESTRICTED_BUILTIN_TOOLS : []),
-          ...(config.swarm ? [] : ["Task", "Agent"])
+          ...CLAUDE_RESTRICTED_BUILTIN_TOOLS.filter(
+            (tool) => !config.swarm || !["Task", "Agent"].includes(tool)
+          )
         ].join(","),
-        ...(restricted ? ["--append-system-prompt", "You are solving the current grid-game task. Use only the explicitly configured game controls and your current conversation memory."] : ["--add-dir", config.agentSwarmWorkspaceDir])
+        "--append-system-prompt",
+        restricted
+          ? "You are solving the current grid-game task. Use only the explicitly configured game controls and your current conversation memory."
+          : "Use only the configured game controls and python_exec. Host shell, files, repositories, web, apps, and connectors are unavailable."
       );
-      if (config.hostAccess && !restricted) argv.push("--add-dir", ROOT_DIR);
       const agents = claudeAgents(config);
       if (agents) argv.push("--agents", agents);
     } else if (config.tools) {
@@ -1434,7 +1485,7 @@ function runAgent(config, prompt) {
   console.log(`\n=== Launching local ${config.model} agent (${bin}) ===`);
   console.log(`Session: ${config.sessionFile}`);
   console.log(
-    `${config.hostAccess ? "Host access" : "Docker"} | Tool-use ${config.toolUse.toUpperCase()}${config.swarm ? " + SWARM" : ""} | ` +
+    `${config.hostAccess ? "Verified native sandbox" : "Docker isolation"} | Tool-use ${config.toolUse.toUpperCase()}${config.swarm ? " + SWARM" : ""} | ` +
       `Mode ${config.mode}${config.mode === "vision" ? ` (${config.visionWidth}x${config.visionHeight})` : ""} | ` +
       `Game ${config.gameId} | Level ${config.levelId} | view ${config.view} | yaw ${config.yaw} | budget ${config.unlimited ? "unlimited" : `${config.moves} moves`}\n`
   );
@@ -2001,12 +2052,12 @@ async function runWizard(raw) {
 
   out.container = await promptSelect("Access?", [
     { label: "Container", value: "true", hint: "isolated from your files — recommended" },
-    { label: "Host", value: "false", hint: "weaker isolation" }
+    { label: "Host", value: "false", hint: "native OS sandbox with launch-time verification" }
   ]);
 
-  out.tool_use = await promptSelect("Tool-use (Not guaranteed)?", [
+  out.tool_use = await promptSelect("Tool use?", [
     { label: "No Tools", value: "read-only", hint: "game controls only; no files, shell, web, memory, or workers" },
-    { label: "[CLI] Tools", value: "offline", hint: "write files and execute code; no network" }
+    { label: "[PY] Tools", value: "offline", hint: "isolated Python scratchpad; no host files or network" }
   ]);
 
   if (out.tool_use === "offline") {
@@ -2087,9 +2138,13 @@ async function main() {
   const unlimited = isTruthy(raw.unlimited, false);
   const hostAccess = !wantsContainer && !inContainer;
   const agentHomeStat = inContainer ? fs.statSync("/home/pwuser") : null;
-  const workspaceDir = path.join(outDir, "workspace");
+  const workspaceKey = crypto.createHash("sha256").update(outDir).digest("hex").slice(0, 24);
+  const workspaceRoot = path.join(os.tmpdir(), "mazebench-agent-workspaces", workspaceKey);
+  const workspaceDir = path.join(workspaceRoot, "workspace");
   const swarmDir = path.join(outDir, "swarm");
-  const swarmWorkspaceDir = path.join(outDir, "swarm-workspaces");
+  const swarmWorkspaceDir = path.join(workspaceRoot, "swarm-workspaces");
+  const codexRuntimeDir = path.join(outDir, ".codex-runtime");
+  const pythonSandboxStateDir = path.join(outDir, ".python-sandbox");
 
   const requestedMode = String(raw.mode || raw.observation || "text").toLowerCase();
   const mode = ["json", "vision"].includes(requestedMode) ? requestedMode : "text";
@@ -2097,6 +2152,7 @@ async function main() {
     claudeBin: raw.claude_bin || "claude",
     claudeAllowedTools: raw.claude_allowed_tools || "",
     codexBin: raw.codex_bin || "codex",
+    pythonBin: raw.python_bin || "",
     container: wantsContainer,
     dockerBin: raw.docker_bin || "docker",
     image: raw.image || "mazebench-agent",
@@ -2135,8 +2191,11 @@ async function main() {
     workspaceDir,
     swarmDir,
     swarmWorkspaceDir,
+    codexRuntimeDir,
+    pythonSandboxStateDir,
     agentWorkspaceDir: inContainer ? "/app/workspace" : workspaceDir,
     agentSwarmWorkspaceDir: inContainer ? "/app/swarm-workspaces" : swarmWorkspaceDir,
+    agentCodexRuntimeDir: inContainer ? "/run/mazebench-codex-runtime" : codexRuntimeDir,
     // The outer Docker launcher re-execs before starting an agent. Actual host
     // and in-container agents both use MCP so maze persistence stays outside
     // their file/tool sandbox.
@@ -2177,10 +2236,14 @@ async function main() {
   // outrun that connection and receive no game tools. Start the existing
   // authenticated localhost transport before launching Claude so its tools are
   // ready immediately. Containers already require the same transport.
+  prepareAgentRuntime(config);
+  if (!isTruthy(raw.dry_run, false) && config.toolUse === "offline") {
+    verifyToolIsolation(config);
+    console.log("Tool isolation verified: Python scratch writes allowed; repository, host files, symlink escapes, subprocesses, and network blocked.");
+  }
   const privateMcp = needsPrivateMcpServer(config)
     ? await startPrivateMcpServer(config)
     : null;
-  prepareAgentRuntime(config);
 
   const prompt = buildPrompt(config);
 

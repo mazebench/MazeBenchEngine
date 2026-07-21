@@ -61,7 +61,7 @@ try {
   assert.equal(Object.prototype.hasOwnProperty.call(firstObservation, "player"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(firstObservation, "scorecard"), false);
   const listedTools = responses.find((response) => response.id === 10)?.result?.tools || [];
-  assert.deepEqual(listedTools.map((tool) => tool.name), ["maze_start", "maze_observe", "maze_action", "maze_workers"]);
+  assert.deepEqual(listedTools.map((tool) => tool.name), ["maze_start", "maze_observe", "maze_action", "maze_workers", "python_exec"]);
   assert.doesNotMatch(JSON.stringify(listedTools), /clone_id|maze_clone/i);
   assert.equal(listedTools.some((tool) => /scorecard/i.test(tool.name)), false);
   assert(responses.find((response) => response.id === 3)?.error, "the lead cannot call maze_clone");
@@ -107,7 +107,7 @@ try {
   assert.equal(workerResult.status, 0, workerResult.stderr);
   const workerResponses = workerResult.stdout.trim().split("\n").map((line) => JSON.parse(line));
   const workerTools = workerResponses.find((response) => response.id === 101)?.result?.tools || [];
-  assert.deepEqual(workerTools.map((tool) => tool.name), ["maze_start", "maze_observe", "maze_action"]);
+  assert.deepEqual(workerTools.map((tool) => tool.name), ["maze_start", "maze_observe", "maze_action", "python_exec"]);
   assert.doesNotMatch(JSON.stringify(workerTools), /clone_id|maze_clone|maze_workers/i);
   assert.match(workerResponses.find((response) => response.id === 102)?.result?.structuredContent?.level || "", /P|p/);
   assert.match(workerResponses.find((response) => response.id === 104)?.result?.structuredContent?.level || "", /P|p/);
@@ -227,8 +227,8 @@ try {
     ?.find((tool) => tool.name === "maze_action");
   assert.deepEqual(
     noQuitResponses.find((response) => response.id === 21)?.result?.tools?.map((tool) => tool.name),
-    ["maze_start", "maze_observe", "maze_action"],
-    "ordinary runs retain their three game controls and receive no worker controls"
+    ["maze_start", "maze_observe", "maze_action", "python_exec"],
+    "ordinary tools-enabled runs receive game controls and isolated Python, but no worker controls"
   );
   assert.doesNotMatch(noQuitActionTool?.inputSchema?.properties?.action?.description || "", /quit/i);
   assert.equal(noQuitResponses.find((response) => response.id === 23)?.result?.isError, true);
@@ -550,7 +550,7 @@ try {
   const leadResponse = JSON.parse(leadProbe.stdout);
   assert.deepEqual(
     leadResponse.result.tools.map((tool) => tool.name),
-    ["maze_start", "maze_observe", "maze_action", "maze_workers"]
+    ["maze_start", "maze_observe", "maze_action", "maze_workers", "python_exec"]
   );
   assert.doesNotMatch(JSON.stringify(leadResponse.result.tools), /clone_id|maze_clone/i);
   const leadStart = spawnSync(
@@ -619,7 +619,7 @@ try {
   const workerList = callWorker(workerSessionId, 4, "tools/list");
   assert.equal(workerList.status, 0, workerList.stderr);
   const httpWorkerTools = JSON.parse(workerList.stdout).result.tools;
-  assert.deepEqual(httpWorkerTools.map((tool) => tool.name), ["maze_start", "maze_observe", "maze_action"]);
+  assert.deepEqual(httpWorkerTools.map((tool) => tool.name), ["maze_start", "maze_observe", "maze_action", "python_exec"]);
   assert.doesNotMatch(JSON.stringify(httpWorkerTools), /clone_id|maze_clone|maze_workers/i);
 
   for (const request of [
