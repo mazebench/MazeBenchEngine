@@ -13,6 +13,23 @@ const {
   getLevelState
 } = require("../server/app");
 const { BOARD_STATE_HASH_VERSION } = require("../shared/board-state");
+const {
+  ACTOR_GLYPHS,
+  BLACK_ICE_SLOPE_DIRECTION_GLYPHS,
+  BLOCK_ASSET_GLYPHS,
+  CLONE_GLYPHS,
+  ICE_SLOPE_DIRECTION_GLYPHS,
+  ORANGE_BUTTON_GLYPHS,
+  ORANGE_ICE_SLOPE_DIRECTION_GLYPHS,
+  PLAYER_LIFT_GLYPHS,
+  PUNCHER_DIRECTION_GLYPHS,
+  TERRAIN_GLYPHS,
+  UNKNOWN_GLYPHS,
+  WEIGHTLESS_BOX_GLYPHS,
+  createDynamicGlyphCatalog,
+  glyphPair,
+  hideAsciiGlyphNames
+} = require("../shared/maze-observation-contract");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const DEFAULT_TERMINAL_REPLAY_ROOT = path.join(ROOT_DIR, "outputs", "maze-terminal");
@@ -76,84 +93,23 @@ const DEAD_ALLOWED_COMMANDS = Object.freeze([
   "reset",
   "go to level X Y"
 ]);
-function glyphPair(top, side) {
-  return { side, top };
-}
-
-const TERRAIN_GLYPHS = {
-  block_asset: glyphPair("&", "7"),
-  empty: glyphPair(" ", " "),
-  exit: glyphPair("E", "e"),
-  floor: glyphPair("A", "a"),
-  hole: glyphPair("H", "h"),
-  ice: glyphPair("I", "i"),
-  ice_block: glyphPair("K", "k"),
-  ice_slope: glyphPair("~", "-"),
-  orange_wall: glyphPair("O", "o"),
-  player_gate: glyphPair("Y", "y"),
-  shrub: glyphPair("S", "s"),
-  tree: glyphPair("T", "t"),
-  wall: glyphPair("W", "w")
-};
-const PLAYER_LIFT_GLYPHS = {
-  player_lift: {
-    loweredTop: ">",
-    raisedTop: "L",
-    side: "l"
-  }
-};
-const ORANGE_BUTTON_GLYPHS = {
-  orange_button: glyphPair("8", " ")
-};
-const BLOCK_ASSET_GLYPHS = {
-  1: glyphPair("!", "1"),
-  2: glyphPair("@", "2"),
-  3: glyphPair("#", "3"),
-  4: glyphPair("$", "4")
-};
-const ICE_SLOPE_DIRECTION_GLYPHS = {
-  down: glyphPair("V", "v"),
-  left: glyphPair("<", ","),
-  right: glyphPair("R", "r"),
-  up: glyphPair("^", "6")
-};
-const ACTOR_GLYPHS = {
-  box: glyphPair("B", "b"),
-  clone: glyphPair("{", "["),
-  floating_floor: glyphPair("F", "f"),
-  gem: glyphPair("G", "g"),
-  player: glyphPair("P", "p"),
-  puncher: glyphPair("}", "]"),
-  weightless_box: glyphPair(";", "_")
-};
-const CLONE_GLYPHS = {
-  c0: glyphPair("C", "c"),
-  c1: glyphPair("D", "d"),
-  c2: glyphPair("J", "j")
-};
-const WEIGHTLESS_BOX_GLYPHS = {
-  M0: glyphPair("U", "u"),
-  M1: glyphPair("0", "9"),
-  M2: glyphPair("(", ")"),
-  M3: glyphPair("+", "="),
-  M4: glyphPair(".", ":")
-};
-const PUNCHER_DIRECTION_GLYPHS = {
-  down: glyphPair("%", "5"),
-  left: glyphPair("X", "x"),
-  right: glyphPair("Q", "q"),
-  up: glyphPair("Z", "z")
-};
-const UNKNOWN_GLYPHS = {
-  actor: glyphPair("|", "\\"),
-  terrain: glyphPair("`", "'")
-};
 const DEFAULT_WORLD_AXIS = Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
 const WORLD_LEVEL_PATTERN = /^level_([A-Z])x([A-Z])$/;
 const JSON_OBJECT_NAME_UNIVERSE = Object.freeze([
-  "block_asset",
+  "attached_player_gate_lowered",
+  "attached_player_gate_raised",
+  "attached_player_lift_lowered",
+  "attached_player_lift_raised",
+  "black_ice_slope_down",
+  "black_ice_slope_left",
+  "black_ice_slope_right",
+  "black_ice_slope_up",
+  "block_asset_1",
+  "block_asset_2",
+  "block_asset_3",
+  "block_asset_4",
   "box",
-  "clone",
+  "clone_ungrouped",
   "empty",
   "exit",
   "floor",
@@ -166,6 +122,10 @@ const JSON_OBJECT_NAME_UNIVERSE = Object.freeze([
   "ice_slope_right",
   "ice_slope_up",
   "orange_button",
+  "orange_ice_slope_down",
+  "orange_ice_slope_left",
+  "orange_ice_slope_right",
+  "orange_ice_slope_up",
   "orange_wall",
   "player_gate",
   "player_lift_lowered",
@@ -175,100 +135,20 @@ const JSON_OBJECT_NAME_UNIVERSE = Object.freeze([
   "puncher_right",
   "puncher_up",
   "shrub",
-  "tree",
+  "small_tree_1",
+  "small_tree_3",
+  "small_tree_4",
+  "tree_1",
+  "tree_2",
+  "tree_3",
+  "tree_4",
   "wall",
-  "weightless_box"
+  "weightless_push_box_ungrouped"
 ]);
 const HIDDEN_NAME_ALPHABET = Array.from("ABCDEFGHJKLMNOQRSTUVWXYZabcdefghijklmnoqrstuvwxyz");
-const HIDDEN_ASCII_FIXED_GLYPHS = new Map([
-  ["P", "P"],
-  ["p", "p"],
-  ["G", "G"],
-  ["g", "g"]
-]);
 // JSON reports discrete occupied rows: ground surfaces keep their authored
 // elevation, while an object resting on that surface occupies the next row.
 const JSON_GROUND_TERRAIN_TYPES = new Set(["empty", "exit", "floor", "hole", "ice"]);
-
-function assertUniqueGlyphPairs(groups) {
-  const used = new Map();
-
-  Object.entries(groups).forEach(([groupName, group]) => {
-    Object.entries(group).forEach(([name, pair]) => {
-      const owner = `${groupName}.${name}`;
-
-      Object.entries(pair).forEach(([role, symbol]) => {
-        if (symbol === " ") {
-          return;
-        }
-
-        if (String(symbol).length !== 1) {
-          throw new Error(`${groupName}.${name}.${role} must be one character`);
-        }
-
-        const previous = used.get(symbol);
-        if (previous && previous.owner !== owner) {
-          throw new Error(`Duplicate ASCII glyph ${JSON.stringify(symbol)} in ${previous.path} and ${owner}.${role}`);
-        }
-
-        used.set(symbol, { owner, path: `${owner}.${role}` });
-      });
-    });
-  });
-}
-
-assertUniqueGlyphPairs({
-  ACTOR_GLYPHS,
-  BLOCK_ASSET_GLYPHS,
-  CLONE_GLYPHS,
-  ICE_SLOPE_DIRECTION_GLYPHS,
-  ORANGE_BUTTON_GLYPHS,
-  PLAYER_LIFT_GLYPHS,
-  PUNCHER_DIRECTION_GLYPHS,
-  TERRAIN_GLYPHS,
-  UNKNOWN_GLYPHS,
-  WEIGHTLESS_BOX_GLYPHS
-});
-
-const HIDDEN_ASCII_GLYPH_UNIVERSE = Object.freeze(
-  Array.from(new Set(
-    [
-      ACTOR_GLYPHS,
-      BLOCK_ASSET_GLYPHS,
-      CLONE_GLYPHS,
-      ICE_SLOPE_DIRECTION_GLYPHS,
-      ORANGE_BUTTON_GLYPHS,
-      PLAYER_LIFT_GLYPHS,
-      PUNCHER_DIRECTION_GLYPHS,
-      TERRAIN_GLYPHS,
-      UNKNOWN_GLYPHS,
-      WEIGHTLESS_BOX_GLYPHS
-    ]
-      .flatMap((group) => Object.values(group))
-      .flatMap((glyphs) => Object.values(glyphs))
-      .filter((glyph) => glyph !== " " && !HIDDEN_ASCII_FIXED_GLYPHS.has(glyph))
-  )).sort()
-);
-const HIDDEN_ASCII_BLANK_GLYPH = "?";
-
-function hiddenAsciiGlyphMap(seed) {
-  const normalizedSeed = String(seed || "1");
-  const sourceGlyphs = [" ", ...HIDDEN_ASCII_GLYPH_UNIVERSE];
-  const targetGlyphs = [...HIDDEN_ASCII_GLYPH_UNIVERSE, HIDDEN_ASCII_BLANK_GLYPH];
-  const shuffled = targetGlyphs.sort((left, right) => {
-    const leftHash = crypto.createHash("sha256").update(`${normalizedSeed}:ascii:${left}`).digest("hex");
-    const rightHash = crypto.createHash("sha256").update(`${normalizedSeed}:ascii:${right}`).digest("hex");
-    return leftHash.localeCompare(rightHash) || left.localeCompare(right);
-  });
-  return new Map(sourceGlyphs.map((glyph, index) => [glyph, shuffled[index]]));
-}
-
-function hideAsciiGlyphNames(text, seed) {
-  const mapping = hiddenAsciiGlyphMap(seed);
-  return Array.from(String(text || ""), (glyph) =>
-    HIDDEN_ASCII_FIXED_GLYPHS.get(glyph) || mapping.get(glyph) || glyph
-  ).join("");
-}
 
 function normalizeLevelId(value) {
   const raw = String(value || "").trim();
@@ -523,7 +403,7 @@ function adjacentWorldLevelId(levelId, dx, dy, worldColumns = DEFAULT_WORLD_AXIS
 }
 
 function isPlayerActorType(type) {
-  return type === "player";
+  return type === "player" || type === "circle_player";
 }
 
 function loadBrowserScript(relativePath) {
@@ -580,6 +460,8 @@ function cloneTransferActor(actor) {
     imageUrl: actor.imageUrl || null,
     modelUrl: actor.modelUrl || null,
     direction: actor.direction || actor.facing || null,
+    shape: actor.shape || null,
+    styleKey: actor.styleKey || null,
     removed: false,
     elevation: actor.elevation ?? 0,
     x: actor.x,
@@ -705,6 +587,41 @@ function createTerminalContext(mazeEngine, options) {
     gameWonGemCount: normalizeGameWonGemCount(options.gameWonGemCount)
   };
   const { game, level, playData } = resolvePlayData(normalizedOptions);
+  const worldIdentities = (game.levels || []).reduce(
+    (identities, candidateLevel) => {
+      try {
+        return mergeDynamicIdentitySets(
+          identities,
+          dynamicIdentitySetsForPlayData(getLevelState(game, candidateLevel))
+        );
+      } catch (_error) {
+        return identities;
+      }
+    },
+    { cloneIdentities: new Set(), weightlessIdentities: new Set() }
+  );
+  Object.defineProperty(normalizedOptions, "observationGlyphCatalog", {
+    configurable: true,
+    enumerable: false,
+    value: createPlayDataGlyphCatalog(playData, worldIdentities),
+    writable: false
+  });
+  const worldJsonNames = new Set(JSON_OBJECT_NAME_UNIVERSE);
+  (game.levels || []).forEach((candidateLevel) => {
+    try {
+      semanticNamesForPlayData(getLevelState(game, candidateLevel)).forEach((name) => {
+        worldJsonNames.add(name);
+      });
+    } catch (_error) {
+      // A malformed unrelated room should not prevent the selected room from opening.
+    }
+  });
+  Object.defineProperty(normalizedOptions, "observationJsonNames", {
+    configurable: true,
+    enumerable: false,
+    value: Array.from(worldJsonNames),
+    writable: false
+  });
   const room = buildRuntimeRoom(mazeEngine, playData);
   const context = {
     engine: room.engine,
@@ -798,6 +715,10 @@ function terrainLayerHeight(
     return layerElevation + 1;
   }
 
+  if (type === "orange_ice_slope") {
+    return layerElevation + (orangeButtonsPressed ? 0 : 1);
+  }
+
   if (type === "tree") {
     return layerElevation + 3;
   }
@@ -817,7 +738,15 @@ function terrainLayerHeight(
   return layerElevation;
 }
 
-function transitionLayerSurfaceHeight(playData, state, typeNames, layer, x, y) {
+function transitionLayerSurfaceHeight(
+  playData,
+  state,
+  typeNames,
+  layer,
+  x,
+  y,
+  orangeButtonsPressed = false
+) {
   const type = layer.type || "empty";
   const elevation = layer.elevation ?? 0;
 
@@ -833,6 +762,10 @@ function transitionLayerSurfaceHeight(playData, state, typeNames, layer, x, y) {
     type === "block_asset"
   ) {
     return elevation + 1;
+  }
+
+  if (type === "orange_ice_slope") {
+    return elevation + (orangeButtonsPressed ? 0 : 1);
   }
 
   if (type === "tree") {
@@ -857,7 +790,16 @@ function transitionLayerSurfaceHeight(playData, state, typeNames, layer, x, y) {
   return elevation;
 }
 
-function transitionLayerBlocksElevation(playData, state, typeNames, layer, x, y, elevation) {
+function transitionLayerBlocksElevation(
+  playData,
+  state,
+  typeNames,
+  layer,
+  x,
+  y,
+  elevation,
+  orangeButtonsPressed = false
+) {
   const type = layer.type || "empty";
   const layerElevation = layer.elevation ?? 0;
 
@@ -867,6 +809,13 @@ function transitionLayerBlocksElevation(playData, state, typeNames, layer, x, y,
 
   if (type === "ice_slope") {
     return elevation === layerElevation || elevation === layerElevation + 1;
+  }
+
+  if (type === "orange_ice_slope") {
+    if (!orangeButtonsPressed) {
+      return elevation === layerElevation || elevation === layerElevation + 1;
+    }
+    return layerElevation > 0 && (elevation === layerElevation - 1 || elevation === layerElevation);
   }
 
   if (type === "tree") {
@@ -895,13 +844,30 @@ function transitionLayerBlocksElevation(playData, state, typeNames, layer, x, y,
   return false;
 }
 
-function transitionTerrainBlocksElevation(playData, state, typeNames, x, y, elevation) {
+function transitionTerrainBlocksElevation(
+  playData,
+  state,
+  typeNames,
+  x,
+  y,
+  elevation,
+  orangeButtonsPressed = false
+) {
   if (x < 0 || y < 0 || x >= playData.width || y >= playData.height) {
     return true;
   }
 
   return terrainLayersAt(playData, state, typeNames, x, y).some((layer) =>
-    transitionLayerBlocksElevation(playData, state, typeNames, layer, x, y, elevation)
+    transitionLayerBlocksElevation(
+      playData,
+      state,
+      typeNames,
+      layer,
+      x,
+      y,
+      elevation,
+      orangeButtonsPressed
+    )
   );
 }
 
@@ -911,8 +877,19 @@ function transitionSurfaceTypeAt(playData, state, engine, x, y, elevation) {
   }
 
   const typeNames = terrainTypeNameByValue(engine.terrainTypes);
+  const orangeButtonsPressed = orangeButtonsPressedForState(engine, state);
 
-  if (transitionTerrainBlocksElevation(playData, state, typeNames, x, y, elevation)) {
+  if (
+    transitionTerrainBlocksElevation(
+      playData,
+      state,
+      typeNames,
+      x,
+      y,
+      elevation,
+      orangeButtonsPressed
+    )
+  ) {
     return null;
   }
 
@@ -921,7 +898,15 @@ function transitionSurfaceTypeAt(playData, state, engine, x, y, elevation) {
       .map((layer, index) => ({
         index,
         layer,
-        surfaceHeight: transitionLayerSurfaceHeight(playData, state, typeNames, layer, x, y)
+        surfaceHeight: transitionLayerSurfaceHeight(
+          playData,
+          state,
+          typeNames,
+          layer,
+          x,
+          y,
+          orangeButtonsPressed
+        )
       }))
       .filter((entry) => entry.surfaceHeight === elevation)
       .sort(
@@ -1015,8 +1000,8 @@ function cloneVariant(actor) {
   const values = [actor?.groupId, actor?.label, actor?.name, actor?.token];
 
   for (const value of values) {
-    const text = String(value || "").toLowerCase();
-    const match = text.match(/\bc([0-2])\b/) || text.match(/\bclone\s*([0-2])\b/);
+    const text = String(value || "");
+    const match = text.match(/(?:^|\b)c(\d+)(?:\b|$)/i) || text.match(/\bclone\s*(\d+)\b/i);
 
     if (match) {
       return `c${match[1]}`;
@@ -1032,8 +1017,8 @@ function weightlessBoxVariant(actor) {
   for (const value of values) {
     const text = String(value || "");
     const match =
-      text.match(/\bM([0-4])\b/) ||
-      text.match(/\bweightless(?:_|\s*)box\s*([0-4])\b/i);
+      text.match(/(?:^|\b)M(\d+)(?:\b|$)/i) ||
+      text.match(/\b(?:weightless(?:_|\s*)box|box)\s*(\d+)\b/i);
 
     if (match) {
       return `M${match[1]}`;
@@ -1041,6 +1026,87 @@ function weightlessBoxVariant(actor) {
   }
 
   return "";
+}
+
+function treeVariant(layer) {
+  const values = [layer?.modelUrl, layer?.label, layer?.name, layer?.token];
+
+  for (const value of values) {
+    const text = String(value || "");
+    const modelMatch = text.match(/(?:^|\/)assets_3d\/(st[134]|t[1-4])\.glb(?:$|\?)/i);
+    const tokenMatch = text.match(/(?:^|\b)(st[134]|t[1-4])(?:\b|$)/i);
+    const labelMatch = text.match(/\b(small\s+)?tree\s*([1-4])\b/i);
+    const match = modelMatch || tokenMatch;
+
+    if (match) {
+      const token = match[1].toLowerCase();
+      return token.startsWith("st") ? `small_tree_${token.slice(2)}` : `tree_${token.slice(1)}`;
+    }
+
+    if (labelMatch) {
+      return `${labelMatch[1] ? "small_tree" : "tree"}_${labelMatch[2]}`;
+    }
+  }
+
+  return "tree";
+}
+
+function isSlopeShapedActor(actor) {
+  return actor?.shape === "slope";
+}
+
+function dynamicIdentitySetsForPlayData(playData) {
+  const cloneIdentities = new Set();
+  const weightlessIdentities = new Set();
+
+  (playData?.actors || []).forEach((actor) => {
+    if (actor?.type !== "clone" && actor?.type !== "weightless_box") return;
+
+    const variant = actor.type === "clone" ? cloneVariant(actor) : weightlessBoxVariant(actor);
+    const isLegacyCube = !isSlopeShapedActor(actor) && (
+      (actor.type === "clone" && Object.prototype.hasOwnProperty.call(CLONE_GLYPHS, variant)) ||
+      (actor.type === "weightless_box" && Object.prototype.hasOwnProperty.call(WEIGHTLESS_BOX_GLYPHS, variant))
+    );
+
+    if (isLegacyCube) return;
+
+    const target = actor.type === "clone" ? cloneIdentities : weightlessIdentities;
+    if (isSlopeShapedActor(actor)) {
+      ["down", "left", "right", "up"].forEach((direction) => {
+        const prefix = actor.type === "clone"
+          ? `ramped_clone_${variant || "ungrouped"}`
+          : `ramped_weightless_push_box_${variant || "ungrouped"}`;
+        target.add(`${prefix}_${direction}`);
+      });
+    } else {
+      target.add(
+        actor.type === "clone"
+          ? `clone_${variant || "ungrouped"}`
+          : `weightless_push_box_${variant || "ungrouped"}`
+      );
+    }
+  });
+
+  return { cloneIdentities, weightlessIdentities };
+}
+
+function mergeDynamicIdentitySets(target, source) {
+  source.cloneIdentities.forEach((name) => target.cloneIdentities.add(name));
+  source.weightlessIdentities.forEach((name) => target.weightlessIdentities.add(name));
+  return target;
+}
+
+function createPlayDataGlyphCatalog(playData, extraIdentities = null) {
+  const identities = dynamicIdentitySetsForPlayData(playData);
+  if (extraIdentities) mergeDynamicIdentitySets(identities, extraIdentities);
+  return createDynamicGlyphCatalog({
+    cloneIdentities: Array.from(identities.cloneIdentities),
+    weightlessIdentities: Array.from(identities.weightlessIdentities)
+  });
+}
+
+function glyphCatalogFor(playData, options = {}) {
+  return options?.observationGlyphCatalog || createPlayDataGlyphCatalog(playData);
 }
 
 function normalizeGlyph(value) {
@@ -1056,7 +1122,13 @@ function normalizeGlyph(value) {
   return glyphPair(top, top.toLowerCase());
 }
 
-function terrainGlyph(layerOrType, state = null, index = -1, orangeButtonsPressed = false) {
+function terrainGlyph(
+  layerOrType,
+  state = null,
+  index = -1,
+  orangeButtonsPressed = false,
+  yaw = 0
+) {
   const layer =
     typeof layerOrType === "object" && layerOrType !== null
       ? layerOrType
@@ -1083,17 +1155,21 @@ function terrainGlyph(layerOrType, state = null, index = -1, orangeButtonsPresse
     return BLOCK_ASSET_GLYPHS[blockAssetVariant(layer)] || TERRAIN_GLYPHS.block_asset;
   }
 
-  if (type === "ice_slope") {
-    return (
-      ICE_SLOPE_DIRECTION_GLYPHS[normalizeDirection(layer.direction)] ||
-      TERRAIN_GLYPHS.ice_slope
-    );
+  if (type === "ice_slope" || type === "orange_ice_slope") {
+    const direction = cameraRelativeDirection(layer.direction, yaw);
+    if (type === "orange_ice_slope") {
+      return ORANGE_ICE_SLOPE_DIRECTION_GLYPHS[direction] || TERRAIN_GLYPHS.ice_slope;
+    }
+    if (layer.styleKey === "wall") {
+      return BLACK_ICE_SLOPE_DIRECTION_GLYPHS[direction] || TERRAIN_GLYPHS.ice_slope;
+    }
+    return ICE_SLOPE_DIRECTION_GLYPHS[direction] || TERRAIN_GLYPHS.ice_slope;
   }
 
   return TERRAIN_GLYPHS[type] || UNKNOWN_GLYPHS.terrain;
 }
 
-function actorGlyph(actorOrType) {
+function actorGlyph(actorOrType, yaw = 0, catalog = null) {
   const actor =
     typeof actorOrType === "object" && actorOrType !== null
       ? actorOrType
@@ -1104,26 +1180,47 @@ function actorGlyph(actorOrType) {
     return ORANGE_BUTTON_GLYPHS.orange_button;
   }
 
+  if (type === "player" || type === "circle_player") {
+    return ACTOR_GLYPHS.player;
+  }
+
+  if (type === "attached_lift") {
+    const glyph = PLAYER_LIFT_GLYPHS.player_lift;
+    return glyphPair(actor.observationRaised ? glyph.raisedTop : glyph.loweredTop, glyph.side);
+  }
+
+  if (type === "attached_gate") {
+    return TERRAIN_GLYPHS.player_gate;
+  }
+
   if (type === "clone") {
-    return CLONE_GLYPHS[cloneVariant(actor)] || ACTOR_GLYPHS.clone;
+    const variant = cloneVariant(actor);
+    if (!isSlopeShapedActor(actor) && CLONE_GLYPHS[variant]) return CLONE_GLYPHS[variant];
+    const identity = semanticObjectName(type, actor, yaw);
+    return catalog?.pairFor("clone", identity) || ACTOR_GLYPHS.clone;
   }
 
   if (type === "puncher") {
     return (
-      PUNCHER_DIRECTION_GLYPHS[normalizeDirection(actor.direction)] ||
+      PUNCHER_DIRECTION_GLYPHS[cameraRelativeDirection(actor.direction, yaw)] ||
       ACTOR_GLYPHS.puncher
     );
   }
 
   if (type === "weightless_box") {
-    return WEIGHTLESS_BOX_GLYPHS[weightlessBoxVariant(actor)] || ACTOR_GLYPHS.weightless_box;
+    const variant = weightlessBoxVariant(actor);
+    if (!isSlopeShapedActor(actor) && WEIGHTLESS_BOX_GLYPHS[variant]) {
+      return WEIGHTLESS_BOX_GLYPHS[variant];
+    }
+    const identity = semanticObjectName(type, actor, yaw);
+    return catalog?.pairFor("weightless_box", identity) || ACTOR_GLYPHS.weightless_box;
   }
 
   return ACTOR_GLYPHS[type] || UNKNOWN_GLYPHS.actor;
 }
 
-function actorLetter(actorOrType) {
-  return actorGlyph(actorOrType).top;
+function actorLetter(actorOrType, yaw = 0, catalog = null) {
+  return actorGlyph(actorOrType, yaw, catalog).top;
 }
 
 function rotatePoint(x, y, yaw) {
@@ -1459,10 +1556,12 @@ function exposedTerrainSides(
   };
 }
 
-function buildSceneFaces(playData, engine, state) {
+function buildSceneFaces(playData, engine, state, options = {}) {
   const typeNames = terrainTypeNameByValue(engine.terrainTypes);
   const orangeButtonsPressed = orangeButtonsPressedForState(engine, state);
   const raisedPlayerGates = raisedPlayerGatesForState(engine, state);
+  const yaw = normalizeYaw(options.yaw);
+  const catalog = glyphCatalogFor(playData, options);
   const faces = [];
 
   for (let y = 0; y < playData.height; y += 1) {
@@ -1483,7 +1582,7 @@ function buildSceneFaces(playData, engine, state) {
         );
 
         if (box) {
-          addBoxFaces(faces, box, terrainGlyph(layer, state, index, orangeButtonsPressed), {
+          addBoxFaces(faces, box, terrainGlyph(layer, state, index, orangeButtonsPressed, yaw), {
             layer: 0,
             sides: exposedTerrainSides(
               playData,
@@ -1521,14 +1620,14 @@ function buildSceneFaces(playData, engine, state) {
           z0: elevation,
           z1: elevation
         },
-        actorGlyph({ ...actor, type }),
+        actorGlyph({ ...actor, type }, yaw, catalog),
         { layer: 10 }
       );
       continue;
     }
 
     if (type === "gem") {
-      const glyph = actorGlyph({ ...actor, type });
+      const glyph = actorGlyph({ ...actor, type }, yaw, catalog);
       const z0 = (state.actorElevation[index] || 0) + 0.18;
       const box = {
         x0: state.actorX[index] + 0.3,
@@ -1549,7 +1648,13 @@ function buildSceneFaces(playData, engine, state) {
       continue;
     }
 
-    const glyph = actorGlyph({ ...actor, type });
+    const cell = cellIndex(playData, state.actorX[index], state.actorY[index]);
+    const observationRaised = type === "attached_lift"
+      ? state.liftRaised[cell] === 1
+      : type === "attached_gate"
+        ? raisedPlayerGates.has(cell)
+        : false;
+    const glyph = actorGlyph({ ...actor, observationRaised, type }, yaw, catalog);
     const z0 = state.actorElevation[index] || 0;
     const box = {
       x0: state.actorX[index] + ACTOR_INSET,
@@ -1557,7 +1662,9 @@ function buildSceneFaces(playData, engine, state) {
       y0: state.actorY[index] + ACTOR_INSET,
       y1: state.actorY[index] + 1 - ACTOR_INSET,
       z0,
-      z1: z0 + ACTOR_HEIGHT
+      z1: z0 + ((type === "attached_lift" || type === "attached_gate") && !observationRaised
+        ? 0
+        : ACTOR_HEIGHT)
     };
 
     addBoxFaces(
@@ -1891,7 +1998,8 @@ function terrainBlocksAt(
   x,
   y,
   orangeButtonsPressed = false,
-  raisedPlayerGates = null
+  raisedPlayerGates = null,
+  yaw = 0
 ) {
   return terrainLayersAt(playData, state, typeNames, x, y)
     .map((layer, layerIndex) => {
@@ -1904,6 +2012,7 @@ function terrainBlocksAt(
       const index = cellIndex(playData, x, y);
       const elevation = layer.elevation ?? 0;
       const isPressedOrangeWall = type === "orange_wall" && orangeButtonsPressed;
+      const isPressedOrangeSlope = type === "orange_ice_slope" && orangeButtonsPressed;
       const isLoweredPlayerGate =
         type === "player_gate" && !raisedPlayerGates?.has(index);
       const lowersAsBlock =
@@ -1922,7 +2031,7 @@ function terrainBlocksAt(
         orangeButtonsPressed,
         raisedPlayerGates
       );
-      const glyph = terrainGlyph(layer, state, index, orangeButtonsPressed);
+      const glyph = terrainGlyph(layer, state, index, orangeButtonsPressed, yaw);
 
       return {
         bottom,
@@ -1930,7 +2039,7 @@ function terrainBlocksAt(
         objectId: terrainObjectId(x, y, layerIndex),
         sideLetter: glyph.side,
         surfaceOnly:
-          (isPressedOrangeWall && !lowersAsBlock) || isLoweredPlayerGate,
+          (isPressedOrangeWall && !lowersAsBlock) || isPressedOrangeSlope || isLoweredPlayerGate,
         top,
         type
       };
@@ -1945,7 +2054,8 @@ function maxTerrainStackHeight(
   state,
   typeNames,
   orangeButtonsPressed = false,
-  raisedPlayerGates = null
+  raisedPlayerGates = null,
+  yaw = 0
 ) {
   let maxHeight = 0;
 
@@ -1959,7 +2069,8 @@ function maxTerrainStackHeight(
         x,
         y,
         orangeButtonsPressed,
-        raisedPlayerGates
+        raisedPlayerGates,
+        yaw
       ).forEach((block) => {
         maxHeight = Math.max(maxHeight, block.top);
       });
@@ -1969,8 +2080,10 @@ function maxTerrainStackHeight(
   return maxHeight;
 }
 
-function actorRows(playData, engine, state, yaw) {
+function actorRows(playData, engine, state, yaw, options = {}) {
   const rows = new Map();
+  const raisedPlayerGates = raisedPlayerGatesForState(engine, state);
+  const catalog = glyphCatalogFor(playData, options);
 
   for (let index = 0; index < engine.actorCount; index += 1) {
     if (state.actorRemoved[index]) {
@@ -1979,8 +2092,16 @@ function actorRows(playData, engine, state, yaw) {
 
     const type = engine.actorTypes[index] || playData.actors[index]?.type || "";
     const actor = playData.actors[index] || {};
-    const glyph = actorGlyph({ ...actor, type });
-    const surfaceOnly = type === "orange_button";
+    const cell = cellIndex(playData, state.actorX[index], state.actorY[index]);
+    const observationRaised = type === "attached_lift"
+      ? state.liftRaised[cell] === 1
+      : type === "attached_gate"
+        ? raisedPlayerGates.has(cell)
+        : false;
+    const glyph = actorGlyph({ ...actor, observationRaised, type }, yaw, catalog);
+    const surfaceOnly =
+      type === "orange_button" ||
+      ((type === "attached_lift" || type === "attached_gate") && !observationRaised);
     const display = displayCoordinatesForWorld(
       playData,
       yaw,
@@ -2156,8 +2277,10 @@ function drawTerrainSideForLevel(
   );
 }
 
-function actorCells(playData, engine, state, yaw) {
+function actorCells(playData, engine, state, yaw, options = {}) {
   const cells = new Map();
+  const raisedPlayerGates = raisedPlayerGatesForState(engine, state);
+  const catalog = glyphCatalogFor(playData, options);
 
   for (let index = 0; index < engine.actorCount; index += 1) {
     if (state.actorRemoved[index]) {
@@ -2166,12 +2289,22 @@ function actorCells(playData, engine, state, yaw) {
 
     const type = engine.actorTypes[index] || playData.actors[index]?.type || "";
 
-    if (type === "orange_button") {
+    const cell = cellIndex(playData, state.actorX[index], state.actorY[index]);
+    const observationRaised = type === "attached_lift"
+      ? state.liftRaised[cell] === 1
+      : type === "attached_gate"
+        ? raisedPlayerGates.has(cell)
+        : false;
+
+    if (
+      type === "orange_button" ||
+      ((type === "attached_lift" || type === "attached_gate") && !observationRaised)
+    ) {
       continue;
     }
 
     const actor = playData.actors[index] || {};
-    const glyph = actorGlyph({ ...actor, type });
+    const glyph = actorGlyph({ ...actor, observationRaised, type }, yaw, catalog);
     const display = displayCoordinatesForWorld(
       playData,
       yaw,
@@ -2202,7 +2335,8 @@ function visibleObjectIdsFromOwnerCanvas(ownerCanvas) {
   return new Set(ownerCanvas ? ownerCanvas.flat().filter(Boolean) : []);
 }
 
-function maxRenderedActorHeight(engine, state) {
+function maxRenderedActorHeight(playData, engine, state) {
+  const raisedPlayerGates = raisedPlayerGatesForState(engine, state);
   return Math.max(
     0,
     ...Array.from({ length: engine.actorCount }, (_, index) => {
@@ -2211,7 +2345,15 @@ function maxRenderedActorHeight(engine, state) {
       }
 
       const elevation = state.actorElevation[index] || 0;
-      return engine.actorTypes[index] === "orange_button" ? elevation : elevation + 1;
+      const type = engine.actorTypes[index];
+      if (type === "orange_button") return elevation;
+      if (type === "attached_lift") {
+        return elevation + (state.liftRaised[cellIndex(playData, state.actorX[index], state.actorY[index])] ? 1 : 0);
+      }
+      if (type === "attached_gate") {
+        return elevation + (raisedPlayerGates.has(cellIndex(playData, state.actorX[index], state.actorY[index])) ? 1 : 0);
+      }
+      return elevation + 1;
     })
   );
 }
@@ -2228,9 +2370,10 @@ function renderAsciiSideScene(playData, engine, state, options, trackOwners = fa
     state,
     typeNames,
     orangeButtonsPressed,
-    raisedPlayerGates
+    raisedPlayerGates,
+    yaw
   );
-  const maxActorHeight = maxRenderedActorHeight(engine, state);
+  const maxActorHeight = maxRenderedActorHeight(playData, engine, state);
   const maxHeight = Math.max(1, maxTerrainHeight, maxActorHeight);
   const baseline = maxHeight * TILE_GRANULARITY;
   const width = dimensions.width * TILE_GRANULARITY;
@@ -2240,7 +2383,7 @@ function renderAsciiSideScene(playData, engine, state, options, trackOwners = fa
     ? Array.from({ length: height }, () => Array.from({ length: width }, () => ""))
     : null;
   const holeObjectIds = new Set();
-  const actorsByCell = actorCells(playData, engine, state, yaw);
+  const actorsByCell = actorCells(playData, engine, state, yaw, options);
 
   for (let displayY = dimensions.height - 1; displayY >= 0; displayY -= 1) {
     for (let displayX = 0; displayX < dimensions.width; displayX += 1) {
@@ -2254,7 +2397,8 @@ function renderAsciiSideScene(playData, engine, state, options, trackOwners = fa
         x,
         y,
         orangeButtonsPressed,
-        raisedPlayerGates
+        raisedPlayerGates,
+        yaw
       );
 
       semanticTerrainLayersAt(playData, state, typeNames, x, y)
@@ -2348,9 +2492,10 @@ function renderAsciiLayeredScene(playData, engine, state, options, trackOwners =
     state,
     typeNames,
     orangeButtonsPressed,
-    raisedPlayerGates
+    raisedPlayerGates,
+    yaw
   );
-  const maxActorHeight = maxRenderedActorHeight(engine, state);
+  const maxActorHeight = maxRenderedActorHeight(playData, engine, state);
   const topMargin = Math.max(maxTerrainHeight, maxActorHeight) * sideRows + 1;
   const width = dimensions.width * TILE_GRANULARITY;
   const height =
@@ -2364,7 +2509,7 @@ function renderAsciiLayeredScene(playData, engine, state, options, trackOwners =
     ? Array.from({ length: height }, () => Array.from({ length: width }, () => ""))
     : null;
   const holeObjectIds = new Set();
-  const actorsByRow = actorRows(playData, engine, state, yaw);
+  const actorsByRow = actorRows(playData, engine, state, yaw, options);
   const maxSceneHeight = Math.max(maxTerrainHeight, maxActorHeight);
 
   for (let displayY = 0; displayY < dimensions.height; displayY += 1) {
@@ -2382,7 +2527,8 @@ function renderAsciiLayeredScene(playData, engine, state, options, trackOwners =
           x,
           y,
           orangeButtonsPressed,
-          raisedPlayerGates
+          raisedPlayerGates,
+          yaw
         );
         const screenX = displayX * TILE_GRANULARITY;
 
@@ -2553,7 +2699,26 @@ function semanticObjectName(type, source, yaw) {
     return "player";
   }
 
-  if (type === "ice_slope" || type === "puncher") {
+  if (type === "clone") {
+    const id = cloneVariant(source) || "ungrouped";
+    return isSlopeShapedActor(source)
+      ? `ramped_clone_${id}_${cameraRelativeDirection(source?.direction, yaw)}`
+      : `clone_${id}`;
+  }
+
+  if (type === "weightless_box") {
+    const id = weightlessBoxVariant(source) || "ungrouped";
+    return isSlopeShapedActor(source)
+      ? `ramped_weightless_push_box_${id}_${cameraRelativeDirection(source?.direction, yaw)}`
+      : `weightless_push_box_${id}`;
+  }
+
+  if (type === "ice_slope") {
+    const prefix = source?.styleKey === "wall" ? "black_ice_slope" : "ice_slope";
+    return `${prefix}_${cameraRelativeDirection(source?.direction, yaw)}`;
+  }
+
+  if (type === "orange_ice_slope" || type === "puncher") {
     return `${type}_${cameraRelativeDirection(source?.direction, yaw)}`;
   }
 
@@ -2571,7 +2736,77 @@ function semanticTerrainObjectName(type, source, yaw, state, index, orangeButton
     return "orange_wall";
   }
 
+  if (type === "block_asset") {
+    const variant = blockAssetVariant(source);
+    return variant ? `block_asset_${variant}` : "block_asset";
+  }
+
+  if (type === "tree") {
+    return treeVariant(source);
+  }
+
   return semanticObjectName(type, source, yaw);
+}
+
+function semanticActorObjectName(type, source, yaw, state, index, raisedPlayerGates, playData) {
+  if (type === "attached_lift" || type === "attached_gate") {
+    const cell = cellIndex(playData, state.actorX[index], state.actorY[index]);
+    const raised = type === "attached_lift"
+      ? state.liftRaised[cell] === 1
+      : raisedPlayerGates.has(cell);
+    const family = type === "attached_lift" ? "attached_player_lift" : "attached_player_gate";
+    return `${family}_${raised ? "raised" : "lowered"}`;
+  }
+
+  return semanticObjectName(type, source, yaw);
+}
+
+function semanticNamesForPlayData(playData) {
+  const names = new Set(JSON_OBJECT_NAME_UNIVERSE);
+  const directions = ["down", "left", "right", "up"];
+
+  (playData?.terrain || []).flat().forEach((cell) => {
+    const layers = Array.isArray(cell?.layers) && cell.layers.length > 0
+      ? cell.layers
+      : [cell];
+
+    layers.filter(Boolean).forEach((layer) => {
+      const type = layer.type || "empty";
+      if (["ice_slope", "orange_ice_slope"].includes(type)) {
+        directions.forEach((direction) => {
+          names.add(semanticObjectName(type, { ...layer, direction }, 0));
+        });
+      } else if (type === "player_lift") {
+        names.add("player_lift_lowered");
+        names.add("player_lift_raised");
+      } else if (type === "block_asset") {
+        names.add(blockAssetVariant(layer) ? `block_asset_${blockAssetVariant(layer)}` : "block_asset");
+      } else if (type === "tree") {
+        names.add(treeVariant(layer));
+      } else {
+        names.add(semanticObjectName(type, layer, 0));
+      }
+    });
+  });
+
+  (playData?.actors || []).forEach((actor) => {
+    const type = actor?.type || "unknown";
+    if (type === "puncher" || isSlopeShapedActor(actor)) {
+      directions.forEach((direction) => {
+        names.add(semanticObjectName(type, { ...actor, direction }, 0));
+      });
+    } else if (type === "attached_lift") {
+      names.add("attached_player_lift_lowered");
+      names.add("attached_player_lift_raised");
+    } else if (type === "attached_gate") {
+      names.add("attached_player_gate_lowered");
+      names.add("attached_player_gate_raised");
+    } else {
+      names.add(semanticObjectName(type, actor, 0));
+    }
+  });
+
+  return Array.from(names).filter(Boolean);
 }
 
 function jsonTerrainElevation(
@@ -2588,7 +2823,7 @@ function jsonTerrainElevation(
     return elevation;
   }
 
-  if (type === "orange_wall") {
+  if (type === "orange_wall" || type === "orange_ice_slope") {
     return elevation + (orangeButtonsPressed ? 0 : 1);
   }
 
@@ -2647,10 +2882,27 @@ function jsonObservationObjects(context) {
 
     const source = playData.actors[index] || {};
     const type = engine.actorTypes[index] || source.type || "unknown";
+    const cell = cellIndex(playData, state.actorX[index], state.actorY[index]);
+    const baseElevation = state.actorElevation[index] || 0;
+    const elevation = type === "orange_button"
+      ? baseElevation
+      : type === "attached_lift"
+        ? baseElevation + (state.liftRaised[cell] ? 1 : 0)
+        : type === "attached_gate"
+          ? baseElevation + (raisedPlayerGates.has(cell) ? 1 : 0)
+          : baseElevation + 1;
     objects.push({
-      elevation: (state.actorElevation[index] || 0) + 1,
+      elevation,
       id: actorObjectId(index),
-      name: semanticObjectName(type, source, options.yaw),
+      name: semanticActorObjectName(
+        type,
+        source,
+        options.yaw,
+        state,
+        index,
+        raisedPlayerGates,
+        playData
+      ),
       x: state.actorX[index],
       y: state.actorY[index]
     });
@@ -2659,15 +2911,30 @@ function jsonObservationObjects(context) {
   return objects;
 }
 
-function hiddenObjectNameMap(seed) {
+function hiddenNameCode(index) {
+  const base = HIDDEN_NAME_ALPHABET.length;
+  let value = Math.max(0, index);
+  let code = "";
+
+  do {
+    code = HIDDEN_NAME_ALPHABET[value % base] + code;
+    value = Math.floor(value / base) - 1;
+  } while (value >= 0);
+
+  return code;
+}
+
+function hiddenObjectNameMap(seed, objectNames = JSON_OBJECT_NAME_UNIVERSE) {
   const normalizedSeed = String(seed || "1");
-  const names = JSON_OBJECT_NAME_UNIVERSE.slice().sort((left, right) => {
+  const names = Array.from(new Set(objectNames)).filter(
+    (name) => name !== "player" && name !== "gem"
+  ).sort((left, right) => {
     const leftHash = crypto.createHash("sha256").update(`${normalizedSeed}:${left}`).digest("hex");
     const rightHash = crypto.createHash("sha256").update(`${normalizedSeed}:${right}`).digest("hex");
     return leftHash.localeCompare(rightHash) || left.localeCompare(right);
   });
 
-  return new Map(names.map((name, index) => [name, HIDDEN_NAME_ALPHABET[index]]));
+  return new Map(names.map((name, index) => [name, hiddenNameCode(index)]));
 }
 
 function hiddenObjectName(name, seed, mapping) {
@@ -2679,10 +2946,8 @@ function hiddenObjectName(name, seed, mapping) {
     return mapping.get(name);
   }
 
-  const hash = crypto.createHash("sha256").update(`${seed}:${name}`).digest();
-  const first = HIDDEN_NAME_ALPHABET[hash[0] % HIDDEN_NAME_ALPHABET.length];
-  const second = HIDDEN_NAME_ALPHABET[hash[1] % HIDDEN_NAME_ALPHABET.length];
-  return `${first}${second}`;
+  const hash = crypto.createHash("sha256").update(`${seed}:${name}`).digest("hex");
+  return `x${hash}`;
 }
 
 function buildJsonObservation(context, observationOptions = {}) {
@@ -2699,10 +2964,15 @@ function buildJsonObservation(context, observationOptions = {}) {
         context.options,
         true
       ).visibleObjectIds;
-  const nameMapping = hideNames ? hiddenObjectNameMap(hideNamesSeed) : null;
+  const allObjects = jsonObservationObjects(context);
+  const stableNames = context.options?.observationJsonNames || [
+    ...JSON_OBJECT_NAME_UNIVERSE,
+    ...semanticNamesForPlayData(context.playData)
+  ];
+  const nameMapping = hideNames ? hiddenObjectNameMap(hideNamesSeed, stableNames) : null;
   const grouped = {};
 
-  jsonObservationObjects(context)
+  allObjects
     .filter((object) => omniscient || visibleObjectIds.has(object.id))
     .forEach((object) => {
       const name = hideNames
@@ -2713,6 +2983,7 @@ function buildJsonObservation(context, observationOptions = {}) {
     });
 
   return {
+    schema_version: 2,
     observation_mode: "json",
     omniscient,
     hide_names: hideNames,
@@ -2730,9 +3001,90 @@ function buildJsonObservation(context, observationOptions = {}) {
   };
 }
 
+function buildAsciiLegend(context) {
+  if (context.options?.hideNames === true) return [];
+  const catalog = glyphCatalogFor(context.playData, context.options);
+  const entries = new Map();
+
+  (context.playData.actors || []).forEach((actor) => {
+    if (actor?.type !== "clone" && actor?.type !== "weightless_box") return;
+    const variant = actor.type === "clone" ? cloneVariant(actor) : weightlessBoxVariant(actor);
+    const isLegacyCube = !isSlopeShapedActor(actor) && (
+      (actor.type === "clone" && CLONE_GLYPHS[variant]) ||
+      (actor.type === "weightless_box" && WEIGHTLESS_BOX_GLYPHS[variant])
+    );
+    if (isLegacyCube) return;
+
+    const name = semanticObjectName(actor.type, actor, context.options.yaw);
+    const family = actor.type === "clone" ? "clone" : "weightless_box";
+    const pair = catalog.pairFor(family, name);
+    if (pair) entries.set(name, { name, side: pair.side, top: pair.top });
+  });
+
+  return Array.from(entries.values()).sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function buildObservationInventory(context) {
+  const { engine, options, playData, state } = context;
+  const typeNames = terrainTypeNameByValue(engine.terrainTypes);
+  const orangeButtonsPressed = orangeButtonsPressedForState(engine, state);
+  const raisedPlayerGates = raisedPlayerGatesForState(engine, state);
+  const catalog = glyphCatalogFor(playData, options);
+  const entries = [];
+
+  for (let y = 0; y < playData.height; y += 1) {
+    for (let x = 0; x < playData.width; x += 1) {
+      const index = cellIndex(playData, x, y);
+      semanticTerrainLayersAt(playData, state, typeNames, x, y).forEach((layer) => {
+        const type = layer.type || "empty";
+        entries.push({
+          glyph: terrainGlyph(layer, state, index, orangeButtonsPressed, options.yaw),
+          kind: "terrain",
+          name: semanticTerrainObjectName(
+            type,
+            layer,
+            options.yaw,
+            state,
+            index,
+            orangeButtonsPressed
+          ),
+          sourceType: type
+        });
+      });
+    }
+  }
+
+  for (let index = 0; index < engine.actorCount; index += 1) {
+    const source = playData.actors[index] || {};
+    const type = engine.actorTypes[index] || source.type || "unknown";
+    const cell = cellIndex(playData, state.actorX[index], state.actorY[index]);
+    const observationRaised = type === "attached_lift"
+      ? state.liftRaised[cell] === 1
+      : type === "attached_gate"
+        ? raisedPlayerGates.has(cell)
+        : false;
+    entries.push({
+      glyph: actorGlyph({ ...source, observationRaised, type }, options.yaw, catalog),
+      kind: "actor",
+      name: semanticActorObjectName(
+        type,
+        source,
+        options.yaw,
+        state,
+        index,
+        raisedPlayerGates,
+        playData
+      ),
+      sourceType: type
+    });
+  }
+
+  return entries;
+}
+
 function renderAsciiProjected(playData, engine, state, options) {
   const pitch = clampPitch(options.pitch);
-  const projectedFaces = buildSceneFaces(playData, engine, state)
+  const projectedFaces = buildSceneFaces(playData, engine, state, options)
     .filter((face) => pitch !== 0 || face.kind === "top")
     .filter((face) =>
       pitch !== MAX_PITCH ||
@@ -3928,6 +4280,8 @@ module.exports = {
   applyMove,
   BOARD_STATE_HASH_VERSION,
   boardStateHash,
+  buildAsciiLegend,
+  buildObservationInventory,
   buildModelJsonPayload,
   buildJsonObservation,
   buildScorecard,

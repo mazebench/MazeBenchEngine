@@ -195,6 +195,9 @@ function publicObservationStatus(value, { mode = "text" } = {}) {
 
   if (observationMode === "ascii") {
     observation.level = String(source?.level || source?.observation || "");
+    observation.ascii_legend = Array.isArray(source?.ascii_legend)
+      ? source.ascii_legend
+      : [];
   } else if (observationMode === "json") {
     observation.json_observation = source?.json_observation || {};
   } else if (observationMode === "vision" && source?.frame_image) {

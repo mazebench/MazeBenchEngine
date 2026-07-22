@@ -323,19 +323,27 @@ board. Coordinates are [x,y,elevation]. Object types have stable random letter
 IDs for this run; player and gem remain literal. Infer every hidden type only
 from the observations and interactions in this run.`
         : `This is JSON mode. Read json_observation.objects instead of an ASCII
-board. Coordinates are [x,y,elevation]. Directional object names such as
-ice_slope_up and puncher_left are relative to the current camera. Dynamic
-player lifts include their live state in their name:
-player_lift_lowered/player_lift_raised. Orange walls remain orange_wall and
-their elevation coordinate drops by one while an orange button is pressed. ${
+board. Schema version 2 coordinates are [x,y,elevation]. Directional object
+names such as ice_slope_up, black_ice_slope_left, orange_ice_slope_down,
+puncher_left, ramped_clone_c7_up, and ramped_weightless_push_box_M7_right are
+relative to the current camera. Clone and weightless-push-box names preserve
+their arbitrary group ids. Player lifts and attached lifts/gates include their
+live raised/lowered state in the name. Orange walls and orange ice slopes drop
+one elevation while the orange buttons are pressed. ${
   config.omniscient
     ? "The observation is omniscient and contains every object in the current room, so camera rotation is not needed for visibility."
     : "Only objects with at least one character visible in the equivalent ASCII view are included, so rotate the camera to reveal occluded objects."
 } Object type names are literal.`
-      : `This is ASCII mode. Observations contain the current room's ASCII
-board in the level field and the complete visited_levels list.${config.hideNames
-  ? " Every glyph except player P and gem G is assigned a stable random identity for this run. Infer meanings only from observations and interactions in this run."
-  : ""}`;
+      : config.hideNames
+        ? `This is ASCII mode. Observations contain the current room's ASCII
+board in the level field and the complete visited_levels list. Directional
+glyphs are relative to the current camera. Every glyph except player P and gem
+G is assigned a stable random identity for this run. Infer meanings only from
+observations and interactions in this run.`
+        : `This is ASCII mode. Observations contain the current room's ASCII
+board in the level field, any dynamic Unicode clone/box symbols in ascii_legend,
+and the complete visited_levels list. Directional slope and puncher glyphs are
+relative to the current camera.`;
   const movementFeedback = `The controls do not report whether a movement was
 blocked. Infer its effect only from the returned observation.`;
   const capability = config.toolUse === "offline"
@@ -479,13 +487,29 @@ JSON also carries a short text status (current_room, gem_count, game state,
 allowed_commands). The first command boots a headless browser
 (a few seconds); later commands render quickly.`
     : config.mode === "json"
-      ? `This is JSON mode. Every helper command prints json_observation.objects,
-grouped by object type with [x,y,elevation] coordinates, and no ASCII board.
-Directional names are camera-relative. Player lifts include live state in their name: player_lift_lowered/player_lift_raised. Orange walls remain orange_wall and their elevation coordinate drops by one while an orange button is pressed. ${config.omniscient ? "Every room object is included, so rotating the camera is unnecessary for visibility." : "Only objects visible in the equivalent ASCII view are included; rotate the camera to uncover occluded objects."}
-${config.hideNames ? "Names except player and gem are stable random letter IDs for this run." : "Names are literal."}`
-      : `This is ASCII mode. Every helper command prints a JSON observation with an
-ASCII board in the "level" field plus a short status. Read the JSON to choose
-your next move.`;
+      ? config.hideNames
+        ? `This is JSON mode. Every helper command prints json_observation.objects,
+grouped by schema-version-2 object type with [x,y,elevation] coordinates, and no
+ASCII board. Object types have stable random letter IDs for this run; player
+and gem remain literal. Directional identities are camera-relative. Infer every
+hidden type only from observations and interactions in this run.`
+        : `This is JSON mode. Every helper command prints json_observation.objects,
+grouped by schema-version-2 object type with [x,y,elevation] coordinates, and no
+ASCII board. Directional names are camera-relative. Clone and weightless push
+box ids are preserved, including ramped_*_<id>_<direction> actors. Player lifts
+and attached devices include live state in their names. Orange walls and orange
+ice slopes drop one elevation while the buttons are pressed. ${config.omniscient ? "Every room object is included, so rotating the camera is unnecessary for visibility." : "Only objects visible in the equivalent ASCII view are included; rotate the camera to uncover occluded objects."}
+Names are literal.`
+      : config.hideNames
+        ? `This is ASCII mode. Every helper command prints a JSON observation with an
+ASCII board in the "level" field and a short status. Directional glyphs are
+camera-relative. Every glyph except player P and gem G is assigned a stable
+random identity for this run. Infer meanings only from observations and
+interactions in this run.`
+        : `This is ASCII mode. Every helper command prints a JSON observation with an
+ASCII board in the "level" field, an ascii_legend for any dynamic Unicode
+clone/box identities, and a short status. Directional slope and puncher glyphs
+are camera-relative. Read the JSON to choose your next move.`;
   const toolsNote = config.tools
     ? ""
     : `

@@ -58,7 +58,8 @@ try {
     "player_dead",
     "game_won",
     "game_lost",
-    "level"
+    "level",
+    "ascii_legend"
   ]);
   assert.equal(firstObservation.observation_mode, "ascii");
   assert.match(firstObservation.level, /P|p/);
@@ -458,7 +459,8 @@ try {
     "player_dead",
     "game_won",
     "game_lost",
-    "level"
+    "level",
+    "ascii_legend"
   ]);
   assert.equal(restrictedObservation.observation_mode, "ascii");
   assert.match(restrictedObservation.level, /P|p/);
@@ -972,7 +974,8 @@ runpy.run_path("planner.py")`;
     player_dead: false,
     game_won: false,
     game_lost: false,
-    level: "P"
+    level: "P",
+    ascii_legend: []
   });
   assert.deepEqual(asciiStatuses.dead, {
     observation_mode: "ascii",
@@ -985,6 +988,7 @@ runpy.run_path("planner.py")`;
     game_won: false,
     game_lost: false,
     level: ".",
+    ascii_legend: [],
     death_message: "The player died, you must now undo or reset or go to a level.",
     allowed_commands: ["undo", "reset", "go to level X Y"]
   });
