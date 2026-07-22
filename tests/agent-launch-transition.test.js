@@ -18,11 +18,16 @@ assert.match(siteTheme, /\.agent-launch-status__spinner \{[\s\S]*?animation: loa
 assert.match(agentScript, /function resetComposerForNextRun\(\)/);
 assert.match(pages, /id="auto-run-tools-option"[\s\S]*id="run-auto-run-tools"[\s\S]*Auto-run tools/);
 assert.match(pages, /Lets solvers submit full action sequences, the agent observe the final frame, and can inspect intermediate frames\./);
+assert.match(pages, /id="auto-run-all-frames-option"[\s\S]*id="run-auto-run-all-frames"[\s\S]*Include every frame/);
 assert.match(agentScript, /autoRunTools: false/);
+assert.match(agentScript, /autoRunAllFrames: false/);
 assert.match(agentScript, /autoRunOption\.hidden = state\.toolUse !== "offline"/);
 assert.match(agentScript, /state\.autoRunTools = next === "offline"/);
+assert.match(agentScript, /state\.autoRunAllFrames = next === "offline"/);
 assert.match(agentScript, /auto_run_tools: state\.toolUse === "offline" && state\.autoRunTools/);
+assert.match(agentScript, /auto_run_all_frames: state\.toolUse === "offline" && state\.autoRunTools && state\.autoRunAllFrames/);
 assert.match(siteTheme, /\.tool-use-options\[hidden\][\s\S]*display: none/);
+assert.match(siteTheme, /\.tool-use-suboption\[hidden\][\s\S]*display: none/);
 assert.match(agentScript, /state\.harness && state\.harness !== "none" && state\.execution === "prime"/);
 assert.match(agentScript, /beginLaunch\(\);\s*setStatus\(""\);\s*resetComposerForNextRun\(\);\s*\n\s*try \{/);
 assert.match(agentScript, /runsView\.page = 1;\s*void refreshRuns\(\);/);

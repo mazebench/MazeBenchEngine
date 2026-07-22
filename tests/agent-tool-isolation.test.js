@@ -50,6 +50,7 @@ const baseConfig = {
   pythonSandboxStateDir: path.join(workspace, "python-sandbox"),
   reasoning: "low",
   autoRunTools: false,
+  autoRunAllFrames: false,
   resume: "",
   seed: false,
   sessionFile: path.join(workspace, "session.json"),
@@ -113,6 +114,7 @@ assert.doesNotMatch(toolsOnPrompt, /TOOLS-OFF mode/);
 assert.doesNotMatch(toolsOnPrompt, /maze_scorecard/);
 assert.doesNotMatch(toolsOnPrompt, /AUTO-RUN TOOLS HARNESS IS ENABLED/);
 assert.match(localAgentSource, /isTruthy\(raw\.auto_run_tools, true\)/);
+assert.match(localAgentSource, /isTruthy\(raw\.auto_run_all_frames, true\)/);
 
 const autoRunToolsPrompt = buildMcpPrompt({
   ...toolsOnConfig,
@@ -129,6 +131,15 @@ assert.match(autoRunToolsPrompt, /every intermediate ASCII board, JSON observati
 assert.match(autoRunToolsPrompt, /stops immediately on a terminal state, death, pause, exhausted\s+move budget/);
 assert.match(autoRunToolsPrompt, /Never create a Python helper that calls a live game API/);
 assert.doesNotMatch(autoRunToolsPrompt, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+const autoRunAllFramesPrompt = buildMcpPrompt({
+  ...toolsOnConfig,
+  autoRunTools: true,
+  autoRunAllFrames: true
+});
+assert.match(autoRunAllFramesPrompt, /Every sequence automatically returns every intermediate ASCII board/);
+assert.match(autoRunAllFramesPrompt, /Inspect\s+the full ordered trajectory/);
+assert.doesNotMatch(autoRunAllFramesPrompt, /By default it returns compact per-action summaries plus only the final/);
 
 const swarmPrompt = buildMcpPrompt({ ...toolsOnConfig, swarm: true });
 assert.match(swarmPrompt, /SWARM IS ENABLED/);

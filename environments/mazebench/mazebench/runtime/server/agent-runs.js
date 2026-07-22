@@ -4670,6 +4670,8 @@ function createAgentRunService({
         : "read-only";
     const autoRunTools = toolUse === "offline" &&
       !(params.auto_run_tools === false || params.auto_run_tools === "false");
+    const autoRunAllFrames = autoRunTools &&
+      !(params.auto_run_all_frames === false || params.auto_run_all_frames === "false");
     const swarm = model !== "kimi" && toolUse === "offline" && (params.swarm === true || params.swarm === "true");
     const allowQuit = !(params.allow_quit === false || params.allow_quit === "false");
     const autoQuit = normalizeAutoQuitConfig(params);
@@ -4706,6 +4708,7 @@ function createAgentRunService({
       `tools=${toolUse === "read-only" ? "false" : "true"}`,
       `tool_use=${toolUse}`,
       `auto_run_tools=${autoRunTools ? "true" : "false"}`,
+      `auto_run_all_frames=${autoRunAllFrames ? "true" : "false"}`,
       `swarm=${swarm ? "true" : "false"}`,
       `container=${params.container === false || params.container === "false" ? "false" : "true"}`,
       `video=${params.video === false || params.video === "false" ? "off" : "on"}`,
@@ -4804,7 +4807,7 @@ function createAgentRunService({
       args.push(`session_id=${String(params.session_id)}`);
     }
 
-    return { args, model, levelId, moves, gems, view, toolUse, autoRunTools, swarm, unlimited, allowQuit, autoQuit, mode, omniscient, hideNames, hideNamesSeed };
+    return { args, model, levelId, moves, gems, view, toolUse, autoRunTools, autoRunAllFrames, swarm, unlimited, allowQuit, autoQuit, mode, omniscient, hideNames, hideNamesSeed };
   }
 
   // Agent Runner defaults to a local Verifiers evaluator (while inference still
@@ -5109,7 +5112,7 @@ function createAgentRunService({
 
         requireLocalSubscription(effectiveParams);
         const game = normalizedGameForRun(effectiveParams.game_id);
-        const { args, model, levelId, moves, gems, view, toolUse, autoRunTools, swarm, unlimited, allowQuit, autoQuit, mode, omniscient, hideNames, hideNamesSeed } = buildLocalRunArgs(runId, effectiveParams, game);
+        const { args, model, levelId, moves, gems, view, toolUse, autoRunTools, autoRunAllFrames, swarm, unlimited, allowQuit, autoQuit, mode, omniscient, hideNames, hideNamesSeed } = buildLocalRunArgs(runId, effectiveParams, game);
         const requestedModelName = String(effectiveParams.model_name || "");
         const exactModelName = model === "claude"
           ? resolveClaudeCatalogModelId(requestedModelName)
@@ -5155,6 +5158,7 @@ function createAgentRunService({
           tools: toolUse !== "read-only",
           tool_use: toolUse,
           auto_run_tools: autoRunTools,
+          auto_run_all_frames: autoRunAllFrames,
           swarm,
           container: !(effectiveParams.container === false || effectiveParams.container === "false"),
           video: !(effectiveParams.video === false || effectiveParams.video === "false"),
@@ -5496,6 +5500,7 @@ function createAgentRunService({
           ? "offline"
           : "read-only",
       auto_run_tools: Boolean(meta.auto_run_tools),
+      auto_run_all_frames: Boolean(meta.auto_run_all_frames),
       swarm: Boolean(meta.swarm),
       gems: meta.gems,
       view: meta.view

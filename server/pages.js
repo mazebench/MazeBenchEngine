@@ -987,6 +987,10 @@ function createPageRenderer({
                 <div id="auto-run-tools-option" class="tool-use-options" hidden>
                   <label class="switch auto-run-tools-toggle"><input id="run-auto-run-tools" type="checkbox"><span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span><span class="switch__label">Auto-run tools</span></label>
                   <p>Lets solvers submit full action sequences, the agent observe the final frame, and can inspect intermediate frames.</p>
+                  <div id="auto-run-all-frames-option" class="tool-use-suboption" hidden>
+                    <label class="switch"><input id="run-auto-run-all-frames" type="checkbox"><span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span><span class="switch__label">Include every frame</span></label>
+                    <p>Sends every intermediate frame from each action sequence to the agent, not only the final frame.</p>
+                  </div>
                 </div>
               </article>
               <article class="setting-card setting-card--orchestration is-gated" inert aria-hidden="true">

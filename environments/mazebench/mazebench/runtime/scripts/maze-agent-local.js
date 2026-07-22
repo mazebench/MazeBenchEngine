@@ -23,6 +23,7 @@
 //                                                            (default read-only)
 //   tools        legacy boolean alias (false=game-only, true=offline)
 //   auto_run_tools      allow saved solvers to submit action sequences (tools only)
+//   auto_run_all_frames return every intermediate sequence observation (default true)
 //   swarm        true lets an offline lead spawn identical-model workers
 //   max_swarm_workers  hard cap on workers/private instances   (default 8)
 //   mode         text (ASCII) | json (structured room) | vision (PNG) (default text)
@@ -269,6 +270,13 @@ function timestampSlug() {
 
 function autoRunToolsInstructions(config) {
   if (config.toolUse !== "offline" || !config.autoRunTools) return "";
+  const observationDelivery = config.autoRunAllFrames
+    ? `- Every sequence automatically returns every intermediate ASCII board,
+  JSON observation, or vision frame, followed by the final observation. Inspect
+  the full ordered trajectory before deciding what to do next.`
+    : `- By default it returns compact per-action summaries plus only the final full
+  observation. Set include_intermediate_observations=true when you specifically
+  need every intermediate ASCII board, JSON observation, or vision frame.`;
   return `AUTO-RUN TOOLS HARNESS IS ENABLED. You additionally have
 maze_action_sequence for quickly applying a route produced by a saved Python
 planner or solver.
@@ -281,9 +289,7 @@ planner or solver.
   budgeted, persisted, and logged exactly like an individual maze_action.
 - The sequence stops immediately on a terminal state, death, pause, exhausted
   move budget, rejected action, or other error, and reports how far it got.
-- By default it returns compact per-action summaries plus only the final full
-  observation. Set include_intermediate_observations=true when you specifically
-  need every intermediate ASCII board, JSON observation, or vision frame.
+${observationDelivery}
 - After the call, inspect the final observation and the ordered summaries. If
   they disagree with the solver's prediction, update and rerun the saved program
   before submitting another route.
@@ -423,7 +429,7 @@ stop after the first observation while budget remains. Before every primary
 ${controls.action}${config.autoRunTools ? " or maze_action_sequence call" : ""}, write one short sentence explaining the choice. Valid action
 strings include ${validActions}.
 
-After every ${config.autoRunTools ? "maze_action or maze_action_sequence call" : "action"}, inspect the returned ${config.autoRunTools ? "final " : ""}${config.mode === "vision" ? "frame and status" : config.mode === "json" ? "JSON observation and status" : "ASCII board"} before choosing the next move. Collect as many
+After every ${config.autoRunTools ? "maze_action or maze_action_sequence call" : "action"}, inspect the returned ${config.autoRunTools && config.autoRunAllFrames ? "ordered observations and final " : config.autoRunTools ? "final " : ""}${config.mode === "vision" ? "frame and status" : config.mode === "json" ? "JSON observation and status" : "ASCII board"} before choosing the next move. Collect as many
 unique gems as possible. If the player dies, recover with undo, reset, or a room
 change. Scoring is runner-only; do not attempt to access a scorecard. When done,
 give a one-line summary of the route and gems collected.`;
@@ -565,6 +571,7 @@ function mcpEnvironment(config, workerOnly = false) {
     MAZEBENCH_PROVIDER: config.model,
     MAZEBENCH_RESTRICTED_MODE: config.toolUse === "read-only" ? "1" : "0",
     MAZEBENCH_AUTO_RUN_TOOLS: config.autoRunTools ? "1" : "0",
+    MAZEBENCH_AUTO_RUN_ALL_FRAMES: config.autoRunAllFrames ? "1" : "0",
     MAZEBENCH_VISION_WIDTH: String(config.visionWidth),
     MAZEBENCH_VISION_HEIGHT: String(config.visionHeight),
     MAZEBENCH_VISION_VIEW: config.visionView || "",
@@ -2139,7 +2146,7 @@ function runInContainer(config, raw) {
   // path options (out/session) are intentionally dropped; the inner run writes
   // under the mounted /app/outputs/maze-local.
   const forwardKeys = [
-    "model", "moves", "unlimited", "allow_quit", "mode", "omniscient", "hide_names", "hide_names_seed", "tools", "tool_use", "auto_run_tools", "swarm", "max_swarm_workers", "game", "level", "view", "yaw", "gems",
+    "model", "moves", "unlimited", "allow_quit", "mode", "omniscient", "hide_names", "hide_names_seed", "tools", "tool_use", "auto_run_tools", "auto_run_all_frames", "swarm", "max_swarm_workers", "game", "level", "view", "yaw", "gems",
     "video", "no_video", "fast", "draft", "width", "height", "fps",
     "vision_width", "vision_height", "vision_view", "model_name", "llm",
     "reasoning", "effort", "codex_fast", "resume", "seed", "fork_session", "session_id",
@@ -2591,6 +2598,7 @@ async function main() {
       : "read-only";
   const requestedSwarm = toolUse === "offline" && isTruthy(raw.swarm, false);
   const autoRunTools = toolUse === "offline" && isTruthy(raw.auto_run_tools, true);
+  const autoRunAllFrames = autoRunTools && isTruthy(raw.auto_run_all_frames, true);
   if (model === "kimi" && requestedSwarm) {
     throw new Error("Kimi Code local runs currently support a single isolated agent, not swarm workers.");
   }
@@ -2636,6 +2644,7 @@ async function main() {
     tools: toolUse !== "read-only",
     toolUse,
     autoRunTools,
+    autoRunAllFrames,
     swarm,
     maxSwarmWorkers: Math.min(
       32,

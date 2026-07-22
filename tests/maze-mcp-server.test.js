@@ -156,6 +156,50 @@ try {
     .trim().split("\n").map((line) => JSON.parse(line));
   assert.equal(sequenceEvents.length, 5, "every batched move remains individually visible in telemetry");
 
+  const allFramesDir = path.join(runDir, "all-frames");
+  fs.mkdirSync(allFramesDir, { recursive: true });
+  const allFramesRequests = [
+    { jsonrpc: "2.0", id: 80, method: "tools/list", params: {} },
+    { jsonrpc: "2.0", id: 81, method: "tools/call", params: { name: "maze_start", arguments: {} } },
+    {
+      jsonrpc: "2.0",
+      id: 82,
+      method: "tools/call",
+      params: {
+        name: "maze_action_sequence",
+        arguments: {
+          actions: ["rotate camera left", "rotate camera right", "rotate camera left"],
+          include_intermediate_observations: false
+        }
+      }
+    }
+  ];
+  const allFramesResult = spawnSync(process.execPath, [path.join(rootDir, "scripts", "maze-mcp-server.js")], {
+    cwd: rootDir,
+    encoding: "utf8",
+    input: `${allFramesRequests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+    env: {
+      ...process.env,
+      MAZEBENCH_REPO_ROOT: rootDir,
+      MAZEBENCH_RUN_DIR: allFramesDir,
+      MAZEBENCH_SESSION_FILE: path.join(allFramesDir, "session.json"),
+      MAZEBENCH_AUTO_RUN_TOOLS: "1",
+      MAZEBENCH_AUTO_RUN_ALL_FRAMES: "1",
+      MAZEBENCH_MOVE_BUDGET: "3"
+    },
+    timeout: 240000
+  });
+  assert.equal(allFramesResult.status, 0, allFramesResult.stderr);
+  const allFramesResponses = allFramesResult.stdout.trim().split("\n").map((line) => JSON.parse(line));
+  const allFramesTool = allFramesResponses.find((response) => response.id === 80)?.result?.tools
+    ?.find((tool) => tool.name === "maze_action_sequence");
+  assert.equal(allFramesTool?.inputSchema?.properties?.include_intermediate_observations?.default, true);
+  const enforcedFrames = allFramesResponses.find((response) => response.id === 82)?.result?.structuredContent;
+  assert.equal(enforcedFrames.completed_count, 3);
+  assert.equal(enforcedFrames.intermediate_observations.length, 2);
+  assert.match(enforcedFrames.intermediate_observations[0].observation.level, /P|p/);
+  assert.match(enforcedFrames.final_observation.level, /P|p/);
+
   const workerRequests = [
     { jsonrpc: "2.0", id: 100, method: "initialize", params: { protocolVersion: "2024-11-05" } },
     { jsonrpc: "2.0", method: "notifications/initialized" },

@@ -49,6 +49,8 @@ for (const label of [
   "Identity seed",
   "Isolation",
   "Tool use",
+  "Auto-run tools",
+  "Sequence frames",
   "Orchestration"
 ]) {
   assert.match(runScript, new RegExp(`\\["${label}"`), `missing ${label} launch parameter`);

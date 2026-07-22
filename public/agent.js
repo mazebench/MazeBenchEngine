@@ -117,6 +117,7 @@
     hideNamesSeed: "1",
     toolUse: null,
     autoRunTools: false,
+    autoRunAllFrames: false,
     orchestration: null,
     unlimited: false,
     allowQuit: null,
@@ -1503,10 +1504,18 @@
     picker?.classList.toggle("is-second", state.toolUse === "offline");
     const autoRunOption = document.getElementById("auto-run-tools-option");
     const autoRunInput = document.getElementById("run-auto-run-tools");
+    const allFramesOption = document.getElementById("auto-run-all-frames-option");
+    const allFramesInput = document.getElementById("run-auto-run-all-frames");
     if (autoRunOption) autoRunOption.hidden = state.toolUse !== "offline";
     if (autoRunInput) {
       autoRunInput.disabled = state.toolUse !== "offline";
       autoRunInput.checked = state.toolUse === "offline" && state.autoRunTools;
+    }
+    const allFramesEnabled = state.toolUse === "offline" && state.autoRunTools;
+    if (allFramesOption) allFramesOption.hidden = !allFramesEnabled;
+    if (allFramesInput) {
+      allFramesInput.disabled = !allFramesEnabled;
+      allFramesInput.checked = allFramesEnabled && state.autoRunAllFrames;
     }
   }
 
@@ -1515,6 +1524,7 @@
     if (state.toolUse !== next) {
       state.orchestration = next === "read-only" || state.harness === "kimi-code" ? "single" : null;
       state.autoRunTools = next === "offline";
+      state.autoRunAllFrames = next === "offline";
     }
     state.toolUse = next;
     syncToolUsePicker();
@@ -1734,6 +1744,7 @@
           tools: state.toolUse === "offline",
           tool_use: state.toolUse,
           auto_run_tools: state.toolUse === "offline" && state.autoRunTools,
+          auto_run_all_frames: state.toolUse === "offline" && state.autoRunTools && state.autoRunAllFrames,
           swarm: state.harness !== "kimi-code" && state.orchestration === "swarm"
         };
 
@@ -2212,6 +2223,11 @@
   });
   document.getElementById("run-auto-run-tools")?.addEventListener("change", (event) => {
     state.autoRunTools = state.toolUse === "offline" && event.currentTarget.checked;
+    state.autoRunAllFrames = state.autoRunTools;
+    syncToolUsePicker();
+  });
+  document.getElementById("run-auto-run-all-frames")?.addEventListener("change", (event) => {
+    state.autoRunAllFrames = state.toolUse === "offline" && state.autoRunTools && event.currentTarget.checked;
     syncToolUsePicker();
   });
   document.querySelectorAll(".segmented__option[data-orchestration]").forEach((option) => {

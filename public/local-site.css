@@ -6073,6 +6073,18 @@ button.run-tools__file:focus-visible {
   padding-left: 43px;
 }
 
+.tool-use-suboption {
+  border-top: 1px solid rgba(124, 143, 255, 0.12);
+  display: grid;
+  gap: 7px;
+  margin-top: 5px;
+  padding: 10px 0 0 18px;
+}
+
+.tool-use-suboption[hidden] {
+  display: none;
+}
+
 .json-mode-option {
   align-items: center;
   display: inline-flex;

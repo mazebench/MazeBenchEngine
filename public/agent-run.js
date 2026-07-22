@@ -1164,6 +1164,7 @@
       const container = configuredFlag(params, "container", run.container !== false);
       const toolUse = String(configuredValue(params, "tool_use", run.tool_use || "read-only"));
       const autoRunTools = configuredFlag(params, "auto_run_tools", run.auto_run_tools);
+      const autoRunAllFrames = configuredFlag(params, "auto_run_all_frames", run.auto_run_all_frames);
       const swarm = configuredFlag(params, "swarm", run.swarm);
       items.push(
         ["Isolation", container ? "Docker" : "Native sandbox"],
@@ -1171,6 +1172,9 @@
       );
       if (toolUse === "offline") {
         items.push(["Auto-run tools", autoRunTools ? "On" : "Off", autoRunTools]);
+        if (autoRunTools) {
+          items.push(["Sequence frames", autoRunAllFrames ? "Every frame" : "Final only", autoRunAllFrames]);
+        }
       }
       items.push(["Orchestration", swarm ? "Swarm" : "Single", swarm]);
     } else if (run.prime_execution) {

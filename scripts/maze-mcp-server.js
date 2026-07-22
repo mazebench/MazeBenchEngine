@@ -59,6 +59,7 @@ const SWARM_REQUIRED = process.env.MAZEBENCH_SWARM === "1";
 const MAX_SWARM_WORKERS = Math.min(32, positiveInt(process.env.MAZEBENCH_MAX_SWARM_WORKERS, 8));
 const RESTRICTED_MODE = process.env.MAZEBENCH_RESTRICTED_MODE === "1";
 const AUTO_RUN_TOOLS = !RESTRICTED_MODE && process.env.MAZEBENCH_AUTO_RUN_TOOLS === "1";
+const AUTO_RUN_ALL_FRAMES = AUTO_RUN_TOOLS && process.env.MAZEBENCH_AUTO_RUN_ALL_FRAMES === "1";
 const KIMI_OBSERVE_BREAK_ENABLED = process.env.MAZEBENCH_PROVIDER === "kimi";
 const KIMI_IDENTICAL_ACTION_INTERVAL = 5;
 const HTTP_TOKEN = String(process.env.MAZEBENCH_MCP_HTTP_TOKEN || "");
@@ -620,8 +621,10 @@ const LEAD_TOOLS = [
         },
         include_intermediate_observations: {
           type: "boolean",
-          default: false,
-          description: "When true, also return every intermediate ASCII board, JSON observation, or vision frame."
+          default: AUTO_RUN_ALL_FRAMES,
+          description: AUTO_RUN_ALL_FRAMES
+            ? "Every intermediate ASCII board, JSON observation, or vision frame is enforced by this run's harness."
+            : "When true, also return every intermediate ASCII board, JSON observation, or vision frame."
         }
       },
       required: ["actions"],
@@ -687,7 +690,7 @@ const WORKER_TOOLS = [
           minItems: 1,
           items: { type: "string", minLength: 1 }
         },
-        include_intermediate_observations: { type: "boolean", default: false }
+        include_intermediate_observations: { type: "boolean", default: AUTO_RUN_ALL_FRAMES }
       },
       required: ["actions"],
       additionalProperties: false
@@ -861,7 +864,8 @@ function normalizedToolCall(name, input = {}, { workerOnly = false } = {}) {
         name,
         input: {
           actions,
-          include_intermediate_observations: input.include_intermediate_observations === true
+          include_intermediate_observations:
+            AUTO_RUN_ALL_FRAMES || input.include_intermediate_observations === true
         }
       };
     }
