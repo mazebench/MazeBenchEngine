@@ -612,7 +612,7 @@ const LEAD_TOOLS = [
   },
   {
     name: "python_exec",
-    description: "Run Python in this agent's persistent isolated scratch workspace. Repository files, host files, run artifacts, and network access are blocked.",
+    description: "Run Python in this agent's writable persistent isolated scratch workspace. Each call uses a fresh Python process, while relative-path files in the current working directory persist for the run. Create and reuse Python programs with pathlib/open and execute them with runpy/import. Repository files, host files, run artifacts, subprocesses, and network access are blocked.",
     inputSchema: {
       type: "object",
       properties: {
@@ -655,7 +655,7 @@ const WORKER_TOOLS = [
   },
   {
     name: "python_exec",
-    description: "Run Python in this worker's private persistent isolated scratch workspace. Repository files, host files, run artifacts, and network access are blocked.",
+    description: "Run Python in this worker's private writable persistent isolated scratch workspace. Each call uses a fresh Python process, while relative-path files in the current working directory persist for the run. Create and reuse Python programs with pathlib/open and execute them with runpy/import. Repository files, host files, run artifacts, subprocesses, and network access are blocked.",
     inputSchema: {
       type: "object",
       properties: {

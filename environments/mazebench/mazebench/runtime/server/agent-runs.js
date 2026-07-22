@@ -4972,6 +4972,8 @@ function createAgentRunService({
       : wantTools
         ? "offline"
         : "read-only";
+    const reverseEngineering = toolUse === "offline" &&
+      (params.reverse_engineering === true || params.reverse_engineering === "true");
     const swarm = model !== "kimi" && toolUse === "offline" && (params.swarm === true || params.swarm === "true");
     const allowQuit = !(params.allow_quit === false || params.allow_quit === "false");
     const autoQuit = normalizeAutoQuitConfig(params);
@@ -5007,6 +5009,7 @@ function createAgentRunService({
       ...(hideNames ? [`hide_names_seed=${hideNamesSeed}`] : []),
       `tools=${toolUse === "read-only" ? "false" : "true"}`,
       `tool_use=${toolUse}`,
+      `reverse_engineering=${reverseEngineering ? "true" : "false"}`,
       `swarm=${swarm ? "true" : "false"}`,
       `container=${params.container === false || params.container === "false" ? "false" : "true"}`,
       `video=${params.video === false || params.video === "false" ? "off" : "on"}`,
@@ -5105,7 +5108,7 @@ function createAgentRunService({
       args.push(`session_id=${String(params.session_id)}`);
     }
 
-    return { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit, autoQuit, mode, omniscient, hideNames, hideNamesSeed };
+    return { args, model, levelId, moves, gems, view, toolUse, reverseEngineering, swarm, unlimited, allowQuit, autoQuit, mode, omniscient, hideNames, hideNamesSeed };
   }
 
   // Agent Runner defaults to a local Verifiers evaluator (while inference still
@@ -5410,7 +5413,7 @@ function createAgentRunService({
 
         requireLocalSubscription(effectiveParams);
         const game = normalizedGameForRun(effectiveParams.game_id);
-        const { args, model, levelId, moves, gems, view, toolUse, swarm, unlimited, allowQuit, autoQuit, mode, omniscient, hideNames, hideNamesSeed } = buildLocalRunArgs(runId, effectiveParams, game);
+        const { args, model, levelId, moves, gems, view, toolUse, reverseEngineering, swarm, unlimited, allowQuit, autoQuit, mode, omniscient, hideNames, hideNamesSeed } = buildLocalRunArgs(runId, effectiveParams, game);
         const requestedModelName = String(effectiveParams.model_name || "");
         const exactModelName = model === "claude"
           ? resolveClaudeCatalogModelId(requestedModelName)
@@ -5455,6 +5458,7 @@ function createAgentRunService({
           hide_names_seed: hideNamesSeed,
           tools: toolUse !== "read-only",
           tool_use: toolUse,
+          reverse_engineering: reverseEngineering,
           swarm,
           container: !(effectiveParams.container === false || effectiveParams.container === "false"),
           video: !(effectiveParams.video === false || effectiveParams.video === "false"),
@@ -5797,6 +5801,7 @@ function createAgentRunService({
         : meta.tools
           ? "offline"
           : "read-only",
+      reverse_engineering: Boolean(meta.reverse_engineering),
       swarm: Boolean(meta.swarm),
       gems: meta.gems,
       view: meta.view

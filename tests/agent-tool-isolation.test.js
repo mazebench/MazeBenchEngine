@@ -49,6 +49,7 @@ const baseConfig = {
   pythonBin: "",
   pythonSandboxStateDir: path.join(workspace, "python-sandbox"),
   reasoning: "low",
+  reverseEngineering: false,
   resume: "",
   seed: false,
   sessionFile: path.join(workspace, "session.json"),
@@ -100,12 +101,35 @@ const toolsOnConfig = {
 const toolsOnPrompt = buildMcpPrompt(toolsOnConfig);
 assert.match(toolsOnPrompt, /TOOLS mode/);
 assert.match(toolsOnPrompt, /python_exec/);
+assert.match(toolsOnPrompt, /current working directory is writable and persists/);
+assert.match(toolsOnPrompt, /MUST use python_exec to create\s+and execute at least one reusable Python program/);
+assert.match(toolsOnPrompt, /Path\("planner\.py"\)\.write_text/);
+assert.match(toolsOnPrompt, /runpy\.run_path\("planner\.py"\)/);
 assert.match(toolsOnPrompt, /cannot read MazeBench source, repositories/);
-assert.match(toolsOnPrompt, /Shell, file-browser, editor, web, app, and connector tools are disabled/);
+assert.match(toolsOnPrompt, /Shell, file-browser,\s+editor, web, app, and connector tools are disabled/);
 assert.doesNotMatch(toolsOnPrompt, /tool availability is not guaranteed/);
 assert.doesNotMatch(toolsOnPrompt, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 assert.doesNotMatch(toolsOnPrompt, /TOOLS-OFF mode/);
 assert.doesNotMatch(toolsOnPrompt, /maze_scorecard/);
+assert.doesNotMatch(toolsOnPrompt, /REVERSE ENGINEERING HARNESS IS ENABLED/);
+
+const reverseEngineeringPrompt = buildMcpPrompt({
+  ...toolsOnConfig,
+  reverseEngineering: true
+});
+assert.match(reverseEngineeringPrompt, /REVERSE ENGINEERING HARNESS IS ENABLED/);
+assert.match(reverseEngineeringPrompt, /maze_versions\/ in the persistent scratch workspace/);
+assert.match(reverseEngineeringPrompt, /sim_v1\.py,[\s\S]*sim_v2\.py,[\s\S]*sim_v3\.py/);
+assert.match(reverseEngineeringPrompt, /Never overwrite or delete an older version/);
+assert.match(reverseEngineeringPrompt, /prediction function plus a\s+BFS or A\* planner/);
+assert.match(reverseEngineeringPrompt, /planner MUST return that exact action/);
+assert.match(reverseEngineeringPrompt, /compare the actual resulting board\/frame\/state/);
+assert.match(reverseEngineeringPrompt, /including animation when present/);
+assert.match(reverseEngineeringPrompt, /reproduce every prior fixture\s+and the newest transition/);
+assert.match(reverseEngineeringPrompt, /planner finds no valid route to victory, send reset/);
+assert.match(reverseEngineeringPrompt, /Except for camera rotation actions/);
+assert.match(reverseEngineeringPrompt, /Never create a helper that\s+calls a live game API or sends game actions/);
+assert.doesNotMatch(reverseEngineeringPrompt, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
 const swarmPrompt = buildMcpPrompt({ ...toolsOnConfig, swarm: true });
 assert.match(swarmPrompt, /SWARM IS ENABLED/);
@@ -228,6 +252,9 @@ assert.match(localAgentSource, /if \(config\.model === "kimi"\) verifyKimiCliCom
 const kimiPrompt = buildMcpPrompt(kimiConfig);
 assert.match(kimiPrompt, /after five consecutive game_action[\s\S]*same normalized action/i);
 assert.match(kimiPrompt, /A different action resets the repetition[\s\S]*game_observe resets the[\s\S]*count/i);
+const kimiReversePrompt = buildMcpPrompt({ ...kimiConfig, toolUse: "offline", tools: true, reverseEngineering: true });
+assert.match(kimiReversePrompt, /REVERSE ENGINEERING HARNESS IS ENABLED/);
+assert.match(kimiReversePrompt, /after five consecutive maze_action[\s\S]*maze_observe resets the[\s\S]*count/i);
 const kimi = agentCommand(kimiConfig, kimiPrompt);
 assert.equal(kimi.bin, "kimi");
 assert.equal(kimi.argv[kimi.argv.indexOf("--model") + 1], "kimi/k3");

@@ -116,6 +116,7 @@
     hideNames: true,
     hideNamesSeed: "1",
     toolUse: null,
+    reverseEngineering: false,
     orchestration: null,
     unlimited: false,
     allowQuit: null,
@@ -1500,6 +1501,13 @@
     const picker = document.getElementById("tool-use-picker");
     picker?.classList.toggle("has-selection", Boolean(state.toolUse));
     picker?.classList.toggle("is-second", state.toolUse === "offline");
+    const reverseOption = document.getElementById("reverse-engineering-option");
+    const reverseInput = document.getElementById("run-reverse-engineering");
+    if (reverseOption) reverseOption.hidden = state.toolUse !== "offline";
+    if (reverseInput) {
+      reverseInput.disabled = state.toolUse !== "offline";
+      reverseInput.checked = state.toolUse === "offline" && state.reverseEngineering;
+    }
   }
 
   function setToolUse(value, syncSteps = true) {
@@ -1508,6 +1516,7 @@
       state.orchestration = next === "read-only" || state.harness === "kimi-code" ? "single" : null;
     }
     state.toolUse = next;
+    if (next !== "offline") state.reverseEngineering = false;
     syncToolUsePicker();
     syncOrchestrationPicker();
     syncRunSettingCards();
@@ -1724,6 +1733,7 @@
           video: false,
           tools: state.toolUse === "offline",
           tool_use: state.toolUse,
+          reverse_engineering: state.toolUse === "offline" && state.reverseEngineering,
           swarm: state.harness !== "kimi-code" && state.orchestration === "swarm"
         };
 
@@ -2199,6 +2209,10 @@
   });
   document.querySelectorAll(".segmented__option[data-tool-use]").forEach((option) => {
     option.addEventListener("click", () => setToolUse(option.dataset.toolUse));
+  });
+  document.getElementById("run-reverse-engineering")?.addEventListener("change", (event) => {
+    state.reverseEngineering = state.toolUse === "offline" && event.currentTarget.checked;
+    syncToolUsePicker();
   });
   document.querySelectorAll(".segmented__option[data-orchestration]").forEach((option) => {
     option.addEventListener("click", () => setOrchestration(option.dataset.orchestration));

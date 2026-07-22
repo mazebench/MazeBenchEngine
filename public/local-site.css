@@ -6050,6 +6050,29 @@ button.run-tools__file:focus-visible {
   font-size: 12px;
 }
 
+.tool-use-options {
+  border-top: 1px solid rgba(124, 143, 255, 0.16);
+  display: grid;
+  gap: 7px;
+  padding-top: 12px;
+}
+
+.tool-use-options[hidden] {
+  display: none;
+}
+
+.tool-use-options .switch__label {
+  font-size: 12px;
+}
+
+.tool-use-options p {
+  color: var(--muted, #9aa3c7);
+  font-size: 10px;
+  line-height: 1.45;
+  margin: 0;
+  padding-left: 43px;
+}
+
 .json-mode-option {
   align-items: center;
   display: inline-flex;

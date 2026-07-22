@@ -22,6 +22,7 @@
 //   tool_use     read-only (game controls only) | offline (isolated Python)
 //                                                            (default read-only)
 //   tools        legacy boolean alias (false=game-only, true=offline)
+//   reverse_engineering  require versioned simulator + BFS/A* planning (tools only)
 //   swarm        true lets an offline lead spawn identical-model workers
 //   max_swarm_workers  hard cap on workers/private instances   (default 8)
 //   mode         text (ASCII) | json (structured room) | vision (PNG) (default text)
@@ -266,6 +267,51 @@ function timestampSlug() {
   return new Date().toISOString().replace(/[:.]/g, "-").replace(/Z$/, "");
 }
 
+function reverseEngineeringInstructions(config) {
+  if (config.toolUse !== "offline" || !config.reverseEngineering) return "";
+  const gameId = String(config.gameId || "game")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "game";
+  const versionsDirectory = `${gameId}_versions`;
+  return `REVERSE ENGINEERING HARNESS IS ENABLED. Your gameplay must be driven
+by a versioned Python simulation built only from observations and interactions
+in this run. The games are simple and should usually be solved in a few moves,
+but every visible object does something: hypothesize its behavior and encode it.
+Generalize mechanics only when the evidence supports it.
+
+Development strategy:
+- Create ${versionsDirectory}/ in the persistent scratch workspace.
+- Save every simulator revision as a new file in that folder: sim_v1.py,
+  sim_v2.py, sim_v3.py, and so on. Never overwrite or delete an older version.
+- Record enough observed input/output fixtures to regression-test every version.
+- The simulator must model game state and expose a prediction function plus a
+  BFS or A* planner with stronger heuristics when they are justified.
+
+Mandatory gameplay/modeling loop:
+1. From the current observation, update the current simulated state.
+2. Run the latest saved simulator and BFS/A* planner. Before every non-camera
+   game action, the planner MUST return that exact action as its next move.
+3. Save the simulator's predicted next board/state, then send exactly one live
+   game action through maze_action.
+4. Observe and compare the actual resulting board/frame/state with the saved
+   prediction, including animation when present. For vision, inspect the actual
+   image and compare all modeled objects, positions, and state transitions.
+5. If prediction matches, retain the current version and plan again.
+6. If prediction fails, explain the mismatch, form a mechanics hypothesis, and
+   create the next sim_vN.py. The new version must reproduce every prior fixture
+   and the newest transition before it may choose another non-camera action.
+7. If the planner finds no valid route to victory, send reset, rebuild the
+   simulated state from the reset observation, and search again.
+
+Do not test movement actions by intuition. Except for camera rotation actions,
+you MUST obey the saved program's planned move without exception. If a planned
+move seems unwise, improve the program when an observed prediction mismatch
+permits a revision; do not substitute your own move. Never create a helper that
+calls a live game API or sends game actions. Network access is blocked, and each
+live action must remain one explicit maze_action tool call.`;
+}
+
 function buildMcpPrompt(config) {
   const restricted = config.toolUse === "read-only";
   const maxSwarmWorkers = positiveInt(config.maxSwarmWorkers, DEFAULT_MAX_SWARM_WORKERS);
@@ -305,9 +351,18 @@ blocked. Infer its effect only from the returned observation.`;
   const capability = config.toolUse === "offline"
     ? `TOOLS mode. In addition to the game controls, you have exactly one
 general-purpose computation tool: python_exec. It runs Python in a fresh,
-persistent scratch workspace. It cannot read MazeBench source, repositories,
-run artifacts, host files, credentials, or prior runs, and it has no network
-access. Shell, file-browser, editor, web, app, and connector tools are disabled.
+persistent scratch workspace. Each python_exec call starts a fresh Python
+process, but its current working directory is writable and persists for this
+entire run. Use relative paths to create and reuse .py, .json, and other scratch
+files. Before your first primary game action, you MUST use python_exec to create
+and execute at least one reusable Python program that helps parse observations,
+track state, model mechanics, or plan moves. Keep reusable logic in files instead
+of repeatedly sending the same logic inline. For example, Python can call
+Path("planner.py").write_text(...), then runpy.run_path("planner.py"). There is no
+separate editor or shell; create, revise, and execute files through python_exec.
+It cannot read MazeBench source, repositories, run artifacts, host files,
+credentials, or prior runs, and it has no network access. Shell, file-browser,
+editor, web, app, and connector tools are disabled.
 Only genuine swarm workers receive private game instances, and each worker is
 permanently bound to exactly one instance.`
     : `Do not use any external tools. Do not search the web, do not read any
@@ -315,6 +370,7 @@ files, do not run shell commands, and do not spawn any sub-agents. This is
 TOOLS-OFF mode. Do not access repositories, connectors, resource listings,
 prior-run memory, workers, or private branches. Use only the three game controls
 named below and your current conversation memory.`;
+  const reverseEngineering = reverseEngineeringInstructions(config);
   const firstStep = config.resume || config.seed
     ? `Call ${controls.observe} first. This is the same primary game; do not call ${controls.start}.`
     : `Call ${controls.start} exactly once as your first game-control call.`;
@@ -374,6 +430,7 @@ session JSON directly or create, select, or branch game instances yourself.`;
 ${observation}
 ${movementFeedback}
 ${capability}
+${reverseEngineering}
 ${swarm}
 ${quitPolicy}
 ${kimiObservePolicy}
@@ -609,7 +666,9 @@ function codexWorkerConfig(config, name) {
       "You are a grid-game swarm worker. Use the identical model and reasoning effort inherited from the lead. " +
       "You have exactly one private maze instance. Call maze_start once, then use maze_observe and maze_action without an instance id. " +
       (offline
-        ? "Explore only your private maze, use python_exec for isolated local computation, and report findings to the lead. "
+        ? "Explore only your private maze, use python_exec for isolated local computation, and report findings to the lead. " +
+          "Each call starts a fresh Python process but relative-path files persist. Before your first maze_action, create and execute a reusable .py program in that workspace. " +
+          (config.reverseEngineering ? `${reverseEngineeringInstructions(config)} ` : "")
         : "Explore only your private maze without writing files or executing general-purpose code, and report findings to the lead. ") +
       "Never act on the primary maze and never change your model or reasoning effort."
     )}`,
@@ -762,7 +821,9 @@ function claudeAgents(config) {
       "You are a grid-game swarm worker controlled by the superior lead. You have exactly one private maze instance. " +
       "Call maze_start once, then use maze_observe and maze_action without an instance id. Report findings to the lead. " +
       (offline
-        ? "You may use python_exec for isolated computation in your private scratch workspace. "
+        ? "You may use python_exec for isolated computation in your private scratch workspace. " +
+          "Each call starts a fresh Python process but relative-path files persist. Before your first maze_action, create and execute a reusable .py program in that workspace. " +
+          (config.reverseEngineering ? `${reverseEngineeringInstructions(config)} ` : "")
         : "Do not write files or execute general-purpose code. ") +
       "Never act on the primary maze and never switch model or reasoning effort.",
     model: config.modelName || "inherit",
@@ -2040,7 +2101,7 @@ function runInContainer(config, raw) {
   // path options (out/session) are intentionally dropped; the inner run writes
   // under the mounted /app/outputs/maze-local.
   const forwardKeys = [
-    "model", "moves", "unlimited", "allow_quit", "mode", "omniscient", "hide_names", "hide_names_seed", "tools", "tool_use", "swarm", "max_swarm_workers", "game", "level", "view", "yaw", "gems",
+    "model", "moves", "unlimited", "allow_quit", "mode", "omniscient", "hide_names", "hide_names_seed", "tools", "tool_use", "reverse_engineering", "swarm", "max_swarm_workers", "game", "level", "view", "yaw", "gems",
     "video", "no_video", "fast", "draft", "width", "height", "fps",
     "vision_width", "vision_height", "vision_view", "model_name", "llm",
     "reasoning", "effort", "codex_fast", "resume", "seed", "fork_session", "session_id",
@@ -2491,6 +2552,7 @@ async function main() {
       ? "offline"
       : "read-only";
   const requestedSwarm = toolUse === "offline" && isTruthy(raw.swarm, false);
+  const reverseEngineering = toolUse === "offline" && isTruthy(raw.reverse_engineering, false);
   if (model === "kimi" && requestedSwarm) {
     throw new Error("Kimi Code local runs currently support a single isolated agent, not swarm workers.");
   }
@@ -2535,6 +2597,7 @@ async function main() {
       : "",
     tools: toolUse !== "read-only",
     toolUse,
+    reverseEngineering,
     swarm,
     maxSwarmWorkers: Math.min(
       32,
