@@ -311,7 +311,6 @@ function parseArgs(argv) {
       options.once = true;
     } else if (arg === "--json") {
       options.json = true;
-      options.once = true;
     } else if (arg === "--omniscient") {
       options.omniscient = true;
     } else if (arg === "--hide-names") {
@@ -378,7 +377,8 @@ Options:
                      Defaults to top-diagonal.
   --pitch <0-4>      Camera pitch; 0 is top-down, 4 is side.
   --yaw <0-3>        Camera yaw rotation.
-  --json             Print the model-facing structured JSON observation.
+  --json             Show the model-facing structured JSON observation.
+                     Interactive on a TTY; pipes and --once print one snapshot.
   --omniscient       Include every room object in JSON observations.
   --hide-names       Randomize ASCII glyphs or JSON names except player/gem.
                      Names are literal by default.
@@ -3670,6 +3670,51 @@ function printScreen(context, clear = false) {
   console.log(renderScreen(context));
 }
 
+function stringifyTerminalJson(value, indent = 0) {
+  if (Array.isArray(value)) {
+    return JSON.stringify(value);
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value).filter(([, entryValue]) =>
+      entryValue !== undefined &&
+      typeof entryValue !== "function" &&
+      typeof entryValue !== "symbol"
+    );
+
+    if (entries.length === 0) {
+      return "{}";
+    }
+
+    const currentIndent = " ".repeat(indent);
+    const childIndent = " ".repeat(indent + 2);
+    const properties = entries.map(([key, entryValue]) =>
+      `${childIndent}${JSON.stringify(key)}: ${stringifyTerminalJson(entryValue, indent + 2)}`
+    );
+    return `{\n${properties.join(",\n")}\n${currentIndent}}`;
+  }
+
+  const serialized = JSON.stringify(value);
+  return serialized === undefined ? "null" : serialized;
+}
+
+async function printJsonScreen(context, clear = false) {
+  if (clear && process.stdout.isTTY) {
+    process.stdout.write("\x1Bc");
+  }
+  const payload = await buildModelJsonPayload(context);
+  process.stdout.write(`${stringifyTerminalJson(payload)}\n`);
+}
+
+async function printInteractiveScreen(context, clear = false) {
+  if (context.options.json) {
+    await printJsonScreen(context, clear);
+    return;
+  }
+
+  printScreen(context, clear);
+}
+
 function interactiveHelpText(context) {
   if (isPlayerDead(context)) {
     return `\n${DEATH_MESSAGE}\nz/u undo. r resets.`;
@@ -3689,8 +3734,8 @@ function cameraDirectionForInteractiveKey(keyName) {
   return INTERACTIVE_CAMERA_DIRECTIONS[String(keyName || "").toLowerCase()] || null;
 }
 
-function startInteractive(context) {
-  printScreen(context, true);
+async function startInteractive(context) {
+  await printInteractiveScreen(context, true);
   console.log(interactiveHelpText(context));
 
   readline.emitKeypressEvents(process.stdin);
@@ -3713,9 +3758,13 @@ function startInteractive(context) {
       recordReplayAction(context, "quit", "quit");
     }
 
-    const scorecardText = buildScorecard(context);
-    const scorecard = JSON.parse(scorecardText).scorecard;
-    console.log(scorecardText);
+    const scorecardPayload = JSON.parse(buildScorecard(context));
+    const scorecard = scorecardPayload.scorecard;
+    console.log(
+      context.options.json
+        ? stringifyTerminalJson(scorecardPayload)
+        : JSON.stringify(scorecardPayload, null, 2)
+    );
 
     if (shouldWriteReplayArtifacts(context.options, true)) {
       try {
@@ -3744,7 +3793,7 @@ function startInteractive(context) {
     process.exit(process.exitCode || 0);
   }
 
-  process.stdin.on("keypress", (_text, key = {}) => {
+  async function handleKeypress(key = {}) {
     let shouldRender = true;
     const dead = isPlayerDead(context);
     const cameraDirection = cameraDirectionForInteractiveKey(key.name);
@@ -3760,7 +3809,7 @@ function startInteractive(context) {
       console.log(`\n${DEATH_MESSAGE}`);
       shouldRender = false;
     } else if (key.name === "q" || (key.ctrl && key.name === "c")) {
-      void endRun("quit");
+      await endRun("quit");
       return;
     } else if (key.name === "up") {
       applyMove(context, "U");
@@ -3781,13 +3830,24 @@ function startInteractive(context) {
     }
 
     if (shouldRender) {
-      printScreen(context, true);
+      await printInteractiveScreen(context, true);
       if (isGameWon(context)) {
-        void endRun("game_won");
+        await endRun("game_won");
         return;
       }
       console.log(interactiveHelpText(context));
     }
+  }
+
+  let inputQueue = Promise.resolve();
+  process.stdin.on("keypress", (_text, key = {}) => {
+    inputQueue = inputQueue
+      .then(() => handleKeypress(key))
+      .catch((error) => {
+        console.error(error instanceof Error ? error.message : error);
+        process.exitCode = 1;
+        return endRun("error");
+      });
   });
 }
 
@@ -3798,13 +3858,12 @@ async function main() {
 
   applyMoves(context, options.moves);
 
-  if (options.json) {
-    const payload = await buildModelJsonPayload(context);
-    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+  const interactive = !options.once && process.stdin.isTTY;
+
+  if (options.json && !interactive) {
+    await printJsonScreen(context, false);
     return;
   }
-
-  const interactive = !options.once && process.stdin.isTTY;
 
   if (!interactive) {
     printScreen(context, false);
@@ -3818,7 +3877,7 @@ async function main() {
     return;
   }
 
-  startInteractive(context);
+  await startInteractive(context);
 }
 
 if (require.main === module) {
@@ -3849,6 +3908,7 @@ module.exports = {
   rotateCamera,
   resetLevel,
   solveContext,
+  stringifyTerminalJson,
   writeLocalReplayArtifacts,
   undoMove,
   screenMoveVector

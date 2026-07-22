@@ -40,6 +40,7 @@ const {
   resetLevel,
   rotateCamera,
   screenMoveVector,
+  stringifyTerminalJson,
   undoMove
 } = require(terminalScript);
 const mazeEngine = loadMazeEngine();
@@ -589,6 +590,24 @@ function syntheticFloor(width, height) {
   assert.equal(cameraDirectionForInteractiveKey("k"), null);
   assert.equal(cameraDirectionForInteractiveKey("j"), null);
   assert.equal(cameraDirectionForInteractiveKey("l"), null);
+}
+
+{
+  const value = {
+    json_observation: {
+      objects: {
+        player: [[7, 11, 0]],
+        wall: [[0, 0, 0], [1, 0, 0], [2, 0, 0]]
+      }
+    },
+    visited_levels: ["level_CxD", "level_CxE"]
+  };
+  const output = stringifyTerminalJson(value);
+
+  assert.deepEqual(JSON.parse(output), value);
+  assert.match(output, /^  "json_observation": \{$/m);
+  assert.match(output, /^      "wall": \[\[0,0,0\],\[1,0,0\],\[2,0,0\]\]$/m);
+  assert.match(output, /^  "visited_levels": \["level_CxD","level_CxE"\]$/m);
 }
 
 {
@@ -1637,12 +1656,13 @@ function syntheticFloor(width, height) {
   const stateFile = path.join(outDir, "session.json");
 
   try {
-    const terminalPayload = JSON.parse(runTerminal([
+    const terminalOutput = runTerminal([
       "--level", "CxD",
       "--view", "top-diagonal",
       "--json",
       "--omniscient"
-    ]));
+    ]);
+    const terminalPayload = JSON.parse(terminalOutput);
     const modelPayload = runCodexPlay([
       "start",
       "--repo-root", ROOT_DIR,
@@ -1658,6 +1678,7 @@ function syntheticFloor(width, height) {
     assert.equal(terminalPayload.json_observation.omniscient, true);
     assert.equal(terminalPayload.json_observation.objects.wall.length > 0, true);
     assert.equal(Object.prototype.hasOwnProperty.call(terminalPayload, "level"), false);
+    assert.match(terminalOutput, /^      "wall": \[\[.*\]\],?$/m);
   } finally {
     fs.rmSync(outDir, { recursive: true, force: true });
   }
