@@ -205,6 +205,126 @@ try {
   assert.match(enforcedFrames.intermediate_observations[0].observation.level, /P|p/);
   assert.match(enforcedFrames.final_observation.level, /P|p/);
 
+  const longHistoryDir = path.join(runDir, "long-history-sequence");
+  fs.mkdirSync(longHistoryDir, { recursive: true });
+  const longHistorySessionPath = path.join(longHistoryDir, "session.json");
+  const longHistoryStart = spawnSync(
+    process.execPath,
+    [
+      path.join(rootDir, "scripts", "codex-play.js"),
+      "start",
+      "--repo-root", rootDir,
+      "--state", longHistorySessionPath,
+      "--max-actions", "unlimited"
+    ],
+    { cwd: rootDir, encoding: "utf8" }
+  );
+  assert.equal(longHistoryStart.status, 0, longHistoryStart.stderr);
+  const longHistorySession = JSON.parse(fs.readFileSync(longHistorySessionPath, "utf8"));
+  longHistorySession.actions = Array.from({ length: 1000 }, (_, index) => ({
+    turn: index + 1,
+    timestamp: new Date(1_700_000_000_000 + index).toISOString(),
+    command_text: index % 2 === 0 ? "rotate camera left" : "rotate camera right",
+    valid: true,
+    error: null,
+    message: {
+      command: "rotate_camera",
+      direction: index % 2 === 0 ? "left" : "right"
+    },
+    status: longHistorySession.initial
+  }));
+  longHistorySession.lastStatus = longHistorySession.initial;
+  fs.writeFileSync(longHistorySessionPath, `${JSON.stringify(longHistorySession, null, 2)}\n`);
+  fs.writeFileSync(
+    path.join(longHistoryDir, "actions.jsonl"),
+    `${longHistorySession.actions.map((action) => JSON.stringify(action)).join("\n")}\n`
+  );
+  const fastRoute = Array.from({ length: 100 }, (_, index) =>
+    index % 2 === 0 ? "rotate camera left" : "rotate camera right"
+  );
+  const longHistoryRequests = [{
+    jsonrpc: "2.0",
+    id: 83,
+    method: "tools/call",
+    params: {
+      name: "maze_action_sequence",
+      arguments: { actions: fastRoute }
+    }
+  }];
+  const longHistoryStartedAt = Date.now();
+  const longHistoryResult = spawnSync(
+    process.execPath,
+    [path.join(rootDir, "scripts", "maze-mcp-server.js")],
+    {
+      cwd: rootDir,
+      encoding: "utf8",
+      input: `${longHistoryRequests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+      env: {
+        ...process.env,
+        MAZEBENCH_REPO_ROOT: rootDir,
+        MAZEBENCH_RUN_DIR: longHistoryDir,
+        MAZEBENCH_SESSION_FILE: longHistorySessionPath,
+        MAZEBENCH_AUTO_RUN_TOOLS: "1",
+        MAZEBENCH_MOVE_BUDGET: "unlimited"
+      },
+      timeout: 30000
+    }
+  );
+  const longHistoryDuration = Date.now() - longHistoryStartedAt;
+  assert.equal(longHistoryResult.status, 0, longHistoryResult.stderr);
+  const fastSequence = JSON.parse(longHistoryResult.stdout).result.structuredContent;
+  assert.equal(fastSequence.completed_count, 100);
+  assert.equal(fastSequence.stop_reason, "completed");
+  assert.equal(JSON.parse(fs.readFileSync(longHistorySessionPath, "utf8")).actions.length, 1100);
+  assert(
+    longHistoryDuration < 15_000,
+    `100 batched moves after a 1,000-action replay took ${longHistoryDuration}ms`
+  );
+
+  const sequencePauseDir = path.join(runDir, "sequence-pause");
+  fs.mkdirSync(sequencePauseDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(sequencePauseDir, "pause-request.json"),
+    JSON.stringify({ requested_at: "2026-07-10T00:00:00.000Z", requested_after_turn: 0 })
+  );
+  const sequencePauseRequests = [
+    { jsonrpc: "2.0", id: 84, method: "tools/call", params: { name: "maze_start", arguments: {} } },
+    {
+      jsonrpc: "2.0",
+      id: 85,
+      method: "tools/call",
+      params: {
+        name: "maze_action_sequence",
+        arguments: { actions: ["rotate camera left", "rotate camera right"] }
+      }
+    }
+  ];
+  const sequencePauseResult = spawnSync(
+    process.execPath,
+    [path.join(rootDir, "scripts", "maze-mcp-server.js")],
+    {
+      cwd: rootDir,
+      encoding: "utf8",
+      input: `${sequencePauseRequests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+      env: {
+        ...process.env,
+        MAZEBENCH_REPO_ROOT: rootDir,
+        MAZEBENCH_RUN_DIR: sequencePauseDir,
+        MAZEBENCH_SESSION_FILE: path.join(sequencePauseDir, "session.json"),
+        MAZEBENCH_AUTO_RUN_TOOLS: "1",
+        MAZEBENCH_MOVE_BUDGET: "unlimited"
+      }
+    }
+  );
+  assert.equal(sequencePauseResult.status, 0, sequencePauseResult.stderr);
+  const sequencePauseResponses = sequencePauseResult.stdout.trim().split("\n").map((line) => JSON.parse(line));
+  const pausedSequence = sequencePauseResponses.find((response) => response.id === 85)?.result?.structuredContent;
+  assert.equal(pausedSequence.completed_count, 1);
+  assert.equal(pausedSequence.stop_reason, "user_paused");
+  assert.equal(pausedSequence.final_observation.user_pause_requested, true);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(sequencePauseDir, "session.json"), "utf8")).actions.length, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(sequencePauseDir, "pause-boundary.json"), "utf8")).completed_turn, 1);
+
   const workerRequests = [
     { jsonrpc: "2.0", id: 100, method: "initialize", params: { protocolVersion: "2024-11-05" } },
     { jsonrpc: "2.0", method: "notifications/initialized" },

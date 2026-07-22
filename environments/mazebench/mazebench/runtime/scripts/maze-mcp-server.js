@@ -126,13 +126,14 @@ function sessionFor(workerId) {
   return session;
 }
 
-function runHelper(args) {
+function runHelper(args, options = {}) {
   const result = spawnSync(process.execPath, [HELPER, ...args], {
     cwd: REPO_ROOT,
     encoding: "utf8",
     env: { ...process.env, MAZEBENCH_MCP_CHILD: "1" },
+    ...(options.input === undefined ? {} : { input: String(options.input) }),
     maxBuffer: 128 * 1024 * 1024,
-    timeout: 240000
+    ...(options.timeout === 0 ? {} : { timeout: options.timeout || 240000 })
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -890,79 +891,46 @@ function normalizedToolCall(name, input = {}, { workerOnly = false } = {}) {
   };
 }
 
-function sequenceStopReason(value, effectiveInput) {
-  const status = value?.status && typeof value.status === "object" ? value.status : value;
-  if (status?.user_pause_requested || (!effectiveInput?.clone_id && primaryPauseBoundary())) {
-    return "user_paused";
-  }
-  if (status?.game_won || status?.solved) return "game_won";
-  if (status?.game_lost || status?.player_dead) return "player_dead";
-  if (status?.quit) return "quit";
-  if (
-    PRIMARY_MOVE_BUDGET != null &&
-    !effectiveInput?.clone_id &&
-    sessionActionCount(PRIMARY_SESSION) - PRIMARY_INITIAL_ACTION_COUNT >= PRIMARY_MOVE_BUDGET
-  ) {
-    return "move_budget_exhausted";
-  }
-  return "";
-}
-
 function runActionSequence(input, context) {
   if (!AUTO_RUN_TOOLS) throw new Error("Auto-run tools are not enabled for this run.");
   const workerOnly = Boolean(context?.workerOnly);
   const cloneId = workerOnly ? ensureWorkerAssignment(context) : "";
   const effectiveInput = cloneId ? { ...input, clone_id: cloneId } : input;
-  const observations = [];
-  const steps = [];
-  let attemptedCount = 0;
-  let stopReason = "completed";
-
-  for (let index = 0; index < input.actions.length; index += 1) {
-    const action = input.actions[index];
-    const before = actionCountForInput(effectiveInput);
-    attemptedCount += 1;
-    try {
-      const observation = callTool("maze_action", { action }, context);
-      const after = actionCountForInput(effectiveInput);
-      observations.push(observation);
-      steps.push({
-        index: index + 1,
-        action,
-        recorded: after > before,
-        action_count_before: before,
-        action_count_after: after,
-        status: compactStatus(observation)
-      });
-      const terminalReason = sequenceStopReason(observation, effectiveInput);
-      if (terminalReason) {
-        stopReason = terminalReason;
-        break;
-      }
-    } catch (error) {
-      const after = actionCountForInput(effectiveInput);
-      stopReason = "error";
-      steps.push({
-        index: index + 1,
-        action,
-        recorded: after > before,
-        action_count_before: before,
-        action_count_after: after,
-        error: safeErrorMessage(error),
-        status: after > before ? lastStatusForInput(effectiveInput) : null
-      });
-      break;
-    }
+  if (workerOnly && primaryPauseRequest()) {
+    throw new Error("The user is pausing this run. Stop worker exploration and report back to the lead now.");
   }
-
+  const batch = runHelper(
+    ["action-sequence", "--state", sessionFor(effectiveInput.clone_id)],
+    {
+      input: JSON.stringify({ actions: input.actions, primary: !effectiveInput.clone_id }),
+      timeout: 0
+    }
+  );
+  const batchSteps = Array.isArray(batch.steps) ? batch.steps : [];
+  const observations = batchSteps
+    .filter((step) => step?.observation)
+    .map((step) => step.observation);
+  const steps = batchSteps.map((step) => ({
+    index: Math.max(1, Number(step.index) || 1),
+    action: String(step.action || ""),
+    recorded: Boolean(step.recorded),
+    action_count_before: Math.max(0, Number(step.action_count_before) || 0),
+    action_count_after: Math.max(0, Number(step.action_count_after) || 0),
+    ...(step.error ? { error: safeErrorMessage(step.error) } : {}),
+    status: step.observation
+      ? compactStatus(step.observation)
+      : step.status
+        ? compactStatus(step.status)
+        : null
+  }));
   const completedCount = observations.length;
   const finalObservation = observations.at(-1) || null;
   return {
     requested_count: input.actions.length,
-    attempted_count: attemptedCount,
+    attempted_count: Math.max(0, Number(batch.attempted_count) || 0),
     completed_count: completedCount,
     stopped_early: completedCount < input.actions.length,
-    stop_reason: stopReason,
+    stop_reason: String(batch.stop_reason || "completed"),
     steps,
     ...(input.include_intermediate_observations
       ? {

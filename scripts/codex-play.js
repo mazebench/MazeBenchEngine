@@ -246,6 +246,7 @@ function usage() {
   node codex-play.js start --repo-root <path> --state <session.json> [options]
   node codex-play.js observe --state <session.json>
   node codex-play.js action --state <session.json> <command words...>
+  node codex-play.js action-sequence --state <session.json> < sequence.json
 
 start options:
   --game <id>               game directory under games/ (default maze; draft
@@ -336,6 +337,41 @@ function runBridge(session, message) {
   if (!response) throw new Error("maze bridge returned no response");
   if (!response.ok) throw new Error(response.error || "maze bridge command failed");
   return response;
+}
+
+// Batch actions use the same trusted bridge implementation in-process. The
+// saved history is replayed exactly once, after which every new action advances
+// this one live bridge session. Single-action commands retain the process-
+// isolated path above.
+function replayedBridgeSession(session) {
+  const {
+    createSession,
+    handleCommand,
+    parseArgs: parseBridgeArgs
+  } = require("./maze-bridge");
+  const liveSession = createSession(parseBridgeArgs(bridgeArgs(session).slice(1)));
+  const checkpoint = session.bridgeCheckpoint && typeof session.bridgeCheckpoint === "object"
+    ? session.bridgeCheckpoint
+    : null;
+  const checkpointTurn = checkpoint && Number.isFinite(Number(checkpoint.turn))
+    ? Math.max(0, Math.floor(Number(checkpoint.turn)))
+    : null;
+  const replay = (session.actions || []).filter((action) =>
+    action &&
+    action.message &&
+    action.replay !== false &&
+    (checkpointTurn === null || Number(action.turn) > checkpointTurn)
+  );
+
+  try {
+    if (checkpoint) handleCommand(liveSession, { command: "restore_checkpoint", checkpoint });
+    replay.forEach((action) => handleCommand(liveSession, action.message));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Replay failed before requested sequence: ${message}`);
+  }
+
+  return { handleCommand, liveSession };
 }
 
 function normalizeAction(words) {
@@ -671,22 +707,19 @@ async function renderVisionFrame(session, turnIndex, stateFile) {
   return framePath;
 }
 
-// Print the status the agent sees. In vision mode, render a perspective image,
+// Build the status the agent sees. In vision mode, render a perspective image,
 // attach its path as frame_image, and drop the ASCII board so the agent must
 // look at the picture. A render failure is fatal for this observation: silently
 // falling back to ASCII would invalidate a vision benchmark.
-async function emitStatus(session, response, turnIndex, stateFile) {
+async function materializeStatus(session, response, turnIndex, stateFile) {
   const status = response.status || response;
 
   if (session.observationMode === "json") {
-    const printable = publicObservationStatus(status, { mode: "json" });
-    console.log(JSON.stringify(printable, null, 2));
-    return true;
+    return { observation: publicObservationStatus(status, { mode: "json" }), ok: true };
   }
 
   if (!session.vision) {
-    console.log(JSON.stringify(publicObservationStatus(status, { mode: "text" }), null, 2));
-    return true;
+    return { observation: publicObservationStatus(status, { mode: "text" }), ok: true };
   }
 
   const printable = publicObservationStatus(status, { mode: "vision" });
@@ -695,11 +728,178 @@ async function emitStatus(session, response, turnIndex, stateFile) {
   } catch (error) {
     printable.observation_mode = "vision (render unavailable)";
     printable.frame_error = error instanceof Error ? error.message : String(error);
-    console.log(JSON.stringify(printable, null, 2));
-    return false;
+    return { observation: printable, ok: false, error: printable.frame_error };
   }
-  console.log(JSON.stringify(printable, null, 2));
+  return { observation: printable, ok: true };
+}
+
+async function emitStatus(session, response, turnIndex, stateFile) {
+  const materialized = await materializeStatus(session, response, turnIndex, stateFile);
+  console.log(JSON.stringify(materialized.observation, null, 2));
+  return materialized.ok;
+}
+
+function persistAction(session, stateFile, commandText, message, response) {
+  const status = response.status || response;
+  const persistedStatus = storedStatus(session, status);
+  const record = {
+    turn: session.actions.length + 1,
+    timestamp: new Date().toISOString(),
+    command_text: commandText,
+    valid: true,
+    error: null,
+    message,
+    status: persistedStatus
+  };
+  session.actions.push(record);
+  session.lastStatus = persistedStatus;
+  writeJson(stateFile, session);
+  fs.appendFileSync(path.join(path.dirname(stateFile), "actions.jsonl"), `${JSON.stringify(record)}\n`);
+  return record;
+}
+
+function sequenceControlPaths(stateFile) {
+  const runDir = process.env.MAZEBENCH_RUN_DIR
+    ? path.resolve(process.env.MAZEBENCH_RUN_DIR)
+    : path.dirname(stateFile);
+  return {
+    boundary: path.join(runDir, "pause-boundary.json"),
+    request: path.join(runDir, "pause-request.json")
+  };
+}
+
+function applySequencePauseRequest(stateFile, actionCount, response) {
+  const control = sequenceControlPaths(stateFile);
+  const request = readJson(control.request, null);
+  const requestedAfter = Math.max(0, Number(request?.requested_after_turn) || 0);
+  if (!request || actionCount <= requestedAfter) return false;
+
+  const at = new Date().toISOString();
+  writeJson(control.boundary, {
+    requested_at: request.requested_at || null,
+    completed_at: at,
+    completed_turn: actionCount,
+    provider_thread_can_exit: true
+  });
+  const status = response?.status && typeof response.status === "object" ? response.status : response;
+  if (status && typeof status === "object") {
+    status.user_pause_requested = true;
+    status.pause_message =
+      "The user requested a pause. This action is fully saved. Do not take another maze action; end your response now so this exact thread can resume later.";
+    status.allowed_commands = [];
+  }
   return true;
+}
+
+function sequenceTerminalReason(status) {
+  if (status?.game_won || status?.solved) return "game_won";
+  if (status?.game_lost || status?.player_dead) return "player_dead";
+  if (status?.quit) return "quit";
+  return "";
+}
+
+async function readStdinJson() {
+  let input = "";
+  for await (const chunk of process.stdin) input += chunk;
+  return JSON.parse(input || "{}");
+}
+
+async function runActionSequence(session, stateFile, payload) {
+  const actions = Array.isArray(payload?.actions) ? payload.actions : null;
+  if (!actions || actions.length < 1) throw new Error("actions must contain at least one item");
+  const primary = payload.primary !== false;
+  const control = sequenceControlPaths(stateFile);
+  const { handleCommand, liveSession } = replayedBridgeSession(session);
+  const steps = [];
+  let attemptedCount = 0;
+  let stopReason = "completed";
+
+  if (primary && fs.existsSync(control.boundary)) {
+    return { attempted_count: 0, stop_reason: "user_paused", steps };
+  }
+
+  for (let index = 0; index < actions.length; index += 1) {
+    const action = actions[index];
+    const before = session.actions.length;
+    attemptedCount += 1;
+
+    if (sessionMaxActions(session) != null && before >= sessionMaxActions(session)) {
+      stopReason = "move_budget_exhausted";
+      break;
+    }
+
+    try {
+      if (typeof action !== "string" || !action.trim()) {
+        throw new Error(`actions[${index}] must be a non-empty string`);
+      }
+      const commandText = action.trim();
+      const message = normalizeAction([commandText]);
+      if (message.command === "quit" && session.allowQuit === false) {
+        throw new Error(
+          "Quit is disabled by the user for this run. Continue playing until the budget is exhausted or the user stops the run."
+        );
+      }
+      const response = applyQuitPolicy(
+        consumeRenderState(handleCommand(liveSession, message), stateFile),
+        session
+      );
+      const record = persistAction(session, stateFile, commandText, message, response);
+      const paused = primary && applySequencePauseRequest(stateFile, session.actions.length, response);
+      const rendered = await materializeStatus(session, response, record.turn, stateFile);
+      if (!rendered.ok) {
+        stopReason = "error";
+        steps.push({
+          index: index + 1,
+          action: commandText,
+          recorded: true,
+          action_count_before: before,
+          action_count_after: session.actions.length,
+          error: rendered.error,
+          status: record.status
+        });
+        break;
+      }
+      steps.push({
+        index: index + 1,
+        action: commandText,
+        recorded: true,
+        action_count_before: before,
+        action_count_after: session.actions.length,
+        observation: rendered.observation
+      });
+
+      if (paused) {
+        stopReason = "user_paused";
+        break;
+      }
+      const terminalReason = sequenceTerminalReason(response.status || response);
+      if (terminalReason) {
+        stopReason = terminalReason;
+        break;
+      }
+      if (
+        sessionMaxActions(session) != null &&
+        session.actions.length >= sessionMaxActions(session)
+      ) {
+        stopReason = "move_budget_exhausted";
+        break;
+      }
+    } catch (error) {
+      stopReason = "error";
+      steps.push({
+        index: index + 1,
+        action: String(action || ""),
+        recorded: session.actions.length > before,
+        action_count_before: before,
+        action_count_after: session.actions.length,
+        error: error instanceof Error ? error.message : String(error),
+        status: session.actions.length > before ? session.lastStatus : null
+      });
+      break;
+    }
+  }
+
+  return { attempted_count: attemptedCount, stop_reason: stopReason, steps };
 }
 
 async function main() {
@@ -751,6 +951,12 @@ async function main() {
 
   const session = readJson(options.state, null);
   if (!session) throw new Error(`No session found at ${options.state}`);
+
+  if (command === "action-sequence") {
+    const result = await runActionSequence(session, options.state, await readStdinJson());
+    console.log(JSON.stringify(result));
+    return;
+  }
 
   if (command === "record-no-move") {
     if (process.env.MAZEBENCH_TRUSTED_NO_MOVE !== "1") {
@@ -836,21 +1042,13 @@ async function main() {
       consumeRenderState(runBridge(session, message), options.state),
       session
     );
-    const status = response.status || response;
-    const persistedStatus = storedStatus(session, status);
-    const record = {
-      turn: session.actions.length + 1,
-      timestamp: new Date().toISOString(),
-      command_text: options.positional.join(" ").trim(),
-      valid: true,
-      error: null,
+    const record = persistAction(
+      session,
+      options.state,
+      options.positional.join(" ").trim(),
       message,
-      status: persistedStatus
-    };
-    session.actions.push(record);
-    session.lastStatus = persistedStatus;
-    writeJson(options.state, session);
-    fs.appendFileSync(path.join(path.dirname(options.state), "actions.jsonl"), `${JSON.stringify(record)}\n`);
+      response
+    );
     if (!(await emitStatus(session, response, session.actions.length, options.state))) process.exitCode = 1;
     emitTelemetry(record, session.observationMode);
     return;
