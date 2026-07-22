@@ -587,10 +587,19 @@ function createAgentRunService({
   const jsonLineIndexes = new Map();
   const initialPlayerCache = new Map();
   const reconstructedJsonObservationCache = new Map();
+  const jsonDisplayPaletteCache = new Map();
   const reconstructedAsciiObservationCache = new Map();
   const reconstructedBoardStateTimelineCache = new Map();
   const LARGE_TELEMETRY_BYTES = 1024 * 1024;
   const LARGE_TELEMETRY_REFRESH_MS = 10_000;
+  // History reconstruction uses spawnSync, so an oversized legacy run can
+  // otherwise block every HTTP request until the bridge times out. Large runs
+  // still load normally; only unavailable legacy observations/positions are
+  // omitted instead of being rebuilt synchronously on the server thread.
+  const MAX_SYNCHRONOUS_HISTORY_REPLAY_ACTIONS = 500;
+  // Hydrate long run pages in bounded chunks so JSON parsing and DOM updates
+  // yield between batches instead of freezing the browser on a 10k+ move run.
+  const PROGRESS_ACTION_BATCH_SIZE = 500;
   const stableCodexCatalogPath = path.join(runsDir, ".codex-model-catalog.json");
   let stableCodexCatalog;
   let startingClaudeQueue = false;
@@ -1861,6 +1870,7 @@ function createAgentRunService({
         if (previous) {
           delete previous.level;
           delete previous.json_observation;
+          delete previous.json_display_palette;
         }
         records.push({
         turn: record.turn,
@@ -1880,7 +1890,8 @@ function createAgentRunService({
         valid: record.valid !== false && !record.error,
         error: record.error || null,
         level: record.status?.level || null,
-        json_observation: record.status?.json_observation || null
+        json_observation: record.status?.json_observation || null,
+        json_display_palette: record.status?.json_display_palette || null
         });
       });
 
@@ -3890,6 +3901,7 @@ function createAgentRunService({
     const hideNames = Boolean(launchParams.hide_names ?? summary.hide_names);
     const seed = resolvedHideNamesSeed(hideNames, launchParams.hide_names_seed || summary.hide_names_seed);
     const turn = Math.max(0, Math.floor(Number(absoluteTurn) || 0));
+    if (turn > MAX_SYNCHRONOUS_HISTORY_REPLAY_ACTIONS) return "";
     const cacheKey = [runId, turn, actionsStamp, hideNames ? 1 : 0, seed].join(":");
     if (reconstructedAsciiObservationCache.has(cacheKey)) {
       return reconstructedAsciiObservationCache.get(cacheKey);
@@ -3962,6 +3974,7 @@ function createAgentRunService({
     }
 
     const actions = readActions(runId);
+    if (actions.length > MAX_SYNCHRONOUS_HISTORY_REPLAY_ACTIONS) return null;
     const replay = actions.map((action) => {
       if (action?.valid === false) return { command: "observe" };
       return replayMessageForCommandText(action.command_text) || { command: "observe" };
@@ -4028,6 +4041,7 @@ function createAgentRunService({
     const sessionPath = path.join(instanceDir, "session.json");
     const session = loadJson(sessionPath, null);
     if (!session || !Array.isArray(session.actions)) return null;
+    if (absoluteTurn > MAX_SYNCHRONOUS_HISTORY_REPLAY_ACTIONS) return null;
 
     let sessionMtime = 0;
     try {
@@ -4092,13 +4106,58 @@ function createAgentRunService({
         .map((line) => line.trim())
         .filter(Boolean)
         .map((line) => JSON.parse(line));
-      const observation = responses[replay.length]?.json_observation || null;
+      const response = responses[replay.length] || null;
+      const observation = response?.json_observation || null;
       if (!observation) return null;
+      const reconstructed = {
+        observation,
+        displayPalette: response?.json_display_palette || null
+      };
       if (reconstructedJsonObservationCache.size >= 64) {
         reconstructedJsonObservationCache.delete(reconstructedJsonObservationCache.keys().next().value);
       }
-      reconstructedJsonObservationCache.set(cacheKey, observation);
-      return observation;
+      reconstructedJsonObservationCache.set(cacheKey, reconstructed);
+      return reconstructed;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function jsonDisplayPaletteForRun(summary, metadata = {}, observation = null) {
+    const launchParams = summary.launch_params || {};
+    const gameId = String(metadata.game_id || summary.game_id || "maze");
+    const levelId = String(metadata.level_id || summary.level_id || "level_HxI");
+    const view = String(metadata.view || summary.view || "top-diagonal");
+    const yaw = Number(metadata.yaw ?? summary.yaw) || 0;
+    const hideNames = typeof observation?.hide_names === "boolean"
+      ? observation.hide_names
+      : Boolean(metadata.hide_names ?? launchParams.hide_names ?? summary.hide_names);
+    const seed = String(metadata.hide_names_seed || launchParams.hide_names_seed || summary.hide_names_seed || "1");
+    const cacheKey = [gameId, levelId, view, yaw, hideNames ? 1 : 0, seed].join(":");
+    if (jsonDisplayPaletteCache.has(cacheKey)) return jsonDisplayPaletteCache.get(cacheKey);
+
+    try {
+      // Loading this lazily avoids the maze-terminal -> server/app dependency
+      // cycle during startup. Palette generation creates only the initial room
+      // context; it never replays the run or starts a child process.
+      const {
+        buildJsonDisplayPalette,
+        createTerminalContext,
+        loadMazeEngine
+      } = require("../scripts/maze-terminal");
+      const pitch = Math.max(0, ["top", "top-diagonal", "diagonal", "side-diagonal", "side"].indexOf(view));
+      const context = createTerminalContext(loadMazeEngine(), {
+        gameId,
+        levelId,
+        gameWonGemCount: Math.max(1, Number(summary.gems) || 100),
+        hideNames,
+        hideNamesSeed: seed,
+        pitch,
+        yaw
+      });
+      const palette = buildJsonDisplayPalette(context, { hideNames, hideNamesSeed: seed });
+      jsonDisplayPaletteCache.set(cacheKey, palette);
+      return palette;
     } catch (_error) {
       return null;
     }
@@ -4167,9 +4226,12 @@ function createAgentRunService({
     const board = mode === "text" && primary && !status?.level
       ? reconstructAsciiObservation(runId, absoluteTurn, summary)
       : String(status?.level || "");
-    const jsonObservation = mode === "json" && !status?.json_observation
+    const reconstructedJson = mode === "json" && !status?.json_observation
       ? reconstructJsonObservation(runId, requestedInstance, instanceDir, absoluteTurn, summary, metadata)
-      : status?.json_observation || null;
+      : null;
+    const jsonObservation = status?.json_observation || reconstructedJson?.observation || null;
+    const jsonDisplayPalette = status?.json_display_palette || reconstructedJson?.displayPalette ||
+      (jsonObservation ? jsonDisplayPaletteForRun(summary, metadata, jsonObservation) : null);
     let player = normalizedPlayerPosition(status?.player);
     if (primary && !player) {
       const reconstructed = reconstructBoardStateTimeline(runId, summary);
@@ -4197,6 +4259,7 @@ function createAgentRunService({
       command_text: String(record?.command_text || ""),
       board,
       json_observation: jsonObservation,
+      json_display_palette: jsonDisplayPalette,
       frame_url: frameUrl,
       current_room: String(status?.current_room || ""),
       gem_count: Math.max(0, Number(status?.gem_count) || 0),
@@ -4251,10 +4314,27 @@ function createAgentRunService({
     if (summary.status === "running") startLegacyClaudeSnapshots(runId);
 
     const cursor = Math.max(0, Number(afterTurn) || 0);
-    const historyFloor = Math.max(1, cursor - 5);
     const log = readLogChunk(runId, logOffset);
     const instanceViews = readSwarmViews(runId);
-    const actions = readActions(runId, cursor);
+    const pendingActions = readActions(runId, cursor);
+    const actions = pendingActions.slice(0, PROGRESS_ACTION_BATCH_SIZE);
+    const totalTurns = Math.max(0, Number(summary.turns) || 0);
+    const historyThrough = actions.length
+      ? Math.max(cursor, Number(actions[actions.length - 1]?.turn) || cursor)
+      : cursor;
+    const historySync = {
+      current: Math.min(totalTurns, historyThrough),
+      total: totalTurns,
+      complete: historyThrough >= totalTurns
+    };
+    const historyFloor = Math.max(1, cursor - 5);
+    const historyCeiling = Math.max(cursor, historyThrough);
+    if (summary.mode === "json" && actions.length) {
+      const latest = actions[actions.length - 1];
+      if (latest.json_observation && !latest.json_display_palette) {
+        latest.json_display_palette = jsonDisplayPaletteForRun(summary, {}, latest.json_observation);
+      }
+    }
     if (summary.mode === "text" && actions.length) {
       const latest = actions[actions.length - 1];
       const latestTurn = Math.max(0, Number(summary.turns) || 0);
@@ -4297,11 +4377,12 @@ function createAgentRunService({
       action.timestamp ||= reasoningTimestamps.get(Number(action.turn)) || null;
     });
     const tokenUsage = readTokenUsage(runId, summary);
-    const incrementalTokenUsage = cursor > 0 && Array.isArray(tokenUsage?.actions)
+    const incrementalTokenUsage = Array.isArray(tokenUsage?.actions)
       ? {
           ...tokenUsage,
           actions: tokenUsage.actions.filter((point, index) =>
-            Math.max(1, Number(point?.action) || index + 1) >= historyFloor
+            Math.max(1, Number(point?.action) || index + 1) >= historyFloor &&
+              Math.max(1, Number(point?.action) || index + 1) <= historyCeiling
           )
         }
       : tokenUsage;
@@ -4323,16 +4404,18 @@ function createAgentRunService({
     return {
       run: inference ? { ...summary, inference } : summary,
       actions,
+      history_sync: historySync,
       initial_board_state_hash: initialBoardStateHash || null,
       initial_player: initialPlayer,
       log_chunk: log.chunk,
       log_offset: log.offset,
       token_usage: incrementalTokenUsage,
-      tool_activity: readToolActivity(runId, summary),
-      tools_workspace: readToolsWorkspace(runId, summary),
-      reasoning: cursor > 0
-        ? reasoning.filter((entry) => Math.max(1, Number(entry?.move) || 0) >= historyFloor)
-        : reasoning,
+      tool_activity: historySync.complete ? readToolActivity(runId, summary) : null,
+      tools_workspace: historySync.complete ? readToolsWorkspace(runId, summary) : null,
+      reasoning: reasoning.filter((entry) => {
+        const move = Math.max(1, Number(entry?.move) || 0);
+        return move >= historyFloor && move <= historyCeiling;
+      }),
       instance_activity: {
         active: instanceViews.filter((instance) => ["acting", "exploring"].includes(instance.activity)).length,
         instances: Math.max(0, Number(summary.explorer_instances) || 0),

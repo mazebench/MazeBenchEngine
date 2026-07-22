@@ -7,6 +7,7 @@ const {
   BOARD_STATE_HASH_VERSION,
   boardStateHash,
   buildAsciiLegend,
+  buildJsonDisplayPalette,
   buildJsonObservation,
   buildScorecard,
   createTerminalContext,
@@ -471,11 +472,13 @@ function sessionSnapshot(session, extra = {}) {
   };
 
   if (session.initialOptions.observationMode === "json") {
-    snapshot.json_observation = buildJsonObservation(context, {
+    const observationOptions = {
       hideNames: session.initialOptions.hideNames,
       hideNamesSeed: session.initialOptions.hideNamesSeed,
       omniscient: session.initialOptions.omniscient
-    });
+    };
+    snapshot.json_observation = buildJsonObservation(context, observationOptions);
+    snapshot.json_display_palette = buildJsonDisplayPalette(context, observationOptions);
   }
 
   return snapshot;

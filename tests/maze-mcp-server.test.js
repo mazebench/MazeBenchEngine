@@ -563,12 +563,12 @@ try {
   assert.equal(jsonStatus.json_observation.hide_names, true);
   assert.equal(jsonStatus.json_observation.objects.player.length > 0, true);
   assert.equal(jsonStatus.moved, undefined);
+  assert.equal(jsonStatus.json_display_palette, undefined);
   assert.equal(jsonStatus.board_state_hash, undefined);
   assert.equal(jsonStatus.board_state_hash_version, undefined);
-  assert.equal(
-    JSON.parse(fs.readFileSync(path.join(jsonDir, "session.json"), "utf8")).hideNamesSeed,
-    "mcp-repeatable-seed"
-  );
+  const storedJsonSession = JSON.parse(fs.readFileSync(path.join(jsonDir, "session.json"), "utf8"));
+  assert.equal(storedJsonSession.hideNamesSeed, "mcp-repeatable-seed");
+  assert.equal(storedJsonSession.initial.json_display_palette.player, "#5aa95c");
 
   const jsonBridgeDir = path.join(runDir, "json-solver-bridge");
   fs.mkdirSync(jsonBridgeDir, { recursive: true });

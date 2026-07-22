@@ -2330,7 +2330,7 @@ body.play-body {
 }
 
 .run-live__grid.is-json-mode {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .run-live__grid.is-image-only {
@@ -2391,8 +2391,27 @@ body.play-body {
   text-align: center;
 }
 
-.run-live__placeholder.is-history .inline-spinner {
-  display: none;
+.run-history-progress {
+  background: rgba(111, 128, 184, 0.22);
+  border: 1px solid rgba(111, 128, 184, 0.48);
+  border-radius: 999px;
+  height: 10px;
+  max-width: 360px;
+  overflow: hidden;
+  width: min(72%, 360px);
+}
+
+.run-history-progress__fill {
+  background: linear-gradient(90deg, #65f3d4, #7c8fff);
+  display: block;
+  height: 100%;
+  transition: width 120ms ease-out;
+  width: 0%;
+}
+
+.run-history-progress__label {
+  color: var(--muted, #9aa3c7);
+  font-size: 12px;
 }
 
 /* ---- Observation playback controls ---- */

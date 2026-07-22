@@ -32,6 +32,7 @@ const EXPLICIT_PLAYER_POSITION_KEYS = new Set([
 const MODEL_PRIVATE_STATUS_KEYS = new Set([
   "collected_gems",
   "collected_this_action",
+  "json_display_palette",
   "moved",
   "novel_push_count",
   "novel_pushes_this_action",

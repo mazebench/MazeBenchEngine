@@ -86,7 +86,7 @@ function createPageRenderer({
       title,
       description,
       extraHeadHtml: `<link rel="stylesheet" href="/build-theme.css?v=20260719-build-card-gems-1">
-    <link rel="stylesheet" href="/local-site.css?v=20260719-launch-transition-1">
+    <link rel="stylesheet" href="/local-site.css?v=20260722-json-grid-1">
     ${extraHeadHtml}`
     })}
   </head>
@@ -258,7 +258,7 @@ function createPageRenderer({
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/play-theme.css?v=${PLAY_ASSET_VERSION}">
-    <link rel="stylesheet" href="/local-site.css?v=20260719-launch-transition-1">`;
+    <link rel="stylesheet" href="/local-site.css?v=20260722-json-grid-1">`;
   }
 
   function renderPlayPage(game, level) {
@@ -469,7 +469,7 @@ function createPageRenderer({
     ${includeRuntimeStyles ? '<link rel="stylesheet" href="/styles.css">' : ""}
     <link rel="stylesheet" href="/site.css">
     <link rel="stylesheet" href="/author-theme.css">
-    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260719-launch-transition-1">' : ""}`;
+    ${includeLocalSite ? '<link rel="stylesheet" href="/local-site.css?v=20260722-json-grid-1">' : ""}`;
   }
 
   function renderAuthorPage(game, level) {
@@ -1420,10 +1420,13 @@ function createPageRenderer({
             <div class="run-live__viewer">
               <figure class="run-live__frame">
                 <img id="run-live-image" alt="Live maze view" hidden>
-                <canvas id="run-live-bitmap" class="run-live__bitmap" width="64" height="64" aria-label="Live colored ASCII view" hidden></canvas>
+                <canvas id="run-live-bitmap" class="run-live__bitmap" width="64" height="64" aria-label="Live colored grid view" hidden></canvas>
                 <div id="run-live-placeholder" class="run-live__placeholder">
-                  <span class="inline-spinner" aria-hidden="true"></span>
-                  <span>Loading move 0…</span>
+                  <span id="run-history-progress-title">Loading run history…</span>
+                  <div id="run-history-progress" class="run-history-progress" role="progressbar" aria-label="Run history loading progress" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+                    <span id="run-history-progress-fill" class="run-history-progress__fill"></span>
+                  </div>
+                  <small id="run-history-progress-label" class="run-history-progress__label">0 moves loaded</small>
                 </div>
                 <figcaption id="run-live-caption" class="run-live__caption" hidden></figcaption>
               </figure>
@@ -1494,7 +1497,7 @@ function createPageRenderer({
         </section>
         ${replayExportSection}
         <script>window.__AGENT_RUN__ = ${serializeForScript(clientRun)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260722-readable-chart-axis-2" defer></script>`
+        <script src="/agent-run.js?v=20260722-history-progress-1" defer></script>`
     });
   }
 

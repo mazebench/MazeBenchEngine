@@ -15,6 +15,8 @@ assert.match(runService, /const start = cached\?\.size \|\| 0/);
 assert.match(runService, /delete previous\.level/);
 assert.match(runService, /const LARGE_TELEMETRY_REFRESH_MS = 10_000/);
 assert.match(runService, /Date\.now\(\) - cached\.checkedAt < LARGE_TELEMETRY_REFRESH_MS/);
+assert.match(runService, /const MAX_SYNCHRONOUS_HISTORY_REPLAY_ACTIONS = 500/);
+assert.match(runService, /if \(actions\.length > MAX_SYNCHRONOUS_HISTORY_REPLAY_ACTIONS\) return null/);
 assert.match(runService, /actions: tokenUsage\.actions\.filter/);
 assert.match(runService, /reasoning\.filter\(\(entry\)/);
 assert.match(runService, /apiPricingForRun\(summary, listProviderModels\("prime"\)\.models\)/);
@@ -122,6 +124,62 @@ assert.equal(
   null,
   "legacy live-render PNGs are no longer served"
 );
+
+const oversizedRunId = "perf-run-oversized";
+const oversizedRunDir = path.join(tempRoot, "outputs", "maze-local", "site", oversizedRunId);
+const replayMarker = path.join(tempRoot, "legacy-replay-started");
+fs.mkdirSync(oversizedRunDir, { recursive: true });
+fs.mkdirSync(path.join(tempRoot, "scripts"), { recursive: true });
+fs.writeFileSync(
+  path.join(tempRoot, "scripts", "maze-bridge.js"),
+  `require("node:fs").writeFileSync(${JSON.stringify(replayMarker)}, "started");\n`
+);
+fs.writeFileSync(path.join(oversizedRunDir, "run.json"), JSON.stringify({
+  id: oversizedRunId,
+  kind: "local",
+  model: "codex",
+  model_name: "legacy-test-model",
+  game_id: "maze",
+  game_title: "Maze",
+  level_id: "level_HxI",
+  mode: "text",
+  moves: null,
+  unlimited: true,
+  status: "paused"
+}));
+fs.writeFileSync(path.join(oversizedRunDir, "initial-status.json"), JSON.stringify({
+  board_state_hash: "initial-v3",
+  board_state_hash_version: 3,
+  current_room: "level_HxI",
+  level: "W"
+}));
+fs.writeFileSync(
+  path.join(oversizedRunDir, "actions.jsonl"),
+  `${Array.from({ length: 501 }, (_, index) => JSON.stringify({
+    turn: index + 1,
+    command_text: "right",
+    status: {
+      board_state_hash: `state-${index + 1}`,
+      board_state_hash_version: 3,
+      current_room: "level_HxI",
+      level: "W"
+    }
+  })).join("\n")}\n`
+);
+
+const oversizedProgress = service.getRunProgress(oversizedRunId);
+assert.equal(oversizedProgress.actions.length, 500);
+assert.deepEqual(oversizedProgress.history_sync, { current: 500, total: 501, complete: false });
+assert.equal(oversizedProgress.initial_player, null);
+assert.equal(
+  fs.existsSync(replayMarker),
+  false,
+  "oversized legacy runs must not synchronously replay history on the HTTP server thread"
+);
+const oversizedFinalProgress = service.getRunProgress(oversizedRunId, { afterTurn: 500 });
+assert.deepEqual(oversizedFinalProgress.actions.map((action) => action.turn), [501]);
+assert.deepEqual(oversizedFinalProgress.history_sync, { current: 501, total: 501, complete: true });
+assert.equal(fs.existsSync(replayMarker), false);
 
 fs.rmSync(tempRoot, { recursive: true, force: true });
 
