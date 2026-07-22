@@ -41,7 +41,7 @@ The Python `games/maze/player.py` implementation is useful but currently behind 
    - Observation spec: ASCII renderer first, image renderer later.
 
 2. Build `mazebench` in stages:
-   - `mazebench-ascii-single`: one-shot prompt asks for `<moves>...</moves>`, reward simulates the path. This mode uses `scripts/maze-terminal.js --json` against the real JS engine.
+   - `mazebench-ascii-single`: one-shot prompt asks for `<moves>...</moves>`, reward simulates the path. Initial ASCII state comes from the canonical `scripts/maze-bridge.js` observation path.
    - `mazebench-ascii-tools`: stateful/tool environment exposes `move(direction)`, `rotate_camera(direction)`, `undo()`, `reset_level()`, and `goto_level(x, y)`. This is now the default `mazebench` mode, with `level_HxI` as the starter task.
    - `mazebench-open-world`: multi-level/world-map navigation once the open world is converted to ASCII.
    - `mazebench-vlm`: visual observations from the browser/isometric renderer for VLM evaluation.
@@ -126,7 +126,7 @@ aaaa
 aaaa
 ```
 
-The terminal prototype at `scripts/maze-terminal.js` is a local testbed for rendering and one-shot replay. It exposes a JSON mode (`--json --solve`) so the Python verifier can render observations, compute JS solver references, and replay submitted moves without a Python engine port. The stateful Verifiers tool contract is backed by `scripts/maze-bridge.js`, a JSON-lines Node process that keeps room state, camera state, visited rooms, and monotonic unique gem IDs alive for the rollout.
+The terminal prototype at `scripts/maze-terminal.js` is a local testbed for rendering and one-shot replay. Its `--json` output uses the same structured, model-facing observation contract as agent runners; `--solve` can explicitly add a JS solver reference. Initial ASCII state and the stateful Verifiers tool contract are backed by `scripts/maze-bridge.js`, a JSON-lines Node process that keeps room state, camera state, visited rooms, and monotonic unique gem IDs alive for the rollout.
 
 ## Sources
 

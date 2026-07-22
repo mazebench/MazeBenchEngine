@@ -13,6 +13,7 @@ Examples
     mazebench codex moves=10            # shorthand for model=codex
     mazebench replay outputs/maze-local/codex/<run>/    # (re)make the video
     mazebench ascii --level CxD         # interactive ASCII game
+    mazebench json --level CxD          # model-facing structured observation
     mazebench play                      # interactive human REPL
     mazebench prime install             # prime env install mazebench
     mazebench prime eval model=openai/gpt-5-nano n=1 r=1
@@ -76,6 +77,9 @@ Replay / video from a finished run or a Prime eval dir:
 
 Interactive ASCII game (arrow-key controls):
   mazebench ascii [--level CxD] [--view top-diagonal]
+
+Model-facing JSON observation (literal names by default):
+  mazebench json [--level CxD] [--omniscient] [--hide-names]
 
 Interactive command REPL:
   mazebench play [level=HxI view=top-diagonal]
@@ -264,6 +268,24 @@ def run_ascii(root: Path, pairs: dict[str, str], flags: list[str]) -> int:
         cmd.extend(["--level", pairs["level"]])
     if "view" in pairs:
         cmd.extend(["--view", pairs["view"]])
+    cmd.extend(flags)
+    return _run(cmd, root)
+
+
+def run_json(root: Path, pairs: dict[str, str], flags: list[str]) -> int:
+    """Print the same structured JSON observation exposed to model runners."""
+    _require(_node_bin(), "Install Node.js (the maze engine runs on Node).")
+    cmd = [_node_bin(), str(root / "scripts" / "maze-terminal.js"), "--json"]
+    if "level" in pairs:
+        cmd.extend(["--level", pairs["level"]])
+    if "view" in pairs:
+        cmd.extend(["--view", pairs["view"]])
+    if _is_on(pairs.get("omniscient", "")):
+        cmd.append("--omniscient")
+    if _is_on(pairs.get("hide_names", "")):
+        cmd.append("--hide-names")
+        if pairs.get("hide_names_seed"):
+            cmd.extend(["--hide-names-seed", pairs["hide_names_seed"]])
     cmd.extend(flags)
     return _run(cmd, root)
 
@@ -600,6 +622,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_replay(root, words[1:], pairs, flags)
         if command == "ascii":
             return run_ascii(root, pairs, flags)
+        if command == "json":
+            return run_json(root, pairs, flags)
         if command == "play":
             return run_play(root, pairs, flags)
         if command in ("codex", "claude", "kimi"):

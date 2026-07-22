@@ -21,9 +21,9 @@ const { writePrimeResumeCheckpoint } = require("../server/prime-resume");
 const { BOARD_STATE_HASH_VERSION } = require("../shared/board-state");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
+const BRIDGE = path.join(ROOT_DIR, "scripts", "maze-bridge.js");
 const EXPORT_REPLAY = path.join(ROOT_DIR, "scripts", "maze-export-replay.js");
 const LIVE_EVAL = path.join(ROOT_DIR, "scripts", "maze-prime-live-eval.py");
-const TERMINAL = path.join(ROOT_DIR, "scripts", "maze-terminal.js");
 const HOSTED_STATE_FILE = "prime-evaluation.json";
 const HOSTED_SAMPLES_FILE = "prime-evaluation-samples.json";
 const HARNESS_CATALOG_FILE = path.join(ROOT_DIR, "environments", "mazebench", "prime-harness-catalog.json");
@@ -237,38 +237,41 @@ function updateHostedState(opts, patch) {
 }
 
 function writeInitialStatus(opts) {
-  const terminalArgs = [
-    TERMINAL,
-    "--json",
-    "--once",
+  const bridgeArgs = [
+    BRIDGE,
     "--level",
     opts.levelId,
     "--game-won-gem-count",
     String(opts.gameWonGemCount)
   ];
   if (opts.observationMode === "ascii" && opts.hideNames) {
-    terminalArgs.push("--hide-names", "--hide-names-seed", opts.hideNamesSeed || "1");
+    bridgeArgs.push("--hide-names", "--hide-names-seed", opts.hideNamesSeed || "1");
   }
   const result = spawnSync(
     process.execPath,
-    terminalArgs,
-    { cwd: ROOT_DIR, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }
+    bridgeArgs,
+    {
+      cwd: ROOT_DIR,
+      encoding: "utf8",
+      input: `${JSON.stringify({ command: "observe" })}\n`,
+      maxBuffer: 16 * 1024 * 1024
+    }
   );
   if (result.status !== 0) return;
   try {
     const payload = JSON.parse(result.stdout);
     writeJsonAtomic(path.join(opts.outDir, "initial-status.json"), {
-      allowed_commands: payload.allowedCommands || [],
-      board_state_hash: payload.boardStateHash || null,
-      board_state_hash_version: Number(payload.boardStateHashVersion) || BOARD_STATE_HASH_VERSION,
-      current_room: payload.levelId || opts.levelId,
-      current_view: payload.view || "top-diagonal",
+      allowed_commands: payload.allowed_commands || [],
+      board_state_hash: payload.board_state_hash || null,
+      board_state_hash_version: Number(payload.board_state_hash_version) || BOARD_STATE_HASH_VERSION,
+      current_room: payload.current_room || opts.levelId,
+      current_view: payload.current_view || "top-diagonal",
       gem_count: 0,
-      level: payload.observation || "",
+      level: payload.level || "",
       player: payload.player || null,
-      player_dead: Boolean(payload.playerDead),
+      player_dead: Boolean(payload.player_dead),
       solved: Boolean(payload.solved),
-      visited_levels: [payload.levelId || opts.levelId],
+      visited_levels: payload.visited_levels || [payload.current_room || opts.levelId],
       yaw: Number(payload.yaw) || 0
     });
   } catch (_error) {

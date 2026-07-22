@@ -1601,12 +1601,17 @@ function syntheticFloor(width, height) {
     "--solve"
   ]));
 
-  assert.equal(payload.levelId, "level_HxI");
-  assert.equal(payload.view, "diagonal");
-  assert.equal(typeof payload.solved, "boolean");
+  assert.equal(payload.observation_mode, "json");
+  assert.equal(payload.current_room, "level_HxI");
+  assert.equal(payload.current_view, "diagonal");
+  assert.equal(payload.json_observation.hide_names, false);
+  assert.equal(payload.json_observation.omniscient, false);
+  assert.equal(payload.json_observation.objects.player.length > 0, true);
   assert.equal(typeof payload.solution.status, "string");
   assert.equal(typeof payload.solution.path, "string");
-  assert.match(payload.screen, /maze level_HxI \| view=diagonal yaw=0/);
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, "observation"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, "screen"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, "level"), false);
 }
 
 {
@@ -1620,9 +1625,42 @@ function syntheticFloor(width, height) {
     "--json"
   ]));
 
-  assert.equal(payload.levelId, "level_HxI");
-  assert.equal(payload.inputMoves, "U");
-  assert.equal(typeof payload.solved, "boolean");
+  assert.equal(payload.observation_mode, "json");
+  assert.equal(payload.current_room, "level_HxI");
+  assert.equal(payload.current_view, "diagonal");
+  assert.equal(payload.json_observation.observation_mode, "json");
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, "inputMoves"), false);
+}
+
+{
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "maze-terminal-model-json-"));
+  const stateFile = path.join(outDir, "session.json");
+
+  try {
+    const terminalPayload = JSON.parse(runTerminal([
+      "--level", "CxD",
+      "--view", "top-diagonal",
+      "--json",
+      "--omniscient"
+    ]));
+    const modelPayload = runCodexPlay([
+      "start",
+      "--repo-root", ROOT_DIR,
+      "--state", stateFile,
+      "--level", "CxD",
+      "--view", "top-diagonal",
+      "--json-observation",
+      "--omniscient"
+    ]);
+
+    assert.deepEqual(terminalPayload, modelPayload);
+    assert.equal(terminalPayload.json_observation.hide_names, false);
+    assert.equal(terminalPayload.json_observation.omniscient, true);
+    assert.equal(terminalPayload.json_observation.objects.wall.length > 0, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(terminalPayload, "level"), false);
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
 }
 
 {

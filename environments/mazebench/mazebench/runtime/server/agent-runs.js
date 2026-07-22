@@ -1937,9 +1937,7 @@ function createAgentRunService({
 
   function primeInitialStatus(meta) {
     const argv = [
-      path.join(rootDir, "scripts", "maze-terminal.js"),
-      "--json",
-      "--once",
+      path.join(rootDir, "scripts", "maze-bridge.js"),
       "--level",
       String(meta.level_id || "level_HxI"),
       "--game-won-gem-count",
@@ -1951,6 +1949,7 @@ function createAgentRunService({
     const result = spawnSync(process.execPath, argv, {
       cwd: rootDir,
       encoding: "utf8",
+      input: `${JSON.stringify({ command: "observe" })}\n`,
       timeout: 30_000,
       maxBuffer: 16 * 1024 * 1024
     });
@@ -1959,17 +1958,17 @@ function createAgentRunService({
     }
     const payload = JSON.parse(result.stdout);
     return {
-      allowed_commands: payload.allowedCommands || [],
-      board_state_hash: payload.boardStateHash || null,
-      board_state_hash_version: Number(payload.boardStateHashVersion) || BOARD_STATE_HASH_VERSION,
-      current_room: payload.levelId || meta.level_id || "level_HxI",
-      current_view: payload.view || "top-diagonal",
+      allowed_commands: payload.allowed_commands || [],
+      board_state_hash: payload.board_state_hash || null,
+      board_state_hash_version: Number(payload.board_state_hash_version) || BOARD_STATE_HASH_VERSION,
+      current_room: payload.current_room || meta.level_id || "level_HxI",
+      current_view: payload.current_view || "top-diagonal",
       gem_count: 0,
-      level: payload.observation || "",
+      level: payload.level || "",
       player: payload.player || null,
-      player_dead: Boolean(payload.playerDead),
+      player_dead: Boolean(payload.player_dead),
       solved: Boolean(payload.solved),
-      visited_levels: [payload.levelId || meta.level_id || "level_HxI"],
+      visited_levels: payload.visited_levels || [payload.current_room || meta.level_id || "level_HxI"],
       yaw: Number(payload.yaw) || 0
     };
   }

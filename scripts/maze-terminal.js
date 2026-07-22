@@ -283,6 +283,7 @@ function parseArgs(argv) {
     levelId: "level_HxI",
     maxExpandedStates: 1000000,
     moves: "",
+    omniscient: false,
     pitch: 1,
     replayDraft: false,
     replayFast: false,
@@ -311,6 +312,8 @@ function parseArgs(argv) {
     } else if (arg === "--json") {
       options.json = true;
       options.once = true;
+    } else if (arg === "--omniscient") {
+      options.omniscient = true;
     } else if (arg === "--hide-names") {
       options.hideNames = true;
     } else if (arg === "--hide-names-seed") {
@@ -364,6 +367,7 @@ function parseArgs(argv) {
 
 function printHelp() {
   console.log(`Usage: mazebench ascii [options]
+       mazebench json [options]
        npm run maze:terminal -- [options]
 
 Options:
@@ -374,8 +378,13 @@ Options:
                      Defaults to top-diagonal.
   --pitch <0-4>      Camera pitch; 0 is top-down, 4 is side.
   --yaw <0-3>        Camera yaw rotation.
-  --json             Print machine-readable state instead of terminal text.
-  --solve            Include the JS solver answer in --json output.
+  --json             Print the model-facing structured JSON observation.
+  --omniscient       Include every room object in JSON observations.
+  --hide-names       Randomize ASCII glyphs or JSON names except player/gem.
+                     Names are literal by default.
+  --hide-names-seed <value>
+                     Stable randomization seed used with --hide-names.
+  --solve            Add the JS solver answer to --json output.
   --max-expanded-states <n>
                      Solver search cap used by --solve.
   --game-won-gem-count <n>
@@ -3270,30 +3279,33 @@ function boardStateHash(context) {
   return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
-async function buildJsonPayload(context) {
+async function buildModelJsonPayload(context) {
   applyCollectedGemsToContext(context);
+  const stats = context.stats || createRunStats(context.level.id, context.options);
+  normalizeCollectedGemIds(stats.collectedGemIds);
   const player = activePlayerEntry(context);
   const playerDead = !player;
-  const observation = renderAscii(context.playData, context.engine, context.state, context.options);
   const payload = {
-    allowedCommands: allowedCommandsForContext(context),
-    deathMessage: playerDead ? DEATH_MESSAGE : "",
-    gameId: context.playData.gameId,
-    height: context.playData.height,
-    inputMoves: context.options.moves || "",
-    levelId: context.level.id,
-    boardStateHash: boardStateHash(context),
-    boardStateHashVersion: BOARD_STATE_HASH_VERSION,
-    pitch: context.options.pitch,
-    player,
-    playerDead,
-    solved: context.engine.isSolved(context.state),
-    view: VIEW_NAMES[context.options.pitch],
-    width: context.playData.width,
+    observation_mode: "json",
+    current_room: context.level.id,
+    current_view: VIEW_NAMES[context.options.pitch],
     yaw: context.options.yaw,
-    observation,
-    screen: renderScreen(context)
+    gem_count: stats.collectedGemIds.size,
+    visited_levels: Array.from(stats.visitedRooms),
+    player_dead: playerDead,
+    game_won: isGameWon(context),
+    game_lost: false,
+    json_observation: buildJsonObservation(context, {
+      hideNames: context.options.hideNames,
+      hideNamesSeed: context.options.hideNamesSeed,
+      omniscient: context.options.omniscient
+    })
   };
+
+  if (playerDead) {
+    payload.death_message = DEATH_MESSAGE;
+    payload.allowed_commands = allowedCommandsForContext(context);
+  }
 
   if (context.options.solve) {
     const solution = await solveContext(context);
@@ -3787,7 +3799,7 @@ async function main() {
   applyMoves(context, options.moves);
 
   if (options.json) {
-    const payload = await buildJsonPayload(context);
+    const payload = await buildModelJsonPayload(context);
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     return;
   }
@@ -3820,8 +3832,8 @@ module.exports = {
   applyMove,
   BOARD_STATE_HASH_VERSION,
   boardStateHash,
+  buildModelJsonPayload,
   buildJsonObservation,
-  buildJsonPayload,
   buildScorecard,
   cameraDirectionForInteractiveKey,
   createTerminalContext,

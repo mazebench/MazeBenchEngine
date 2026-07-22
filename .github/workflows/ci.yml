@@ -114,6 +114,16 @@ jobs:
           cd /
           MAZEBENCH_HOME=/tmp/mzhome /tmp/mzvenv/bin/mazebench ascii --level CxD --once > /tmp/ascii.txt
           grep -q 'maze level_CxD' /tmp/ascii.txt
+          MAZEBENCH_HOME=/tmp/mzhome /tmp/mzvenv/bin/mazebench json --level CxD --omniscient > /tmp/json.txt
+          python - <<'PY'
+          import json
+          payload = json.load(open('/tmp/json.txt', encoding='utf8'))
+          assert payload['observation_mode'] == 'json'
+          assert payload['json_observation']['omniscient'] is True
+          assert payload['json_observation']['hide_names'] is False
+          assert payload['json_observation']['objects']['wall']
+          assert 'level' not in payload and 'screen' not in payload
+          PY
           MAZEBENCH_HOME=/tmp/mzhome nohup /tmp/mzvenv/bin/mazebench launch port=3311 open=false > /tmp/launch.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT

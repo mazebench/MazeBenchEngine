@@ -24,6 +24,16 @@ mazebench ascii --level CxD
 
 Both `CxD` and the full `level_CxD` level ID are accepted.
 
+Print the same structured JSON observation a model receives, with literal
+object names and every room object included:
+
+```bash
+mazebench json --level CxD --omniscient
+```
+
+Omit `--omniscient` to include only objects visible in the equivalent ASCII
+view. Names are not hidden unless `--hide-names` is passed explicitly.
+
 Local agent runs also require Docker and either the Codex CLI or Claude Code.
 Replay video requires a Chromium-family browser and `ffmpeg`.
 

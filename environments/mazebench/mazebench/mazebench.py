@@ -284,7 +284,7 @@ def find_bridge_root(configured_root: str | None = None) -> Path:
     )
 
 
-def run_terminal_json(
+def run_initial_ascii_observation(
     *,
     level_id: str,
     node_bin: str,
@@ -293,7 +293,7 @@ def run_terminal_json(
     view: str,
     yaw: int,
 ) -> dict[str, Any]:
-    script_path = repo_root / "scripts" / "maze-terminal.js"
+    script_path = repo_root / "scripts" / "maze-bridge.js"
     command = [
         node_bin,
         str(script_path),
@@ -303,7 +303,6 @@ def run_terminal_json(
         view,
         "--yaw",
         str(int(yaw)),
-        "--json",
     ]
 
     result = subprocess.run(
@@ -312,20 +311,21 @@ def run_terminal_json(
         capture_output=True,
         check=False,
         encoding="utf8",
+        input=json.dumps({"command": "observe"}) + "\n",
         timeout=timeout_seconds,
     )
 
     if result.returncode != 0:
         raise RuntimeError(
-            "maze-terminal.js failed with exit code "
+            "maze-bridge.js failed with exit code "
             f"{result.returncode}: {(result.stderr or result.stdout).strip()}"
         )
 
     try:
-        return json.loads(result.stdout)
+        return json.loads(result.stdout.strip())
     except json.JSONDecodeError as error:
         raise RuntimeError(
-            f"maze-terminal.js returned invalid JSON: {result.stdout[:500]}"
+            f"maze-bridge.js returned invalid JSON: {result.stdout[:500]}"
         ) from error
 
 
@@ -695,7 +695,7 @@ def make_row(
     view: str,
     yaw: int,
 ) -> dict[str, Any]:
-    payload = run_terminal_json(
+    payload = run_initial_ascii_observation(
         level_id=level_id,
         node_bin=node_bin,
         repo_root=repo_root,
@@ -707,13 +707,13 @@ def make_row(
         "example_id": example_id,
         "game_id": DEFAULT_GAME_ID,
         "game_won_gem_count": int(game_won_gem_count),
-        "level_id": str(payload["levelId"]),
+        "level_id": str(payload["current_room"]),
         "node_bin": node_bin,
-        "observation": str(payload["observation"]),
+        "observation": str(payload["level"]),
         "repo_root": str(repo_root),
         "target_gems": int(target_gems),
         "timeout_seconds": int(timeout_seconds),
-        "view": str(payload["view"]),
+        "view": str(payload["current_view"]),
         "yaw": int(payload["yaw"]),
     }
     row["info"] = json.dumps(
