@@ -15,7 +15,7 @@
   // built-in harness without changing the model or run-settings flow.
   const HARNESSES = [
     {
-      id: "none",
+      id: "custom",
       name: "Prime Intellect",
       logo: '<img src="/logos/prime.png" alt="" width="128" height="128" loading="eager" decoding="sync" fetchpriority="high">'
     },
@@ -32,12 +32,7 @@
     {
       id: "kimi-code",
       name: "Kimi Code",
-      logo: '<svg viewBox="0 0 128 128" fill="none" aria-hidden="true"><circle cx="64" cy="64" r="52" fill="currentColor" opacity=".12"></circle><path d="M38 26v76M39 66l48-40M39 65l51 38" stroke="currentColor" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"></path></svg>'
-    },
-    {
-      id: "custom",
-      name: "Custom",
-      logo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9 5 12l3 3"></path><path d="m16 9 3 3-3 3"></path><path d="m14 5-4 14"></path></svg>'
+      logo: '<img src="/logos/kimi.svg" alt="" width="24" height="25" loading="eager" decoding="sync" fetchpriority="high">'
     }
   ];
   const LOCAL_SETUP = {

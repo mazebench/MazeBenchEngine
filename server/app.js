@@ -67,6 +67,7 @@ const PUBLIC_FILE_ROUTES = new Map(
     "/favicon.svg",
     "/logos/codex.png",
     "/logos/claude.png",
+    "/logos/kimi.svg",
     "/logos/prime.png"
   ].map((routePath) => [routePath, path.join(PUBLIC_DIR, routePath.slice(1))])
 );

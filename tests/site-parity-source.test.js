@@ -19,6 +19,7 @@ const siteTheme = fs.readFileSync(path.join(root, "public", "local-site.css"), "
 const replayExporter = fs.readFileSync(path.join(root, "scripts", "maze-export-replay.js"), "utf8");
 const visionRenderer = fs.readFileSync(path.join(root, "scripts", "maze-render-frame.js"), "utf8");
 const favicon = fs.readFileSync(path.join(root, "public", "favicon.svg"), "utf8");
+const kimiLogo = fs.readFileSync(path.join(root, "public", "logos", "kimi.svg"), "utf8");
 const router = fs.readFileSync(path.join(root, "server", "router.js"), "utf8");
 const { createRemoteService } = require(path.join(root, "server", "remote.js"));
 const {
@@ -96,6 +97,10 @@ assert.match(favicon, /fill-rule="evenodd"/);
 assert.doesNotMatch(favicon, /Minotaur icon by Lorc|M189\.78 118\.22|<ellipse/);
 assert.match(favicon, /stroke="#34e7f0" stroke-width="3"/);
 assert.match(pageChrome, /BRAND_MARK_SVG = `[\s\S]*?M 358\.428 591\.327/);
+assert.match(kimiLogo, /viewBox="0 0 24 25"/);
+assert.match(kimiLogo, /fill="#1783FF"/);
+assert.match(kimiLogo, /M9\.39 13\.9501L17\.82 5\.59012/);
+assert.match(siteTheme, /img\[src\$="\/kimi\.svg"\][\s\S]*?object-fit: contain/);
 
 assert.match(
   pages,
@@ -105,21 +110,24 @@ assert.match(siteTheme, /\.inline-spinner \{[\s\S]*?animation: loading-spin 0\.8
 assert.match(siteTheme, /@keyframes loading-spin \{[\s\S]*?transform: rotate\(360deg\)/);
 assert.match(pages, /rel="preload" as="image" href="\/logos\/codex\.png"[^>]*fetchpriority="high"/);
 assert.match(pages, /rel="preload" as="image" href="\/logos\/claude\.png"[^>]*fetchpriority="high"/);
+assert.match(pages, /rel="preload" as="image" href="\/logos\/kimi\.svg"[^>]*fetchpriority="high"/);
+assert.match(appSource, /"\/logos\/kimi\.svg"/);
 assert.match(pages, /rel="preload" as="image" href="\/logos\/prime\.png"[^>]*fetchpriority="high"/);
 assert.doesNotMatch(agentScript, /logos\/(?:codex|claude|prime)\.png" alt="" loading="lazy"/);
-assert.equal((agentScript.match(/loading="eager" decoding="sync" fetchpriority="high"/g) || []).length, 3);
+assert.equal((agentScript.match(/loading="eager" decoding="sync" fetchpriority="high"/g) || []).length, 4);
 assert.match(agentScript, /const HARNESSES = \[/);
 assert.match(agentScript, /function runModeLabel\(value\)/);
 assert.match(agentScript, /run-card__badge--mode[^\n]*runModeLabel\(run\.mode\)/);
-assert.match(agentScript, /id: "none",\s*name: "Prime Intellect",\s*logo: '<img src="\/logos\/prime\.png"/);
+assert.doesNotMatch(agentScript, /id: "none",\s*name: "Prime Intellect"/);
+assert.match(agentScript, /id: "custom",\s*name: "Prime Intellect",\s*logo: '<img src="\/logos\/prime\.png"/);
 assert.match(agentScript, /id: "codex",\s*name: "Codex"/);
 assert.match(agentScript, /id: "claude-code",\s*name: "Claude Code"/);
-assert.match(agentScript, /id: "kimi-code",\s*name: "Kimi Code"/);
-assert.match(agentScript, /id: "custom",\s*name: "Custom"/);
+assert.match(agentScript, /id: "kimi-code",\s*name: "Kimi Code",\s*logo: '<img src="\/logos\/kimi\.svg"/);
 assert.ok(
-  agentScript.indexOf('id: "claude-code"') < agentScript.indexOf('id: "kimi-code"') &&
-    agentScript.indexOf('id: "kimi-code"') < agentScript.indexOf('id: "custom"'),
-  "Kimi Code must appear immediately after Claude Code and before Custom"
+  agentScript.indexOf('id: "custom"') < agentScript.indexOf('id: "codex"') &&
+    agentScript.indexOf('id: "codex"') < agentScript.indexOf('id: "claude-code"') &&
+    agentScript.indexOf('id: "claude-code"') < agentScript.indexOf('id: "kimi-code"'),
+  "Prime Intellect must come first, with Kimi Code immediately after Claude Code"
 );
 assert.match(agentScript, /kind: "prime",\s*harness: effectiveHarnessId\(\)/);
 assert.match(agentScript, /kind: "local",\s*subscription: true/);

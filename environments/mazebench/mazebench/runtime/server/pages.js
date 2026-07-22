@@ -848,6 +848,7 @@ function createPageRenderer({
       title: "Agent — Maze Bench",
       extraHeadHtml: `<link rel="preload" as="image" href="/logos/codex.png" type="image/png" fetchpriority="high">
     <link rel="preload" as="image" href="/logos/claude.png" type="image/png" fetchpriority="high">
+    <link rel="preload" as="image" href="/logos/kimi.svg" type="image/svg+xml" fetchpriority="high">
     <link rel="preload" as="image" href="/logos/prime.png" type="image/png" fetchpriority="high">`,
       main: `<div class="page-head agent-page-head">
           <h1>Agent</h1>

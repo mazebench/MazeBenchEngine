@@ -2063,6 +2063,10 @@ body.play-body {
   width: 100%;
 }
 
+.provider-card__logo img[src$="/kimi.svg"] {
+  object-fit: contain;
+}
+
 /* ---- prime model folders ---- */
 
 .model-folders {

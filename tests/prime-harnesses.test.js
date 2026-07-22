@@ -54,12 +54,12 @@ try {
     "utf8"
   ));
 
-  assert.match(agentSource, /id: "none",\s*name: "Prime Intellect",\s*logo: '<img src="\/logos\/prime\.png"/);
+  assert.doesNotMatch(agentSource, /id: "none",\s*name: "Prime Intellect"/);
+  assert.match(agentSource, /id: "custom",\s*name: "Prime Intellect",\s*logo: '<img src="\/logos\/prime\.png"/);
   assert.doesNotMatch(agentSource, /<circle cx=\"24\" cy=\"24\" r=\"17\.5\"><\/circle><path d=\"M12\.5 35\.5 35\.5 12\.5\"><\/path>/);
   assert.match(agentSource, /id: "codex",\s*name: "Codex"/);
   assert.match(agentSource, /id: "claude-code",\s*name: "Claude Code"/);
-  assert.match(agentSource, /id: "kimi-code",\s*name: "Kimi Code"/);
-  assert.match(agentSource, /id: "custom",\s*name: "Custom"/);
+  assert.match(agentSource, /id: "kimi-code",\s*name: "Kimi Code",\s*logo: '<img src="\/logos\/kimi\.svg"/);
   assert.match(agentSource, /harness: effectiveHarnessId\(\)/);
   assert.match(agentSource, /harness_config: state\.harness === "custom"/);
   assert.match(agentSource, /kind: "local",\s*subscription: true/);
