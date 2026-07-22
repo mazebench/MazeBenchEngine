@@ -3711,6 +3711,28 @@ function createAgentRunService({
     }
   }
 
+  function readJsonLineRange(filePath, index, lineIndex, count) {
+    const start = index.offsets[lineIndex];
+    if (!Number.isFinite(start) || count <= 0) return [];
+    const end = index.offsets[lineIndex + count] ?? index.size;
+    const length = Math.max(0, end - start);
+    if (!length) return [];
+    const buffer = Buffer.alloc(length);
+    const fd = fs.openSync(filePath, "r");
+    try {
+      fs.readSync(fd, buffer, 0, length, start);
+    } finally {
+      fs.closeSync(fd);
+    }
+    return buffer.toString("utf8").split("\n").slice(0, count).map((line) => {
+      try {
+        return JSON.parse(line.trim());
+      } catch (_error) {
+        return null;
+      }
+    });
+  }
+
   function latestSwarmFrame(runId, workerId, workerDir) {
     const framesDir = path.join(workerDir, "frames");
     if (!fs.existsSync(framesDir)) return null;
@@ -4066,7 +4088,7 @@ function createAgentRunService({
     }
   }
 
-  function getRunObservation(runId, { instanceId = "primary", turn = 0 } = {}) {
+  function runObservationContext(runId, instanceId) {
     const summary = summarizeRun(runId);
     if (!summary) return null;
 
@@ -4083,9 +4105,39 @@ function createAgentRunService({
     const actionIndex = jsonLineIndexFor(actionsPath);
     const forkActionCount = primary ? 0 : Math.max(0, Number(metadata.fork_action_count) || 0);
     const total = Math.max(0, actionIndex.offsets.length - forkActionCount);
+    return {
+      actionIndex,
+      actionsPath,
+      forkActionCount,
+      instanceDir,
+      metadata,
+      mode: normalizeObservationMode(metadata.observation_mode || summary.mode),
+      primary,
+      requestedInstance,
+      runId,
+      summary,
+      total
+    };
+  }
+
+  function runObservationAt(context, turn, suppliedRecord) {
+    const {
+      actionsPath,
+      forkActionCount,
+      instanceDir,
+      metadata,
+      mode,
+      primary,
+      requestedInstance,
+      runId,
+      summary,
+      total
+    } = context;
     const relativeTurn = Math.max(0, Math.min(total, Math.floor(Number(turn) || 0)));
     const absoluteTurn = forkActionCount + relativeTurn;
-    const record = absoluteTurn > 0 ? readJsonLineAt(actionsPath, absoluteTurn - 1) : null;
+    const record = suppliedRecord === undefined && absoluteTurn > 0
+      ? readJsonLineAt(actionsPath, absoluteTurn - 1)
+      : suppliedRecord || null;
     let status = record?.status || null;
 
     if (!status && absoluteTurn === 0) {
@@ -4096,7 +4148,6 @@ function createAgentRunService({
       }
     }
 
-    const mode = normalizeObservationMode(metadata.observation_mode || summary.mode);
     const board = mode === "text" && primary && !status?.level
       ? reconstructAsciiObservation(runId, absoluteTurn, summary)
       : String(status?.level || "");
@@ -4135,6 +4186,42 @@ function createAgentRunService({
       gem_count: Math.max(0, Number(status?.gem_count) || 0),
       player,
       yaw: Number(status?.yaw) || 0
+    };
+  }
+
+  function getRunObservation(runId, { instanceId = "primary", turn = 0 } = {}) {
+    const context = runObservationContext(runId, instanceId);
+    return context ? runObservationAt(context, turn) : null;
+  }
+
+  function getRunObservations(runId, { instanceId = "primary", fromTurn = 0, limit = 1 } = {}) {
+    const context = runObservationContext(runId, instanceId);
+    if (!context) return null;
+    const batchSize = Math.max(1, Math.min(240, Math.floor(Number(limit) || 1)));
+    const firstTurn = Math.max(0, Math.min(context.total, Math.floor(Number(fromTurn) || 0)));
+    const lastTurn = Math.min(context.total, firstTurn + batchSize - 1);
+    const firstAbsoluteTurn = context.forkActionCount + firstTurn;
+    const lastAbsoluteTurn = context.forkActionCount + lastTurn;
+    const firstRecordTurn = Math.max(1, firstAbsoluteTurn);
+    const recordCount = Math.max(0, lastAbsoluteTurn - firstRecordTurn + 1);
+    const records = readJsonLineRange(
+      context.actionsPath,
+      context.actionIndex,
+      firstRecordTurn - 1,
+      recordCount
+    );
+    const observations = [];
+    for (let turn = firstTurn; turn <= lastTurn; turn += 1) {
+      const absoluteTurn = context.forkActionCount + turn;
+      const record = absoluteTurn > 0 ? records[absoluteTurn - firstRecordTurn] || null : undefined;
+      observations.push(runObservationAt(context, turn, record));
+    }
+
+    return {
+      instance_id: context.requestedInstance,
+      from_turn: firstTurn,
+      total: context.total,
+      observations
     };
   }
 
@@ -6446,6 +6533,7 @@ function createAgentRunService({
     getRunNotes,
     getRunReview,
     getRunObservation,
+    getRunObservations,
     getRunProgress,
     getToolExecution,
     getToolWorkspaceFile,

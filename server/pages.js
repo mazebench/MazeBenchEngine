@@ -1494,7 +1494,7 @@ function createPageRenderer({
         </section>
         ${replayExportSection}
         <script>window.__AGENT_RUN__ = ${serializeForScript(clientRun)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260721-replay-30fps-1" defer></script>`
+        <script src="/agent-run.js?v=20260722-smooth-replay-1" defer></script>`
     });
   }
 

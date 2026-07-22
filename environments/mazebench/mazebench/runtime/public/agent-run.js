@@ -222,6 +222,9 @@
   const FEED_RENDER_BATCH = 200;
   const BOARD_STATE_NOVELTY_WINDOW = 100;
   const DEFAULT_REPLAY_FPS = 30;
+  const REPLAY_BUFFER_FRAMES = 240;
+  const REPLAY_BUFFER_REFILL_AT = 120;
+  const REPLAY_BUFFER_LIMIT = 600;
   const BOARD_STATE_CUSTOM_WINDOW_DEFAULT = 100;
   const BOARD_STATE_CUSTOM_WINDOW_MAX = 10000;
   const state = {
@@ -241,13 +244,17 @@
     replayCursors: new Map(),
     replayObservations: new Map(),
     replayRequests: new Map(),
+    replayBuffers: new Map(),
+    replayBufferRequests: new Map(),
     replayRates: new Map(),
     activeReplay: "primary",
     playingView: "",
     playbackTimer: null,
     playbackGeneration: 0,
-    playbackDeadline: 0,
+    playbackNextFrameAt: 0,
     playbackPending: false,
+    progressController: null,
+    currentJumpControl: null,
     branchPending: false,
     keyboardStepAt: 0,
     suppressCardToggleView: "",
@@ -563,19 +570,29 @@
       return true;
     }
     const rows = boardText.replaceAll("\r", "").split("\n");
-    const width = Math.max(1, ...rows.map((row) => Array.from(row).length));
+    const width = Math.max(1, ...rows.map((row) => row.length));
     const height = Math.max(1, rows.length);
     const context = liveBitmap.getContext("2d");
     if (!context) return false;
 
-    liveBitmap.width = width;
-    liveBitmap.height = height;
-    const image = context.createImageData(width, height);
-    const palette = initial.ascii_palette || {};
+    if (liveBitmap.width !== width) liveBitmap.width = width;
+    if (liveBitmap.height !== height) liveBitmap.height = height;
+    if (!drawAsciiBitmap.image || drawAsciiBitmap.image.width !== width || drawAsciiBitmap.image.height !== height) {
+      drawAsciiBitmap.image = context.createImageData(width, height);
+    }
+    if (!drawAsciiBitmap.palette) {
+      drawAsciiBitmap.palette = Object.fromEntries(
+        Object.entries(initial.ascii_palette || {}).map(([glyph, color]) => [glyph, bitmapRgb(color)])
+      );
+      drawAsciiBitmap.fallback = bitmapRgb("#050608");
+    }
+    const image = drawAsciiBitmap.image;
+    const palette = drawAsciiBitmap.palette;
+    const fallback = drawAsciiBitmap.fallback;
     for (let y = 0; y < height; y += 1) {
-      const glyphs = Array.from(rows[y] || "");
+      const glyphs = rows[y] || "";
       for (let x = 0; x < width; x += 1) {
-        const [red, green, blue] = bitmapRgb(palette[glyphs[x] ?? " "] || "#050608");
+        const [red, green, blue] = palette[glyphs[x] ?? " "] || fallback;
         const offset = (y * width + x) * 4;
         image.data[offset] = red;
         image.data[offset + 1] = green;
@@ -599,10 +616,11 @@
 
   function showAsciiBoard(board, turn = null) {
     if (!board) return;
+    const wasHidden = boardWrap.hidden;
     boardEl.textContent = board;
     boardWrap.hidden = false;
     drawAsciiBitmap(board, turn);
-    requestAnimationFrame(fitAsciiBoard);
+    if (wasHidden) requestAnimationFrame(fitAsciiBoard);
   }
 
   function showJsonObservation(observation, turn = null) {
@@ -707,7 +725,7 @@
     controls.classList.toggle("is-active", state.activeReplay === viewId);
     Object.entries(disabled).forEach(([action, value]) => {
       const control = controls.querySelector(`[data-replay-action="${action}"]`);
-      if (control) control.disabled = value;
+      if (control && control.disabled !== value) control.disabled = value;
     });
 
     const play = controls.querySelector('[data-replay-action="play"]');
@@ -717,26 +735,30 @@
         : `Play at ${rate} action${rate === 1 ? "" : "s"} per second`;
       const playIcon = play.querySelector('[data-replay-icon="play"]');
       const pauseIcon = play.querySelector('[data-replay-icon="pause"]');
-      if (playIcon) playIcon.hidden = playing;
-      if (pauseIcon) pauseIcon.hidden = !playing;
-      play.setAttribute("aria-label", label);
-      play.setAttribute("aria-pressed", String(playing));
-      play.title = label;
+      if (playIcon && playIcon.hidden !== playing) playIcon.hidden = playing;
+      if (pauseIcon && pauseIcon.hidden !== !playing) pauseIcon.hidden = !playing;
+      if (play.getAttribute("aria-label") !== label) play.setAttribute("aria-label", label);
+      if (play.getAttribute("aria-pressed") !== String(playing)) {
+        play.setAttribute("aria-pressed", String(playing));
+      }
+      if (play.title !== label) play.title = label;
     }
 
     const rateInput = controls.querySelector("[data-replay-rate]");
     if (rateInput && document.activeElement !== rateInput) rateInput.value = String(rate);
     const positionInput = controls.querySelector("[data-replay-turn]");
     if (positionInput) {
-      positionInput.max = String(total);
-      if (document.activeElement !== positionInput) positionInput.value = String(turn);
+      if (positionInput.max !== String(total)) positionInput.max = String(total);
+      if (document.activeElement !== positionInput && positionInput.value !== String(turn)) {
+        positionInput.value = String(turn);
+      }
       const suffix = positionInput.nextElementSibling;
-      if (suffix) suffix.textContent = `/ ${total}`;
+      if (suffix && suffix.textContent !== `/ ${total}`) suffix.textContent = `/ ${total}`;
     }
     if (existingBranch) {
       const label = `Branch from action ${turn}`;
-      existingBranch.setAttribute("aria-label", label);
-      existingBranch.title = label;
+      if (existingBranch.getAttribute("aria-label") !== label) existingBranch.setAttribute("aria-label", label);
+      if (existingBranch.title !== label) existingBranch.title = label;
     }
     return true;
   }
@@ -751,14 +773,95 @@
   }
 
   function stopPlayback() {
-    if (state.playbackTimer) clearTimeout(state.playbackTimer);
+    if (state.playbackTimer) cancelAnimationFrame(state.playbackTimer);
     state.playbackTimer = null;
     state.playbackGeneration += 1;
-    state.playbackDeadline = 0;
+    state.playbackNextFrameAt = 0;
     state.playbackPending = false;
     const previous = state.playingView;
     state.playingView = "";
-    if (previous) refreshReplayControls(previous);
+    if (previous) {
+      refreshReplayControls(previous);
+      scheduleProgressPoll(0);
+    }
+  }
+
+  function replayBufferFor(viewId) {
+    if (!state.replayBuffers.has(viewId)) state.replayBuffers.set(viewId, new Map());
+    return state.replayBuffers.get(viewId);
+  }
+
+  function cacheReplayObservation(viewId, observation) {
+    const turn = Math.max(0, Number(observation?.turn) || 0);
+    replayBufferFor(viewId).set(turn, observation);
+  }
+
+  function trimReplayBuffer(viewId, anchorTurn) {
+    const buffer = replayBufferFor(viewId);
+    if (buffer.size <= REPLAY_BUFFER_LIMIT) return;
+    [...buffer.keys()]
+      .sort((left, right) => Math.abs(right - anchorTurn) - Math.abs(left - anchorTurn))
+      .slice(0, buffer.size - REPLAY_BUFFER_LIMIT)
+      .forEach((cachedTurn) => buffer.delete(cachedTurn));
+  }
+
+  async function ensureReplayBuffered(viewId, requestedTurn) {
+    const total = replayTotal(viewId);
+    const turn = Math.max(0, Math.min(total, Math.floor(Number(requestedTurn) || 0)));
+    const buffer = replayBufferFor(viewId);
+    if (buffer.has(turn)) return buffer.get(turn);
+
+    const existing = state.replayBufferRequests.get(viewId);
+    if (existing) {
+      await existing;
+      return buffer.get(turn) || null;
+    }
+
+    const params = new URLSearchParams({
+      instance: viewId,
+      from_turn: String(turn),
+      limit: String(REPLAY_BUFFER_FRAMES)
+    });
+    const request = (async () => {
+      try {
+        const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/observations?${params}`);
+        if (!response.ok) return;
+        const payload = await response.json();
+        (payload.observations || []).forEach((observation) => cacheReplayObservation(viewId, observation));
+        trimReplayBuffer(viewId, turn);
+      } catch (_error) {
+        // A later animation tick can retry without disturbing the current frame.
+      }
+    })();
+    state.replayBufferRequests.set(viewId, request);
+    try {
+      await request;
+    } finally {
+      if (state.replayBufferRequests.get(viewId) === request) {
+        state.replayBufferRequests.delete(viewId);
+      }
+    }
+    return buffer.get(turn) || null;
+  }
+
+  function prefetchReplayBuffer(viewId, currentTurn) {
+    const total = replayTotal(viewId);
+    const buffer = replayBufferFor(viewId);
+    let nextTurn = currentTurn + 1;
+    while (nextTurn <= total && buffer.has(nextTurn)) nextTurn += 1;
+    if (nextTurn <= total && nextTurn - currentTurn <= REPLAY_BUFFER_REFILL_AT) {
+      void ensureReplayBuffered(viewId, nextTurn);
+    }
+  }
+
+  function applyReplayObservation(viewId, turn, observation) {
+    state.replayCursors.set(viewId, turn);
+    state.replayObservations.set(viewId, observation);
+    if (viewId === "primary") {
+      applyMainObservation(observation);
+      updateReplayJumpSelection(turn);
+    }
+    refreshReplayControls(viewId);
   }
 
   async function setReplayTurn(viewId, requestedTurn, { playbackGeneration = null } = {}) {
@@ -770,19 +873,18 @@
     const requestId = (state.replayRequests.get(viewId) || 0) + 1;
     state.replayRequests.set(viewId, requestId);
     try {
-      const params = new URLSearchParams({ instance: viewId, turn: String(turn) });
-      const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/observation?${params}`);
-      if (!response.ok) return null;
-      const observation = await response.json();
+      let observation = replayBufferFor(viewId).get(turn) || null;
+      if (!observation) {
+        const params = new URLSearchParams({ instance: viewId, turn: String(turn) });
+        const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/observation?${params}`);
+        if (!response.ok) return null;
+        observation = await response.json();
+        cacheReplayObservation(viewId, observation);
+        trimReplayBuffer(viewId, turn);
+      }
       if (state.replayRequests.get(viewId) !== requestId) return null;
       if (playbackRequest && !isCurrentPlayback(viewId, playbackGeneration)) return null;
-      state.replayCursors.set(viewId, turn);
-      state.replayObservations.set(viewId, observation);
-      if (viewId === "primary") {
-        applyMainObservation(observation);
-        updateReplayJumpSelection(turn);
-      }
-      refreshReplayControls(viewId);
+      applyReplayObservation(viewId, turn, observation);
       return observation;
     } catch (_error) {
       return null;
@@ -797,12 +899,18 @@
   }
 
   function updateReplayJumpSelection(turn) {
-    document.querySelectorAll("[data-jump-turn]").forEach((control) => {
-      const selected = Number(control.dataset.jumpTurn) === Number(turn);
-      control.classList.toggle("is-current-frame", selected);
-      if (selected) control.setAttribute("aria-current", "true");
-      else control.removeAttribute("aria-current");
-    });
+    const previous = state.currentJumpControl;
+    if (previous && (!previous.isConnected || Number(previous.dataset.jumpTurn) !== Number(turn))) {
+      previous.classList.remove("is-current-frame");
+      previous.removeAttribute("aria-current");
+      state.currentJumpControl = null;
+    }
+    if (state.currentJumpControl?.isConnected) return;
+    const current = feedEl?.querySelector(`[data-jump-turn="${Math.max(0, Number(turn) || 0)}"]`);
+    if (!current) return;
+    current.classList.add("is-current-frame");
+    current.setAttribute("aria-current", "true");
+    state.currentJumpControl = current;
   }
 
   function jumpToPrimaryFrame(requestedTurn, { scroll = true } = {}) {
@@ -826,18 +934,22 @@
 
   function schedulePlaybackTick(viewId, generation, { fromNow = false } = {}) {
     if (!isCurrentPlayback(viewId, generation)) return;
-    const now = performance.now();
-    if (fromNow || !state.playbackDeadline) state.playbackDeadline = now;
-    state.playbackDeadline += replayDelay(viewId);
-    if (state.playbackTimer) clearTimeout(state.playbackTimer);
-    state.playbackTimer = setTimeout(() => {
+    if (fromNow || !state.playbackNextFrameAt) {
+      state.playbackNextFrameAt = performance.now() + replayDelay(viewId);
+    }
+    if (state.playbackTimer) cancelAnimationFrame(state.playbackTimer);
+    state.playbackTimer = requestAnimationFrame((timestamp) => {
       state.playbackTimer = null;
-      void playbackTick(viewId, generation);
-    }, Math.max(0, state.playbackDeadline - performance.now()));
+      playbackTick(viewId, generation, timestamp);
+    });
   }
 
-  async function playbackTick(viewId, generation) {
+  function playbackTick(viewId, generation, timestamp) {
     if (!isCurrentPlayback(viewId, generation)) return;
+    if (timestamp + 1 < state.playbackNextFrameAt) {
+      schedulePlaybackTick(viewId, generation);
+      return;
+    }
     const total = replayTotal(viewId);
     const current = replayTurn(viewId);
     if (current >= total) {
@@ -845,10 +957,33 @@
       return;
     }
 
-    state.playbackPending = true;
-    await setReplayTurn(viewId, current + 1, { playbackGeneration: generation });
-    if (!isCurrentPlayback(viewId, generation)) return;
-    state.playbackPending = false;
+    const nextTurn = current + 1;
+    const observation = replayBufferFor(viewId).get(nextTurn);
+    if (!observation) {
+      state.playbackPending = true;
+      void ensureReplayBuffered(viewId, nextTurn).then((buffered) => {
+        if (!isCurrentPlayback(viewId, generation)) return;
+        state.playbackPending = false;
+        state.playbackNextFrameAt = 0;
+        if (!buffered) {
+          schedulePlaybackTick(viewId, generation);
+          return;
+        }
+        schedulePlaybackTick(viewId, generation, { fromNow: true });
+      });
+      return;
+    }
+
+    applyReplayObservation(viewId, nextTurn, observation);
+    const delay = replayDelay(viewId);
+    state.playbackNextFrameAt = timestamp - state.playbackNextFrameAt > delay
+      ? timestamp + delay
+      : state.playbackNextFrameAt + delay;
+    prefetchReplayBuffer(viewId, nextTurn);
+    if (nextTurn >= total) {
+      stopPlayback();
+      return;
+    }
     schedulePlaybackTick(viewId, generation);
   }
 
@@ -858,18 +993,24 @@
       return;
     }
     stopPlayback();
+    clearTimeout(state.timer);
+    state.timer = null;
+    state.progressController?.abort();
+    state.progressController = null;
     state.activeReplay = viewId;
     state.playingView = viewId;
     const generation = state.playbackGeneration;
     state.playbackPending = true;
     refreshReplayControls(viewId);
     if (replayTurn(viewId) >= replayTotal(viewId)) {
-      await setReplayTurn(viewId, 0, { playbackGeneration: generation });
+      const first = await ensureReplayBuffered(viewId, 0);
+      if (first && isCurrentPlayback(viewId, generation)) applyReplayObservation(viewId, 0, first);
+    } else {
+      await ensureReplayBuffered(viewId, replayTurn(viewId) + 1);
     }
     if (!isCurrentPlayback(viewId, generation)) return;
     state.playbackPending = false;
-    state.playbackDeadline = performance.now();
-    schedulePlaybackTick(viewId, generation);
+    schedulePlaybackTick(viewId, generation, { fromNow: true });
   }
 
   async function branchFromTurn(turn) {
@@ -962,7 +1103,7 @@
         state.replayRates.set(viewId, rate);
         if (commit) control.value = String(rate);
         if (state.playingView === viewId) {
-          state.playbackDeadline = 0;
+          state.playbackNextFrameAt = 0;
           if (!state.playbackPending) {
             schedulePlaybackTick(viewId, state.playbackGeneration, { fromNow: true });
           }
@@ -3577,11 +3718,21 @@
 
   // ---- poll loop ------------------------------------------------------------
 
+  function scheduleProgressPoll(delay) {
+    clearTimeout(state.timer);
+    state.timer = null;
+    if (!state.playingView) state.timer = setTimeout(poll, delay);
+  }
+
   async function poll() {
+    if (state.playingView) return;
+    const controller = new AbortController();
+    state.progressController?.abort();
+    state.progressController = controller;
     try {
       const response = await fetch(
         `/api/agent/runs/${encodeURIComponent(runId)}/progress?after_turn=${state.afterTurn}&log_offset=${state.logOffset}`,
-        { headers: { accept: "application/json" } }
+        { headers: { accept: "application/json" }, signal: controller.signal }
       );
       if (!response.ok) throw new Error(`progress failed (${response.status})`);
       const progress = await response.json();
@@ -3675,18 +3826,18 @@
         } else {
           setStatus("Live — the agent is playing.");
         }
-        state.timer = setTimeout(poll, 1500);
+        scheduleProgressPoll(1500);
       } else if (waitingForVideo) {
         setStatus(progress.run.status === "paused"
           ? "Paused — rendering a replay snapshot…"
           : "Rendering the replay video…");
-        state.timer = setTimeout(poll, 2000);
+        scheduleProgressPoll(2000);
       } else if (waitingForPrimeSync) {
         setStatus("Run ended — syncing the evaluation to your Prime dashboard…");
-        state.timer = setTimeout(poll, 2000);
+        scheduleProgressPoll(2000);
       } else if (progress.run.status === "waiting") {
         setStatus("Waiting for the active Claude Code run to finish.");
-        state.timer = setTimeout(poll, 3000);
+        scheduleProgressPoll(3000);
       } else if (progress.run.status === "paused") {
         const retryMs = Date.parse(progress.run.retry_at || "") - Date.now();
         setStatus(
@@ -3702,7 +3853,7 @@
           ["quota", "provider_backoff"].includes(progress.run.pause_reason)
         );
         // Keep polling slowly so the page reflects a resume from elsewhere.
-        state.timer = setTimeout(poll, 4000);
+        scheduleProgressPoll(4000);
       } else {
         const rolloutError = String(progress.run.rollout_error || "").trim();
         setStatus(
@@ -3719,8 +3870,11 @@
         );
       }
     } catch (error) {
+      if (controller.signal.aborted) return;
       setStatus(error.message, true);
-      state.timer = setTimeout(poll, 4000);
+      scheduleProgressPoll(4000);
+    } finally {
+      if (state.progressController === controller) state.progressController = null;
     }
   }
 
@@ -3748,8 +3902,7 @@
       primeSyncButton.textContent = "Syncing to Prime…";
       await runAction("prime-sync");
       setStatus("Syncing the evaluation to your Prime dashboard…");
-      clearTimeout(state.timer);
-      state.timer = setTimeout(poll, 500);
+      scheduleProgressPoll(500);
     } catch (error) {
       primeSyncButton.disabled = false;
       setStatus(error.message, true);

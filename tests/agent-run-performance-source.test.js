@@ -23,6 +23,13 @@ assert.doesNotMatch(runScript, /frame\?turn=/);
 assert.doesNotMatch(runScript, /mayRenderLiveFrame/);
 assert.match(runScript, /function drawAsciiBitmap\(board, turn = null\)/);
 assert.match(runScript, /context\.createImageData\(width, height\)/);
+assert.match(runScript, /if \(liveBitmap\.width !== width\) liveBitmap\.width = width/);
+assert.match(runScript, /if \(!drawAsciiBitmap\.palette\)/);
+assert.match(runScript, /if \(wasHidden\) requestAnimationFrame\(fitAsciiBoard\)/);
+assert.doesNotMatch(runScript, /document\.querySelectorAll\("\[data-jump-turn\]"\)/);
+assert.match(runScript, /state\.currentJumpControl/);
+assert.match(runService, /function getRunObservations\(runId/);
+assert.match(router, /segments\[4\] === "observations"/);
 assert.doesNotMatch(runScript, /function maybeRenderLocalFrame/);
 assert.doesNotMatch(runService, /LIVE_RENDERER_IDLE_MS/);
 assert.doesNotMatch(runService, /function renderLiveFrame\(/);
@@ -107,6 +114,9 @@ fs.writeFileSync(path.join(runDir, "frames", "frame-451.png"), "legacy exact fra
 fs.writeFileSync(path.join(runDir, "frames", "live-451.png"), "legacy live frame");
 const textObservation = service.getRunObservation(runId, { turn: 451 });
 assert.equal(textObservation.frame_url, null, "ASCII history must not expose cached 3D frames");
+const observationBatch = service.getRunObservations(runId, { fromTurn: 448, limit: 10 });
+assert.deepEqual(observationBatch.observations.map((observation) => observation.turn), [448, 449, 450, 451]);
+assert.ok(observationBatch.observations.every((observation) => observation.board.length === 4096));
 assert.equal(
   service.resolveRunFilePath(runId, "frames/live-451.png"),
   null,

@@ -401,6 +401,20 @@ function createRequestRouter({
         return;
       }
 
+      if (segments[4] === "observations" && request.method === "GET") {
+        const observations = agentRuns.getRunObservations(runId, {
+          instanceId: url.searchParams.get("instance") || "primary",
+          fromTurn: Math.max(0, Number(url.searchParams.get("from_turn")) || 0),
+          limit: Math.max(1, Number(url.searchParams.get("limit")) || 1)
+        });
+        if (!observations) {
+          sendHtml(response, 404, renderNotFound());
+          return;
+        }
+        sendJson(response, 200, observations);
+        return;
+      }
+
       if (segments[4] === "observation" && request.method === "GET") {
         const observation = await agentRuns.getRunObservation(runId, {
           instanceId: url.searchParams.get("instance") || "primary",
