@@ -7,6 +7,7 @@ const { spawn, spawnSync } = require("child_process");
 const rootDir = path.resolve(__dirname, "..");
 const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "mazebench-mcp-test-"));
 const leadWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "mazebench-mcp-workspace-"));
+const codexAvailable = spawnSync("codex", ["--version"], { encoding: "utf8" }).status === 0;
 let httpChild = null;
 
 try {
@@ -81,14 +82,20 @@ try {
   assert(fs.existsSync(path.join(runDir, "initial-status.json")));
   assert.equal(fs.existsSync(path.join(runDir, "current-render-state.json")), false);
   assert.equal(responses.find((response) => response.id === 6)?.result?.isError, true, "the MCP boundary enforces the lead budget");
-  assert.equal(responses.find((response) => response.id === 7)?.result?.structuredContent?.stdout, "up\n");
-  assert.equal(
-    responses.find((response) => response.id === 7)?.result?.structuredContent?.cpu_time_ms,
-    undefined,
-    "trusted CPU telemetry must not be exposed to the evaluated agent"
-  );
-  assert.equal(fs.readFileSync(path.join(leadWorkspace, "notes.txt"), "utf8"), "mapped");
-  assert.match(fs.readFileSync(path.join(leadWorkspace, "planner.py"), "utf8"), /def next_move/);
+  const pythonResponse = responses.find((response) => response.id === 7)?.result;
+  if (codexAvailable) {
+    assert.equal(pythonResponse?.structuredContent?.stdout, "up\n");
+    assert.equal(
+      pythonResponse?.structuredContent?.cpu_time_ms,
+      undefined,
+      "trusted CPU telemetry must not be exposed to the evaluated agent"
+    );
+    assert.equal(fs.readFileSync(path.join(leadWorkspace, "notes.txt"), "utf8"), "mapped");
+    assert.match(fs.readFileSync(path.join(leadWorkspace, "planner.py"), "utf8"), /def next_move/);
+  } else {
+    assert.equal(pythonResponse?.isError, true, "python_exec fails closed without the Codex sandbox CLI");
+    assert.match(pythonResponse?.content?.[0]?.text || "", /Codex executable was not found on PATH/);
+  }
 
   const sequenceDir = path.join(runDir, "sequence");
   fs.mkdirSync(sequenceDir, { recursive: true });
@@ -383,12 +390,19 @@ try {
   assert(activity.some((entry) => entry.tool === "maze_action" && entry.clone_id === "scout"));
   assert(activity.some((entry) => entry.status === "running"));
   const pythonStarted = activity.find((entry) => entry.tool === "python_exec" && entry.status === "running");
-  const pythonCompleted = activity.find((entry) => entry.tool === "python_exec" && entry.status === "completed");
   assert.match(pythonStarted.python_code, /Path\('notes\.txt'\)/);
   assert.match(pythonStarted.python_code_hash, /^[a-f0-9]{64}$/);
-  assert.equal(pythonCompleted.python_result.stdout, "up\n");
-  assert(Number.isFinite(pythonCompleted.python_result.cpu_time_ms));
-  assert.deepEqual(new Set(pythonCompleted.workspace_changes.created), new Set(["notes.txt", "planner.py"]));
+  const pythonFinished = activity.find((entry) =>
+    entry.tool === "python_exec" && entry.status === (codexAvailable ? "completed" : "failed")
+  );
+  if (codexAvailable) {
+    assert.equal(pythonFinished.python_result.stdout, "up\n");
+    assert(Number.isFinite(pythonFinished.python_result.cpu_time_ms));
+    assert.deepEqual(new Set(pythonFinished.workspace_changes.created), new Set(["notes.txt", "planner.py"]));
+  } else {
+    assert.match(pythonFinished.error, /Codex executable was not found on PATH/);
+    assert.deepEqual(pythonFinished.workspace_changes.created, []);
+  }
   const instanceEvents = fs.readFileSync(path.join(runDir, "maze-instance-events.jsonl"), "utf8")
     .trim()
     .split("\n")
