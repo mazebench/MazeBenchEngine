@@ -1569,13 +1569,36 @@
     return `${scaled.toLocaleString(undefined, { maximumFractionDigits: 1 })}${unit[1]}`;
   }
 
-  function moveAxisLabels(firstAction, lastAction) {
-    const labels = [];
-    const firstHundred = Math.max(100, Math.ceil(firstAction / 100) * 100);
-    for (let action = firstHundred; action <= lastAction; action += 100) {
-      labels.push(action);
+  function nextMoveAxisStep(step) {
+    const magnitude = 10 ** Math.floor(Math.log10(step));
+    const normalized = step / magnitude;
+    if (normalized < 2) return 2 * magnitude;
+    if (normalized < 5) return 5 * magnitude;
+    return 10 * magnitude;
+  }
+
+  function moveAxisLabelLimit(plotWidth) {
+    return Math.max(2, Math.min(10, Math.floor(Math.max(1, Number(plotWidth) || 1) / 72)));
+  }
+
+  function moveAxisLabels(firstAction, lastAction, maxLabels = 10) {
+    const first = Math.max(0, Math.floor(Number(firstAction) || 0));
+    const last = Math.max(first, Math.floor(Number(lastAction) || 0));
+    const limit = Math.max(2, Math.min(10, Math.floor(Number(maxLabels) || 10)));
+    const labelsForStep = (step) => {
+      const labels = [];
+      const firstTick = Math.max(step, Math.ceil(first / step) * step);
+      for (let action = firstTick; action <= last; action += step) labels.push(action);
+      if (!labels.includes(last)) labels.push(last);
+      return labels;
+    };
+
+    let step = 100;
+    let labels = labelsForStep(step);
+    while (labels.length > limit) {
+      step = nextMoveAxisStep(step);
+      labels = labelsForStep(step);
     }
-    if (!labels.includes(lastAction)) labels.push(lastAction);
     return labels;
   }
 
@@ -1658,7 +1681,7 @@
       context.stroke();
     });
 
-    const actionLabels = moveAxisLabels(firstAction, lastAction);
+    const actionLabels = moveAxisLabels(firstAction, lastAction, moveAxisLabelLimit(plotWidth));
     context.fillStyle = "rgba(154, 163, 199, 0.76)";
     context.textBaseline = "alphabetic";
     actionLabels.forEach((action, index) => {
@@ -1872,7 +1895,7 @@
       ? `Click a highlighted change to show its exact frame (${jumpTargets.length} change${jumpTargets.length === 1 ? "" : "s"})`
       : `No ${key} changes yet`;
 
-    const actionLabels = moveAxisLabels(firstAction, lastAction);
+    const actionLabels = moveAxisLabels(firstAction, lastAction, moveAxisLabelLimit(plotWidth));
     context.fillStyle = "rgba(154, 163, 199, 0.76)";
     context.textBaseline = "alphabetic";
     actionLabels.forEach((action, index) => {
@@ -2104,7 +2127,7 @@
     }));
     boardStateCanvas._replayJumpTargets = targets;
 
-    const actionLabels = moveAxisLabels(firstAction, lastAction);
+    const actionLabels = moveAxisLabels(firstAction, lastAction, moveAxisLabelLimit(plotWidth));
     context.fillStyle = "rgba(154, 163, 199, 0.76)";
     context.textBaseline = "alphabetic";
     actionLabels.forEach((action, index) => {

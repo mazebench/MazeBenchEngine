@@ -15,7 +15,7 @@ assert.match(runScript, />FPS<\/span>/);
 assert.match(runScript, /const DEFAULT_REPLAY_FPS = 30/);
 assert.match(runScript, /: DEFAULT_REPLAY_FPS;/);
 assert.doesNotMatch(runScript, /<select data-replay-rate/);
-assert.match(pages, /agent-run\.js\?v=20260722-smooth-replay-1/);
+assert.match(pages, /agent-run\.js\?v=20260722-readable-chart-axis-1/);
 assert.match(runScript, /function updateReplayControlsInPlace\(container, viewId\)/);
 assert.match(runScript, /function fitAsciiBoard\(\)/);
 assert.match(runScript, /function drawAsciiBitmap\(board, turn = null\)/);
