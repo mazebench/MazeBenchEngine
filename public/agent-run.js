@@ -188,6 +188,7 @@
 
   const FEED_RENDER_BATCH = 200;
   const BOARD_STATE_NOVELTY_WINDOW = 100;
+  const DEFAULT_REPLAY_FPS = 30;
   const BOARD_STATE_CUSTOM_WINDOW_DEFAULT = 100;
   const BOARD_STATE_CUSTOM_WINDOW_MAX = 10000;
   const state = {
@@ -590,7 +591,7 @@
 
   function replayRate(viewId) {
     const rate = Number(state.replayRates.get(viewId));
-    return Number.isFinite(rate) ? Math.max(1, Math.min(60, rate)) : 10;
+    return Number.isFinite(rate) ? Math.max(1, Math.min(60, rate)) : DEFAULT_REPLAY_FPS;
   }
 
   function replayDelay(viewId) {
