@@ -1,9 +1,14 @@
 const assert = require("assert");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const {
+  findKimiWireFile,
   parseClaudeEvents,
   parseCodexEvents,
   parseCodexSession,
   parseCodexSwarmSessions,
+  parseKimiWire,
   parsePrimeLiveUsage,
   parsePrimeResults,
   withApiCostEstimate
@@ -46,6 +51,16 @@ const lines = (...events) => events.map((event) => JSON.stringify(event)).join("
     apiPricingForRun({ provider: "claude", model_name: "claude-haiku-4-5" }, catalog),
     { model: "anthropic/claude-haiku-4.5", input: 1, output: 5 }
   );
+  assert.deepEqual(
+    apiPricingForRun(
+      { provider: "kimi", model_name: "kimi/k3" },
+      [
+        { id: "other/kimi-k3", pricing: { input: 99, output: 99 } },
+        { id: "moonshotai/kimi-k3", pricing: { input: 3, output: 15 } }
+      ]
+    ),
+    { model: "moonshotai/kimi-k3", input: 3, output: 15 }
+  );
 
   const usage = withApiCostEstimate(
     { available: true, input_tokens: 1_000_000, output_tokens: 500_000, api_cost_estimate_usd: null },
@@ -65,6 +80,61 @@ const lines = (...events) => events.map((event) => JSON.stringify(event)).join("
     2.75,
     "provider-reported cost remains authoritative"
   );
+}
+
+{
+  const loop = (event) => ({ type: "context.append_loop_event", event });
+  const kimiWire = lines(
+    { type: "llm.request", maxTokens: 1000 },
+    { type: "usage.record", usageScope: "turn", usage: { inputOther: 10, inputCacheRead: 20, inputCacheCreation: 0, output: 5 } },
+    { type: "llm.request", maxTokens: 965 },
+    loop({ type: "tool.call", toolCallId: "move-1", name: "mcp__mazebench__maze_action", args: { action: "right" } }),
+    loop({ type: "tool.result", toolCallId: "move-1", result: { output: "{}" } }),
+    { type: "usage.record", usageScope: "turn", usage: { inputOther: 5, inputCacheRead: 30, inputCacheCreation: 0, output: 5 } },
+    { type: "llm.request", maxTokens: 925 },
+    loop({ type: "tool.call", toolCallId: "batch-1", name: "mcp__mazebench__maze_action_sequence", args: { actions: ["up", "right", "down"] } }),
+    loop({ type: "tool.result", toolCallId: "batch-1", result: { output: JSON.stringify({ completed_count: 2 }) } }),
+    { type: "usage.record", usageScope: "turn", usage: { inputOther: 4, inputCacheRead: 40, inputCacheCreation: 0, output: 6 } }
+  );
+  const usage = parseKimiWire(kimiWire);
+  assert.equal(usage.available, true);
+  assert.equal(usage.exact, true);
+  assert.equal(usage.input_tokens, 109);
+  assert.equal(usage.cached_input_tokens, 90);
+  assert.equal(usage.output_tokens, 16);
+  assert.equal(usage.total_tokens, 125);
+  assert.equal(usage.current_context_tokens, 50);
+  assert.equal(usage.context_window, 1000);
+  assert.equal(usage.uncached_input_tokens, 19);
+  assert.equal(usage.cache_read_input_tokens, 90);
+  assert.equal(usage.actions.length, 3, "completed sequence moves receive individual chart points");
+  assert.deepEqual(usage.actions.map((point) => point.total_tokens), [75, 25, 25]);
+  assert.equal(usage.actions.reduce((sum, point) => sum + point.total_tokens, 0), usage.total_tokens);
+  assert.equal(usage.average_tokens_per_action, 42);
+  assert.match(usage.note, /isolated session usage/);
+  assert.equal(
+    withApiCostEstimate(usage, { model: "moonshotai/kimi-k3", input: 3, output: 15 }).api_cost_estimate_usd,
+    0.000567
+  );
+
+  const inFlight = parseKimiWire(`${kimiWire}\n${JSON.stringify({ type: "llm.request", maxTokens: 900 })}`);
+  assert.equal(inFlight.current_context_tokens, 100, "the latest request exposes live context use while Kimi is thinking");
+  assert.equal(parseKimiWire("").available, false);
+
+  const kimiHome = fs.mkdtempSync(path.join(os.tmpdir(), "mazebench-kimi-usage-"));
+  try {
+    const oldWire = path.join(kimiHome, "sessions", "old", "agents", "main", "wire.jsonl");
+    const newWire = path.join(kimiHome, "sessions", "new", "agents", "main", "wire.jsonl");
+    fs.mkdirSync(path.dirname(oldWire), { recursive: true });
+    fs.mkdirSync(path.dirname(newWire), { recursive: true });
+    fs.writeFileSync(oldWire, "{}\n");
+    fs.writeFileSync(newWire, "{}\n");
+    fs.utimesSync(oldWire, new Date(1000), new Date(1000));
+    fs.utimesSync(newWire, new Date(2000), new Date(2000));
+    assert.equal(findKimiWireFile(kimiHome), newWire, "the active Kimi session wins over stale session files");
+  } finally {
+    fs.rmSync(kimiHome, { recursive: true, force: true });
+  }
 }
 
 assert.deepEqual(

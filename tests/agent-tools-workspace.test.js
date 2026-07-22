@@ -153,6 +153,34 @@ try {
   assert.equal(service.getToolWorkspaceFile(runId, "primary", "../outside-secret.txt"), null);
   assert.equal(service.getToolWorkspaceFile(runId, "primary", "outside-link"), null);
 
+  const kimiId = "2026-07-22T00-00-00-000-kimi001";
+  const kimi = prepareRun(kimiId, "kimi");
+  const kimiMeta = loadJson(path.join(kimi.runDir, "run.json"), {});
+  fs.writeFileSync(
+    path.join(kimi.runDir, "run.json"),
+    `${JSON.stringify({ ...kimiMeta, model_name: "kimi/k3" }, null, 2)}\n`
+  );
+  const kimiWire = path.join(kimi.workspaceRoot, "kimi-home", "sessions", "wd", "session", "agents", "main", "wire.jsonl");
+  fs.mkdirSync(path.dirname(kimiWire), { recursive: true });
+  fs.writeFileSync(kimiWire, [
+    { type: "llm.request", maxTokens: 1000 },
+    { type: "context.append_loop_event", event: { type: "tool.call", toolCallId: "move-1", name: "mcp__mazebench__maze_action", args: { action: "right" } } },
+    { type: "context.append_loop_event", event: { type: "tool.result", toolCallId: "move-1", result: { output: "{}" } } },
+    { type: "usage.record", usageScope: "turn", usage: { inputOther: 10, inputCacheRead: 20, inputCacheCreation: 0, output: 5 } }
+  ].map(JSON.stringify).join("\n") + "\n");
+  const initialKimiUsage = service.getRunProgress(kimiId).token_usage;
+  assert.equal(initialKimiUsage.available, true);
+  assert.equal(initialKimiUsage.total_tokens, 35);
+  assert.equal(initialKimiUsage.context_window, 1000);
+  assert.equal(initialKimiUsage.current_context_tokens, 35);
+  fs.appendFileSync(kimiWire, [
+    { type: "llm.request", maxTokens: 965 },
+    { type: "usage.record", usageScope: "turn", usage: { inputOther: 2, inputCacheRead: 30, inputCacheCreation: 0, output: 3 } }
+  ].map(JSON.stringify).join("\n") + "\n");
+  const refreshedKimiUsage = service.getRunProgress(kimiId).token_usage;
+  assert.equal(refreshedKimiUsage.total_tokens, 70, "live Kimi usage invalidates the run-page cache");
+  assert.equal(refreshedKimiUsage.cached_input_tokens, 50);
+
   const legacyId = "2026-07-22T00-00-00-000-tools02";
   const legacy = prepareRun(legacyId, "codex");
   fs.mkdirSync(legacy.workspace, { recursive: true });

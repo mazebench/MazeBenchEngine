@@ -13,11 +13,13 @@ const {
   findClaudeSessionFile,
   findCodexSessionFile,
   findCodexSessionFiles,
+  findKimiWireFile,
   findPrimeResultsFile,
   parseClaudeEvents,
   parseCodexEvents,
   parseCodexSession,
   parseCodexSwarmSessions,
+  parseKimiWire,
   parsePrimeLiveUsage,
   parsePrimeResults,
   withApiCostEstimate
@@ -487,7 +489,9 @@ function apiPricingForRun(summary, models) {
     ? "openai"
     : summary?.provider === "claude"
       ? "anthropic"
-      : "";
+      : summary?.provider === "kimi"
+        ? "moonshotai"
+        : "";
   const model = (Array.isArray(models) ? models : []).find((candidate) => {
     const id = String(candidate?.id || "");
     const slash = id.indexOf("/");
@@ -3493,6 +3497,7 @@ function createAgentRunService({
     const primeLiveUsagePath = path.join(runDir, "prime-usage.jsonl");
     let codexSessionPath = "";
     let codexSwarmSessionPaths = [];
+    let kimiWirePath = "";
     let primeResultsPath = "";
 
     if (summary.provider === "codex") {
@@ -3513,6 +3518,8 @@ function createAgentRunService({
           codexSwarmSessionPaths = [codexSessionPath];
         }
       }
+    } else if (summary.provider === "kimi") {
+      kimiWirePath = findKimiWireFile(path.join(agentWorkspaceRootFor(runId), "kimi-home"));
     } else if (summary.provider === "prime") {
       primeResultsPath = primeResultsPaths.get(runId) || "";
       if (!primeResultsPath) {
@@ -3525,6 +3532,7 @@ function createAgentRunService({
       fileStamp(eventsPath),
       fileStamp(codexSessionPath),
       codexSwarmSessionPaths.map(fileStamp).join(","),
+      fileStamp(kimiWirePath),
       fileStamp(primeLiveUsagePath),
       fileStamp(primeResultsPath)
     ].join("|");
@@ -3556,7 +3564,7 @@ function createAgentRunService({
     const cached = tokenUsageCache.get(runId);
     if (cached?.signature === signature) return withSwarmAgentStatus(withCatalogApiEstimate(cached.value));
     const active = ["running", "pausing", "stopping"].includes(summary.status);
-    const expensive = [eventsPath, codexSessionPath, ...codexSwarmSessionPaths, primeLiveUsagePath, primeResultsPath]
+    const expensive = [eventsPath, codexSessionPath, ...codexSwarmSessionPaths, kimiWirePath, primeLiveUsagePath, primeResultsPath]
       .some((filePath) => fileSize(filePath) > LARGE_TELEMETRY_BYTES);
     if (active && expensive && cached && Date.now() - cached.checkedAt < LARGE_TELEMETRY_REFRESH_MS) {
       return withSwarmAgentStatus(withCatalogApiEstimate(cached.value));
@@ -3578,13 +3586,15 @@ function createAgentRunService({
       } else if (summary.provider === "claude") {
         value = parseClaudeEvents(fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath, "utf8") : "");
       } else if (summary.provider === "kimi") {
-        value = {
-          provider: "kimi",
-          available: false,
-          exact: false,
-          note: "Kimi Code does not currently include token usage in its stream-json output.",
-          actions: []
-        };
+        value = kimiWirePath
+          ? parseKimiWire(fs.readFileSync(kimiWirePath, "utf8"))
+          : {
+              provider: "kimi",
+              available: false,
+              exact: false,
+              note: "Waiting for Kimi Code usage…",
+              actions: []
+            };
       } else {
         const hasFinalResults = primeResultsPath && fs.statSync(primeResultsPath).size > 0;
         value = hasFinalResults
