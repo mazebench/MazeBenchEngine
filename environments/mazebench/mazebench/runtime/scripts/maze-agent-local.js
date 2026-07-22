@@ -2590,7 +2590,7 @@ async function main() {
       ? "offline"
       : "read-only";
   const requestedSwarm = toolUse === "offline" && isTruthy(raw.swarm, false);
-  const autoRunTools = toolUse === "offline" && isTruthy(raw.auto_run_tools, false);
+  const autoRunTools = toolUse === "offline" && isTruthy(raw.auto_run_tools, true);
   if (model === "kimi" && requestedSwarm) {
     throw new Error("Kimi Code local runs currently support a single isolated agent, not swarm workers.");
   }

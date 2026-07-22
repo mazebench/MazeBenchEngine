@@ -112,6 +112,7 @@ assert.doesNotMatch(toolsOnPrompt, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g
 assert.doesNotMatch(toolsOnPrompt, /TOOLS-OFF mode/);
 assert.doesNotMatch(toolsOnPrompt, /maze_scorecard/);
 assert.doesNotMatch(toolsOnPrompt, /AUTO-RUN TOOLS HARNESS IS ENABLED/);
+assert.match(localAgentSource, /isTruthy\(raw\.auto_run_tools, true\)/);
 
 const autoRunToolsPrompt = buildMcpPrompt({
   ...toolsOnConfig,

@@ -986,7 +986,7 @@ function createPageRenderer({
                 </div>
                 <div id="auto-run-tools-option" class="tool-use-options" hidden>
                   <label class="switch auto-run-tools-toggle"><input id="run-auto-run-tools" type="checkbox"><span class="switch__track" aria-hidden="true"><span class="switch__thumb"></span></span><span class="switch__label">Auto-run tools</span></label>
-                  <p>Lets a saved solver submit its full move sequence; returns the final observation by default.</p>
+                  <p>Lets solvers submit full action sequences, the agent observe the final frame, and can inspect intermediate frames.</p>
                 </div>
               </article>
               <article class="setting-card setting-card--orchestration is-gated" inert aria-hidden="true">

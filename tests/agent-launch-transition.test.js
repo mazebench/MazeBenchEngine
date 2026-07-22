@@ -17,9 +17,10 @@ assert.match(siteTheme, /\.agent-launch-status \{[\s\S]*?position: fixed;[\s\S]*
 assert.match(siteTheme, /\.agent-launch-status__spinner \{[\s\S]*?animation: loading-spin/);
 assert.match(agentScript, /function resetComposerForNextRun\(\)/);
 assert.match(pages, /id="auto-run-tools-option"[\s\S]*id="run-auto-run-tools"[\s\S]*Auto-run tools/);
-assert.match(pages, /saved solver submit its full move sequence/);
+assert.match(pages, /Lets solvers submit full action sequences, the agent observe the final frame, and can inspect intermediate frames\./);
 assert.match(agentScript, /autoRunTools: false/);
 assert.match(agentScript, /autoRunOption\.hidden = state\.toolUse !== "offline"/);
+assert.match(agentScript, /state\.autoRunTools = next === "offline"/);
 assert.match(agentScript, /auto_run_tools: state\.toolUse === "offline" && state\.autoRunTools/);
 assert.match(siteTheme, /\.tool-use-options\[hidden\][\s\S]*display: none/);
 assert.match(agentScript, /state\.harness && state\.harness !== "none" && state\.execution === "prime"/);

@@ -1514,9 +1514,9 @@
     const next = value === "read-only" || value === "offline" ? value : null;
     if (state.toolUse !== next) {
       state.orchestration = next === "read-only" || state.harness === "kimi-code" ? "single" : null;
+      state.autoRunTools = next === "offline";
     }
     state.toolUse = next;
-    if (next !== "offline") state.autoRunTools = false;
     syncToolUsePicker();
     syncOrchestrationPicker();
     syncRunSettingCards();

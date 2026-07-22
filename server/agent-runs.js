@@ -4973,7 +4973,7 @@ function createAgentRunService({
         ? "offline"
         : "read-only";
     const autoRunTools = toolUse === "offline" &&
-      (params.auto_run_tools === true || params.auto_run_tools === "true");
+      !(params.auto_run_tools === false || params.auto_run_tools === "false");
     const swarm = model !== "kimi" && toolUse === "offline" && (params.swarm === true || params.swarm === "true");
     const allowQuit = !(params.allow_quit === false || params.allow_quit === "false");
     const autoQuit = normalizeAutoQuitConfig(params);
