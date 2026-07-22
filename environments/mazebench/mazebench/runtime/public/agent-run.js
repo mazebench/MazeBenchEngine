@@ -319,6 +319,7 @@
       const started = Date.parse(execution.started_at || "");
       return `Running${Number.isFinite(started) ? ` · ${formatDuration(Date.now() - started)}` : ""}`;
     }
+    if (execution.status === "cancelled") return "Cancelled";
     if (execution.status === "failed") return "Failed";
     if (execution.timed_out) return "Timed out";
     return execution.duration_ms ? formatDuration(execution.duration_ms) : "Completed";
@@ -1381,6 +1382,7 @@
       primeSyncButton.title = run.prime_evaluation_sync_error || "Upload this evaluation to the Prime dashboard";
     }
     pauseButton.hidden = !run.pausable;
+    pauseButton.textContent = run.status === "pausing" ? "Cancel now" : "Pause";
     resumeButton.hidden = !run.resumable;
     continueButton.hidden = !run.continuable;
     const renderingVideo = run.video_status === "rendering";
@@ -3656,7 +3658,7 @@
       const waitingForPrimeSync = !running && progress.run.prime_evaluation_sync_status === "syncing";
       if (running) {
         if (progress.run.status === "pausing") {
-          setStatus(`Pausing after move ${progress.run.pause_after_turn || "the next completed action"}…`);
+          setStatus("Pausing now — cancelling active model and tools…");
         } else if (progress.run.status === "stopping") {
           setStatus(progress.run.auto_quit_triggered
             ? "Auto-quitting — state novelty reached the configured threshold."
@@ -3756,11 +3758,17 @@
 
   pauseButton?.addEventListener("click", async () => {
     try {
+      pauseButton.disabled = true;
+      setStatus("Pausing now — cancelling active model and tools…");
       const payload = await runAction("pause");
-      setStatus(`Pausing after move ${payload.run?.pause_after_turn || "the next completed action"}…`);
+      setStatus(payload.run?.status === "paused"
+        ? "Paused. Active model and tool work was cancelled."
+        : "Pausing now — cancelling active model and tools…");
       renderControls(payload.run || {});
     } catch (error) {
       setStatus(error.message, true);
+    } finally {
+      pauseButton.disabled = false;
     }
   });
 

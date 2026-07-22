@@ -217,10 +217,10 @@ function writeJson(filePath, value) {
 }
 
 writeJson(PAUSE_CAPABILITY_FILE, {
-  version: 1,
+  version: 2,
   pid: process.pid,
   started_at: new Date().toISOString(),
-  boundary: "next-completed-primary-action"
+  boundary: "immediate-process-tree-cancellation"
 });
 
 function compactStatus(value) {

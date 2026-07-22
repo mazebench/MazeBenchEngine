@@ -194,9 +194,11 @@ try {
   assert.match(client, /function renderToolsWorkspace\(data\)/);
   assert.match(client, /formatToolDuration\(counts\.duration_ms\)/);
   assert.match(client, /formatToolDuration\(counts\.cpu_time_ms\)/);
+  assert.match(client, /execution\.status === "cancelled"/);
   assert.match(client, /data-tool-execution/);
   assert.match(client, /data-workspace-file/);
   assert.match(theme, /\.run-tools__grid \{/);
+  assert.match(theme, /\.run-tools__execution\.is-cancelled/);
   assert.match(router, /segments\[5\] === "execution"/);
   assert.match(router, /segments\[5\] === "file"/);
 } finally {

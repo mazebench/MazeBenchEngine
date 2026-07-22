@@ -102,6 +102,8 @@ assert.match(runScript, /logEl\.scrollTop = previousLogScrollTop/);
 assert.doesNotMatch(runScript, /logEl\.scrollTop = logEl\.scrollHeight/);
 assert.doesNotMatch(pages, /id="generate-video" class="button run-video-action"/);
 assert.match(runScript, /\["paused", "finished", "stopped", "failed"\]\.includes\(run\.status\)/);
+assert.match(runScript, /Pausing now — cancelling active model and tools/);
+assert.doesNotMatch(runScript, /Pausing after move/);
 assert.match(runScript, /generateLabel\.textContent = renderingVideo \? "Generating…" : "Generate replay"/);
 assert.match(siteTheme, /\.run-video \{[\s\S]*?max-height: min\(62vh, 540px\);[\s\S]*?width: min\(100%, 760px\);/);
 assert.match(siteTheme, /\.run-replay-progress-panel \{[\s\S]*?margin-top: 16px/);

@@ -12,13 +12,14 @@ fs.writeFileSync(
   path.join(scriptsDir, "maze-agent-local.js"),
   `const fs = require("node:fs");
 const path = require("node:path");
+const { spawn } = require("node:child_process");
 const args = Object.fromEntries(process.argv.slice(2).map((part) => {
   const at = part.indexOf("=");
   return at < 0 ? [part, ""] : [part.slice(0, at), part.slice(at + 1)];
 }));
-setInterval(() => {
-  if (args.out && fs.existsSync(path.join(args.out, "pause-request.json"))) process.exit(0);
-}, 10);
+const nested = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+if (args.out) fs.writeFileSync(path.join(args.out, "nested-runner.pid"), String(nested.pid));
+setInterval(() => {}, 1000);
 process.on("SIGTERM", () => process.exit(0));
 `,
   "utf8"
@@ -766,19 +767,61 @@ try {
     path.join(rootDir, "outputs", "maze-local", "site", hostReadOnlySwarm.id, "agent-events.jsonl"),
     `${JSON.stringify({ type: "thread.started", thread_id: "cold-pause-thread" })}\n`
   );
+  const savedAction = {
+    turn: 1,
+    command_text: "up",
+    status: { current_room: "level_HxI", gem_count: 0 }
+  };
+  fs.writeFileSync(
+    path.join(hostRunDir, "session.json"),
+    `${JSON.stringify({ actions: [savedAction], lastStatus: savedAction.status }, null, 2)}\n`
+  );
+  fs.writeFileSync(path.join(hostRunDir, "actions.jsonl"), `${JSON.stringify(savedAction)}\n{"partial"`);
+  fs.appendFileSync(
+    path.join(hostRunDir, "tool-activity.jsonl"),
+    `${JSON.stringify({
+      id: "python-paused",
+      tool: "python_exec",
+      actor: "lead",
+      started_at: new Date(Date.now() - 100).toISOString(),
+      status: "running",
+      python_code: "while True: pass",
+      python_code_hash: "paused-hash"
+    })}\n`
+  );
+  const nestedPid = Number(fs.readFileSync(path.join(hostRunDir, "nested-runner.pid"), "utf8"));
   const pauseRequested = service.pauseRun(hostReadOnlySwarm.id);
-  assert.equal(pauseRequested.status, "pausing");
-  assert.equal(pauseRequested.pause_after_turn, 1);
+  assert.equal(pauseRequested.status, "paused");
+  assert.equal(pauseRequested.pause_mode, "cold");
+  assert.match(pauseRequested.pause_message, /cancelled immediately/);
   const pauseDeadline = Date.now() + 3000;
-  let pausedHostRun = service.summarizeRun(hostReadOnlySwarm.id);
-  while (pausedHostRun.status !== "paused" && Date.now() < pauseDeadline) {
+  let nestedAlive = true;
+  while (nestedAlive && Date.now() < pauseDeadline) {
+    try {
+      process.kill(nestedPid, 0);
+    } catch (_error) {
+      nestedAlive = false;
+      break;
+    }
     await new Promise((resolve) => setTimeout(resolve, 25));
-    pausedHostRun = service.summarizeRun(hostReadOnlySwarm.id);
   }
+  assert.equal(nestedAlive, false, "pause kills nested provider/tool processes");
+  const pausedHostRun = service.summarizeRun(hostReadOnlySwarm.id);
   assert.equal(pausedHostRun.status, "paused");
   assert.equal(pausedHostRun.pause_reason, "manual");
   assert.equal(pausedHostRun.pause_mode, "cold");
   assert.equal(pausedHostRun.pid, null);
+  assert.deepEqual(
+    fs.readFileSync(path.join(hostRunDir, "actions.jsonl"), "utf8").trim().split("\n").map(JSON.parse),
+    [savedAction],
+    "immediate pause repairs a partial action log from the last complete session"
+  );
+  const pausedActivity = fs.readFileSync(path.join(hostRunDir, "tool-activity.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map(JSON.parse)
+    .filter((entry) => entry.id === "python-paused");
+  assert.equal(pausedActivity.at(-1).status, "cancelled");
   fs.writeFileSync(path.join(hostRunDir, "session.json"), "{}\n");
   const renderingVideo = service.generateRunVideo(hostReadOnlySwarm.id);
   assert.equal(renderingVideo.video_status, "rendering");
@@ -820,7 +863,7 @@ try {
   assert.equal("video_pid" in resumedHostMeta, false);
   assert.equal("video_generation_id" in resumedHostMeta, false);
   const stopAlias = service.stopRun(hostReadOnlySwarm.id);
-  assert.equal(stopAlias.status, "pausing", "local Stop aliases the same resumable cold pause");
+  assert.equal(stopAlias.status, "paused", "local Stop aliases the same immediate resumable pause");
   service.deleteRun(hostReadOnlySwarm.id);
 
   const [unlimitedRun] = service.launchRuns({

@@ -914,6 +914,69 @@ function createAgentRunService({
     }
   }
 
+  function reconcileInterruptedActionLogs(runId) {
+    const runDir = runDirFor(runId);
+    const directories = [runDir];
+    const swarmDir = path.join(runDir, "swarm");
+    try {
+      fs.readdirSync(swarmDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .forEach((entry) => directories.push(path.join(swarmDir, entry.name)));
+    } catch (_error) {
+      /* no worker sessions */
+    }
+
+    directories.forEach((directory) => {
+      const session = loadJson(path.join(directory, "session.json"), null);
+      if (!Array.isArray(session?.actions)) return;
+      const target = path.join(directory, "actions.jsonl");
+      const temporary = `${target}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`;
+      const content = session.actions.length
+        ? `${session.actions.map((action) => JSON.stringify(action)).join("\n")}\n`
+        : "";
+      fs.writeFileSync(temporary, content, "utf8");
+      fs.renameSync(temporary, target);
+    });
+    actionCache.delete(runId);
+  }
+
+  function settleInterruptedToolActivity(runId, completedAt) {
+    const activityPath = path.join(runDirFor(runId), "tool-activity.jsonl");
+    const latest = new Map();
+    readJsonLineTail(activityPath, 32 * 1024 * 1024).forEach((entry) => {
+      if (entry?.id) latest.set(String(entry.id), entry);
+    });
+    const completedMs = Date.parse(completedAt);
+    const cancelled = [...latest.values()]
+      .filter((entry) => entry.status === "running")
+      .map((entry) => {
+        const startedMs = Date.parse(entry.started_at || "");
+        return {
+          id: entry.id,
+          tool: entry.tool,
+          actor: entry.actor,
+          clone_id: entry.clone_id,
+          action: entry.action,
+          ...(Array.isArray(entry.actions) ? { actions: entry.actions } : {}),
+          started_at: entry.started_at || null,
+          completed_at: completedAt,
+          duration_ms: Number.isFinite(startedMs) && Number.isFinite(completedMs)
+            ? Math.max(0, completedMs - startedMs)
+            : 0,
+          status: "cancelled",
+          error: "Cancelled because the user paused the run.",
+          move_calls: 0,
+          moves_before: entry.moves_before,
+          moves_after: entry.moves_before,
+          ...(entry.python_code_hash ? { python_code_hash: entry.python_code_hash } : {})
+        };
+      });
+    if (!cancelled.length) return;
+    fs.appendFileSync(activityPath, `${cancelled.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+    toolActivityCache.delete(runId);
+    toolWorkspaceCache.delete(runId);
+  }
+
   function processCommand(pid) {
     if (!pid) return "";
     const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], {
@@ -2428,7 +2491,7 @@ function createAgentRunService({
       // Grouping key for the runs-list provider filter (codex | claude | kimi | prime).
       provider: meta.kind === "prime" ? "prime" : meta.model,
       pausable:
-        meta.status === "running" &&
+        ["running", "pausing"].includes(meta.status) &&
         meta.kind !== "prime" &&
         (meta.container === false || Boolean(runContainerId(runId))),
       resumable:
@@ -5226,8 +5289,8 @@ function createAgentRunService({
         return;
       }
 
-      // A manual pause SIGSTOPs the process without killing it; ignore any exit
-      // that races with that (the resume path drives the status instead).
+      // Immediate pause finalizes metadata before the killed child is reaped;
+      // its exit callback must not overwrite that resumable paused state.
       if (current.status === "paused") {
         maybeSyncPrimeEvaluation(runId, current);
         return;
@@ -5338,53 +5401,58 @@ function createAgentRunService({
       throw new Error(`Unknown run "${runId}".`);
     }
 
-    if (["paused", "pausing"].includes(meta.status)) {
+    if (meta.status === "paused") {
       return summarizeRun(runId);
     }
 
-    if (meta.status !== "running") return summarizeRun(runId);
+    if (!["running", "pausing"].includes(meta.status)) return summarizeRun(runId);
 
     if (meta.kind === "prime") {
       throw new Error("Prime Intellect runs cannot be paused. Cancel the run instead.");
     }
 
-    const coldPauseReady =
-      meta.container === false ||
-      fs.existsSync(path.join(runDirFor(runId), PAUSE_CAPABILITY_FILE));
-    if (!coldPauseReady) {
-      // A container launched from an older image cannot see the boundary marker.
-      // Preserve it with the legacy hot pause rather than pretending a cold
-      // pause is safe; its next relaunch will use the current cold-pause image.
-      dockerRunControl(runId, ["pause"], "pause");
-      snapshotLegacyClaudeConversation(runId, meta, { force: true });
-      const pausedAt = new Date().toISOString();
-      writeRunMeta(runId, {
-        ...meta,
-        status: "paused",
-        pause_reason: "manual",
-        pause_mode: "hot-legacy",
-        paused_at: pausedAt,
-        active_elapsed_ms: activeElapsedMs(meta, Date.parse(pausedAt)),
-        active_started_at: null
-      });
-      return summarizeRun(runId);
-    }
-
     const turns = readActions(runId).length;
-    const requestedAt = new Date().toISOString();
+    const requestedAt = meta.pause_requested_at || new Date().toISOString();
     clearColdPauseMarkers(runId);
     fs.writeFileSync(
       path.join(runDirFor(runId), PAUSE_REQUEST_FILE),
-      `${JSON.stringify({ requested_at: requestedAt, requested_after_turn: turns }, null, 2)}\n`
+      `${JSON.stringify({ requested_at: requestedAt, requested_after_turn: turns, mode: "immediate" }, null, 2)}\n`
     );
-    writeRunMeta(runId, {
+    const pausing = {
       ...meta,
       status: "pausing",
       pause_reason: "manual",
       pause_mode: "cold",
       pause_requested_at: requestedAt,
-      pause_after_turn: turns + 1
+      pause_after_turn: undefined
+    };
+    writeRunMeta(runId, pausing);
+    stopAutoQuitMonitor(runId);
+    snapshotLegacyClaudeConversation(runId, meta, { force: true });
+    stopLegacyClaudeSnapshots(runId);
+
+    if (meta.container) {
+      try {
+        dockerRunControl(runId, ["rm", "-f"], "pause", { required: false });
+      } catch (_error) {
+        /* killing the outer process group below remains the fallback */
+      }
+    }
+
+    stopDetachedRunRenderers(runId, { force: true });
+    signalRunProcess(meta, "SIGKILL");
+    liveChildren.delete(runId);
+
+    const pausedAt = new Date().toISOString();
+    reconcileInterruptedActionLogs(runId);
+    settleInterruptedToolActivity(runId, pausedAt);
+    const paused = coldPausedRunMeta(pausing, {
+      pause_after_turn: undefined,
+      pause_message: "Active model and tool work were cancelled immediately.",
+      paused_at: pausedAt
     });
+    writeRunMeta(runId, paused);
+    if (meta.model === "claude") setImmediate(() => startNextWaitingClaudeRun());
     return summarizeRun(runId);
   }
 
@@ -6260,8 +6328,8 @@ function createAgentRunService({
     }
 
     // Local providers have one resumable lifecycle control. "Stop" is kept as
-    // an API compatibility alias, but it now requests the same action-boundary
-    // cold pause. Prime rollouts remain cancellable because they cannot resume.
+    // an API compatibility alias, but it now requests the same immediate cold
+    // pause. Prime rollouts remain cancellable because they cannot resume.
     if (meta.kind !== "prime" && ["running", "pausing", "paused"].includes(meta.status)) {
       return pauseRun(runId);
     }

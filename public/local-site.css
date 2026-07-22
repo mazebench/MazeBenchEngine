@@ -4299,7 +4299,8 @@ button.run-tools__file:focus-visible {
   background: rgba(101, 243, 212, 0.05);
 }
 
-.run-tools__execution.is-failed {
+.run-tools__execution.is-failed,
+.run-tools__execution.is-cancelled {
   background: rgba(255, 103, 135, 0.045);
 }
 
