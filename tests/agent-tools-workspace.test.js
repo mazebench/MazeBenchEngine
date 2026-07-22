@@ -130,10 +130,12 @@ try {
     duration_ms: 175,
     active: 1,
     unique_commands: 2,
-    files: 2
+    files: 2,
+    total_bytes: 19
   });
   const primary = progress.tools_workspace.workspaces.find((entry) => entry.id === "primary");
   assert.equal(primary.virtual_path, "/workspace");
+  assert.equal(primary.total_bytes, 19);
   assert(primary.entries.some((entry) => entry.path === "plan.py" && entry.type === "file"));
   assert(primary.entries.some((entry) => entry.path === "maps/room.txt" && entry.type === "file"));
   assert(primary.entries.some((entry) => entry.path === "outside-link" && entry.type === "symlink"));
@@ -219,10 +221,12 @@ try {
   const router = fs.readFileSync(path.join(projectRoot, "server", "router.js"), "utf8");
   assert.match(pages, /id="run-tools-section"/);
   assert.match(pages, /id="run-tools-duration"/);
+  assert.match(pages, /id="run-tools-file-size">0 B<\/strong><small>Total file size/);
   assert.doesNotMatch(pages, /Total CPU time/);
   assert.match(pages, /Inline commands run as <code>&lt;mazebench-python&gt;<\/code>/);
   assert.match(client, /function renderToolsWorkspace\(data\)/);
   assert.match(client, /function liveToolsWallTime\(data, now = Date\.now\(\)\)/);
+  assert.match(client, /toolsFileSize\.textContent = formatBytes\(totalBytes\)/);
   assert.match(client, /window\.setInterval\(\(\) => refreshLiveToolsTiming\(\), 250\)/);
   assert.match(client, /data-tool-status-label/);
   assert.doesNotMatch(client, /Total CPU time/);

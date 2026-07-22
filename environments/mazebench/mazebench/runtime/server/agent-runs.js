@@ -3189,7 +3189,8 @@ function createAgentRunService({
         ),
         active: executions.filter((entry) => entry.status === "running").length,
         unique_commands: new Set(executions.map((entry) => entry.code_hash).filter(Boolean)).size,
-        files: workspaces.reduce((sum, workspace) => sum + workspace.file_count, 0)
+        files: workspaces.reduce((sum, workspace) => sum + workspace.file_count, 0),
+        total_bytes: workspaces.reduce((sum, workspace) => sum + workspace.total_bytes, 0)
       }
     };
   }

@@ -91,6 +91,7 @@
   document.getElementById("run-tools-cpu-time")?.parentElement?.remove();
   const toolsCommandCount = document.getElementById("run-tools-command-count");
   const toolsFileCount = document.getElementById("run-tools-file-count");
+  let toolsFileSize = document.getElementById("run-tools-file-size");
   const toolsWorkspaceSelect = document.getElementById("run-tools-workspace");
   const toolsPath = document.getElementById("run-tools-path");
   const toolsFileTree = document.getElementById("run-tools-file-tree");
@@ -106,15 +107,15 @@
   const toolsInspectorClose = document.getElementById("run-tools-inspector-close");
 
   // Static assets can update while the local Node server keeps serving older
-  // run-page markup. Add the aggregate timing tile on refresh in that case.
-  if (toolsSection && !toolsDuration) {
+  // run-page markup. Add missing aggregate summary tiles on refresh in that case.
+  if (toolsSection && (!toolsDuration || !toolsFileSize)) {
     const stats = toolsSection.querySelector(".run-tools__stats");
     if (stats) {
-      const addTimingTile = (id, labelText, after) => {
+      const addSummaryTile = (id, valueText, labelText, after) => {
         const tile = document.createElement("span");
         const value = document.createElement("strong");
         value.id = id;
-        value.textContent = "0 ms";
+        value.textContent = valueText;
         const label = document.createElement("small");
         label.textContent = labelText;
         tile.append(value, label);
@@ -123,11 +124,15 @@
       };
       const executionTile = toolsExecutionCount?.parentElement;
       if (!toolsDuration) {
-        const added = addTimingTile("run-tools-duration", "Total wall time", executionTile);
+        const added = addSummaryTile("run-tools-duration", "0 ms", "Total wall time", executionTile);
         toolsDuration = added.value;
       } else {
         const label = toolsDuration.nextElementSibling;
         if (label) label.textContent = "Total wall time";
+      }
+      if (!toolsFileSize) {
+        const added = addSummaryTile("run-tools-file-size", "0 B", "Total file size", toolsFileCount?.parentElement);
+        toolsFileSize = added.value;
       }
     }
   }
@@ -384,6 +389,11 @@
     refreshLiveToolsTiming();
     toolsCommandCount.textContent = Number(counts.unique_commands || 0).toLocaleString();
     toolsFileCount.textContent = Number(counts.files || 0).toLocaleString();
+    const workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
+    const totalBytes = Number.isFinite(Number(counts.total_bytes))
+      ? Number(counts.total_bytes)
+      : workspaces.reduce((sum, workspace) => sum + Math.max(0, Number(workspace.total_bytes) || 0), 0);
+    if (toolsFileSize) toolsFileSize.textContent = formatBytes(totalBytes);
     const active = Number(counts.active || 0);
     toolsLive.dataset.state = active ? "running" : "idle";
     toolsLive.querySelector("span").textContent = active
@@ -392,7 +402,6 @@
         ? "Python idle"
         : "Waiting for Python";
 
-    const workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
     if (!workspaces.some((workspace) => workspace.id === state.toolsWorkspaceId)) {
       state.toolsWorkspaceId = workspaces[0]?.id || "primary";
     }
@@ -1569,13 +1578,36 @@
     return `${scaled.toLocaleString(undefined, { maximumFractionDigits: 1 })}${unit[1]}`;
   }
 
-  function moveAxisLabels(firstAction, lastAction) {
-    const labels = [];
-    const firstHundred = Math.max(100, Math.ceil(firstAction / 100) * 100);
-    for (let action = firstHundred; action <= lastAction; action += 100) {
-      labels.push(action);
+  function nextMoveAxisStep(step) {
+    const magnitude = 10 ** Math.floor(Math.log10(step));
+    const normalized = step / magnitude;
+    if (normalized < 2) return 2 * magnitude;
+    if (normalized < 5) return 5 * magnitude;
+    return 10 * magnitude;
+  }
+
+  function moveAxisLabelLimit(plotWidth) {
+    return Math.max(2, Math.min(10, Math.floor(Math.max(1, Number(plotWidth) || 1) / 72)));
+  }
+
+  function moveAxisLabels(firstAction, lastAction, maxLabels = 10) {
+    const first = Math.max(0, Math.floor(Number(firstAction) || 0));
+    const last = Math.max(first, Math.floor(Number(lastAction) || 0));
+    const limit = Math.max(2, Math.min(10, Math.floor(Number(maxLabels) || 10)));
+    const labelsForStep = (step) => {
+      const labels = [];
+      const firstTick = Math.max(step, Math.ceil(first / step) * step);
+      for (let action = firstTick; action <= last; action += step) labels.push(action);
+      if (!labels.includes(last)) labels.push(last);
+      return labels;
+    };
+
+    let step = 100;
+    let labels = labelsForStep(step);
+    while (labels.length > limit) {
+      step = nextMoveAxisStep(step);
+      labels = labelsForStep(step);
     }
-    if (!labels.includes(lastAction)) labels.push(lastAction);
     return labels;
   }
 
@@ -1658,7 +1690,7 @@
       context.stroke();
     });
 
-    const actionLabels = moveAxisLabels(firstAction, lastAction);
+    const actionLabels = moveAxisLabels(firstAction, lastAction, moveAxisLabelLimit(plotWidth));
     context.fillStyle = "rgba(154, 163, 199, 0.76)";
     context.textBaseline = "alphabetic";
     actionLabels.forEach((action, index) => {
@@ -1872,7 +1904,7 @@
       ? `Click a highlighted change to show its exact frame (${jumpTargets.length} change${jumpTargets.length === 1 ? "" : "s"})`
       : `No ${key} changes yet`;
 
-    const actionLabels = moveAxisLabels(firstAction, lastAction);
+    const actionLabels = moveAxisLabels(firstAction, lastAction, moveAxisLabelLimit(plotWidth));
     context.fillStyle = "rgba(154, 163, 199, 0.76)";
     context.textBaseline = "alphabetic";
     actionLabels.forEach((action, index) => {
@@ -2104,7 +2136,7 @@
     }));
     boardStateCanvas._replayJumpTargets = targets;
 
-    const actionLabels = moveAxisLabels(firstAction, lastAction);
+    const actionLabels = moveAxisLabels(firstAction, lastAction, moveAxisLabelLimit(plotWidth));
     context.fillStyle = "rgba(154, 163, 199, 0.76)";
     context.textBaseline = "alphabetic";
     actionLabels.forEach((action, index) => {
