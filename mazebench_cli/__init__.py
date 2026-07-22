@@ -34,7 +34,7 @@ import time
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.2.11"
+__version__ = "0.2.12"
 
 USAGE = """mazebench — run the MazeBench maze game
 
