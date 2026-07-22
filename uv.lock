@@ -1282,7 +1282,7 @@ wheels = [
 
 [[package]]
 name = "mazebench"
-version = "0.2.15"
+version = "0.2.16"
 source = { editable = "." }
 
 [package.optional-dependencies]

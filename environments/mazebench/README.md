@@ -79,7 +79,7 @@ prime env install mazebench/mazebench
 Install a specific version for reproducibility:
 
 ```bash
-prime env install mazebench/mazebench@0.1.14
+prime env install mazebench/mazebench@0.1.15
 ```
 
 ## Evaluate locally
