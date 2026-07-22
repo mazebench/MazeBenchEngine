@@ -32,7 +32,7 @@
     {
       id: "kimi-code",
       name: "Kimi Code",
-      logo: '<img src="/logos/kimi.svg" alt="" width="24" height="25" loading="eager" decoding="sync" fetchpriority="high">'
+      logo: '<img src="/logos/kimi.svg" alt="" width="64" height="64" loading="eager" decoding="sync" fetchpriority="high">'
     }
   ];
   const LOCAL_SETUP = {

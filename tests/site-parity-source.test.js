@@ -97,9 +97,11 @@ assert.match(favicon, /fill-rule="evenodd"/);
 assert.doesNotMatch(favicon, /Minotaur icon by Lorc|M189\.78 118\.22|<ellipse/);
 assert.match(favicon, /stroke="#34e7f0" stroke-width="3"/);
 assert.match(pageChrome, /BRAND_MARK_SVG = `[\s\S]*?M 358\.428 591\.327/);
-assert.match(kimiLogo, /viewBox="0 0 24 25"/);
+assert.match(kimiLogo, /viewBox="0 0 64 64"/);
+assert.match(kimiLogo, /<rect x="1" y="1" width="62" height="62" rx="16" fill="white"/);
 assert.match(kimiLogo, /fill="#1783FF"/);
 assert.match(kimiLogo, /M9\.39 13\.9501L17\.82 5\.59012/);
+assert.match(kimiLogo, /fill="black"/);
 assert.match(siteTheme, /img\[src\$="\/kimi\.svg"\][\s\S]*?object-fit: contain/);
 
 assert.match(
