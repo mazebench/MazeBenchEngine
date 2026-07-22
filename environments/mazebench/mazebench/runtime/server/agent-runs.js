@@ -360,6 +360,8 @@ const RUN_FAVORITE_FILE = "favorite.json";
 const RUN_REVIEW_FILE = "run-review.json";
 const RUN_NOTES_FILE = "run-notes.json";
 const MAX_RUN_NOTES_LENGTH = 50_000;
+const TOOL_WORKSPACE_MAX_ENTRIES = 2000;
+const TOOL_WORKSPACE_READ_BYTES = 512 * 1024;
 const RUN_ID_PATTERN = /^[a-z0-9][a-z0-9-]{4,80}$/i;
 const SERVABLE_RUN_FILES = new Set([
   "run.json",
@@ -582,6 +584,7 @@ function createAgentRunService({
   const actionCache = new Map();
   const reasoningCache = new Map();
   const toolActivityCache = new Map();
+  const toolWorkspaceCache = new Map();
   const primeRolloutFailureCache = new Map();
   const tokenUsageCache = new Map();
   const jsonLineIndexes = new Map();
@@ -2723,6 +2726,459 @@ function createAgentRunService({
     }
   }
 
+  function normalizedPythonResult(value) {
+    if (value === null || value === undefined) return null;
+    let candidate = value;
+    for (let depth = 0; depth < 5; depth += 1) {
+      if (typeof candidate === "string") {
+        try {
+          candidate = JSON.parse(candidate);
+          continue;
+        } catch (_error) {
+          return { stdout: candidate, stderr: "", exit_code: null, timed_out: false, output_truncated: false };
+        }
+      }
+      if (Array.isArray(candidate)) {
+        const text = candidate.find((entry) => entry?.type === "text")?.text;
+        if (text !== undefined) {
+          candidate = text;
+          continue;
+        }
+      }
+      if (!candidate || typeof candidate !== "object") return null;
+      if (candidate.structured_content || candidate.structuredContent) {
+        candidate = candidate.structured_content || candidate.structuredContent;
+        continue;
+      }
+      if (candidate.content) {
+        candidate = candidate.content;
+        continue;
+      }
+      if (candidate.result && !Object.prototype.hasOwnProperty.call(candidate, "exit_code")) {
+        candidate = candidate.result;
+        continue;
+      }
+      break;
+    }
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+    return {
+      exit_code: Number.isInteger(candidate.exit_code) ? candidate.exit_code : null,
+      stdout: String(candidate.stdout || ""),
+      stderr: String(candidate.stderr || ""),
+      timed_out: Boolean(candidate.timed_out),
+      output_truncated: Boolean(candidate.output_truncated)
+    };
+  }
+
+  function pythonToolName(value) {
+    return /(?:^|__)python_exec$/.test(String(value || ""));
+  }
+
+  function pythonExecutionsFromProviderEvents(events, provider) {
+    const executions = new Map();
+    const started = (id, values = {}) => {
+      const key = String(id || `python-${executions.size + 1}`);
+      executions.set(key, {
+        ...(executions.get(key) || {}),
+        id: `provider-${key}`,
+        provider_id: key,
+        workspace_id: "primary",
+        actor: "lead",
+        status: "running",
+        ...values
+      });
+    };
+    const completed = (id, values = {}) => {
+      const key = String(id || "");
+      if (!key || !executions.has(key)) return;
+      const previous = executions.get(key);
+      executions.set(key, {
+        ...previous,
+        status: values.status || "completed",
+        ...values
+      });
+    };
+
+    if (provider === "codex") {
+      events.forEach((event) => {
+        const item = event.item;
+        if (item?.type !== "mcp_tool_call" || !pythonToolName(item.tool || item.name)) return;
+        const timestamp = normalizeEventTimestamp(event._mazebench_received_at || event.timestamp);
+        if (event.type === "item.started") {
+          started(item.id, {
+            code: String(item.arguments?.code || ""),
+            timeout_seconds: Number(item.arguments?.timeout_seconds) || 10,
+            started_at: timestamp
+          });
+        } else if (event.type === "item.completed") {
+          if (!executions.has(String(item.id || ""))) {
+            started(item.id, {
+              code: String(item.arguments?.code || ""),
+              timeout_seconds: Number(item.arguments?.timeout_seconds) || 10,
+              started_at: timestamp
+            });
+          }
+          completed(item.id, {
+            completed_at: timestamp,
+            status: item.status === "failed" || item.error ? "failed" : "completed",
+            error: item.error ? String(item.error?.message || item.error) : "",
+            result: normalizedPythonResult(item.result || item.output || item.content)
+          });
+        }
+      });
+    } else if (provider === "claude") {
+      events.forEach((event) => {
+        const timestamp = normalizeEventTimestamp(event._mazebench_received_at || event.timestamp);
+        if (event.type === "assistant" && Array.isArray(event.message?.content)) {
+          event.message.content.forEach((block) => {
+            if (block?.type !== "tool_use" || !pythonToolName(block.name)) return;
+            started(block.id, {
+              code: String(block.input?.code || ""),
+              timeout_seconds: Number(block.input?.timeout_seconds) || 10,
+              started_at: timestamp
+            });
+          });
+        } else if (event.type === "user" && Array.isArray(event.message?.content)) {
+          event.message.content.forEach((block) => {
+            if (block?.type !== "tool_result") return;
+            completed(block.tool_use_id, {
+              completed_at: timestamp,
+              status: block.is_error ? "failed" : "completed",
+              error: block.is_error ? toolResultText(block.content) : "",
+              result: block.is_error ? null : normalizedPythonResult(block.content)
+            });
+          });
+        }
+      });
+    } else if (provider === "kimi") {
+      events.forEach((event) => {
+        const timestamp = normalizeEventTimestamp(event._mazebench_received_at || event.timestamp);
+        if (event.role === "assistant") {
+          for (const call of Array.isArray(event.tool_calls) ? event.tool_calls : []) {
+            const fn = call.function || call;
+            if (!pythonToolName(fn.name || call.name)) continue;
+            let input = fn.arguments ?? call.arguments ?? call.input ?? {};
+            if (typeof input === "string") {
+              try {
+                input = JSON.parse(input);
+              } catch (_error) {
+                input = {};
+              }
+            }
+            started(call.id, {
+              code: String(input.code || ""),
+              timeout_seconds: Number(input.timeout_seconds) || 10,
+              started_at: timestamp
+            });
+          }
+        } else if (event.role === "tool") {
+          const failed = event.is_error === true || Boolean(event.error);
+          completed(event.tool_call_id || event.id, {
+            completed_at: timestamp,
+            status: failed ? "failed" : "completed",
+            error: failed ? toolResultText(event.content ?? event.output ?? event.result) : "",
+            result: failed ? null : normalizedPythonResult(event.content ?? event.output ?? event.result)
+          });
+        }
+      });
+    }
+
+    return [...executions.values()].map((execution) => ({
+      ...execution,
+      duration_ms: execution.completed_at && execution.started_at
+        ? Math.max(0, Date.parse(execution.completed_at) - Date.parse(execution.started_at))
+        : 0
+    }));
+  }
+
+  function readPythonExecutionsUncached(runId, summary) {
+    const runDir = runDirFor(runId);
+    const activityEntries = readJsonLineTail(path.join(runDir, "tool-activity.jsonl"), 32 * 1024 * 1024);
+    const activityById = new Map();
+    activityEntries.forEach((entry, index) => {
+      if (entry.tool !== "python_exec") return;
+      const id = String(entry.id || `legacy-${index}`);
+      activityById.set(id, { ...(activityById.get(id) || {}), ...entry, id });
+    });
+    const activityExecutions = [...activityById.values()]
+      .sort((left, right) => Date.parse(left.started_at || "") - Date.parse(right.started_at || ""))
+      .map((entry) => ({
+        id: entry.id,
+        workspace_id: String(entry.clone_id || "primary"),
+        actor: entry.clone_id ? `instance · ${entry.clone_id}` : entry.actor || "lead",
+        code: typeof entry.python_code === "string" ? entry.python_code : "",
+        code_hash: String(entry.python_code_hash || ""),
+        timeout_seconds: Number(entry.timeout_seconds) || 10,
+        started_at: normalizeEventTimestamp(entry.started_at),
+        completed_at: normalizeEventTimestamp(entry.completed_at),
+        duration_ms: Math.max(0, Number(entry.duration_ms) || 0),
+        status: entry.status || "completed",
+        error: String(entry.error || ""),
+        result: normalizedPythonResult(entry.python_result),
+        workspace_changes: entry.workspace_changes || null
+      }));
+
+    const needsProviderFallback = !activityExecutions.length || activityExecutions.some((entry) => !entry.code);
+    const providerExecutions = needsProviderFallback
+      ? pythonExecutionsFromProviderEvents(
+          readJsonLineTail(path.join(runDir, "agent-events.jsonl"), 32 * 1024 * 1024),
+          summary.provider || summary.model
+        )
+      : [];
+    const unusedProvider = new Set(providerExecutions.map((entry) => entry.id));
+    const combined = activityExecutions.map((execution) => {
+      const start = Date.parse(execution.started_at || "");
+      const match = providerExecutions
+        .filter((candidate) => unusedProvider.has(candidate.id))
+        .map((candidate) => ({ candidate, distance: Math.abs(Date.parse(candidate.started_at || "") - start) }))
+        .filter(({ distance }) => Number.isFinite(distance) && distance <= 5000)
+        .sort((left, right) => left.distance - right.distance)[0]?.candidate;
+      if (!match) return execution;
+      unusedProvider.delete(match.id);
+      return {
+        ...match,
+        ...execution,
+        code: execution.code || match.code,
+        code_hash: execution.code_hash || match.code_hash,
+        result: execution.result || match.result,
+        error: execution.error || match.error,
+        started_at: execution.started_at || match.started_at,
+        completed_at: execution.completed_at || match.completed_at,
+        duration_ms: execution.duration_ms || match.duration_ms
+      };
+    });
+    if (!activityExecutions.length) combined.push(...providerExecutions);
+    else providerExecutions.forEach((entry) => {
+      if (unusedProvider.has(entry.id)) combined.push(entry);
+    });
+
+    combined.forEach((execution) => {
+      execution.code_hash ||= execution.code
+        ? crypto.createHash("sha256").update(execution.code).digest("hex")
+        : "";
+    });
+    combined.sort((left, right) => Date.parse(left.started_at || "") - Date.parse(right.started_at || ""));
+    const totals = new Map();
+    combined.forEach((execution) => {
+      if (execution.code_hash) totals.set(execution.code_hash, (totals.get(execution.code_hash) || 0) + 1);
+    });
+    const seen = new Map();
+    return combined.map((execution, index) => {
+      const repeatIndex = execution.code_hash ? (seen.get(execution.code_hash) || 0) + 1 : 1;
+      if (execution.code_hash) seen.set(execution.code_hash, repeatIndex);
+      return {
+        ...execution,
+        sequence: index + 1,
+        repeat_index: repeatIndex,
+        repeat_count: execution.code_hash ? totals.get(execution.code_hash) || 1 : 1
+      };
+    });
+  }
+
+  function readPythonExecutions(runId, summary, { fresh = false } = {}) {
+    const runDir = runDirFor(runId);
+    const signature = [
+      summary.provider || summary.model,
+      fileStamp(path.join(runDir, "tool-activity.jsonl")),
+      fileStamp(path.join(runDir, "agent-events.jsonl"))
+    ].join("|");
+    const cached = toolWorkspaceCache.get(runId);
+    if (!fresh && cached?.signature === signature) return cached.value;
+    const value = readPythonExecutionsUncached(runId, summary);
+    toolWorkspaceCache.set(runId, { signature, value });
+    return value;
+  }
+
+  function workspaceDescriptors(runId) {
+    const root = agentWorkspaceRootFor(runId);
+    const workspaces = [{
+      id: "primary",
+      label: "Lead agent",
+      virtual_path: "/workspace",
+      directory: path.join(root, "workspace")
+    }];
+    const workersDir = path.join(root, "swarm-workspaces");
+    try {
+      fs.readdirSync(workersDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && /^[a-z0-9_-]{1,80}$/i.test(entry.name))
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .forEach((entry) => workspaces.push({
+          id: entry.name,
+          label: `Worker · ${entry.name}`,
+          virtual_path: `/workspace/${entry.name}`,
+          directory: path.join(workersDir, entry.name)
+        }));
+    } catch (_error) {
+      /* no swarm workspaces yet */
+    }
+    return workspaces;
+  }
+
+  function scanToolWorkspace(descriptor) {
+    const entries = [];
+    let totalBytes = 0;
+    let fileCount = 0;
+    let truncated = false;
+    function visit(directory, prefix = "") {
+      let children;
+      try {
+        children = fs.readdirSync(directory, { withFileTypes: true });
+      } catch (_error) {
+        return;
+      }
+      children.sort((left, right) => {
+        if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1;
+        return left.name.localeCompare(right.name);
+      });
+      for (const child of children) {
+        if (entries.length >= TOOL_WORKSPACE_MAX_ENTRIES) {
+          truncated = true;
+          return;
+        }
+        const relative = prefix ? `${prefix}/${child.name}` : child.name;
+        const absolute = path.join(directory, child.name);
+        let stat;
+        try {
+          stat = fs.lstatSync(absolute);
+        } catch (_error) {
+          continue;
+        }
+        const type = child.isSymbolicLink() ? "symlink" : child.isDirectory() ? "directory" : "file";
+        entries.push({
+          path: relative,
+          name: child.name,
+          type,
+          size: type === "file" ? stat.size : 0,
+          modified_at: normalizeEventTimestamp(stat.mtimeMs)
+        });
+        if (type === "file") {
+          fileCount += 1;
+          totalBytes += stat.size;
+        } else if (type === "directory") {
+          visit(absolute, relative);
+          if (truncated) return;
+        }
+      }
+    }
+    visit(descriptor.directory);
+    return {
+      id: descriptor.id,
+      label: descriptor.label,
+      virtual_path: descriptor.virtual_path,
+      exists: fs.existsSync(descriptor.directory),
+      entries,
+      file_count: fileCount,
+      total_bytes: totalBytes,
+      truncated
+    };
+  }
+
+  function pythonExecutionSummary(execution) {
+    const firstLine = String(execution.code || "").split(/\r?\n/).find((line) => line.trim()) || "";
+    const output = execution.result?.stdout || execution.result?.stderr || execution.error || "";
+    return {
+      id: execution.id,
+      sequence: execution.sequence,
+      workspace_id: execution.workspace_id,
+      actor: execution.actor,
+      status: execution.status,
+      started_at: execution.started_at,
+      completed_at: execution.completed_at,
+      duration_ms: execution.duration_ms,
+      timeout_seconds: execution.timeout_seconds,
+      code_hash: execution.code_hash,
+      code_bytes: Buffer.byteLength(String(execution.code || ""), "utf8"),
+      code_preview: firstLine.trim().slice(0, 180),
+      output_preview: String(output).replace(/\s+/g, " ").trim().slice(0, 180),
+      repeat_index: execution.repeat_index,
+      repeat_count: execution.repeat_count,
+      exit_code: execution.result?.exit_code ?? null,
+      timed_out: Boolean(execution.result?.timed_out),
+      output_truncated: Boolean(execution.result?.output_truncated),
+      workspace_changes: execution.workspace_changes
+    };
+  }
+
+  function readToolsWorkspace(runId, summary) {
+    if (summary.kind === "prime" || summary.tool_use !== "offline") return null;
+    const executions = readPythonExecutions(runId, summary);
+    const workspaces = workspaceDescriptors(runId).map(scanToolWorkspace);
+    return {
+      available: true,
+      workspaces,
+      executions: executions.map(pythonExecutionSummary).reverse(),
+      counts: {
+        executions: executions.length,
+        active: executions.filter((entry) => entry.status === "running").length,
+        unique_commands: new Set(executions.map((entry) => entry.code_hash).filter(Boolean)).size,
+        files: workspaces.reduce((sum, workspace) => sum + workspace.file_count, 0)
+      }
+    };
+  }
+
+  function getToolExecution(runId, executionId) {
+    const summary = summarizeRun(runId);
+    if (!summary || summary.kind === "prime" || summary.tool_use !== "offline") return null;
+    const execution = readPythonExecutions(runId, summary, { fresh: true })
+      .find((entry) => entry.id === String(executionId || ""));
+    if (!execution) return null;
+    return {
+      ...pythonExecutionSummary(execution),
+      code: String(execution.code || ""),
+      stdout: String(execution.result?.stdout || ""),
+      stderr: String(execution.result?.stderr || ""),
+      error: String(execution.error || "")
+    };
+  }
+
+  function getToolWorkspaceFile(runId, workspaceId, requestedPath) {
+    const summary = summarizeRun(runId);
+    if (!summary || summary.kind === "prime" || summary.tool_use !== "offline") return null;
+    const descriptor = workspaceDescriptors(runId)
+      .find((entry) => entry.id === String(workspaceId || "primary"));
+    if (!descriptor) return null;
+    const relative = String(requestedPath || "").replaceAll("\\", "/");
+    if (!relative || relative.includes("\0") || relative.startsWith("/") || relative.split("/").includes("..")) {
+      return null;
+    }
+    const root = path.resolve(descriptor.directory);
+    const candidate = path.resolve(root, ...relative.split("/"));
+    const within = path.relative(root, candidate);
+    if (!within || within === ".." || within.startsWith(`..${path.sep}`) || path.isAbsolute(within)) return null;
+    let stat;
+    try {
+      stat = fs.lstatSync(candidate);
+      if (!stat.isFile() || stat.isSymbolicLink()) return null;
+      const realRoot = fs.realpathSync(root);
+      const realFile = fs.realpathSync(candidate);
+      const realRelative = path.relative(realRoot, realFile);
+      if (!realRelative || realRelative === ".." || realRelative.startsWith(`..${path.sep}`) || path.isAbsolute(realRelative)) {
+        return null;
+      }
+    } catch (_error) {
+      return null;
+    }
+    const length = Math.min(stat.size, TOOL_WORKSPACE_READ_BYTES);
+    const buffer = Buffer.alloc(length);
+    const fd = fs.openSync(candidate, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    try {
+      if (length) fs.readSync(fd, buffer, 0, length, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const binary = buffer.includes(0);
+    return {
+      workspace_id: descriptor.id,
+      path: relative,
+      virtual_path: `${descriptor.virtual_path}/${relative}`,
+      size: stat.size,
+      modified_at: normalizeEventTimestamp(stat.mtimeMs),
+      truncated: stat.size > length,
+      binary,
+      content: binary ? "" : buffer.toString("utf8")
+    };
+  }
+
   function readInstanceEventSummary(runId) {
     const events = readJsonLineTail(
       path.join(runDirFor(runId), "maze-instance-events.jsonl"),
@@ -3997,6 +4453,7 @@ function createAgentRunService({
       log_offset: log.offset,
       token_usage: incrementalTokenUsage,
       tool_activity: readToolActivity(runId, summary),
+      tools_workspace: readToolsWorkspace(runId, summary),
       reasoning: cursor > 0
         ? reasoning.filter((entry) => Math.max(1, Number(entry?.move) || 0) >= historyFloor)
         : reasoning,
@@ -6065,6 +6522,7 @@ function createAgentRunService({
     actionCache.delete(runId);
     reasoningCache.delete(runId);
     toolActivityCache.delete(runId);
+    toolWorkspaceCache.delete(runId);
     tokenUsageCache.delete(runId);
     primeRolloutFailureCache.delete(runId);
     initialPlayerCache.delete(runId);
@@ -6206,6 +6664,8 @@ function createAgentRunService({
     getRunReview,
     getRunObservation,
     getRunProgress,
+    getToolExecution,
+    getToolWorkspaceFile,
     launchRun,
     launchRuns,
     listPrimeHarnesses,

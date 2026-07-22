@@ -1344,6 +1344,47 @@ function createPageRenderer({
             </div>
           </div>
         </section>`;
+    const toolsSection = !isPrime && run.tool_use === "offline"
+      ? `<section class="panel run-tools" id="run-tools-section" aria-labelledby="run-tools-heading">
+          <div class="run-tools__head">
+            <div>
+              <span class="run-tools__eyebrow">Isolated scratch space</span>
+              <h2 id="run-tools-heading">Tools workspace</h2>
+              <p>Agent-created files and every Python execution. Inline commands run as <code>&lt;mazebench-python&gt;</code>; they are not hidden script files.</p>
+            </div>
+            <span id="run-tools-live" class="run-tools__live" data-state="idle"><i aria-hidden="true"></i><span>Waiting for Python</span></span>
+          </div>
+          <div class="run-tools__stats" aria-label="Tools workspace summary">
+            <span><strong id="run-tools-execution-count">0</strong><small>Executions</small></span>
+            <span><strong id="run-tools-command-count">0</strong><small>Unique commands</small></span>
+            <span><strong id="run-tools-file-count">0</strong><small>Files</small></span>
+          </div>
+          <div class="run-tools__grid">
+            <section class="run-tools__pane run-tools__files" aria-labelledby="run-tools-files-heading">
+              <div class="run-tools__pane-head">
+                <div><h3 id="run-tools-files-heading">Workspace files</h3><code id="run-tools-path">/workspace</code></div>
+                <select id="run-tools-workspace" aria-label="Agent workspace" hidden></select>
+              </div>
+              <div id="run-tools-file-tree" class="run-tools__file-tree"></div>
+              <p id="run-tools-file-empty" class="run-tools__empty">The agent has not created any files.</p>
+            </section>
+            <section class="run-tools__pane run-tools__executions" aria-labelledby="run-tools-executions-heading">
+              <div class="run-tools__pane-head">
+                <div><h3 id="run-tools-executions-heading">Python executions</h3><span id="run-tools-execution-summary">Exact source, output, timing, and repeat counts</span></div>
+              </div>
+              <div id="run-tools-execution-list" class="run-tools__execution-list"></div>
+              <p id="run-tools-execution-empty" class="run-tools__empty">Waiting for the first <code>python_exec</code> call.</p>
+            </section>
+          </div>
+          <section id="run-tools-inspector" class="run-tools__inspector" aria-labelledby="run-tools-inspector-title" hidden>
+            <div class="run-tools__inspector-head">
+              <div><span id="run-tools-inspector-kind" class="run-tools__eyebrow">Python execution</span><h3 id="run-tools-inspector-title"></h3><p id="run-tools-inspector-meta"></p></div>
+              <button id="run-tools-inspector-close" type="button" aria-label="Close tools inspector" title="Close">×</button>
+            </div>
+            <div id="run-tools-inspector-body" class="run-tools__inspector-body"></div>
+          </section>
+        </section>`
+      : "";
     // Agent Runner's default Prime path evaluates locally against Prime
     // inference, so its board and move artifacts arrive after every turn.
     // Explicit hosted runs still sync whatever samples Prime publishes.
@@ -1394,6 +1435,8 @@ function createPageRenderer({
             <div class="run-swarm__grid" id="run-finished-grid"></div>
           </details>
         </section>
+
+        ${toolsSection}
 
         ${tokenSection}
 

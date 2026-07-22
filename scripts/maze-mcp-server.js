@@ -63,6 +63,7 @@ const KIMI_IDENTICAL_ACTION_INTERVAL = 5;
 const HTTP_TOKEN = String(process.env.MAZEBENCH_MCP_HTTP_TOKEN || "");
 const WORKER_ALLOCATION_LOCK = path.join(SWARM_DIR, ".instance-allocation.lock");
 const PYTHON_PREFLIGHTS = new Map();
+const PYTHON_WORKSPACE_SNAPSHOT_LIMIT = 2000;
 
 function sessionActionCount(file) {
   try {
@@ -498,6 +499,64 @@ function pythonSandboxOptions(workspace) {
     deniedPaths: [REPO_ROOT, RUN_DIR, os.homedir()],
     codexBin: CODEX_BIN,
     pythonBin: PYTHON_BIN
+  };
+}
+
+function pythonWorkspaceSnapshot(workspace) {
+  const root = path.resolve(workspace);
+  const files = new Map();
+  let truncated = false;
+
+  function visit(directory, prefix = "") {
+    let entries;
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch (_error) {
+      return;
+    }
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (files.size >= PYTHON_WORKSPACE_SNAPSHOT_LIMIT) {
+        truncated = true;
+        return;
+      }
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const absolute = path.join(directory, entry.name);
+      let stat;
+      try {
+        stat = fs.lstatSync(absolute);
+      } catch (_error) {
+        continue;
+      }
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
+        visit(absolute, relative);
+        if (truncated) return;
+      } else {
+        files.set(relative, `${stat.size}:${stat.mtimeMs}:${entry.isSymbolicLink() ? "link" : "file"}`);
+      }
+    }
+  }
+
+  visit(root);
+  return { files, truncated };
+}
+
+function pythonWorkspaceChanges(before, after) {
+  const created = [];
+  const modified = [];
+  const deleted = [];
+  for (const [file, signature] of after.files) {
+    if (!before.files.has(file)) created.push(file);
+    else if (before.files.get(file) !== signature) modified.push(file);
+  }
+  for (const file of before.files.keys()) {
+    if (!after.files.has(file)) deleted.push(file);
+  }
+  return {
+    created,
+    modified,
+    deleted,
+    truncated: before.truncated || after.truncated
   };
 }
 
@@ -979,6 +1038,13 @@ async function handle(
     const activityId = crypto.randomUUID();
     const instanceId = String(effectiveInput.clone_id || "primary");
     const instanceMetadata = readWorkerMetadata(effectiveInput.clone_id);
+    const pythonCode = name === "python_exec" ? String(input.code || "") : "";
+    const pythonCodeHash = pythonCode
+      ? crypto.createHash("sha256").update(pythonCode).digest("hex")
+      : "";
+    const workspaceBefore = name === "python_exec"
+      ? pythonWorkspaceSnapshot(pythonWorkspaceForInput(effectiveInput))
+      : null;
     appendToolActivity({
       id: activityId,
       tool: name,
@@ -989,7 +1055,14 @@ async function handle(
       status: "running",
       move_calls: 0,
       moves_before: movesBefore,
-      moves_after: movesBefore
+      moves_after: movesBefore,
+      ...(name === "python_exec"
+        ? {
+            python_code: pythonCode,
+            python_code_hash: pythonCodeHash,
+            timeout_seconds: input.timeout_seconds
+          }
+        : {})
     });
     try {
       if (KIMI_OBSERVE_BREAK_ENABLED && name === "maze_action" && context.observeRequired) {
@@ -1008,6 +1081,9 @@ async function handle(
       );
       const completedAt = new Date();
       const movesAfter = actionCountForInput(effectiveInput);
+      const workspaceAfter = name === "python_exec"
+        ? pythonWorkspaceSnapshot(pythonWorkspaceForInput(effectiveInput))
+        : null;
       appendToolActivity({
         id: activityId,
         tool: name,
@@ -1020,7 +1096,20 @@ async function handle(
         status: "completed",
         move_calls: name === "maze_action" ? 1 : 0,
         moves_before: movesBefore,
-        moves_after: movesAfter
+        moves_after: movesAfter,
+        ...(name === "python_exec"
+          ? {
+              python_code_hash: pythonCodeHash,
+              python_result: {
+                exit_code: value.exit_code,
+                stdout: String(value.stdout || ""),
+                stderr: String(value.stderr || ""),
+                timed_out: Boolean(value.timed_out),
+                output_truncated: Boolean(value.output_truncated)
+              },
+              workspace_changes: pythonWorkspaceChanges(workspaceBefore, workspaceAfter)
+            }
+          : {})
       });
       if (name === "maze_action" && (!effectiveInput.clone_id || instanceMetadata)) {
         const instanceEvent = {
@@ -1058,6 +1147,9 @@ async function handle(
       });
       const completedAt = new Date();
       const movesAfter = actionCountForInput(effectiveInput);
+      const workspaceAfter = name === "python_exec"
+        ? pythonWorkspaceSnapshot(pythonWorkspaceForInput(effectiveInput))
+        : null;
       appendToolActivity({
         id: activityId,
         tool: name,
@@ -1071,7 +1163,13 @@ async function handle(
         move_calls: name === "maze_action" ? 1 : 0,
         moves_before: movesBefore,
         moves_after: movesAfter,
-        error: errorMessage
+        error: errorMessage,
+        ...(name === "python_exec"
+          ? {
+              python_code_hash: pythonCodeHash,
+              workspace_changes: pythonWorkspaceChanges(workspaceBefore, workspaceAfter)
+            }
+          : {})
       });
       if (name === "maze_action" && (!effectiveInput.clone_id || instanceMetadata)) {
         const instanceEvent = {

@@ -287,6 +287,30 @@ function createRequestRouter({
         return;
       }
 
+      if (segments[4] === "tools" && segments[5] === "execution" && request.method === "GET") {
+        const execution = agentRuns.getToolExecution(runId, url.searchParams.get("id"));
+        if (!execution) {
+          sendHtml(response, 404, renderNotFound());
+          return;
+        }
+        sendJson(response, 200, { execution });
+        return;
+      }
+
+      if (segments[4] === "tools" && segments[5] === "file" && request.method === "GET") {
+        const file = agentRuns.getToolWorkspaceFile(
+          runId,
+          url.searchParams.get("workspace") || "primary",
+          url.searchParams.get("path")
+        );
+        if (!file) {
+          sendHtml(response, 404, renderNotFound());
+          return;
+        }
+        sendJson(response, 200, { file });
+        return;
+      }
+
       if (segments[4] === "progress" && request.method === "GET") {
         const progress = agentRuns.getRunProgress(runId, {
           afterTurn: Number(url.searchParams.get("after_turn")) || 0,

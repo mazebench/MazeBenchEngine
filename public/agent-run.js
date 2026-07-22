@@ -84,6 +84,24 @@
   const finishedAgents = document.getElementById("run-finished-agents");
   const finishedGrid = document.getElementById("run-finished-grid");
   const finishedCount = document.getElementById("run-finished-count");
+  const toolsSection = document.getElementById("run-tools-section");
+  const toolsLive = document.getElementById("run-tools-live");
+  const toolsExecutionCount = document.getElementById("run-tools-execution-count");
+  const toolsCommandCount = document.getElementById("run-tools-command-count");
+  const toolsFileCount = document.getElementById("run-tools-file-count");
+  const toolsWorkspaceSelect = document.getElementById("run-tools-workspace");
+  const toolsPath = document.getElementById("run-tools-path");
+  const toolsFileTree = document.getElementById("run-tools-file-tree");
+  const toolsFileEmpty = document.getElementById("run-tools-file-empty");
+  const toolsExecutionList = document.getElementById("run-tools-execution-list");
+  const toolsExecutionEmpty = document.getElementById("run-tools-execution-empty");
+  const toolsExecutionSummary = document.getElementById("run-tools-execution-summary");
+  const toolsInspector = document.getElementById("run-tools-inspector");
+  const toolsInspectorKind = document.getElementById("run-tools-inspector-kind");
+  const toolsInspectorTitle = document.getElementById("run-tools-inspector-title");
+  const toolsInspectorMeta = document.getElementById("run-tools-inspector-meta");
+  const toolsInspectorBody = document.getElementById("run-tools-inspector-body");
+  const toolsInspectorClose = document.getElementById("run-tools-inspector-close");
 
   // Keep already-open servers compatible with the JSON run UI. The run page
   // HTML comes from a long-lived Node process, while this static script reloads
@@ -231,7 +249,11 @@
     feedRenderLimit: FEED_RENDER_BATCH,
     expandedReasoning: new Set(),
     savedNotes: String(initial.run_notes || ""),
-    review: null
+    review: null,
+    toolsData: null,
+    toolsSignature: "",
+    toolsWorkspaceId: "primary",
+    toolsInspectorRequest: 0
   };
 
   function setStatus(message, isError = false) {
@@ -243,6 +265,206 @@
     const el = document.createElement("span");
     el.textContent = String(value ?? "");
     return el.innerHTML;
+  }
+
+  function formatBytes(value) {
+    const bytes = Math.max(0, Number(value) || 0);
+    if (bytes < 1024) return `${bytes.toLocaleString()} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+  }
+
+  function toolsStatusLabel(execution) {
+    if (execution.status === "running") {
+      const started = Date.parse(execution.started_at || "");
+      return `Running${Number.isFinite(started) ? ` · ${formatDuration(Date.now() - started)}` : ""}`;
+    }
+    if (execution.status === "failed") return "Failed";
+    if (execution.timed_out) return "Timed out";
+    return execution.duration_ms ? formatDuration(execution.duration_ms) : "Completed";
+  }
+
+  function renderToolsFiles(workspace) {
+    if (!toolsFileTree || !toolsFileEmpty || !toolsPath) return;
+    toolsPath.textContent = workspace?.virtual_path || "/workspace";
+    const entries = Array.isArray(workspace?.entries) ? workspace.entries : [];
+    toolsFileTree.innerHTML = entries.map((entry) => {
+      const depth = Math.max(0, String(entry.path || "").split("/").length - 1);
+      const icon = entry.type === "directory" ? "▾" : entry.type === "symlink" ? "↗" : "•";
+      const meta = entry.type === "file" ? formatBytes(entry.size) : entry.type;
+      const content = `<span class="run-tools__file-icon" aria-hidden="true">${icon}</span><span class="run-tools__file-name">${escapeText(entry.name)}</span><span class="run-tools__file-meta">${escapeText(meta)}</span>`;
+      return entry.type === "file"
+        ? `<button type="button" class="run-tools__file" data-workspace-file="${escapeText(entry.path)}" style="--depth:${depth}">${content}</button>`
+        : `<div class="run-tools__file is-${escapeText(entry.type)}" style="--depth:${depth}">${content}</div>`;
+    }).join("");
+    toolsFileEmpty.hidden = entries.length > 0;
+    toolsFileTree.hidden = entries.length === 0;
+    if (workspace?.truncated) {
+      const note = document.createElement("p");
+      note.className = "run-tools__truncated";
+      note.textContent = `Showing the first ${entries.length.toLocaleString()} workspace entries.`;
+      toolsFileTree.append(note);
+    }
+  }
+
+  function renderToolsWorkspace(data) {
+    if (!toolsSection || !data?.available) return;
+    state.toolsData = data;
+    toolsSection.hidden = false;
+    const counts = data.counts || {};
+    toolsExecutionCount.textContent = Number(counts.executions || 0).toLocaleString();
+    toolsCommandCount.textContent = Number(counts.unique_commands || 0).toLocaleString();
+    toolsFileCount.textContent = Number(counts.files || 0).toLocaleString();
+    const active = Number(counts.active || 0);
+    toolsLive.dataset.state = active ? "running" : "idle";
+    toolsLive.querySelector("span").textContent = active
+      ? `${active.toLocaleString()} Python execution${active === 1 ? "" : "s"} running`
+      : counts.executions
+        ? "Python idle"
+        : "Waiting for Python";
+
+    const workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
+    if (!workspaces.some((workspace) => workspace.id === state.toolsWorkspaceId)) {
+      state.toolsWorkspaceId = workspaces[0]?.id || "primary";
+    }
+    const workspaceSignature = workspaces.map((workspace) => `${workspace.id}:${workspace.label}`).join("|");
+    if (toolsWorkspaceSelect.dataset.signature !== workspaceSignature) {
+      toolsWorkspaceSelect.dataset.signature = workspaceSignature;
+      toolsWorkspaceSelect.innerHTML = workspaces.map((workspace) =>
+        `<option value="${escapeText(workspace.id)}">${escapeText(workspace.label)}</option>`
+      ).join("");
+    }
+    toolsWorkspaceSelect.value = state.toolsWorkspaceId;
+    toolsWorkspaceSelect.hidden = workspaces.length < 2;
+    renderToolsFiles(workspaces.find((workspace) => workspace.id === state.toolsWorkspaceId));
+
+    const executions = Array.isArray(data.executions) ? data.executions : [];
+    const signature = JSON.stringify(executions);
+    if (state.toolsSignature !== signature) {
+      state.toolsSignature = signature;
+      toolsExecutionList.innerHTML = executions.map((execution) => {
+        const repeat = Number(execution.repeat_count || 1) > 1
+          ? `<span class="run-tools__repeat">same source ${Number(execution.repeat_index || 1)} of ${Number(execution.repeat_count)}</span>`
+          : "";
+        const changes = execution.workspace_changes || {};
+        const changed = [changes.created, changes.modified, changes.deleted]
+          .reduce((sum, entries) => sum + (Array.isArray(entries) ? entries.length : 0), 0);
+        return `<button type="button" class="run-tools__execution is-${escapeText(execution.status || "completed")}" data-tool-execution="${escapeText(execution.id)}">
+          <span class="run-tools__execution-index">#${Number(execution.sequence || 0).toLocaleString()}</span>
+          <span class="run-tools__execution-copy"><strong>${escapeText(execution.code_preview || "Python command")}</strong><small>${escapeText(execution.output_preview || "No output")}</small></span>
+          <span class="run-tools__execution-meta">${repeat}${changed ? `<span>${changed.toLocaleString()} file change${changed === 1 ? "" : "s"}</span>` : ""}<span>${escapeText(toolsStatusLabel(execution))}</span></span>
+        </button>`;
+      }).join("");
+    }
+    toolsExecutionEmpty.hidden = executions.length > 0;
+    toolsExecutionList.hidden = executions.length === 0;
+    toolsExecutionSummary.textContent = executions.length
+      ? `${executions.length.toLocaleString()} exact command${executions.length === 1 ? "" : "s"} recorded`
+      : "Exact source, output, timing, and repeat counts";
+  }
+
+  function showToolsInspector({ kind, title, meta, sections }) {
+    if (!toolsInspector || !toolsInspectorBody) return;
+    toolsInspector.hidden = false;
+    toolsInspectorKind.textContent = kind;
+    toolsInspectorTitle.textContent = title;
+    toolsInspectorMeta.textContent = meta || "";
+    toolsInspectorBody.replaceChildren();
+    sections.forEach((section) => {
+      if (!section.text && section.optional) return;
+      const block = document.createElement("section");
+      const label = document.createElement("h4");
+      label.textContent = section.label;
+      const pre = document.createElement("pre");
+      pre.textContent = section.text || "(empty)";
+      if (section.className) pre.className = section.className;
+      block.append(label, pre);
+      toolsInspectorBody.append(block);
+    });
+    toolsInspector.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  async function inspectToolExecution(executionId) {
+    const request = ++state.toolsInspectorRequest;
+    showToolsInspector({
+      kind: "Python execution",
+      title: "Loading exact command…",
+      meta: "",
+      sections: [{ label: "Source", text: "Loading…" }]
+    });
+    try {
+      const response = await fetch(
+        `/api/agent/runs/${encodeURIComponent(runId)}/tools/execution?id=${encodeURIComponent(executionId)}`,
+        { headers: { accept: "application/json" } }
+      );
+      if (!response.ok) throw new Error(`Execution details failed (${response.status}).`);
+      const execution = (await response.json()).execution;
+      if (request !== state.toolsInspectorRequest) return;
+      const changes = execution.workspace_changes || {};
+      const changeLines = [
+        ...(changes.created || []).map((file) => `+ ${file}`),
+        ...(changes.modified || []).map((file) => `~ ${file}`),
+        ...(changes.deleted || []).map((file) => `- ${file}`)
+      ];
+      showToolsInspector({
+        kind: "Python execution",
+        title: `Execution #${Number(execution.sequence || 0).toLocaleString()}`,
+        meta: `${execution.actor || "lead"} · ${toolsStatusLabel(execution)} · ${formatBytes(execution.code_bytes)}${Number(execution.repeat_count || 1) > 1 ? ` · same source run ${execution.repeat_count} times` : ""}`,
+        sections: [
+          { label: "Exact Python source", text: execution.code, className: "is-code" },
+          { label: "Standard output", text: execution.stdout, optional: true },
+          { label: "Standard error", text: execution.stderr || execution.error, optional: true },
+          { label: "Workspace changes", text: changeLines.join("\n"), optional: true }
+        ]
+      });
+    } catch (error) {
+      if (request !== state.toolsInspectorRequest) return;
+      showToolsInspector({
+        kind: "Python execution",
+        title: "Could not load command",
+        meta: error.message,
+        sections: []
+      });
+    }
+  }
+
+  async function inspectWorkspaceFile(filePath) {
+    const request = ++state.toolsInspectorRequest;
+    const workspaceId = state.toolsWorkspaceId;
+    showToolsInspector({
+      kind: "Workspace file",
+      title: filePath,
+      meta: "Loading…",
+      sections: []
+    });
+    try {
+      const params = new URLSearchParams({ workspace: workspaceId, path: filePath });
+      const response = await fetch(
+        `/api/agent/runs/${encodeURIComponent(runId)}/tools/file?${params}`,
+        { headers: { accept: "application/json" } }
+      );
+      if (!response.ok) throw new Error(`Workspace file failed (${response.status}).`);
+      const file = (await response.json()).file;
+      if (request !== state.toolsInspectorRequest) return;
+      showToolsInspector({
+        kind: "Workspace file",
+        title: file.virtual_path,
+        meta: `${formatBytes(file.size)}${file.truncated ? ` · preview limited to ${formatBytes(file.content.length)}` : ""}`,
+        sections: [{
+          label: file.binary ? "Binary file" : "Contents",
+          text: file.binary ? "Binary content is not displayed." : file.content,
+          className: "is-code"
+        }]
+      });
+    } catch (error) {
+      if (request !== state.toolsInspectorRequest) return;
+      showToolsInspector({
+        kind: "Workspace file",
+        title: filePath,
+        meta: error.message,
+        sections: []
+      });
+    }
   }
 
   const levelLabel = (id) => String(id || "").replace(/^level_/, "");
@@ -3371,6 +3593,7 @@
 
       describeRun(progress.run);
       renderTokenUsage(progress.token_usage);
+      renderToolsWorkspace(progress.tools_workspace);
       renderStats(progress.run);
       renderSwarmViews(progress.swarm_views);
 
@@ -3627,6 +3850,24 @@
     }
   });
   notesSaveButton?.addEventListener("click", saveRunNotes);
+
+  toolsWorkspaceSelect?.addEventListener("change", () => {
+    state.toolsWorkspaceId = toolsWorkspaceSelect.value || "primary";
+    const workspace = state.toolsData?.workspaces?.find((entry) => entry.id === state.toolsWorkspaceId);
+    renderToolsFiles(workspace);
+  });
+  toolsFileTree?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-workspace-file]");
+    if (button) void inspectWorkspaceFile(button.dataset.workspaceFile);
+  });
+  toolsExecutionList?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-tool-execution]");
+    if (button) void inspectToolExecution(button.dataset.toolExecution);
+  });
+  toolsInspectorClose?.addEventListener("click", () => {
+    state.toolsInspectorRequest += 1;
+    toolsInspector.hidden = true;
+  });
 
   deleteButton?.addEventListener("click", async () => {
     if (!window.confirm("Delete this run and its artifacts? This can't be undone.")) return;
