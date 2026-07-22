@@ -186,6 +186,9 @@ const HIDDEN_ASCII_FIXED_GLYPHS = new Map([
   ["G", "G"],
   ["g", "g"]
 ]);
+// JSON reports discrete occupied rows: ground surfaces keep their authored
+// elevation, while an object resting on that surface occupies the next row.
+const JSON_GROUND_TERRAIN_TYPES = new Set(["empty", "exit", "floor", "hole", "ice"]);
 
 function assertUniqueGlyphPairs(groups) {
   const used = new Map();
@@ -2571,10 +2574,40 @@ function semanticTerrainObjectName(type, source, yaw, state, index, orangeButton
   return semanticObjectName(type, source, yaw);
 }
 
+function jsonTerrainElevation(
+  type,
+  layer,
+  index,
+  state,
+  orangeButtonsPressed,
+  raisedPlayerGates
+) {
+  const elevation = layer.elevation ?? 0;
+
+  if (JSON_GROUND_TERRAIN_TYPES.has(type)) {
+    return elevation;
+  }
+
+  if (type === "orange_wall") {
+    return elevation + (orangeButtonsPressed ? 0 : 1);
+  }
+
+  if (type === "player_gate") {
+    return elevation + (raisedPlayerGates.has(index) ? 1 : 0);
+  }
+
+  if (type === "player_lift") {
+    return elevation + (state.liftRaised[index] ? 1 : 0);
+  }
+
+  return elevation + 1;
+}
+
 function jsonObservationObjects(context) {
   const { engine, options, playData, state } = context;
   const typeNames = terrainTypeNameByValue(engine.terrainTypes);
   const orangeButtonsPressed = orangeButtonsPressedForState(engine, state);
+  const raisedPlayerGates = raisedPlayerGatesForState(engine, state);
   const objects = [];
 
   for (let y = 0; y < playData.height; y += 1) {
@@ -2583,10 +2616,14 @@ function jsonObservationObjects(context) {
       semanticTerrainLayersAt(playData, state, typeNames, x, y).forEach((layer, layerIndex) => {
         const type = layer.type || "empty";
         objects.push({
-          elevation:
-            type === "orange_wall" && orangeButtonsPressed
-              ? (layer.elevation ?? 0) - 1
-              : layer.elevation ?? 0,
+          elevation: jsonTerrainElevation(
+            type,
+            layer,
+            index,
+            state,
+            orangeButtonsPressed,
+            raisedPlayerGates
+          ),
           id: terrainObjectId(x, y, layerIndex),
           name: semanticTerrainObjectName(
             type,
@@ -2611,7 +2648,7 @@ function jsonObservationObjects(context) {
     const source = playData.actors[index] || {};
     const type = engine.actorTypes[index] || source.type || "unknown";
     objects.push({
-      elevation: state.actorElevation[index] || 0,
+      elevation: (state.actorElevation[index] || 0) + 1,
       id: actorObjectId(index),
       name: semanticObjectName(type, source, options.yaw),
       x: state.actorX[index],

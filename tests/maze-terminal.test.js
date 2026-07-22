@@ -640,8 +640,8 @@ function syntheticFloor(width, height) {
   expected.forEach((direction, yaw) => {
     context.options.yaw = yaw;
     const observation = buildJsonObservation(context, { omniscient: true });
-    assert.deepEqual(observation.objects[`ice_slope_${direction}`], [[0, 0, 0]]);
-    assert.deepEqual(observation.objects[`puncher_${direction}`], [[1, 0, 0]]);
+    assert.deepEqual(observation.objects[`ice_slope_${direction}`], [[0, 0, 1]]);
+    assert.deepEqual(observation.objects[`puncher_${direction}`], [[1, 0, 1]]);
   });
 }
 
@@ -743,6 +743,8 @@ function syntheticFloor(width, height) {
 
   assert.match(loweredAscii, />>>>/);
   assert.deepEqual(loweredJson.objects.player_lift_lowered, [[1, 0, 0]]);
+  assert.deepEqual(loweredJson.objects.player, [[0, 0, 1]]);
+  assert.deepEqual(loweredJson.objects.wall, [[2, 0, 1]]);
   assert.equal(loweredJson.objects.player_lift_raised, undefined);
 
   const ontoLift = context.engine.move(context.state, 1, 0);
@@ -750,9 +752,9 @@ function syntheticFloor(width, height) {
 
   assert.equal(ontoLift.moved, true);
   assert.deepEqual(ontoLift.liftToggles, [{ x: 1, y: 0, raised: true }]);
-  assert.deepEqual(raisedJson.objects.player_lift_raised, [[1, 0, 0]]);
+  assert.deepEqual(raisedJson.objects.player_lift_raised, [[1, 0, 1]]);
   assert.equal(raisedJson.objects.player_lift_lowered, undefined);
-  assert.deepEqual(raisedJson.objects.player, [[1, 0, 1]]);
+  assert.deepEqual(raisedJson.objects.player, [[1, 0, 2]]);
 
   const offLift = context.engine.move(context.state, 1, 0);
   const raisedAscii = body(renderScreen(context));
@@ -778,17 +780,25 @@ function syntheticFloor(width, height) {
   };
   const context = syntheticContext(playData, { pitch: 0 });
   const raisedAscii = body(renderScreen(context));
+  const raisedJson = buildJsonObservation(context, { omniscient: true });
 
   assert.match(raisedAscii, /YYYY/);
+  assert.deepEqual(raisedJson.objects.floor, [
+    [0, 0, 0],
+    [1, 0, 0]
+  ]);
+  assert.deepEqual(raisedJson.objects.player_gate, [[2, 0, 1]]);
 
   context.options.pitch = 4;
   const raisedSideAscii = body(renderScreen(context));
   const awayFromGate = context.engine.move(context.state, -1, 0);
   const loweredSideAscii = body(renderScreen(context));
+  const loweredJson = buildJsonObservation(context, { omniscient: true });
 
   assert.equal(awayFromGate.moved, true);
   assert.equal(countMatches(raisedSideAscii, /y/g), 16);
   assert.equal(countMatches(loweredSideAscii, /y/g), 0);
+  assert.deepEqual(loweredJson.objects.player_gate, [[2, 0, 0]]);
 
   context.options.pitch = 0;
   const loweredAscii = body(renderScreen(context));
@@ -798,9 +808,11 @@ function syntheticFloor(width, height) {
 
   const towardGate = context.engine.move(context.state, 1, 0);
   const raisedAgainAscii = body(renderScreen(context));
+  const raisedAgainJson = buildJsonObservation(context, { omniscient: true });
 
   assert.equal(towardGate.moved, true);
   assert.match(raisedAgainAscii, /YYYY/);
+  assert.deepEqual(raisedAgainJson.objects.player_gate, [[2, 0, 1]]);
 }
 
 {
@@ -825,7 +837,7 @@ function syntheticFloor(width, height) {
   const raisedJson = buildJsonObservation(context, { omniscient: true });
 
   assert.match(raisedAscii, /OOOO/);
-  assert.deepEqual(raisedJson.objects.orange_wall, [[2, 0, 0]]);
+  assert.deepEqual(raisedJson.objects.orange_wall, [[2, 0, 1]]);
 
   context.options.pitch = 4;
   const raisedSideAscii = body(renderScreen(context));
@@ -836,7 +848,7 @@ function syntheticFloor(width, height) {
   assert.equal(ontoButton.moved, true);
   assert.equal(countMatches(raisedSideAscii, /o/g), 16);
   assert.equal(countMatches(loweredSideAscii, /o/g), 0);
-  assert.deepEqual(loweredJson.objects.orange_wall, [[2, 0, -1]]);
+  assert.deepEqual(loweredJson.objects.orange_wall, [[2, 0, 0]]);
 
   context.options.pitch = 0;
   const loweredAscii = body(renderScreen(context));
@@ -847,7 +859,7 @@ function syntheticFloor(width, height) {
   const releasedJson = buildJsonObservation(context, { omniscient: true });
 
   assert.equal(offButton.moved, true);
-  assert.deepEqual(releasedJson.objects.orange_wall, [[2, 0, 0]]);
+  assert.deepEqual(releasedJson.objects.orange_wall, [[2, 0, 1]]);
 }
 
 {
@@ -873,7 +885,7 @@ function syntheticFloor(width, height) {
   const context = syntheticContext(playData, { pitch: 1 });
   const raisedJson = buildJsonObservation(context, { omniscient: true });
 
-  assert.deepEqual(raisedJson.objects.orange_wall, [[2, 0, 1]]);
+  assert.deepEqual(raisedJson.objects.orange_wall, [[2, 0, 2]]);
 
   const ontoButton = context.engine.move(context.state, -1, 0);
   const loweredTopDiagonal = body(renderScreen(context));
@@ -882,7 +894,7 @@ function syntheticFloor(width, height) {
   assert.equal(ontoButton.moved, true);
   assert.equal(countMatches(loweredTopDiagonal, /O/g), 12);
   assert.equal(countMatches(loweredTopDiagonal, /w/g), 4);
-  assert.deepEqual(loweredJson.objects.orange_wall, [[2, 0, 0]]);
+  assert.deepEqual(loweredJson.objects.orange_wall, [[2, 0, 1]]);
 
   context.options.pitch = 4;
   const loweredSide = body(renderScreen(context));
@@ -908,7 +920,7 @@ function syntheticFloor(width, height) {
   });
 
   // Only one four-character row of the rear box survives, but that is enough.
-  assert.deepEqual(observation.objects.box, [[0, 0, 0]]);
+  assert.deepEqual(observation.objects.box, [[0, 0, 1]]);
 }
 
 {
@@ -930,7 +942,7 @@ function syntheticFloor(width, height) {
   const omniscient = buildJsonObservation(context, { omniscient: true });
 
   assert.equal(limited.objects.box, undefined);
-  assert.deepEqual(omniscient.objects.box, [[0, 0, 0]]);
+  assert.deepEqual(omniscient.objects.box, [[0, 0, 1]]);
 }
 
 {
@@ -970,8 +982,8 @@ function syntheticFloor(width, height) {
 
   assert.deepEqual(visible.objects.empty, [[0, 0, 0]]);
   assert.deepEqual(hiddenA, hiddenAAgain);
-  assert.deepEqual(hiddenA.objects.player, [[2, 0, 0]]);
-  assert.deepEqual(hiddenA.objects.gem, [[1, 0, 0]]);
+  assert.deepEqual(hiddenA.objects.player, [[2, 0, 1]]);
+  assert.deepEqual(hiddenA.objects.gem, [[1, 0, 1]]);
   assert.equal(
     Object.keys(hiddenA.objects).every((name) => ["player", "gem"].includes(name) || /^[A-Za-z]$/.test(name)),
     true
@@ -1649,6 +1661,42 @@ function syntheticFloor(width, height) {
   assert.equal(payload.current_view, "diagonal");
   assert.equal(payload.json_observation.observation_mode, "json");
   assert.equal(Object.prototype.hasOwnProperty.call(payload, "inputMoves"), false);
+}
+
+{
+  const initial = JSON.parse(runTerminal([
+    "--level", "CxD",
+    "--json",
+    "--omniscient"
+  ]));
+  const movedLeft = JSON.parse(runTerminal([
+    "--level", "CxD",
+    "--moves", "L",
+    "--json",
+    "--omniscient"
+  ]));
+
+  assert.equal(
+    initial.json_observation.objects.floor.every(([, , elevation]) => elevation === 0),
+    true
+  );
+  assert.deepEqual(initial.json_observation.objects.player, [[7, 11, 1]]);
+  assert.equal(
+    initial.json_observation.objects.wall.some(([, , elevation]) => elevation === 1),
+    true
+  );
+  assert.equal(
+    initial.json_observation.objects.player_gate.some(
+      ([x, y, elevation]) => x === 5 && y === 11 && elevation === 0
+    ),
+    true
+  );
+  assert.equal(
+    movedLeft.json_observation.objects.player_gate.some(
+      ([x, y, elevation]) => x === 5 && y === 11 && elevation === 1
+    ),
+    true
+  );
 }
 
 {
