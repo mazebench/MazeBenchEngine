@@ -226,6 +226,7 @@
   const REPLAY_BUFFER_FRAMES = 240;
   const REPLAY_BUFFER_REFILL_AT = 120;
   const REPLAY_BUFFER_LIMIT = 600;
+  const REPLAY_SCRUB_DELAY_MS = 80;
   const BOARD_STATE_CUSTOM_WINDOW_DEFAULT = 100;
   const BOARD_STATE_CUSTOM_WINDOW_MAX = 10000;
   const state = {
@@ -248,6 +249,7 @@
     replayBuffers: new Map(),
     replayBufferRequests: new Map(),
     replayRates: new Map(),
+    replayScrubTimers: new Map(),
     activeReplay: "primary",
     playingView: "",
     playbackTimer: null,
@@ -668,7 +670,9 @@
   };
 
   function replayTotal(viewId) {
-    if (viewId === "primary") return Math.max(0, Number(state.afterTurn) || 0);
+    if (viewId === "primary") {
+      return Math.max(0, Number(state.afterTurn) || 0, Number(state.run?.turns) || 0);
+    }
     const view = state.instanceViews.find((entry) => entry.id === viewId);
     return Math.max(0, Number(view?.auxiliary_actions) || 0);
   }
@@ -708,6 +712,12 @@
           " replay-control--branch"
         )
       : "";
+    const timelineProgress = total > 0 ? turn / total * 100 : 0;
+    const timeline = viewId === "primary"
+      ? `<label class="replay-timeline" title="Drag to show an exact action">
+          <input type="range" min="0" max="${total}" step="1" value="${turn}" data-replay-scrubber data-replay-view="${escapeText(viewId)}" aria-label="Live view action timeline" aria-valuetext="Action ${turn} of ${total}" style="--timeline-progress: ${timelineProgress}%"${total <= 0 ? " disabled" : ""}>
+        </label>`
+      : "";
     return `<div class="replay-controls__buttons${active}" data-replay-controls-view="${escapeText(viewId)}" role="group" aria-label="Observation playback">
       ${button("first", REPLAY_ICONS.first, "First observation", turn <= 0)}
       ${button("previous", REPLAY_ICONS.previous, "Previous observation", turn <= 0)}
@@ -724,7 +734,7 @@
         <span aria-hidden="true">/ ${total}</span>
       </label>
       ${branch}
-    </div>`;
+    </div>${timeline}`;
   }
 
   function updateReplayControlsInPlace(container, viewId) {
@@ -779,6 +789,18 @@
       }
       const suffix = positionInput.nextElementSibling;
       if (suffix && suffix.textContent !== `/ ${total}`) suffix.textContent = `/ ${total}`;
+    }
+    const scrubber = container.querySelector("[data-replay-scrubber]");
+    if (viewId === "primary" && !scrubber) return false;
+    if (scrubber) {
+      const progress = total > 0 ? turn / total * 100 : 0;
+      scrubber.disabled = total <= 0;
+      if (scrubber.max !== String(total)) scrubber.max = String(total);
+      if (document.activeElement !== scrubber && scrubber.value !== String(turn)) {
+        scrubber.value = String(turn);
+      }
+      scrubber.style.setProperty("--timeline-progress", `${progress}%`);
+      scrubber.setAttribute("aria-valuetext", `Action ${turn} of ${total}`);
     }
     if (existingBranch) {
       const label = `Branch from action ${turn}`;
@@ -1176,6 +1198,44 @@
           reset();
           control.blur();
         }
+      });
+    });
+    container?.querySelectorAll("[data-replay-scrubber]").forEach((control) => {
+      const viewId = control.dataset.replayView || "primary";
+      const requestedTurn = () => Math.max(
+        0,
+        Math.min(replayTotal(viewId), Math.floor(Number(control.value) || 0))
+      );
+      const updatePreview = () => {
+        const turn = requestedTurn();
+        const total = replayTotal(viewId);
+        const progress = total > 0 ? turn / total * 100 : 0;
+        control.style.setProperty("--timeline-progress", `${progress}%`);
+        control.setAttribute("aria-valuetext", `Action ${turn} of ${total}`);
+        const position = container.querySelector(`[data-replay-turn][data-replay-view="${viewId}"]`);
+        if (position && document.activeElement !== position) position.value = String(turn);
+      };
+      const seek = () => {
+        const timer = state.replayScrubTimers.get(viewId);
+        if (timer) clearTimeout(timer);
+        state.replayScrubTimers.delete(viewId);
+        state.activeReplay = viewId;
+        void setReplayTurn(viewId, requestedTurn());
+      };
+      control.addEventListener("pointerdown", (event) => event.stopPropagation());
+      control.addEventListener("click", (event) => event.stopPropagation());
+      control.addEventListener("input", (event) => {
+        event.stopPropagation();
+        stopPlayback();
+        updatePreview();
+        const previous = state.replayScrubTimers.get(viewId);
+        if (previous) clearTimeout(previous);
+        state.replayScrubTimers.set(viewId, setTimeout(seek, REPLAY_SCRUB_DELAY_MS));
+      });
+      control.addEventListener("change", (event) => {
+        event.stopPropagation();
+        updatePreview();
+        seek();
       });
     });
   }

@@ -78,6 +78,13 @@ assert.doesNotMatch(siteTheme, /\.run-live__grid\.is-text-history \.run-live__vi
 assert.match(siteTheme, /\.replay-rate input \{/);
 assert.doesNotMatch(siteTheme, /\.replay-rate select \{/);
 assert.match(runScript, /data-replay-turn data-replay-view=/);
+assert.match(runScript, /type="range"[^>]+data-replay-scrubber/);
+assert.match(runScript, /aria-label="Live view action timeline"/);
+assert.match(runScript, /const REPLAY_SCRUB_DELAY_MS = 80/);
+assert.match(runScript, /setTimeout\(seek, REPLAY_SCRUB_DELAY_MS\)/);
+assert.match(runScript, /Math\.max\(0, Number\(state\.afterTurn\) \|\| 0, Number\(state\.run\?\.turns\) \|\| 0\)/);
+assert.match(siteTheme, /\.replay-timeline input\[type="range"\] \{[\s\S]*?--timeline-progress/);
+assert.match(siteTheme, /linear-gradient\(to right, #65f3d4 0 var\(--timeline-progress\)/);
 assert.match(runScript, /function jumpToPrimaryFrame\(requestedTurn/);
 assert.match(runScript, /data-jump-turn="\$\{escapeText\(num\)\}"/);
 assert.match(runScript, /void jumpToPrimaryFrame\(Number\(frame\.dataset\.jumpTurn\)\)/);
