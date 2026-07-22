@@ -88,7 +88,7 @@
   const toolsLive = document.getElementById("run-tools-live");
   const toolsExecutionCount = document.getElementById("run-tools-execution-count");
   let toolsDuration = document.getElementById("run-tools-duration");
-  let toolsCpuTime = document.getElementById("run-tools-cpu-time");
+  document.getElementById("run-tools-cpu-time")?.parentElement?.remove();
   const toolsCommandCount = document.getElementById("run-tools-command-count");
   const toolsFileCount = document.getElementById("run-tools-file-count");
   const toolsWorkspaceSelect = document.getElementById("run-tools-workspace");
@@ -107,7 +107,7 @@
 
   // Static assets can update while the local Node server keeps serving older
   // run-page markup. Add the aggregate timing tile on refresh in that case.
-  if (toolsSection && (!toolsDuration || !toolsCpuTime)) {
+  if (toolsSection && !toolsDuration) {
     const stats = toolsSection.querySelector(".run-tools__stats");
     if (stats) {
       const addTimingTile = (id, labelText, after) => {
@@ -128,10 +128,6 @@
       } else {
         const label = toolsDuration.nextElementSibling;
         if (label) label.textContent = "Total wall time";
-      }
-      if (!toolsCpuTime) {
-        const added = addTimingTile("run-tools-cpu-time", "Total CPU time", toolsDuration.parentElement);
-        toolsCpuTime = added.value;
       }
     }
   }
@@ -321,15 +317,39 @@
     return formatDuration(milliseconds);
   }
 
-  function toolsStatusLabel(execution) {
+  function toolsStatusLabel(execution, now = Date.now()) {
     if (execution.status === "running") {
       const started = Date.parse(execution.started_at || "");
-      return `Running${Number.isFinite(started) ? ` · ${formatDuration(Date.now() - started)}` : ""}`;
+      return `Running${Number.isFinite(started) ? ` · ${formatToolDuration(now - started)}` : ""}`;
     }
     if (execution.status === "cancelled") return "Cancelled";
     if (execution.status === "failed") return "Failed";
     if (execution.timed_out) return "Timed out";
-    return execution.duration_ms ? formatDuration(execution.duration_ms) : "Completed";
+    return execution.duration_ms ? formatToolDuration(execution.duration_ms) : "Completed";
+  }
+
+  function liveToolsWallTime(data, now = Date.now()) {
+    const recorded = Math.max(0, Number(data?.counts?.duration_ms) || 0);
+    return (Array.isArray(data?.executions) ? data.executions : []).reduce((total, execution) => {
+      if (execution.status !== "running") return total;
+      const started = Date.parse(execution.started_at || "");
+      return total + (Number.isFinite(started) ? Math.max(0, now - started) : 0);
+    }, recorded);
+  }
+
+  function refreshLiveToolsTiming(now = Date.now()) {
+    if (!state.toolsData) return;
+    if (toolsDuration) toolsDuration.textContent = formatToolDuration(liveToolsWallTime(state.toolsData, now));
+    const executions = new Map(
+      (Array.isArray(state.toolsData.executions) ? state.toolsData.executions : [])
+        .filter((execution) => execution.status === "running")
+        .map((execution) => [String(execution.id), execution])
+    );
+    toolsExecutionList?.querySelectorAll('[data-tool-status="running"]').forEach((element) => {
+      const execution = executions.get(String(element.dataset.toolExecution || ""));
+      const label = element.querySelector("[data-tool-status-label]");
+      if (execution && label) label.textContent = toolsStatusLabel(execution, now);
+    });
   }
 
   function renderToolsFiles(workspace) {
@@ -361,8 +381,7 @@
     toolsSection.hidden = false;
     const counts = data.counts || {};
     toolsExecutionCount.textContent = Number(counts.executions || 0).toLocaleString();
-    if (toolsDuration) toolsDuration.textContent = formatToolDuration(counts.duration_ms);
-    if (toolsCpuTime) toolsCpuTime.textContent = formatToolDuration(counts.cpu_time_ms);
+    refreshLiveToolsTiming();
     toolsCommandCount.textContent = Number(counts.unique_commands || 0).toLocaleString();
     toolsFileCount.textContent = Number(counts.files || 0).toLocaleString();
     const active = Number(counts.active || 0);
@@ -399,13 +418,10 @@
         const changes = execution.workspace_changes || {};
         const changed = [changes.created, changes.modified, changes.deleted]
           .reduce((sum, entries) => sum + (Array.isArray(entries) ? entries.length : 0), 0);
-        const cpuTime = execution.cpu_time_ms === null || execution.cpu_time_ms === undefined
-          ? ""
-          : `<span>${escapeText(formatToolDuration(execution.cpu_time_ms))} CPU</span>`;
-        return `<button type="button" class="run-tools__execution is-${escapeText(execution.status || "completed")}" data-tool-execution="${escapeText(execution.id)}">
+        return `<button type="button" class="run-tools__execution is-${escapeText(execution.status || "completed")}" data-tool-execution="${escapeText(execution.id)}" data-tool-status="${escapeText(execution.status || "completed")}">
           <span class="run-tools__execution-index">#${Number(execution.sequence || 0).toLocaleString()}</span>
           <span class="run-tools__execution-copy"><strong>${escapeText(execution.code_preview || "Python command")}</strong><small>${escapeText(execution.output_preview || "No output")}</small></span>
-          <span class="run-tools__execution-meta">${repeat}${changed ? `<span>${changed.toLocaleString()} file change${changed === 1 ? "" : "s"}</span>` : ""}${cpuTime}<span>${escapeText(toolsStatusLabel(execution))}</span></span>
+          <span class="run-tools__execution-meta">${repeat}${changed ? `<span>${changed.toLocaleString()} file change${changed === 1 ? "" : "s"}</span>` : ""}<span data-tool-status-label>${escapeText(toolsStatusLabel(execution))}</span></span>
         </button>`;
       }).join("");
     }
@@ -462,7 +478,7 @@
       showToolsInspector({
         kind: "Python execution",
         title: `Execution #${Number(execution.sequence || 0).toLocaleString()}`,
-        meta: `${execution.actor || "lead"} · ${toolsStatusLabel(execution)}${execution.cpu_time_ms === null || execution.cpu_time_ms === undefined ? "" : ` wall · ${formatToolDuration(execution.cpu_time_ms)} CPU`} · ${formatBytes(execution.code_bytes)}${Number(execution.repeat_count || 1) > 1 ? ` · same source run ${execution.repeat_count} times` : ""}`,
+        meta: `${execution.actor || "lead"} · ${toolsStatusLabel(execution)} · ${formatBytes(execution.code_bytes)}${Number(execution.repeat_count || 1) > 1 ? ` · same source run ${execution.repeat_count} times` : ""}`,
         sections: [
           { label: "Exact Python source", text: execution.code, className: "is-code" },
           { label: "Standard output", text: execution.stdout, optional: true },
@@ -4037,6 +4053,8 @@
     state.toolsInspectorRequest += 1;
     toolsInspector.hidden = true;
   });
+
+  if (toolsSection) window.setInterval(() => refreshLiveToolsTiming(), 250);
 
   deleteButton?.addEventListener("click", async () => {
     if (!window.confirm("Delete this run and its artifacts? This can't be undone.")) return;

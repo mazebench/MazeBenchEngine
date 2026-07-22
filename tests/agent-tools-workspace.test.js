@@ -3,10 +3,13 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const vm = require("node:vm");
 const { createAgentRunService } = require("../server/agent-runs");
 
 const projectRoot = path.join(__dirname, "..");
 const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "mazebench-tools-workspace-"));
+const serviceRootDir = `${rootDir}-symlink`;
+fs.symlinkSync(rootDir, serviceRootDir, "dir");
 const workspaceRoots = [];
 
 function loadJson(filePath, fallback) {
@@ -23,7 +26,7 @@ const service = createAgentRunService({
   getGame: () => ({ id: "maze", name: "Maze", worldMap: { levels: [] } }),
   buildWorlds: { countWorldGems: () => 0 },
   loadJson,
-  rootDir,
+  rootDir: serviceRootDir,
   worldMaps: {
     defaultLevelIdForGame: () => "level_HxI",
     isMazeWorldLevelId: () => true
@@ -53,7 +56,7 @@ function prepareRun(runId, model = "codex") {
     mode: "text",
     launch_params: { tool_use: "offline", tools: true }
   }, null, 2)}\n`);
-  const key = crypto.createHash("sha256").update(runDir).digest("hex").slice(0, 24);
+  const key = crypto.createHash("sha256").update(fs.realpathSync(runDir)).digest("hex").slice(0, 24);
   const workspaceRoot = path.join(os.tmpdir(), "mazebench-agent-workspaces", key);
   workspaceRoots.push(workspaceRoot);
   return { runDir, workspaceRoot, workspace: path.join(workspaceRoot, "workspace") };
@@ -125,7 +128,6 @@ try {
   assert.deepEqual(progress.tools_workspace.counts, {
     executions: 3,
     duration_ms: 175,
-    cpu_time_ms: 20,
     active: 1,
     unique_commands: 2,
     files: 2
@@ -142,7 +144,7 @@ try {
   const detail = service.getToolExecution(runId, "python-1");
   assert.equal(detail.code, repeatedCode);
   assert.equal(detail.stdout, "route\n");
-  assert.equal(detail.cpu_time_ms, 12.5);
+  assert.equal(Object.prototype.hasOwnProperty.call(detail, "cpu_time_ms"), false);
   assert.deepEqual(detail.workspace_changes.created, ["plan.py"]);
 
   const file = service.getToolWorkspaceFile(runId, "primary", "maps/room.txt");
@@ -189,11 +191,24 @@ try {
   const router = fs.readFileSync(path.join(projectRoot, "server", "router.js"), "utf8");
   assert.match(pages, /id="run-tools-section"/);
   assert.match(pages, /id="run-tools-duration"/);
-  assert.match(pages, /id="run-tools-cpu-time"/);
+  assert.doesNotMatch(pages, /Total CPU time/);
   assert.match(pages, /Inline commands run as <code>&lt;mazebench-python&gt;<\/code>/);
   assert.match(client, /function renderToolsWorkspace\(data\)/);
-  assert.match(client, /formatToolDuration\(counts\.duration_ms\)/);
-  assert.match(client, /formatToolDuration\(counts\.cpu_time_ms\)/);
+  assert.match(client, /function liveToolsWallTime\(data, now = Date\.now\(\)\)/);
+  assert.match(client, /window\.setInterval\(\(\) => refreshLiveToolsTiming\(\), 250\)/);
+  assert.match(client, /data-tool-status-label/);
+  assert.doesNotMatch(client, /Total CPU time/);
+  const liveTimingSource = client.match(/function liveToolsWallTime[\s\S]*?\n  }\n\n  function refreshLiveToolsTiming/)?.[0]
+    .replace(/\n\n  function refreshLiveToolsTiming$/, "");
+  assert(liveTimingSource, "live wall-time helper is present");
+  const liveToolsWallTime = vm.runInNewContext(`(${liveTimingSource})`);
+  assert.equal(liveToolsWallTime({
+    counts: { duration_ms: 175 },
+    executions: [
+      { status: "completed", started_at: "2026-07-22T00:00:01.000Z", duration_ms: 125 },
+      { status: "running", started_at: "2026-07-22T00:00:03.000Z", duration_ms: 0 }
+    ]
+  }, Date.parse("2026-07-22T00:00:05.000Z")), 2175);
   assert.match(client, /execution\.status === "cancelled"/);
   assert.match(client, /data-tool-execution/);
   assert.match(client, /data-workspace-file/);
@@ -203,6 +218,7 @@ try {
   assert.match(router, /segments\[5\] === "file"/);
 } finally {
   workspaceRoots.forEach((workspaceRoot) => fs.rmSync(workspaceRoot, { recursive: true, force: true }));
+  fs.rmSync(serviceRootDir, { force: true });
   fs.rmSync(rootDir, { recursive: true, force: true });
 }
 

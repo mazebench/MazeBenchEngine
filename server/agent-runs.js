@@ -683,7 +683,18 @@ function createAgentRunService({
   }
 
   function agentWorkspaceRootFor(runId) {
-    const key = crypto.createHash("sha256").update(runDirFor(runId)).digest("hex").slice(0, 24);
+    const runDir = runDirFor(runId);
+    let workspaceIdentity = runDir;
+    try {
+      // A development server may run from a temporary merged checkout whose
+      // outputs directory is a symlink to the canonical repository outputs.
+      // The runner hashes the canonical run directory, so the UI must do the
+      // same or it will report an empty workspace even though files still exist.
+      workspaceIdentity = fs.realpathSync(runDir);
+    } catch (_error) {
+      /* an incomplete/deleted run has no workspace to inspect */
+    }
+    const key = crypto.createHash("sha256").update(workspaceIdentity).digest("hex").slice(0, 24);
     return path.join(os.tmpdir(), "mazebench-agent-workspaces", key);
   }
 
@@ -3144,7 +3155,6 @@ function createAgentRunService({
       started_at: execution.started_at,
       completed_at: execution.completed_at,
       duration_ms: execution.duration_ms,
-      cpu_time_ms: execution.result?.cpu_time_ms ?? null,
       timeout_seconds: execution.timeout_seconds,
       code_hash: execution.code_hash,
       code_bytes: Buffer.byteLength(String(execution.code || ""), "utf8"),
@@ -3171,10 +3181,6 @@ function createAgentRunService({
         executions: executions.length,
         duration_ms: executions.reduce(
           (sum, execution) => sum + Math.max(0, Number(execution.duration_ms) || 0),
-          0
-        ),
-        cpu_time_ms: executions.reduce(
-          (sum, execution) => sum + Math.max(0, Number(execution.result?.cpu_time_ms) || 0),
           0
         ),
         active: executions.filter((entry) => entry.status === "running").length,

@@ -2606,7 +2606,15 @@ async function main() {
   const unlimited = isTruthy(raw.unlimited, false);
   const hostAccess = !wantsContainer && !inContainer;
   const agentHomeStat = inContainer ? fs.statSync("/home/pwuser") : null;
-  const workspaceKey = crypto.createHash("sha256").update(outDir).digest("hex").slice(0, 24);
+  let workspaceIdentity = outDir;
+  try {
+    // Match the run-page lookup when an ancestor such as outputs/ is symlinked
+    // from a temporary merged checkout into the canonical repository.
+    workspaceIdentity = fs.realpathSync(outDir);
+  } catch (_error) {
+    /* direct CLI launches may not have created outDir yet */
+  }
+  const workspaceKey = crypto.createHash("sha256").update(workspaceIdentity).digest("hex").slice(0, 24);
   const workspaceRoot = path.join(os.tmpdir(), "mazebench-agent-workspaces", workspaceKey);
   const workspaceDir = path.join(workspaceRoot, "workspace");
   const swarmDir = path.join(outDir, "swarm");
