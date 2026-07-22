@@ -401,13 +401,6 @@ function createRequestRouter({
         return;
       }
 
-      if (segments[4] === "frame" && request.method === "GET") {
-        const turn = Math.max(0, Number(url.searchParams.get("turn")) || 0);
-        const manual = url.searchParams.get("manual") === "1";
-        sendJson(response, 200, await agentRuns.renderLiveFrame(runId, turn, { manual }));
-        return;
-      }
-
       if (segments[4] === "observation" && request.method === "GET") {
         const observation = await agentRuns.getRunObservation(runId, {
           instanceId: url.searchParams.get("instance") || "primary",

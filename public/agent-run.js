@@ -5,7 +5,7 @@
   const isVision = initial.mode === "vision";
   const isJson = initial.mode === "json";
   // Hosted Prime evaluations expose lifecycle state immediately and the scored
-  // sample at completion, so skip the local-only frame renderer while active.
+  // sample at completion, and use a different run-page lifecycle while active.
   const isPrime = initial.kind === "prime" || initial.model === "prime";
   const statusEl = document.getElementById("run-status");
   const boardEl = document.getElementById("run-board");
@@ -224,8 +224,6 @@
     lastBitmapBoard: "",
     jsonObservationTurn: -1,
     jsonObservationPending: false,
-    replayFrameRequest: 0,
-    replayFrameTimer: null,
     videoShown: false,
     tokenSignature: "",
     explorationSignature: "",
@@ -502,7 +500,7 @@
   }
 
   function drawAsciiBitmap(board, turn = null) {
-    if (!liveBitmap || isVision || isJson) return false;
+    if (!liveBitmap || isVision) return false;
     const boardText = String(board || "");
     if (state.lastBitmapBoard === boardText) {
       liveBitmap.hidden = false;
@@ -713,10 +711,6 @@
     const previous = state.playingView;
     state.playingView = "";
     if (previous) refreshReplayControls(previous);
-    if (previous === "primary") {
-      const observation = state.replayObservations.get("primary");
-      if (observation && !observation.frame_url) resolveReplayFrame(replayTurn("primary"));
-    }
   }
 
   async function setReplayTurn(viewId, requestedTurn, { playbackGeneration = null } = {}) {
@@ -816,7 +810,6 @@
       return;
     }
     stopPlayback();
-    if (viewId === "primary") cancelReplayFrameResolution();
     state.activeReplay = viewId;
     state.playingView = viewId;
     const generation = state.playbackGeneration;
@@ -3389,41 +3382,6 @@
 
   // ---- live image -----------------------------------------------------------
 
-  function cancelReplayFrameResolution() {
-    state.replayFrameRequest += 1;
-    if (state.replayFrameTimer) clearTimeout(state.replayFrameTimer);
-    state.replayFrameTimer = null;
-  }
-
-  function resolveReplayFrame(turn) {
-    if (isPrime || isVision || !state.replayCursors.has("primary")) return;
-    cancelReplayFrameResolution();
-    const requestId = state.replayFrameRequest;
-    const requestedTurn = Math.max(0, Number(turn) || 0);
-
-    const attempt = async (retries = 0) => {
-      try {
-        const response = await fetch(
-          `/api/agent/runs/${encodeURIComponent(runId)}/frame?turn=${requestedTurn}&manual=1`
-        );
-        const payload = await response.json();
-        if (requestId !== state.replayFrameRequest || replayTurn("primary") !== requestedTurn) return;
-        const renderedTurn = Number.isFinite(Number(payload.turn)) ? Number(payload.turn) : requestedTurn;
-        if (payload.url && renderedTurn === requestedTurn) {
-          showImage(payload.url, renderedTurn);
-          return;
-        }
-        if (payload.pending && retries < 12) {
-          state.replayFrameTimer = setTimeout(() => attempt(retries + 1), 250);
-        }
-      } catch (_error) {
-        // The observation remains visible; a later manual step can try again.
-      }
-    };
-
-    void attempt();
-  }
-
   function showImage(url, turn) {
     if (!url) return;
     livePlaceholder?.classList.remove("is-history");
@@ -3449,21 +3407,17 @@
     let showsAsciiBitmap = false;
     if (observation.board && observation.mode !== "vision") {
       showAsciiBoard(observation.board, turn);
-      showsAsciiBitmap = observation.mode === "text" && Boolean(liveBitmap);
+      showsAsciiBitmap = observation.mode !== "vision" && Boolean(liveBitmap);
     }
     if (observation.mode === "json" && observation.json_observation) {
       showJsonObservation(observation.json_observation, turn);
     }
     if (observation.frame_url) {
-      cancelReplayFrameResolution();
       showImage(observation.frame_url, turn);
       return;
     }
 
-    if (showsAsciiBitmap) {
-      if (state.playingView !== "primary") resolveReplayFrame(turn);
-      return;
-    }
+    if (showsAsciiBitmap) return;
 
     const hasRenderedImage = Boolean(state.lastImageUrl || liveImage?.src);
     liveImage.hidden = !hasRenderedImage;
@@ -3472,13 +3426,12 @@
     const label = livePlaceholder?.querySelector("span:last-child");
     if (label) label.textContent = observation.mode === "vision"
       ? `No saved vision frame for move ${turn}`
-      : `Rendering move ${turn}…`;
+      : `No ASCII preview for move ${turn}`;
     if (captionEl) {
       const turnLabel = turn === 0 ? "move 0 · starting state" : `after move ${turn}`;
       captionEl.textContent = hasRenderedImage ? `${turnLabel} · rendered view catching up` : turnLabel;
       captionEl.hidden = false;
     }
-    if (observation.mode !== "vision" && state.playingView !== "primary") resolveReplayFrame(turn);
   }
 
   async function refreshLatestJsonObservation() {

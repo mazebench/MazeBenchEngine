@@ -29,12 +29,7 @@ const {
   providerEventPrefix,
   toolActivityPrefix
 } = require("./run-branch");
-const {
-  findPlaywrightBrowserChildren,
-  killPlaywrightBrowserProcess,
-  playwrightBrowserProcess,
-  signalProcessGroup
-} = require("../scripts/playwright-process");
+const { killPlaywrightBrowserProcess } = require("../scripts/playwright-process");
 const {
   autoQuitLaunchParams,
   evaluateAutoQuit,
@@ -537,14 +532,12 @@ function createAgentRunService({
   const runsDir = path.join(rootDir, "outputs", "maze-local", "site");
   const runnerScript = path.join(rootDir, "scripts", "maze-agent-local.js");
   const primeRunnerScript = path.join(rootDir, "scripts", "maze-prime-run.js");
-  const renderFrameScript = path.join(rootDir, "scripts", "maze-render-frame.js");
   const replayScript = path.join(rootDir, "scripts", "maze-export-replay.js");
   const primeEvaluationCreatorScript = path.join(rootDir, "scripts", "prime-create-evaluation.js");
   const liveChildren = new Map();
   const videoChildren = new Map();
   const primeSyncChildren = new Map();
   const reviewChildren = new Map();
-  const liveFrameLocks = new Map();
   const resolvedRunModels = new Map();
   const legacyClaudeSnapshotTimers = new Map();
   const legacyClaudeSnapshotStamps = new Map();
@@ -1593,7 +1586,6 @@ function createAgentRunService({
       !(meta.container && dockerRunAlive(runId))
     ) {
       stopLegacyClaudeSnapshots(runId);
-      stopLiveRenderer(runId, { force: true });
       stopDetachedRunRenderers(runId, { force: true });
       const updated = coldPausedRunMeta(meta);
       writeRunMeta(runId, updated);
@@ -2006,7 +1998,6 @@ function createAgentRunService({
       stopPrimeAgentSandboxes(runId);
     }
     stopLegacyClaudeSnapshots(runId);
-    stopLiveRenderer(runId, { force: true });
     stopDetachedRunRenderers(runId, { force: true });
 
     if (meta.container) {
@@ -3647,7 +3638,7 @@ function createAgentRunService({
     const framesDir = path.join(workerDir, "frames");
     if (!fs.existsSync(framesDir)) return null;
     const latest = fs.readdirSync(framesDir)
-      .map((name) => ({ name, match: name.match(/^(?:frame|live)-(\d+)\.png$/) }))
+      .map((name) => ({ name, match: name.match(/^frame-(\d+)\.png$/) }))
       .filter((entry) => entry.match)
       .sort((left, right) => Number(right.match[1]) - Number(left.match[1]))[0];
     return latest
@@ -3715,6 +3706,9 @@ function createAgentRunService({
         const inheritedActionCount = Math.max(0, Number(metadata.fork_action_count) || 0);
         const recorded = eventSummary.get(entry.name);
         const ownActionCount = Math.max(0, turn - inheritedActionCount);
+        const observationMode = normalizeObservationMode(
+          metadata.observation_mode || session?.observationMode || (session?.vision ? "vision" : "text")
+        );
 
         return {
           id: entry.name,
@@ -3722,7 +3716,9 @@ function createAgentRunService({
           activity,
           board: String(status.level || ""),
           json_observation: status.json_observation || null,
-          frame_url: latestSwarmFrame(runId, entry.name, workerDir),
+          frame_url: observationMode === "vision"
+            ? latestSwarmFrame(runId, entry.name, workerDir)
+            : null,
           gem_count: Math.max(0, Number(status.gem_count) || 0),
           player: status.player
             ? {
@@ -3748,9 +3744,7 @@ function createAgentRunService({
           owner_kind: String(metadata.owner_kind || "subagent"),
           owner_agent_id: String(metadata.owner_agent_id || entry.name),
           parent_instance_id: String(metadata.parent_instance_id || "primary"),
-          observation_mode: normalizeObservationMode(
-            metadata.observation_mode || session?.observationMode || (session?.vision ? "vision" : "text")
-          ),
+          observation_mode: observationMode,
           updated_at: updatedAt ? new Date(updatedAt).toISOString() : null,
           view: String(status.current_view || ""),
           yaw: Number(status.yaw) || 0
@@ -3765,299 +3759,6 @@ function createAgentRunService({
 
   function readReplayProgress(runId) {
     return loadJson(path.join(runDirFor(runId), "replay-progress.json"), null);
-  }
-
-  function canonicalActionText(message) {
-    if (!message || typeof message !== "object") {
-      return "";
-    }
-
-    if (message.command === "move") return String(message.direction || "");
-    if (message.command === "rotate_camera") return `rotate camera ${message.direction}`;
-    if (message.command === "goto_level") return `go to level ${message.x} ${message.y}`;
-    if (message.command === "reset_level") return "reset";
-    if (message.command === "no_move") return "no move";
-    return String(message.command || "");
-  }
-
-  // ---- live frame renderers -------------------------------------------------
-  // One persistent maze-render-frame.js --serve child per watched run, spawned
-  // lazily and reaped after idling. Its "render" command syncs to the run's
-  // action list incrementally, so rendering turn N+1 applies one new action
-  // instead of booting a browser and replaying the whole run per frame.
-
-  const liveRenderers = new Map();
-  const LIVE_RENDERER_IDLE_MS = 30 * 1000;
-
-  function stopLiveRenderer(runId, { force = false } = {}) {
-    const entry = liveRenderers.get(runId);
-
-    if (!entry) {
-      return;
-    }
-
-    liveRenderers.delete(runId);
-    clearTimeout(entry.idleTimer);
-    entry.waiters.splice(0).forEach((waiter) => waiter.reject(new Error("The frame renderer stopped.")));
-
-    const child = entry.child;
-    findPlaywrightBrowserChildren(child.pid).forEach((info) => {
-      entry.browserProcesses.set(info.pid, info);
-    });
-
-    try {
-      entry.child.stdin.write(`${JSON.stringify({ command: "close" })}\n`);
-    } catch (error) {
-      /* stdin already gone */
-    }
-
-    if (force) {
-      // SIGTERM lets the renderer's Playwright cleanup run. SIGKILLing only
-      // Node is what previously orphaned Chrome's separate process group.
-      signalProcessGroup(child.pid, "SIGTERM");
-    }
-
-    entry.stopTimer = setTimeout(() => {
-      findPlaywrightBrowserChildren(child.pid).forEach((info) => {
-        entry.browserProcesses.set(info.pid, info);
-      });
-      for (const info of entry.browserProcesses.values()) {
-        killPlaywrightBrowserProcess(playwrightBrowserProcess(info.pid) || info);
-      }
-      signalProcessGroup(child.pid, "SIGKILL");
-    }, 20_000);
-    entry.stopTimer.unref();
-  }
-
-  function liveRendererFor(runId) {
-    const existing = liveRenderers.get(runId);
-
-    if (existing && existing.child.exitCode === null && !existing.child.killed) {
-      return existing;
-    }
-
-    if (existing) {
-      stopLiveRenderer(runId);
-    }
-
-    const child = spawn(process.execPath, [renderFrameScript, "--serve"], {
-      cwd: rootDir,
-      detached: process.platform !== "win32",
-      env: enrichedPathEnv(),
-      stdio: ["pipe", "pipe", "ignore"]
-    });
-    const entry = {
-      child,
-      waiters: [],
-      browserProcesses: new Map(),
-      buffer: "",
-      idleTimer: null,
-      stopTimer: null
-    };
-
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      entry.buffer += chunk;
-      let newline = entry.buffer.indexOf("\n");
-
-      while (newline >= 0) {
-        const line = entry.buffer.slice(0, newline).trim();
-        entry.buffer = entry.buffer.slice(newline + 1);
-        newline = entry.buffer.indexOf("\n");
-
-        if (line) {
-          entry.waiters.shift()?.resolve(line);
-        }
-      }
-    });
-
-    const fail = () => {
-      if (liveRenderers.get(runId) === entry) {
-        liveRenderers.delete(runId);
-      }
-
-      clearTimeout(entry.idleTimer);
-      clearTimeout(entry.stopTimer);
-      entry.waiters.splice(0).forEach((waiter) => waiter.reject(new Error("The frame renderer exited.")));
-      for (const info of entry.browserProcesses.values()) {
-        killPlaywrightBrowserProcess(playwrightBrowserProcess(info.pid) || info);
-      }
-    };
-    child.on("error", fail);
-    child.on("close", fail);
-
-    liveRenderers.set(runId, entry);
-    return entry;
-  }
-
-  function liveRendererRequest(runId, message, timeoutMs = 45000) {
-    const entry = liveRendererFor(runId);
-
-    clearTimeout(entry.idleTimer);
-    entry.idleTimer = setTimeout(() => stopLiveRenderer(runId), LIVE_RENDERER_IDLE_MS);
-    entry.idleTimer.unref?.();
-
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const index = entry.waiters.indexOf(waiter);
-
-        if (index >= 0) {
-          entry.waiters.splice(index, 1);
-        }
-
-        // A stuck renderer would stall every later frame too — recycle it.
-        stopLiveRenderer(runId);
-        reject(new Error("The frame renderer timed out."));
-      }, timeoutMs);
-      const waiter = {
-        resolve: (line) => {
-          clearTimeout(timer);
-
-          try {
-            const response = JSON.parse(line);
-            const browserProcess = playwrightBrowserProcess(response.browser_pid);
-            if (browserProcess) {
-              entry.browserProcesses.set(browserProcess.pid, browserProcess);
-            }
-            resolve(response);
-          } catch (error) {
-            reject(new Error("The renderer returned an unreadable response."));
-          }
-        },
-        reject: (error) => {
-          clearTimeout(timer);
-          reject(error);
-        }
-      };
-
-      entry.waiters.push(waiter);
-
-      try {
-        entry.child.stdin.write(`${JSON.stringify(message)}\n`);
-      } catch (error) {
-        waiter.reject(error);
-      }
-    });
-  }
-
-  // Render an exact 3D history frame after a deliberate replay request (vision
-  // runs already have real frames). Syncs the run's persistent renderer to the
-  // first `turn` actions, caches the PNG, and returns its url. One render per
-  // run at a time so requests never pile up behind a slow frame.
-  async function renderLiveFrame(runId, turn, { manual = false } = {}) {
-    const runDir = runDirFor(runId);
-    const framesDir = path.join(runDir, "frames");
-    const checkpoint = loadJson(path.join(runDir, "current-render-state.json"), null);
-    const checkpointTurn = Math.max(0, Number(checkpoint?.turn) || 0);
-    const useCheckpoint = Boolean(
-      checkpoint?.snapshot?.level_id && Array.isArray(checkpoint.snapshot.actors) && checkpointTurn <= Number(turn)
-    );
-    const renderTurn = useCheckpoint ? checkpointTurn : Number(turn);
-    const fileName = `live-${String(renderTurn).padStart(3, "0")}.png`;
-    const target = path.join(framesDir, fileName);
-    const url = `/agent-runs/${encodeURIComponent(runId)}/files/frames/${fileName}`;
-    const fallback = fs.existsSync(framesDir)
-      ? fs.readdirSync(framesDir)
-          .map((name) => ({ name, match: name.match(/^live-(\d+)\.png$/) }))
-          .filter((entry) => entry.match && Number(entry.match[1]) <= Number(turn))
-          .map((entry) => ({
-            turn: Number(entry.match[1]),
-            url: `/agent-runs/${encodeURIComponent(runId)}/files/frames/${entry.name}`
-          }))
-          .sort((left, right) => right.turn - left.turn)[0] || null
-      : null;
-
-    if (fs.existsSync(target)) {
-      return { url, turn: renderTurn, cached: true };
-    }
-
-    const runMeta = readRunMeta(runId);
-    // The live text observation is already rendered as a cheap colored bitmap.
-    // Starting a full headless Three.js/SwiftShader browser can consume several
-    // CPU cores per watched run, so only deliberate replay scrubbing may create
-    // a 3D snapshot. This also protects against already-open pages running an
-    // older client script that still requests automatic frames.
-    if (!manual) {
-      return fallback
-        ? { ...fallback, deferred: true, stale: true }
-        : { url: null, deferred: true };
-    }
-
-    if (["paused", "stopping", "stopped"].includes(runMeta?.status)) {
-      return fallback
-        ? { ...fallback, suspended: true }
-        : { url: null, suspended: true };
-    }
-
-    if (liveFrameLocks.has(runId)) {
-      return fallback ? { ...fallback, pending: true, stale: true } : { url: null, pending: true };
-    }
-
-    const session = loadJson(path.join(runDir, "session.json"), null);
-
-    if (!session) {
-      // The UI requests move 0 immediately. Keep retrying while the runner is
-      // creating its session instead of exhausting the frame failure budget.
-      return fallback ? { ...fallback, pending: true, stale: true } : { url: null, pending: true };
-    }
-
-    const payload = {
-      command: "render",
-      actions: useCheckpoint
-        ? []
-        : (session.actions || [])
-            .slice(0, Number(turn) || 0)
-            .map((action) => canonicalActionText(action.message))
-            .filter(Boolean),
-      draft: true,
-      fast: true,
-      gameId: session.gameId || "maze",
-      levelId: useCheckpoint
-        ? checkpoint.snapshot.level_id
-        : session.levelId || "level_HxI",
-      snapshot: useCheckpoint ? checkpoint.snapshot : null,
-      width: 640,
-      height: 640,
-      yaw: session.yaw || 0
-    };
-
-    const lock = (async () => {
-      try {
-        const response = await liveRendererRequest(runId, payload);
-
-        if (!response || response.ok !== true || !response.frame) {
-          return { url: null, error: (response && response.error) || "The frame renderer failed." };
-        }
-
-        const dataUrl = String(response.frame);
-        const prefix = "data:image/png;base64,";
-
-        if (!dataUrl.startsWith(prefix)) {
-          return { url: null, error: "The renderer returned no image." };
-        }
-
-        fs.mkdirSync(framesDir, { recursive: true });
-        fs.writeFileSync(target, Buffer.from(dataUrl.slice(prefix.length), "base64"));
-        return { url, turn: renderTurn };
-      } catch (error) {
-        return { url: null, error: error.message || "The frame renderer failed." };
-      }
-    })();
-
-    liveFrameLocks.set(runId, lock);
-
-    if (fallback) {
-      lock.finally(() => {
-        if (liveFrameLocks.get(runId) === lock) liveFrameLocks.delete(runId);
-      });
-      return { ...fallback, pending: true, stale: true };
-    }
-
-    try {
-      return await lock;
-    } finally {
-      if (liveFrameLocks.get(runId) === lock) liveFrameLocks.delete(runId);
-    }
   }
 
   function reconstructAsciiObservation(runId, absoluteTurn, summary) {
@@ -4336,15 +4037,10 @@ function createAgentRunService({
     const exactFrame = path.join(instanceDir, "frames", frameName);
     let frameUrl = null;
 
-    if (fs.existsSync(exactFrame)) {
+    if (mode === "vision" && fs.existsSync(exactFrame)) {
       frameUrl = primary
         ? `/agent-runs/${encodeURIComponent(runId)}/files/frames/${frameName}`
         : `/agent-runs/${encodeURIComponent(runId)}/files/swarm/${encodeURIComponent(requestedInstance)}/frames/${frameName}`;
-    } else if (primary && mode !== "vision") {
-      const liveName = `live-${String(absoluteTurn).padStart(3, "0")}.png`;
-      if (fs.existsSync(path.join(instanceDir, "frames", liveName))) {
-        frameUrl = `/agent-runs/${encodeURIComponent(runId)}/files/frames/${liveName}`;
-      }
     }
 
     return {
@@ -5525,7 +5221,6 @@ function createAgentRunService({
         // Its run-scoped transcript and maze files remain mounted in the run
         // directory; only the disposable process/container is released.
         stopLegacyClaudeSnapshots(runId);
-        stopLiveRenderer(runId, { force: true });
         stopDetachedRunRenderers(runId, { force: true });
         updated = coldPausedRunMeta(current, { exit_code: code });
       } else if (current.status === "stopping") {
@@ -5642,7 +5337,6 @@ function createAgentRunService({
       // A container launched from an older image cannot see the boundary marker.
       // Preserve it with the legacy hot pause rather than pretending a cold
       // pause is safe; its next relaunch will use the current cold-pause image.
-      stopLiveRenderer(runId, { force: true });
       dockerRunControl(runId, ["pause"], "pause");
       snapshotLegacyClaudeConversation(runId, meta, { force: true });
       const pausedAt = new Date().toISOString();
@@ -6523,7 +6217,6 @@ function createAgentRunService({
     liveChildren.delete(runId);
     stopAutoQuitMonitor(runId);
     stopLegacyClaudeSnapshots(runId);
-    stopLiveRenderer(runId);
     actionCache.delete(runId);
     reasoningCache.delete(runId);
     toolActivityCache.delete(runId);
@@ -6567,7 +6260,6 @@ function createAgentRunService({
         // a server restart observed the dead runner and finalized metadata
         // before it could reap detached renderers or their marker files.
         stopLegacyClaudeSnapshots(runId);
-        stopLiveRenderer(runId, { force: true });
         stopDetachedRunRenderers(runId, { force: true });
         if (meta.container) {
           try {
@@ -6587,7 +6279,6 @@ function createAgentRunService({
     if (meta.kind === "prime") cancelPrimeEvaluation(runId);
     if (meta.kind === "prime") stopPrimeAgentSandboxes(runId);
     stopLegacyClaudeSnapshots(runId);
-    stopLiveRenderer(runId, { force: true });
 
     if (meta.container) {
       if (meta.status === "paused") {
@@ -6635,8 +6326,8 @@ function createAgentRunService({
 
   function resolveRunFilePath(runId, fileName) {
     const runDir = runDirFor(runId);
-    const isFrame = /^frames\/(frame|live)-\d+\.png$/.test(fileName);
-    const isSwarmFrame = /^swarm\/[a-z0-9_-]{1,48}\/frames\/(frame|live)-\d+\.png$/i.test(fileName);
+    const isFrame = /^frames\/frame-\d+\.png$/.test(fileName);
+    const isSwarmFrame = /^swarm\/[a-z0-9_-]{1,48}\/frames\/frame-\d+\.png$/i.test(fileName);
 
     if (!SERVABLE_RUN_FILES.has(fileName) && !isFrame && !isSwarmFrame) {
       return null;
@@ -6677,7 +6368,6 @@ function createAgentRunService({
     listProviderModels,
     listRuns,
     pauseRun,
-    renderLiveFrame,
     regenerateRunVideo,
     resolveRunFilePath,
     resumeRun,

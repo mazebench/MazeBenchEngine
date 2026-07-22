@@ -700,7 +700,7 @@ try {
   assert.equal(swarmProgress.run.auxiliary_actions, 2);
   assert.equal(swarmProgress.run.simulated_actions, swarmProgress.run.turns + 2);
   assert.deepEqual(swarmProgress.swarm_views[0].player, { elevation: 0, x: 7, y: 0 });
-  assert.match(swarmProgress.swarm_views[0].frame_url, /swarm\/scout_one\/frames\/frame-007\.png$/);
+  assert.equal(swarmProgress.swarm_views[0].frame_url, null);
   const forkObservation = service.getRunObservation(hostReadOnlySwarm.id, {
     instanceId: "scout_one",
     turn: 0
@@ -716,7 +716,7 @@ try {
   assert.equal(latestObservation.turn, 2);
   assert.equal(latestObservation.absolute_turn, 7);
   assert.equal(latestObservation.command_text, "up");
-  assert.match(latestObservation.frame_url, /swarm\/scout_one\/frames\/frame-007\.png$/);
+  assert.equal(latestObservation.frame_url, null);
   assert.equal(
     service.resolveRunFilePath(hostReadOnlySwarm.id, "swarm/scout_one/frames/frame-007.png"),
     path.join(swarmWorkerDir, "frames", "frame-007.png")

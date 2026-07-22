@@ -1145,7 +1145,7 @@ function createPageRenderer({
 
   function renderAgentRunPage(run) {
     const isPrime = run.kind === "prime" || run.model === "prime";
-    const clientRun = run.mode === "text"
+    const clientRun = run.mode !== "vision"
       ? {
           ...run,
           ascii_palette: asciiGlyphPalette({
@@ -1488,7 +1488,7 @@ function createPageRenderer({
         </section>
         ${replayExportSection}
         <script>window.__AGENT_RUN__ = ${serializeForScript(clientRun)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260718-ascii-bitmap-1" defer></script>`
+        <script src="/agent-run.js?v=20260721-ascii-only-1" defer></script>`
     });
   }
 

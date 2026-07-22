@@ -19,15 +19,15 @@ assert.match(runService, /actions: tokenUsage\.actions\.filter/);
 assert.match(runService, /reasoning\.filter\(\(entry\)/);
 assert.match(runService, /apiPricingForRun\(summary, listProviderModels\("prime"\)\.models\)/);
 assert.match(runScript, /const FEED_RENDER_BATCH = 200/);
-assert.match(runScript, /frame\?turn=\$\{requestedTurn\}&manual=1/);
+assert.doesNotMatch(runScript, /frame\?turn=/);
 assert.doesNotMatch(runScript, /mayRenderLiveFrame/);
 assert.match(runScript, /function drawAsciiBitmap\(board, turn = null\)/);
 assert.match(runScript, /context\.createImageData\(width, height\)/);
 assert.doesNotMatch(runScript, /function maybeRenderLocalFrame/);
-assert.match(runService, /const LIVE_RENDERER_IDLE_MS = 30 \* 1000/);
-assert.match(runService, /if \(!manual\) \{/);
-assert.match(runService, /async function renderLiveFrame\(runId, turn, \{ manual = false \} = \{\}\)/);
-assert.match(router, /renderLiveFrame\(runId, turn, \{ manual \}\)/);
+assert.doesNotMatch(runService, /LIVE_RENDERER_IDLE_MS/);
+assert.doesNotMatch(runService, /function renderLiveFrame\(/);
+assert.doesNotMatch(runService, /liveFrameLocks/);
+assert.doesNotMatch(router, /renderLiveFrame/);
 assert.match(runScript, /const renderedMoveNums = hiddenMoveCount > 0 \? moveNums\.slice\(-state\.feedRenderLimit\) : moveNums/);
 assert.match(runScript, /data-feed-load-more/);
 assert.match(runScript, /state\.tokenUsagePoints\.set\(action/);
@@ -66,6 +66,7 @@ fs.writeFileSync(path.join(runDir, "run.json"), JSON.stringify({
   game_id: "maze",
   game_title: "Maze",
   level_id: "level_HxI",
+  mode: "text",
   moves: 500,
   status: "finished",
   finished_at: new Date().toISOString()
@@ -100,6 +101,17 @@ const incrementalProgress = service.getRunProgress(runId, { afterTurn: 450, logO
 assert.deepEqual(incrementalProgress.actions.map((action) => action.turn), [451]);
 assert.equal(incrementalProgress.actions[0].level.length, 4096);
 assert.ok(incrementalProgress.reasoning.length <= 6);
+
+fs.mkdirSync(path.join(runDir, "frames"), { recursive: true });
+fs.writeFileSync(path.join(runDir, "frames", "frame-451.png"), "legacy exact frame");
+fs.writeFileSync(path.join(runDir, "frames", "live-451.png"), "legacy live frame");
+const textObservation = service.getRunObservation(runId, { turn: 451 });
+assert.equal(textObservation.frame_url, null, "ASCII history must not expose cached 3D frames");
+assert.equal(
+  service.resolveRunFilePath(runId, "frames/live-451.png"),
+  null,
+  "legacy live-render PNGs are no longer served"
+);
 
 fs.rmSync(tempRoot, { recursive: true, force: true });
 
