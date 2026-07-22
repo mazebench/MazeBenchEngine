@@ -85,7 +85,7 @@ assert.match(agentScript, /omniscient: state\.mode === "json" && state\.omniscie
 assert.match(agentScript, /hide_names: state\.mode !== "vision" && state\.hideNames/);
 assert.match(agentScript, /hide_names_seed: state\.mode !== "vision" && state\.hideNames/);
 assert.match(runScript, /configuredValue\(params, "hide_names_seed", run\.hide_names_seed/);
-assert.match(runScript, /function showJsonObservation\(observation, turn = null\)/);
+assert.match(runScript, /function showJsonObservation\(observation, turn = null, displayPalette = null\)/);
 assert.match(pages, /ASCII view — the model does not see this/);
 assert.match(pages, /JSON observation — this is what the model sees/);
 assert.match(pages, /id="run-json"/);

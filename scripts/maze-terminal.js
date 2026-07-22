@@ -3001,6 +3001,52 @@ function buildJsonObservation(context, observationOptions = {}) {
   };
 }
 
+function jsonDisplayColor(entry) {
+  const name = String(entry?.name || "");
+  const type = String(entry?.sourceType || "");
+
+  if (name.startsWith("black_ice_slope_")) return "#23262c";
+  if (name.startsWith("orange_ice_slope_")) return "#b85f16";
+  if (name.startsWith("ramped_clone_") || type === "clone") return "#b59a2a";
+  if (name.startsWith("ramped_weightless_push_box_") || type === "weightless_box") return "#315991";
+  if (name.startsWith("puncher_") || type === "puncher") return "#ef4444";
+  if (name.startsWith("block_asset_") || type === "block_asset") return "#5b2f14";
+  if (name.startsWith("player_lift_") || type === "player_lift") return "#8a63d2";
+  if (type === "wall") return "#23262c";
+  if (type === "empty" || type === "hole") return "#050608";
+  if (["floor", "exit", "orange_button", "floating_floor"].includes(type)) return "#d6bd94";
+  if (["ice", "ice_block", "ice_slope"].includes(type)) return "#a9d6f4";
+  if (type === "orange_wall" || type === "orange_ice_slope") return "#b85f16";
+  if (type === "player_gate") return "#c75652";
+  if (type === "shrub") return "#476b35";
+  if (type === "tree") return "#2f7d3f";
+  if (type === "player" || type === "circle_player") return "#5aa95c";
+  if (type === "gem") return "#6cd7ff";
+  return "#2a2d33";
+}
+
+// Trusted run-page metadata only. codex-play strips this before constructing
+// any model-facing observation, while the local UI uses it to paint the JSON
+// coordinate list with the same material colors as the 3D renderer.
+function buildJsonDisplayPalette(context, observationOptions = {}) {
+  const hideNames = observationOptions.hideNames === true;
+  const seed = String(observationOptions.hideNamesSeed || "1");
+  const stableNames = context.options?.observationJsonNames || [
+    ...JSON_OBJECT_NAME_UNIVERSE,
+    ...semanticNamesForPlayData(context.playData)
+  ];
+  const nameMapping = hideNames ? hiddenObjectNameMap(seed, stableNames) : null;
+  const palette = {};
+
+  buildObservationInventory(context).forEach((entry) => {
+    const renderedName = hideNames
+      ? hiddenObjectName(entry.name, seed, nameMapping)
+      : entry.name;
+    palette[renderedName] = jsonDisplayColor(entry);
+  });
+  return palette;
+}
+
 function buildAsciiLegend(context) {
   if (context.options?.hideNames === true) return [];
   const catalog = glyphCatalogFor(context.playData, context.options);
@@ -4281,6 +4327,7 @@ module.exports = {
   BOARD_STATE_HASH_VERSION,
   boardStateHash,
   buildAsciiLegend,
+  buildJsonDisplayPalette,
   buildObservationInventory,
   buildModelJsonPayload,
   buildJsonObservation,

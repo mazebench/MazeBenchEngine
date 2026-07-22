@@ -39,6 +39,10 @@
   const liveImage = document.getElementById("run-live-image");
   const liveBitmap = document.getElementById("run-live-bitmap");
   const livePlaceholder = document.getElementById("run-live-placeholder");
+  const historyProgressTitle = document.getElementById("run-history-progress-title");
+  const historyProgress = document.getElementById("run-history-progress");
+  const historyProgressFill = document.getElementById("run-history-progress-fill");
+  const historyProgressLabel = document.getElementById("run-history-progress-label");
   const captionEl = document.getElementById("run-live-caption");
   const liveGrid = document.getElementById("run-live-grid");
   const mainReplayControls = document.getElementById("run-main-replay-controls");
@@ -267,6 +271,7 @@
     lastImageUrl: null,
     lastBitmapBoard: "",
     jsonObservationTurn: -1,
+    jsonDisplayPaletteTurn: -1,
     jsonObservationPending: false,
     videoShown: false,
     tokenSignature: "",
@@ -641,6 +646,76 @@
     return true;
   }
 
+  function jsonGridFallbackColor(name) {
+    const value = String(name || "");
+    if (value === "player") return "#5aa95c";
+    if (value === "gem") return "#6cd7ff";
+    if (/^(?:empty|hole)$/.test(value)) return "#050608";
+    if (/^(?:floor|exit|orange_button|floating_floor)$/.test(value)) return "#d6bd94";
+    if (/^(?:wall|black_ice_slope_)/.test(value)) return "#23262c";
+    if (/^(?:weightless_push_box_|ramped_weightless_push_box_)/.test(value)) return "#315991";
+    if (/^(?:clone_|ramped_clone_)/.test(value)) return "#b59a2a";
+    if (/^(?:ice|ice_block|ice_slope_)/.test(value)) return "#a9d6f4";
+    if (/^(?:orange_wall|orange_ice_slope_)/.test(value)) return "#b85f16";
+    if (/^puncher_/.test(value)) return "#ef4444";
+    return "#2a2d33";
+  }
+
+  function drawJsonGrid(observation, displayPalette = null, turn = null) {
+    if (!liveBitmap || isVision || !observation?.room || !observation?.objects) return false;
+    const width = Math.max(1, Math.floor(Number(observation.room.width) || 1));
+    const height = Math.max(1, Math.floor(Number(observation.room.height) || 1));
+    const context = liveBitmap.getContext("2d");
+    if (!context) return false;
+    const palette = displayPalette && typeof displayPalette === "object" ? displayPalette : {};
+    const gridKey = JSON.stringify([observation, palette]);
+
+    if (state.lastJsonGridKey !== gridKey) {
+      if (liveBitmap.width !== width) liveBitmap.width = width;
+      if (liveBitmap.height !== height) liveBitmap.height = height;
+      const image = context.createImageData(width, height);
+      const empty = bitmapRgb("#050608");
+      const elevations = new Float64Array(width * height);
+      elevations.fill(Number.NEGATIVE_INFINITY);
+      for (let offset = 0; offset < width * height; offset += 1) {
+        image.data[offset * 4] = empty[0];
+        image.data[offset * 4 + 1] = empty[1];
+        image.data[offset * 4 + 2] = empty[2];
+        image.data[offset * 4 + 3] = 255;
+      }
+
+      Object.entries(observation.objects).forEach(([name, positions]) => {
+        const [red, green, blue] = bitmapRgb(palette[name] || jsonGridFallbackColor(name));
+        (Array.isArray(positions) ? positions : []).forEach((position) => {
+          const x = Math.floor(Number(position?.[0]));
+          const y = Math.floor(Number(position?.[1]));
+          const elevation = Number(position?.[2]) || 0;
+          if (x < 0 || x >= width || y < 0 || y >= height) return;
+          const cell = y * width + x;
+          if (elevation < elevations[cell]) return;
+          elevations[cell] = elevation;
+          const offset = cell * 4;
+          image.data[offset] = red;
+          image.data[offset + 1] = green;
+          image.data[offset + 2] = blue;
+        });
+      });
+      context.putImageData(image, 0, 0);
+      state.lastJsonGridKey = gridKey;
+    }
+
+    liveBitmap.hidden = false;
+    liveImage.hidden = true;
+    livePlaceholder.hidden = true;
+    if (captionEl && turn != null) {
+      captionEl.textContent = Number(turn) === 0
+        ? "move 0 · live JSON grid"
+        : `after move ${turn} · live JSON grid`;
+      captionEl.hidden = false;
+    }
+    return true;
+  }
+
   function showAsciiBoard(board, turn = null) {
     if (!board) return;
     const wasHidden = boardWrap.hidden;
@@ -650,11 +725,15 @@
     if (wasHidden) requestAnimationFrame(fitAsciiBoard);
   }
 
-  function showJsonObservation(observation, turn = null) {
-    if (!observation || !jsonEl || !jsonWrap) return;
+  function showJsonObservation(observation, turn = null, displayPalette = null) {
+    if (!observation || !jsonEl || !jsonWrap) return false;
     jsonEl.textContent = JSON.stringify(observation, null, 2);
     jsonWrap.hidden = false;
     if (turn != null) state.jsonObservationTurn = Math.max(0, Number(turn) || 0);
+    if (turn != null && displayPalette) {
+      state.jsonDisplayPaletteTurn = Math.max(0, Number(turn) || 0);
+    }
+    return drawJsonGrid(observation, displayPalette, turn);
   }
 
   // Chevrons, Play, and Pause from Lucide Icons (ISC License).
@@ -1762,7 +1841,7 @@
     });
   }
 
-  function renderTokenUsage(usage) {
+  function renderTokenUsage(usage, deferRender = false) {
     const signature = JSON.stringify(usage || {});
     if (signature === state.tokenSignature) return;
     state.tokenSignature = signature;
@@ -1794,6 +1873,7 @@
       ran: Math.max(0, Math.floor(Number(usage?.agents_ran) || 0))
     };
     if (agentCountsChanged) state.feedVersion += 1;
+    if (deferRender) return;
 
     const available = Boolean(usage?.available);
     document.getElementById("run-token-total").textContent = available ? formatTokens(usage.total_tokens) : "—";
@@ -3257,7 +3337,7 @@
       if (!state.replayCursors.has("primary")) {
         if (action.level && !isVision) showAsciiBoard(action.level, action.turn);
         if (isJson && action.json_observation) {
-          showJsonObservation(action.json_observation, action.turn);
+          showJsonObservation(action.json_observation, action.turn, action.json_display_palette);
         }
       }
       state.afterTurn = Math.max(state.afterTurn, Number(action.turn) || 0);
@@ -3707,19 +3787,24 @@
     if (!observation) return;
     const turn = Math.max(0, Number(observation.turn) || 0);
     let showsAsciiBitmap = false;
+    let showsJsonGrid = false;
     if (observation.board && observation.mode !== "vision") {
       showAsciiBoard(observation.board, turn);
       showsAsciiBitmap = observation.mode !== "vision" && Boolean(liveBitmap);
     }
     if (observation.mode === "json" && observation.json_observation) {
-      showJsonObservation(observation.json_observation, turn);
+      showsJsonGrid = showJsonObservation(
+        observation.json_observation,
+        turn,
+        observation.json_display_palette
+      );
     }
     if (observation.frame_url) {
       showImage(observation.frame_url, turn);
       return;
     }
 
-    if (showsAsciiBitmap) return;
+    if (showsAsciiBitmap || showsJsonGrid) return;
 
     const hasRenderedImage = Boolean(state.lastImageUrl || liveImage?.src);
     liveImage.hidden = !hasRenderedImage;
@@ -3741,7 +3826,7 @@
       !isJson ||
       state.jsonObservationPending ||
       state.replayCursors.has("primary") ||
-      state.jsonObservationTurn >= state.afterTurn
+      (state.jsonObservationTurn >= state.afterTurn && state.jsonDisplayPaletteTurn >= state.afterTurn)
     ) return;
 
     const turn = state.afterTurn;
@@ -3754,7 +3839,11 @@
       const observation = await response.json();
       if (observation.board) showAsciiBoard(observation.board, observation.turn);
       if (observation.json_observation) {
-        showJsonObservation(observation.json_observation, observation.turn);
+        showJsonObservation(
+          observation.json_observation,
+          observation.turn,
+          observation.json_display_palette
+        );
       }
     } finally {
       state.jsonObservationPending = false;
@@ -3832,6 +3921,23 @@
     if (!state.playingView) state.timer = setTimeout(poll, delay);
   }
 
+  function updateHistoryLoadProgress(sync) {
+    if (!livePlaceholder || !historyProgress || !historyProgressFill || !historyProgressLabel) return;
+    const total = Math.max(0, Number(sync?.total) || 0);
+    const current = Math.min(total, Math.max(0, Number(sync?.current) || 0));
+    const complete = Boolean(sync?.complete) || current >= total;
+    const percent = total > 0 ? Math.min(100, current / total * 100) : complete ? 100 : 0;
+    historyProgress.setAttribute("aria-valuemax", String(total));
+    historyProgress.setAttribute("aria-valuenow", String(current));
+    historyProgressFill.style.width = `${percent}%`;
+    if (historyProgressTitle) historyProgressTitle.textContent = complete
+      ? "Run history loaded"
+      : "Loading run history…";
+    historyProgressLabel.textContent = total > 0
+      ? `${current.toLocaleString()} / ${total.toLocaleString()} moves loaded · ${Math.round(percent)}%`
+      : "No moves to load";
+  }
+
   async function poll() {
     if (state.playingView) return;
     const controller = new AbortController();
@@ -3844,6 +3950,13 @@
       );
       if (!response.ok) throw new Error(`progress failed (${response.status})`);
       const progress = await response.json();
+      const historySync = progress.history_sync || {
+        current: Number(progress.run?.turns) || 0,
+        total: Number(progress.run?.turns) || 0,
+        complete: true
+      };
+      const syncingHistory = !historySync.complete;
+      updateHistoryLoadProgress(historySync);
       state.run = progress.run;
       const initialBoardStateHash = String(progress.initial_board_state_hash || "");
       if (initialBoardStateHash && initialBoardStateHash !== state.initialBoardStateHash) {
@@ -3861,7 +3974,7 @@
       state.instanceActivity = progress.instance_activity || state.instanceActivity;
 
       describeRun(progress.run);
-      renderTokenUsage(progress.token_usage);
+      renderTokenUsage(progress.token_usage, syncingHistory);
       renderToolsWorkspace(progress.tools_workspace);
       renderStats(progress.run);
       renderSwarmViews(progress.swarm_views);
@@ -3870,11 +3983,13 @@
         // Hosted Prime lifecycle and logs stream immediately. The actions,
         // usage, boards, and replay are enriched from the finalized sample.
         ingestActions(progress.actions || []);
-        if (isJson) void refreshLatestJsonObservation();
+        if (isJson && !syncingHistory) void refreshLatestJsonObservation();
         ingestReasoning(progress.reasoning || []);
-        renderExplorationCharts();
-        renderFeed();
-        renderMainReplayControls();
+        if (!syncingHistory) {
+          renderExplorationCharts();
+          renderFeed();
+          renderMainReplayControls();
+        }
         const seeEmpty = document.getElementById("run-see-empty");
         if (seeEmpty && boardEl && boardEl.textContent) {
           seeEmpty.hidden = true;
@@ -3882,11 +3997,13 @@
         updateReplay(progress.run, progress.replay_progress);
       } else {
         ingestActions(progress.actions || []);
-        if (isJson) void refreshLatestJsonObservation();
+        if (isJson && !syncingHistory) void refreshLatestJsonObservation();
         ingestReasoning(progress.reasoning || []);
-        renderExplorationCharts();
-        renderFeed();
-        renderMainReplayControls();
+        if (!syncingHistory) {
+          renderExplorationCharts();
+          renderFeed();
+          renderMainReplayControls();
+        }
 
         if (!state.replayCursors.has("primary") && isVision && progress.vision_frame_url) {
           const match = String(progress.vision_frame_url).match(/frame-(\d+)\.png(?:$|\?)/);
@@ -3908,6 +4025,12 @@
         logEl.scrollLeft = previousLogScrollLeft;
       }
       state.logOffset = progress.log_offset;
+
+      if (syncingHistory) {
+        setStatus(`Loading run history — ${Number(historySync.current).toLocaleString()} / ${Number(historySync.total).toLocaleString()} moves.`);
+        scheduleProgressPoll(25);
+        return;
+      }
 
       const running = ["running", "pausing", "stopping"].includes(progress.run.status);
       // Prime renders its replay inside the same process, so the run stays

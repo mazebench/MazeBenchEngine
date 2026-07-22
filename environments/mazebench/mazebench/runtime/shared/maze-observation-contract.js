@@ -241,6 +241,31 @@ const FIXED_GLYPHS = new Map([
   ["g", "g"]
 ]);
 
+// Hidden ASCII shipped before the dynamic Unicode identity catalog existed.
+// Keep that original permutation pool stable so adding new clone/box glyphs
+// cannot recolor or rename floor, wall, hole, and other established symbols in
+// saved runs. Extended identities are shuffled independently below.
+const LEGACY_HIDDEN_ASCII_GLYPHS = new Set(Array.from([
+  "&7!1@2#3$4",
+  " Hh",
+  "AaEe8",
+  "IiKk~-Vv<,Rr^6",
+  "Oo",
+  "Yy",
+  ">Ll",
+  "Ss",
+  "Tt",
+  "Ww",
+  "`'",
+  "Bb|\\",
+  "{[CcDdJj",
+  "Ff",
+  "Gg",
+  "Pp",
+  "}]%5XxQqZz",
+  ";_Uu09()+=.:"
+].join("")));
+
 function canonicalPalette() {
   const palette = new Map();
   COLOR_GLYPHS.forEach(([pairs, color]) => {
@@ -258,13 +283,20 @@ function hiddenAsciiGlyphMap(seed, canonical = canonicalPalette()) {
   const universe = [...canonical.keys()]
     .filter((glyph) => glyph !== " " && !FIXED_GLYPHS.has(glyph))
     .sort();
-  const sourceGlyphs = [" ", ...universe];
-  const targetGlyphs = [...universe, "?"].sort((left, right) => {
+  const bySeed = (left, right) => {
     const leftHash = crypto.createHash("sha256").update(`${normalizedSeed}:ascii:${left}`).digest("hex");
     const rightHash = crypto.createHash("sha256").update(`${normalizedSeed}:ascii:${right}`).digest("hex");
     return leftHash.localeCompare(rightHash) || left.localeCompare(right);
-  });
-  return new Map(sourceGlyphs.map((glyph, index) => [glyph, targetGlyphs[index]]));
+  };
+  const legacy = universe.filter((glyph) => LEGACY_HIDDEN_ASCII_GLYPHS.has(glyph));
+  const extended = universe.filter((glyph) => !LEGACY_HIDDEN_ASCII_GLYPHS.has(glyph));
+  const legacyTargets = [...legacy, "?"].sort(bySeed);
+  const mapping = new Map(
+    [" ", ...legacy].map((glyph, index) => [glyph, legacyTargets[index]])
+  );
+  const extendedTargets = [...extended].sort(bySeed);
+  extended.forEach((glyph, index) => mapping.set(glyph, extendedTargets[index]));
+  return mapping;
 }
 
 function hideAsciiGlyphNames(text, seed) {

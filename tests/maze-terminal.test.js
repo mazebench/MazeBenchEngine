@@ -29,6 +29,7 @@ const {
   BOARD_STATE_HASH_VERSION,
   boardStateHash,
   buildAsciiLegend,
+  buildJsonDisplayPalette,
   buildJsonObservation,
   buildObservationInventory,
   buildScorecard,
@@ -65,6 +66,12 @@ const mazeEngine = loadMazeEngine();
     Object.values(literal).sort(),
     "glyph randomization preserves the complete semantic 3D color palette"
   );
+
+  const legacySeed = asciiGlyphPalette({ hideNames: true, hideNamesSeed: "1" });
+  assert.equal(legacySeed.q, "#d6bd94", "adding Unicode identities must not recolor hidden floor glyphs");
+  assert.equal(legacySeed.j, "#23262c", "adding Unicode identities must not recolor hidden wall glyphs");
+  assert.equal(legacySeed["}"], "#050608", "adding Unicode identities must not recolor hidden empty cells");
+  assert.equal(legacySeed["?"], "#315991", "adding Unicode identities must not recolor hidden boxes");
 }
 
 assert.deepEqual(expectedReplayPlayerState({ player_dead: false }), {
@@ -1231,6 +1238,11 @@ function syntheticFloor(width, height) {
     hideNames: true,
     hideNamesSeed: "run-b"
   });
+  const hiddenPalette = buildJsonDisplayPalette(context, {
+    omniscient: true,
+    hideNames: true,
+    hideNamesSeed: "run-a"
+  });
 
   assert.deepEqual(visible.objects.empty, [[0, 0, 0]]);
   assert.deepEqual(hiddenA, hiddenAAgain);
@@ -1241,6 +1253,11 @@ function syntheticFloor(width, height) {
     true
   );
   assert.notDeepEqual(Object.keys(hiddenA.objects).sort(), Object.keys(hiddenB.objects).sort());
+  Object.keys(hiddenA.objects).forEach((name) => {
+    assert.match(hiddenPalette[name], /^#[0-9a-f]{6}$/i, `${name} must have a trusted display color`);
+  });
+  assert.equal(hiddenPalette.player, "#5aa95c");
+  assert.equal(hiddenPalette.gem, "#6cd7ff");
 }
 
 {
