@@ -9,10 +9,15 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
+const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
 const { spawnSync } = require("node:child_process");
 const { publicObservationStatus, redactAgentStatus } = require("./codex-play");
+const {
+  preflightPythonSandbox,
+  runSandboxedPython
+} = require("./maze-python-sandbox");
 
 const REPO_ROOT = path.resolve(process.env.MAZEBENCH_REPO_ROOT || path.join(__dirname, ".."));
 const HELPER = path.join(REPO_ROOT, "scripts", "codex-play.js");
@@ -27,6 +32,14 @@ const SWARM_WORKSPACES_DIR = path.resolve(
 const AGENT_SWARM_WORKSPACES_DIR = String(
   process.env.MAZEBENCH_AGENT_SWARM_WORKSPACES_DIR || SWARM_WORKSPACES_DIR
 );
+const AGENT_WORKSPACE_DIR = path.resolve(
+  process.env.MAZEBENCH_AGENT_WORKSPACE_DIR || path.join(os.tmpdir(), "mazebench-agent-workspace")
+);
+const PYTHON_SANDBOX_STATE_DIR = path.resolve(
+  process.env.MAZEBENCH_PYTHON_SANDBOX_STATE_DIR || path.join(RUN_DIR, ".python-sandbox")
+);
+const CODEX_BIN = process.env.MAZEBENCH_CODEX_BIN || "codex";
+const PYTHON_BIN = process.env.MAZEBENCH_PYTHON_BIN || "";
 const ACTIVITY_LOG = path.resolve(
   process.env.MAZEBENCH_TOOL_ACTIVITY_FILE || path.join(RUN_DIR, "tool-activity.jsonl")
 );
@@ -47,6 +60,7 @@ const MAX_SWARM_WORKERS = Math.min(32, positiveInt(process.env.MAZEBENCH_MAX_SWA
 const RESTRICTED_MODE = process.env.MAZEBENCH_RESTRICTED_MODE === "1";
 const HTTP_TOKEN = String(process.env.MAZEBENCH_MCP_HTTP_TOKEN || "");
 const WORKER_ALLOCATION_LOCK = path.join(SWARM_DIR, ".instance-allocation.lock");
+const PYTHON_PREFLIGHTS = new Map();
 
 function sessionActionCount(file) {
   try {
@@ -462,6 +476,42 @@ function finishWorkerContext(context) {
   });
 }
 
+function pythonWorkspaceForInput(input = {}) {
+  if (!input.clone_id) return AGENT_WORKSPACE_DIR;
+  const metadata = readWorkerMetadata(input.clone_id);
+  if (!metadata?.workspace) throw new Error("This worker has no isolated Python workspace.");
+  const workspace = path.resolve(metadata.workspace);
+  const relative = path.relative(SWARM_WORKSPACES_DIR, workspace);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("Invalid worker Python workspace.");
+  }
+  return workspace;
+}
+
+function pythonSandboxOptions(workspace) {
+  const key = crypto.createHash("sha256").update(workspace).digest("hex").slice(0, 16);
+  return {
+    scratchDir: workspace,
+    stateDir: path.join(PYTHON_SANDBOX_STATE_DIR, key),
+    deniedPaths: [REPO_ROOT, RUN_DIR, os.homedir()],
+    codexBin: CODEX_BIN,
+    pythonBin: PYTHON_BIN
+  };
+}
+
+function runPythonTool(input = {}) {
+  if (RESTRICTED_MODE) throw new Error("Python is disabled in game-only mode.");
+  const workspace = pythonWorkspaceForInput(input);
+  const options = pythonSandboxOptions(workspace);
+  if (!PYTHON_PREFLIGHTS.has(workspace)) {
+    PYTHON_PREFLIGHTS.set(workspace, preflightPythonSandbox(options));
+  }
+  return runSandboxedPython(String(input.code || ""), {
+    ...options,
+    timeoutSeconds: Number(input.timeout_seconds) || 10
+  });
+}
+
 const LEAD_TOOLS = [
   {
     name: "maze_start",
@@ -498,6 +548,19 @@ const LEAD_TOOLS = [
     name: "maze_workers",
     description: "List the private maze instances assigned to swarm workers during this run.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false }
+  },
+  {
+    name: "python_exec",
+    description: "Run Python in this agent's persistent isolated scratch workspace. Repository files, host files, run artifacts, and network access are blocked.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: { type: "string", description: "Python source code to execute." },
+        timeout_seconds: { type: "integer", minimum: 1, maximum: 60, default: 10 }
+      },
+      required: ["code"],
+      additionalProperties: false
+    }
   }
 ];
 
@@ -526,6 +589,19 @@ const WORKER_TOOLS = [
         }
       },
       required: ["action"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "python_exec",
+    description: "Run Python in this worker's private persistent isolated scratch workspace. Repository files, host files, run artifacts, and network access are blocked.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: { type: "string", description: "Python source code to execute." },
+        timeout_seconds: { type: "integer", minimum: 1, maximum: 60, default: 10 }
+      },
+      required: ["code"],
       additionalProperties: false
     }
   }
@@ -591,10 +667,22 @@ function normalizedToolCall(name, input = {}, { workerOnly = false } = {}) {
       (workerOnly ? WORKER_TOOLS : LEAD_TOOLS).map((tool) => tool.name)
     );
     if (!allowedNames.has(name)) throw new Error(`Unknown game control "${name}".`);
-    const allowedKeys = name === "maze_action" ? new Set(["action"]) : new Set();
+    const allowedKeys = name === "maze_action"
+      ? new Set(["action"])
+      : name === "python_exec"
+        ? new Set(["code", "timeout_seconds"])
+        : new Set();
     const extraKey = Object.keys(input).find((key) => !allowedKeys.has(key));
     if (extraKey) throw new Error(`Unsupported argument "${extraKey}" for ${name}.`);
-    return { name, input: name === "maze_action" ? { action: input.action } : {} };
+    if (name === "maze_action") return { name, input: { action: input.action } };
+    if (name === "python_exec") {
+      const timeoutSeconds = input.timeout_seconds === undefined ? 10 : Number(input.timeout_seconds);
+      if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 60) {
+        throw new Error("timeout_seconds must be an integer between 1 and 60.");
+      }
+      return { name, input: { code: String(input.code || ""), timeout_seconds: timeoutSeconds } };
+    }
+    return { name, input: {} };
   }
   if (!/^game_(start|observe|action)$/.test(name)) {
     throw new Error(`Unknown game control "${name}".`);
@@ -612,6 +700,7 @@ function callTool(name, input = {}, context = createRequestContext({ workerOnly:
   const workerOnly = Boolean(context?.workerOnly);
   const cloneId = workerOnly ? ensureWorkerAssignment(context) : "";
   const effectiveInput = cloneId ? { ...input, clone_id: cloneId } : input;
+  if (name === "python_exec") return runPythonTool(effectiveInput);
   if (!workerOnly && name !== "maze_start") synchronizePrimarySessionBudget();
   if (name === "maze_start") {
     if (workerOnly) return runHelper(["observe", "--state", sessionFor(cloneId)]);

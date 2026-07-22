@@ -8,18 +8,28 @@ const {
   buildMcpPrompt,
   claudeSandboxSettings,
   codexMcpConfigArgs,
+  distillKimiEvents,
+  kimiMcpConfig,
   migrateSeedSessionObservation,
-  needsPrivateMcpServer
+  needsPrivateMcpServer,
+  sanitizeKimiConfig
 } = require("../scripts/maze-agent-local");
 
 const root = path.resolve(__dirname, "..");
+const localAgentSource = fs.readFileSync(path.join(root, "scripts", "maze-agent-local.js"), "utf8");
 const workspace = path.join(os.tmpdir(), "game-only-agent-test");
 const baseConfig = {
   agentSwarmWorkspaceDir: path.join(workspace, "swarm-workspaces"),
   agentWorkspaceDir: workspace,
+  agentCodexRuntimeDir: path.join(workspace, "codex-runtime"),
   allowQuit: false,
   claudeBin: "claude",
   codexBin: "codex",
+  kimiBin: "kimi",
+  kimiRuntimeDir: path.join(workspace, "kimi-home"),
+  kimiSkillsDir: path.join(workspace, "kimi-home", "empty-skills"),
+  agentKimiRuntimeDir: path.join(workspace, "kimi-home"),
+  agentKimiSkillsDir: path.join(workspace, "kimi-home", "empty-skills"),
   codexFast: false,
   gameId: "maze",
   gems: 100,
@@ -35,6 +45,9 @@ const baseConfig = {
   moves: 2,
   omniscient: false,
   outDir: workspace,
+  codexRuntimeDir: path.join(workspace, "codex-runtime"),
+  pythonBin: "",
+  pythonSandboxStateDir: path.join(workspace, "python-sandbox"),
   reasoning: "low",
   resume: "",
   seed: false,
@@ -85,8 +98,12 @@ const toolsOnConfig = {
   tools: true
 };
 const toolsOnPrompt = buildMcpPrompt(toolsOnConfig);
-assert.match(toolsOnPrompt, /TOOLS-ON mode/);
-assert.match(toolsOnPrompt, /tool availability is not guaranteed/);
+assert.match(toolsOnPrompt, /TOOLS mode/);
+assert.match(toolsOnPrompt, /python_exec/);
+assert.match(toolsOnPrompt, /cannot read MazeBench source, repositories/);
+assert.match(toolsOnPrompt, /Shell, file-browser, editor, web, app, and connector tools are disabled/);
+assert.doesNotMatch(toolsOnPrompt, /tool availability is not guaranteed/);
+assert.doesNotMatch(toolsOnPrompt, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 assert.doesNotMatch(toolsOnPrompt, /TOOLS-OFF mode/);
 assert.doesNotMatch(toolsOnPrompt, /maze_scorecard/);
 
@@ -100,11 +117,11 @@ assert.doesNotMatch(swarmPrompt, /maze_clone|clone_id/i);
 
 assert.deepEqual(
   codexMcpConfigArgs(toolsOnConfig).filter((value) => value.includes("enabled_tools")),
-  ['mcp_servers.mazebench.enabled_tools=["maze_start","maze_observe","maze_action"]']
+  ['mcp_servers.mazebench.enabled_tools=["maze_start","maze_observe","maze_action","python_exec"]']
 );
 assert.deepEqual(
   codexMcpConfigArgs({ ...toolsOnConfig, swarm: true }).filter((value) => value.includes("enabled_tools")),
-  ['mcp_servers.mazebench.enabled_tools=["maze_start","maze_observe","maze_action","maze_workers"]']
+  ['mcp_servers.mazebench.enabled_tools=["maze_start","maze_observe","maze_action","maze_workers","python_exec"]']
 );
 
 const codexConfig = { ...baseConfig, model: "codex" };
@@ -116,10 +133,16 @@ assert.match(codexArgs, /skills\.include_instructions=false/);
 assert.match(codexArgs, /skills\.bundled\.enabled=false/);
 assert.match(codexArgs, /web_search="disabled"/);
 assert.match(codexArgs, /hooks\.PreToolUse/);
-for (const feature of ["apps", "plugins", "memories", "multi_agent", "tool_search"]) {
+for (const feature of ["apps", "plugins", "memories", "multi_agent", "tool_search", "shell_tool", "computer_use"]) {
   const index = codex.argv.indexOf(feature);
   assert(index > 0 && codex.argv[index - 1] === "--disable", `${feature} must be disabled`);
 }
+assert.match(codexArgs, /default_permissions="mazebench_agent"/);
+assert.match(codexArgs, /permissions\.mazebench_agent\.network\.enabled=false/);
+assert.match(codexArgs, new RegExp(`${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*deny`));
+assert.equal(codex.argv.includes("--sandbox"), false, "permission profiles must not be mixed with legacy sandbox mode");
+assert.equal(codex.argv.includes("--add-dir"), false, "the repository must never be added to the agent workspace");
+assert.doesNotMatch(codexArgs, /sandbox_mode|sandbox_workspace_write/);
 assert.deepEqual(
   codexMcpConfigArgs(codexConfig).filter((value) => value.includes("enabled_tools")),
   ['mcp_servers.game.enabled_tools=["game_start","game_observe","game_action"]']
@@ -164,6 +187,7 @@ for (const denied of [
 const claudeSettings = JSON.parse(claudeSandboxSettings(claudeConfig));
 assert.deepEqual(claudeSettings.sandbox.network.allowedDomains, []);
 assert.equal(claudeSettings.sandbox.failIfUnavailable, true);
+assert.deepEqual(claudeSettings.sandbox.filesystem.allowWrite, []);
 assert.deepEqual(
   new Set(claudeSettings.permissions.allow),
   new Set([
@@ -173,8 +197,121 @@ assert.deepEqual(
   ])
 );
 assert.equal(needsPrivateMcpServer(claudeConfig), true, "host Claude runs need a prestarted MCP service");
+assert.equal(needsPrivateMcpServer({ ...baseConfig, model: "kimi" }), true, "host Kimi runs need a private MCP service");
 assert.equal(needsPrivateMcpServer(codexConfig), false, "host Codex can use its synchronous stdio MCP startup");
 assert.equal(needsPrivateMcpServer({ ...codexConfig, inContainer: true }), true);
+
+const claudeToolsOn = agentCommand(
+  { ...toolsOnConfig, model: "claude", modelName: "claude-test" },
+  toolsOnPrompt
+);
+const claudeToolsOnAllowed = new Set(
+  claudeToolsOn.argv[claudeToolsOn.argv.indexOf("--allowedTools") + 1].split(",")
+);
+assert.deepEqual(claudeToolsOnAllowed, new Set([
+  "mcp__mazebench__maze_start",
+  "mcp__mazebench__maze_observe",
+  "mcp__mazebench__maze_action",
+  "mcp__mazebench__python_exec"
+]));
+for (const builtin of ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch"]) {
+  assert(
+    claudeToolsOn.argv[claudeToolsOn.argv.indexOf("--disallowedTools") + 1].split(",").includes(builtin),
+    `${builtin} must remain unavailable in tools mode`
+  );
+}
+assert.equal(claudeToolsOn.argv.includes("--add-dir"), false);
+
+const kimiConfig = { ...baseConfig, model: "kimi", modelName: "kimi/k3", reasoning: "high" };
+assert.match(localAgentSource, /SUPPORTED_KIMI_CODE_VERSIONS = new Set\(\["0\.28\.1"\]\)/);
+assert.match(localAgentSource, /if \(config\.model === "kimi"\) verifyKimiCliCompatibility\(config\)/);
+const kimi = agentCommand(kimiConfig, buildMcpPrompt(kimiConfig));
+assert.equal(kimi.bin, "kimi");
+assert.equal(kimi.argv[kimi.argv.indexOf("--model") + 1], "kimi/k3");
+assert.equal(kimi.argv[kimi.argv.indexOf("--output-format") + 1], "stream-json");
+assert.equal(kimi.argv[kimi.argv.indexOf("--skills-dir") + 1], kimiConfig.agentKimiSkillsDir);
+assert.equal(kimi.argv.includes("--yolo"), false);
+assert.equal(kimi.argv.includes("--auto"), false);
+assert.equal(kimi.argv.includes("--add-dir"), false);
+assert.equal(kimi.env.KIMI_CODE_HOME, kimiConfig.agentKimiRuntimeDir);
+assert.equal(kimi.env.KIMI_DISABLE_TELEMETRY, "1");
+assert.equal(kimi.env.KIMI_CODE_NO_AUTO_UPDATE, "1");
+assert.equal(kimi.env.KIMI_DISABLE_CRON, "1");
+assert.equal(kimi.env.KIMI_MODEL_THINKING_EFFORT, "high");
+
+const unsafeKimiConfig = `
+default_model = "kimi/k3"
+default_permission_mode = "yolo"
+telemetry = true
+
+[providers.kimi]
+type = "kimi"
+api_key = "test-secret"
+base_url = "https://api.kimi.invalid"
+
+[models."kimi/k3"]
+provider = "kimi"
+model = "k3"
+max_context_size = 1000
+capabilities = ["thinking", "tool_use"]
+
+[services.moonshot_search]
+base_url = "https://search.invalid"
+
+[[permission.rules]]
+decision = "allow"
+pattern = "Read"
+
+[[hooks]]
+event = "PreToolUse"
+command = "unsafe-hook"
+`;
+const safeKimiConfig = sanitizeKimiConfig(unsafeKimiConfig, kimiConfig);
+assert.match(safeKimiConfig, /api_key = "test-secret"/, "the private runtime must retain provider authentication");
+assert.match(safeKimiConfig, /default_permission_mode = "auto"/);
+assert.match(safeKimiConfig, /merge_all_available_skills = false/);
+assert.match(safeKimiConfig, /telemetry = false/);
+assert.doesNotMatch(safeKimiConfig, /search\.invalid|unsafe-hook/);
+assert.doesNotMatch(safeKimiConfig, /decision = "allow"\s+pattern = "Read"/);
+for (const tool of [
+  "mcp__game__game_start",
+  "mcp__game__game_observe",
+  "mcp__game__game_action"
+]) {
+  assert.match(safeKimiConfig, new RegExp(`decision = "allow"\\s+pattern = "${tool}"`));
+}
+for (const builtin of [
+  "Bash", "Read", "Write", "Grep", "Glob", "WebSearch", "FetchURL", "Agent", "Skill",
+  "CreateGoal", "GetGoal", "SetGoalBudget", "UpdateGoal"
+]) {
+  assert.match(safeKimiConfig, new RegExp(`decision = "deny"\\s+pattern = "${builtin}"`));
+}
+assert.doesNotMatch(safeKimiConfig, /pattern = "\*\*"/);
+
+const kimiOfflineMcp = JSON.parse(kimiMcpConfig({ ...toolsOnConfig, model: "kimi" }));
+assert.deepEqual(
+  kimiOfflineMcp.mcpServers.mazebench.enabledTools,
+  ["maze_start", "maze_observe", "maze_action", "python_exec"]
+);
+assert.deepEqual(Object.keys(kimiOfflineMcp.mcpServers), ["mazebench"]);
+
+const kimiEvents = [
+  { role: "assistant", content: "Move right.", tool_calls: [{ id: "call-1", type: "function", function: { name: "mcp__game__game_action", arguments: JSON.stringify({ action: "right" }) } }] },
+  { role: "tool", tool_call_id: "call-1", content: JSON.stringify({ moved: true, gem_count: 1, current_room: "HxI" }) },
+  { role: "assistant", content: "Done." },
+  { role: "meta", type: "session.resume_hint", session_id: "session-test" }
+].map(JSON.stringify).join("\n");
+assert.deepEqual(distillKimiEvents(kimiEvents).entries, [{
+  move: 1,
+  action: "right",
+  reasoning: "Move right.",
+  timestamp: null,
+  moved: true,
+  gems: 1,
+  room: "HxI",
+  room_changed: false,
+  player_dead: false
+}]);
 
 const guard = path.join(root, "scripts", "maze-codex-tool-guard.js");
 const blocked = spawnSync(process.execPath, [guard], {

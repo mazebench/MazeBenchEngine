@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Drive MazeBench with a LOCAL coding agent (Codex CLI or Claude Code) instead
+// Drive MazeBench with a LOCAL coding agent (Codex CLI, Claude Code, or Kimi Code) instead
 // of Prime Intellect Verifiers. The agent plays the maze by shelling out to
 // scripts/codex-play.js (a stateful CLI over scripts/maze-bridge.js). When the
 // agent is done we make sure a scorecard exists and then render a replay video
@@ -9,15 +9,18 @@
 // Usage:
 //   node scripts/maze-agent-local.js --model codex [options]
 //   node scripts/maze-agent-local.js model=claude moves=10 level=HxI
+//   node scripts/maze-agent-local.js model=kimi moves=10 level=HxI container=false
 //
 // Options accept either "--flag value" or "key=value" form:
-//   model        codex | claude                              (required)
+//   model        codex | claude | kimi                       (required)
 //   container    true (run inside docker, host FS isolated)  (default true)
 //                | false (run on host with the CLI sandbox)
 //   image        container image tag                         (default mazebench-agent)
 //   docker_bin   container runtime                           (default docker)
 //   codex_auth / claude_auth   host auth dir to mount read-only (subscription logins)
-//   tool_use     read-only (game controls only) | offline    (default read-only)
+//   kimi_auth    host Kimi Code data dir                     (default $KIMI_CODE_HOME or ~/.kimi-code)
+//   tool_use     read-only (game controls only) | offline (isolated Python)
+//                                                            (default read-only)
 //   tools        legacy boolean alias (false=game-only, true=offline)
 //   swarm        true lets an offline lead spawn identical-model workers
 //   max_swarm_workers  hard cap on workers/private instances   (default 8)
@@ -46,6 +49,7 @@
 //   session_id   Claude: id assigned to the forked conversation
 //   codex_bin    codex executable                             (default codex)
 //   claude_bin   claude executable                            (default claude)
+//   kimi_bin     kimi executable                              (default kimi)
 //   fast|draft   forwarded to the video renderer for speed
 //   width|height|fps  forwarded to the video renderer
 //   dry_run      print the agent command + prompt and exit (no run)
@@ -57,7 +61,13 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { spawn, spawnSync } = require("node:child_process");
 const { redactAgentStatus } = require("./codex-play");
+const {
+  canonicalPath,
+  inlinePermissionTable,
+  preflightPythonSandbox
+} = require("./maze-python-sandbox");
 const DEFAULT_MAX_SWARM_WORKERS = 8;
+const SUPPORTED_KIMI_CODE_VERSIONS = new Set(["0.28.1"]);
 
 // Claude Code discovers MCP tools only when its default tool registry is
 // enabled. Keep that registry on, then explicitly remove every non-game tool
@@ -69,12 +79,14 @@ const CLAUDE_RESTRICTED_BUILTIN_TOOLS = [
   "CronCreate",
   "CronDelete",
   "CronList",
+  "CreateGoal",
   "DesignSync",
   "Edit",
   "EnterWorktree",
   "ExitWorktree",
   "Glob",
   "Grep",
+  "GetGoal",
   "Monitor",
   "NotebookEdit",
   "PushNotification",
@@ -84,6 +96,7 @@ const CLAUDE_RESTRICTED_BUILTIN_TOOLS = [
   "ScheduleWakeup",
   "SendMessage",
   "Skill",
+  "SetGoalBudget",
   "Task",
   "TaskCreate",
   "TaskGet",
@@ -95,6 +108,39 @@ const CLAUDE_RESTRICTED_BUILTIN_TOOLS = [
   "WebFetch",
   "WebSearch",
   "Workflow",
+  "Write"
+];
+
+// Kimi Code evaluates deny policies before allow policies, so an overlapping
+// catch-all deny would also block MazeBench MCP. Deny every built-in exposed by
+// the certified CLI version instead, allow exact MCP tools, and reject any
+// unreviewed Kimi version before launch. mcp.json also pins the exact tool list.
+const KIMI_RESTRICTED_BUILTIN_TOOLS = [
+  "Agent",
+  "AgentSwarm",
+  "AskUserQuestion",
+  "Bash",
+  "CronCreate",
+  "CronDelete",
+  "CronList",
+  "CreateGoal",
+  "Edit",
+  "EnterPlanMode",
+  "ExitPlanMode",
+  "Glob",
+  "Grep",
+  "GetGoal",
+  "Read",
+  "ReadMediaFile",
+  "Skill",
+  "SetGoalBudget",
+  "TaskList",
+  "TaskOutput",
+  "TaskStop",
+  "TodoList",
+  "UpdateGoal",
+  "WebSearch",
+  "FetchURL",
   "Write"
 ];
 
@@ -257,14 +303,11 @@ board in the level field and the complete visited_levels list.${config.hideNames
   const movementFeedback = `The controls do not report whether a movement was
 blocked. Infer its effect only from the returned observation.`;
   const capability = config.toolUse === "offline"
-    ? config.hostAccess
-      ? `TOOLS-ON mode. You may use the local file, coding, and execution tools
-made available to you; tool availability is not guaranteed. Work in ${ROOT_DIR}
-and keep run-specific notes in ${config.workspaceDir}. Outbound network access
-is disabled. Host access is less isolated than Docker.`
-      : `TOOLS-ON mode. You may use the local file, coding, and execution tools
-made available to you; tool availability is not guaranteed. Work inside the
-persistent Docker workspace at ${config.agentWorkspaceDir}. Outbound network access is disabled.
+    ? `TOOLS mode. In addition to the game controls, you have exactly one
+general-purpose computation tool: python_exec. It runs Python in a fresh,
+persistent scratch workspace. It cannot read MazeBench source, repositories,
+run artifacts, host files, credentials, or prior runs, and it has no network
+access. Shell, file-browser, editor, web, app, and connector tools are disabled.
 Only genuine swarm workers receive private game instances, and each worker is
 permanently bound to exactly one instance.`
     : `Do not use any external tools. Do not search the web, do not read any
@@ -279,7 +322,7 @@ named below and your current conversation memory.`;
     ? "Use the Codex collaboration spawn tool to spawn the custom maze-worker agent without a full-history fork. Its model and reasoning effort are pinned to yours."
     : "Use the Task/Agent tool to spawn the configured maze-worker subagent type. The subagent creates its own branch. Its model and effort are pinned to yours.";
   const workerCapability = config.toolUse === "offline"
-    ? "may write and execute local code in its private workspace"
+    ? "may use python_exec in its private isolated scratch workspace"
     : "is read-only and must not write files or execute general-purpose code";
   const swarm = config.swarm
     ? `
@@ -451,6 +494,10 @@ function mcpEnvironment(config, workerOnly = false) {
     MAZEBENCH_SWARM_DIR: config.swarmDir,
     MAZEBENCH_SWARM_WORKSPACES_DIR: config.swarmWorkspaceDir,
     MAZEBENCH_AGENT_SWARM_WORKSPACES_DIR: config.agentSwarmWorkspaceDir,
+    MAZEBENCH_AGENT_WORKSPACE_DIR: config.workspaceDir,
+    MAZEBENCH_PYTHON_SANDBOX_STATE_DIR: config.pythonSandboxStateDir || path.join(config.outDir, ".python-sandbox"),
+    MAZEBENCH_CODEX_BIN: config.codexBin,
+    MAZEBENCH_PYTHON_BIN: config.pythonBin || "",
     MAZEBENCH_TOOL_ACTIVITY_FILE: path.join(config.outDir, "tool-activity.jsonl"),
     MAZEBENCH_INSTANCE_EVENTS_FILE: path.join(config.outDir, "maze-instance-events.jsonl"),
     MAZEBENCH_GAME_ID: config.gameId,
@@ -486,11 +533,20 @@ function tomlString(value) {
   return JSON.stringify(String(value));
 }
 
-function codexWritableRoots(config) {
+function codexPermissionConfigArgs(config) {
+  const permissions = { ":minimal": "read" };
+  if (config.toolUse === "offline") {
+    permissions[canonicalPath(config.agentWorkspaceDir)] = "write";
+    permissions[canonicalPath(config.agentSwarmWorkspaceDir)] = "write";
+  }
+  permissions[canonicalPath(ROOT_DIR)] = "deny";
+  permissions[canonicalPath(config.outDir)] = "deny";
+  permissions[canonicalPath(config.inContainer ? "/home" : os.homedir())] = "deny";
+  const profile = "mazebench_agent";
   return [
-    config.agentWorkspaceDir,
-    config.agentSwarmWorkspaceDir,
-    ...(config.hostAccess && config.toolUse === "offline" ? [ROOT_DIR] : [])
+    "-c", `default_permissions=${tomlString(profile)}`,
+    "-c", `permissions.${profile}.filesystem=${inlinePermissionTable(permissions)}`,
+    "-c", `permissions.${profile}.network.enabled=false`
   ];
 }
 
@@ -500,8 +556,8 @@ function codexMcpConfigArgs(config) {
   const enabledTools = restricted
     ? '["game_start","game_observe","game_action"]'
     : config.swarm
-      ? '["maze_start","maze_observe","maze_action","maze_workers"]'
-      : '["maze_start","maze_observe","maze_action"]';
+      ? '["maze_start","maze_observe","maze_action","maze_workers","python_exec"]'
+      : '["maze_start","maze_observe","maze_action","python_exec"]';
   if (config.mcpUrl) {
     return [
       "-c", `${prefix}.url=${tomlString(config.mcpUrl)}`,
@@ -538,15 +594,23 @@ function codexWorkerConfig(config, name) {
   if (config.modelName) rows.push(`model = ${tomlString(config.modelName)}`);
   if (config.reasoning) rows.push(`model_reasoning_effort = ${tomlString(config.reasoning)}`);
   rows.push(
-    `sandbox_mode = ${tomlString(offline ? "workspace-write" : "read-only")}`,
+    `default_permissions = ${tomlString("mazebench_worker")}`,
     `developer_instructions = ${tomlString(
       "You are a grid-game swarm worker. Use the identical model and reasoning effort inherited from the lead. " +
       "You have exactly one private maze instance. Call maze_start once, then use maze_observe and maze_action without an instance id. " +
       (offline
-        ? "Explore only your private maze, write and execute any useful local code in the returned workspace, and report findings to the lead. "
+        ? "Explore only your private maze, use python_exec for isolated local computation, and report findings to the lead. "
         : "Explore only your private maze without writing files or executing general-purpose code, and report findings to the lead. ") +
       "Never act on the primary maze and never change your model or reasoning effort."
     )}`,
+    "",
+    "[permissions.mazebench_worker.filesystem]",
+    `${tomlString(":minimal")} = "read"`,
+    `${tomlString(canonicalPath(ROOT_DIR))} = "deny"`,
+    `${tomlString(canonicalPath(config.outDir))} = "deny"`,
+    "",
+    "[permissions.mazebench_worker.network]",
+    "enabled = false",
     "",
     "[mcp_servers.mazebench]",
     ...(config.mcpWorkerUrl
@@ -557,6 +621,9 @@ function codexWorkerConfig(config, name) {
           `env = { ${Object.entries(mcpEnvironment(config, true)).map(([key, value]) => `${key} = ${tomlString(value)}`).join(", ")} }`
         ]),
     'default_tools_approval_mode = "approve"',
+    `enabled_tools = ${offline
+      ? '["maze_start","maze_observe","maze_action","python_exec"]'
+      : '["maze_start","maze_observe","maze_action"]'}`,
     "startup_timeout_sec = 15",
     "tool_timeout_sec = 300"
   );
@@ -565,7 +632,7 @@ function codexWorkerConfig(config, name) {
 
 function prepareCodexRuntime(config) {
   if (config.toolUse === "read-only") {
-    const codexDir = path.join(config.workspaceDir, ".codex");
+    const codexDir = config.codexRuntimeDir || path.join(config.outDir, ".codex-runtime");
     fs.mkdirSync(codexDir, { recursive: true });
     fs.copyFileSync(CODEX_TOOL_GUARD, path.join(codexDir, "tool-guard.js"));
     fs.writeFileSync(
@@ -577,7 +644,7 @@ function prepareCodexRuntime(config) {
     // Project-scoped agent profiles keep host runs from modifying the user's
     // global ~/.codex configuration. The CLI still uses its normal auth and
     // session store, which is required for true Continue.
-    const agentsDir = path.join(config.workspaceDir, ".codex", "agents");
+    const agentsDir = path.join(config.codexRuntimeDir || path.join(config.outDir, ".codex-runtime"), "agents");
     fs.mkdirSync(agentsDir, { recursive: true });
     for (const name of ["default", "worker", "explorer", "maze-worker"]) {
       fs.writeFileSync(path.join(agentsDir, `${name}.toml`), codexWorkerConfig(config, name));
@@ -589,7 +656,7 @@ function codexAgentConfigArgs(config) {
   if (!config.swarm) return [];
   return ["default", "worker", "explorer", "maze-worker"].flatMap((name) => [
     "-c", `agents.${name}.description=${tomlString("An identical-model grid-game worker controlled by the lead.")}`,
-    "-c", `agents.${name}.config_file=${tomlString(path.posix.join(config.agentWorkspaceDir, ".codex", "agents", `${name}.toml`))}`
+    "-c", `agents.${name}.config_file=${tomlString(path.posix.join(config.agentCodexRuntimeDir || config.codexRuntimeDir || path.join(config.outDir, ".codex-runtime"), "agents", `${name}.toml`))}`
   ]);
 }
 
@@ -607,7 +674,13 @@ function claudeMcpConfig(config) {
 function claudeSandboxSettings(config) {
   const offline = config.toolUse === "offline";
   const leadAllow = offline
-    ? []
+    ? [
+        "mcp__mazebench__maze_start",
+        "mcp__mazebench__maze_observe",
+        "mcp__mazebench__maze_action",
+        "mcp__mazebench__python_exec",
+        ...(config.swarm ? ["mcp__mazebench__maze_workers"] : [])
+      ]
     : [
         "mcp__game__game_start",
         "mcp__game__game_observe",
@@ -615,23 +688,23 @@ function claudeSandboxSettings(config) {
       ];
   const workerAllow = config.swarm
     ? [
-        ...(offline ? ["Bash(*)", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "Skill"] : ["Read", "Glob", "Grep"]),
         "mcp__mazebench_worker__maze_start",
         "mcp__mazebench_worker__maze_observe",
-        "mcp__mazebench_worker__maze_action"
+        "mcp__mazebench_worker__maze_action",
+        ...(offline ? ["mcp__mazebench_worker__python_exec"] : [])
       ]
     : [];
   const home = config.inContainer ? "/home/pwuser" : process.env.HOME || "/home/pwuser";
   const denyRead = [
     process.env.CODEX_HOME || path.join(home, ".codex"),
     process.env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"),
+    ROOT_DIR,
+    config.outDir,
     ...(config.hostAccess
       ? ["~/.ssh", "~/.aws", "~/.gnupg", "~/.kube", "~/.config/gcloud"]
       : [])
   ];
-  const allowWrite = offline
-    ? [config.agentWorkspaceDir, config.agentSwarmWorkspaceDir, ...(config.hostAccess ? [ROOT_DIR] : [])]
-    : [];
+  const allowWrite = [];
   return JSON.stringify({
     sandbox: {
       enabled: true,
@@ -659,9 +732,9 @@ function claudeSandboxSettings(config) {
       allow: [...leadAllow, ...workerAllow],
       deny: [
         "WebFetch", "WebSearch",
-        ...(offline
-          ? []
-          : CLAUDE_RESTRICTED_BUILTIN_TOOLS),
+        ...CLAUDE_RESTRICTED_BUILTIN_TOOLS.filter(
+          (tool) => !config.swarm || !["Task", "Agent"].includes(tool)
+        ),
         ...denyRead.map((entry) => `Read(${entry}/**)`)
       ]
     }
@@ -671,28 +744,25 @@ function claudeSandboxSettings(config) {
 function claudeAgents(config) {
   if (!config.swarm) return "";
   const offline = config.toolUse === "offline";
-  const localTools = offline
-    ? ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "Skill", "TaskOutput", "TaskStop"]
-    : ["Read", "Glob", "Grep"];
   const worker = {
     description: offline
-      ? "Explore a private game clone, use offline coding tools, and report to the lead."
+      ? "Explore a private game clone, use isolated Python, and report to the lead."
       : "Explore a private game clone read-only and report to the lead.",
     prompt:
       "You are a grid-game swarm worker controlled by the superior lead. You have exactly one private maze instance. " +
-      "Call maze_start once, then use maze_observe and maze_action without an instance id. Work only in your private workspace and report findings to the lead. " +
+      "Call maze_start once, then use maze_observe and maze_action without an instance id. Report findings to the lead. " +
       (offline
-        ? "You may write and execute local code in that workspace. "
+        ? "You may use python_exec for isolated computation in your private scratch workspace. "
         : "Do not write files or execute general-purpose code. ") +
       "Never act on the primary maze and never switch model or reasoning effort.",
     model: config.modelName || "inherit",
     permissionMode: "dontAsk",
     background: true,
     tools: [
-      ...localTools,
       "mcp__mazebench_worker__maze_start",
       "mcp__mazebench_worker__maze_observe",
-      "mcp__mazebench_worker__maze_action"
+      "mcp__mazebench_worker__maze_action",
+      ...(offline ? ["mcp__mazebench_worker__python_exec"] : [])
     ],
     mcpServers: [{
       mazebench_worker: config.mcpWorkerUrl
@@ -709,12 +779,189 @@ function claudeAgents(config) {
   return JSON.stringify({ "maze-worker": worker });
 }
 
+function kimiAllowedTools(config) {
+  const restricted = config.toolUse === "read-only";
+  return restricted
+    ? [
+        "mcp__game__game_start",
+        "mcp__game__game_observe",
+        "mcp__game__game_action"
+      ]
+    : [
+        "mcp__mazebench__maze_start",
+        "mcp__mazebench__maze_observe",
+        "mcp__mazebench__maze_action",
+        "mcp__mazebench__python_exec"
+      ];
+}
+
+function sanitizeKimiConfig(source, config) {
+  const unsafeTopLevel = new Set([
+    "default_permission_mode",
+    "default_plan_mode",
+    "extra_skill_dirs",
+    "merge_all_available_skills",
+    "telemetry"
+  ]);
+  const unsafeSections = /^(?:permission|hooks|services|workspace|background|subagent|loop_control)(?:\.|$)/;
+  const preamble = [];
+  const blocks = [];
+  let block = null;
+  let keepBlock = true;
+
+  for (const line of String(source || "").split(/\r?\n/)) {
+    const header = line.match(/^\s*\[\[?([^\]]+)\]\]?\s*(?:#.*)?$/);
+    if (header) {
+      if (block && keepBlock) blocks.push(block.join("\n"));
+      block = [line];
+      const section = String(header[1] || "").trim().replace(/^['"]|['"]$/g, "");
+      keepBlock = !unsafeSections.test(section);
+      continue;
+    }
+    if (block) {
+      block.push(line);
+      continue;
+    }
+    const assignment = line.match(/^\s*([A-Za-z_][\w-]*)\s*=/);
+    if (!assignment || !unsafeTopLevel.has(assignment[1])) preamble.push(line);
+  }
+  if (block && keepBlock) blocks.push(block.join("\n"));
+
+  const maxSteps = config.unlimited
+    ? 1000
+    : Math.max(12, Number(config.moves || 0) + 10);
+  const rules = kimiAllowedTools(config).flatMap((tool) => [
+    "[[permission.rules]]",
+    'decision = "allow"',
+    `pattern = ${tomlString(tool)}`,
+    'reason = "MazeBench isolated MCP tool"',
+    ""
+  ]);
+  for (const tool of KIMI_RESTRICTED_BUILTIN_TOOLS) {
+    rules.push(
+      "[[permission.rules]]",
+      'decision = "deny"',
+      `pattern = ${tomlString(tool)}`,
+      'reason = "Disabled by MazeBench isolation"',
+      ""
+    );
+  }
+  return [
+    ...preamble,
+    'default_permission_mode = "auto"',
+    "default_plan_mode = false",
+    "merge_all_available_skills = false",
+    "extra_skill_dirs = []",
+    "telemetry = false",
+    "",
+    ...blocks,
+    "",
+    "[loop_control]",
+    `max_steps_per_turn = ${maxSteps}`,
+    "max_retries_per_step = 2",
+    "",
+    ...rules
+  ].join("\n").replace(/\n{4,}/g, "\n\n\n").trim() + "\n";
+}
+
+function verifyKimiCliCompatibility(config) {
+  const probe = spawnSync(config.kimiBin, ["--version"], {
+    encoding: "utf8",
+    timeout: 5000
+  });
+  const version = String(probe.stdout || probe.stderr || "").trim().match(/\d+\.\d+\.\d+/)?.[0] || "";
+  if (probe.status !== 0 || !SUPPORTED_KIMI_CODE_VERSIONS.has(version)) {
+    throw new Error(
+      `Kimi Code ${version || "unknown"} has not passed MazeBench's built-in tool isolation review. ` +
+      `Supported version: ${[...SUPPORTED_KIMI_CODE_VERSIONS].join(", ")}.`
+    );
+  }
+  return version;
+}
+
+function kimiMcpConfig(config) {
+  if (!config.mcpUrl) {
+    throw new Error("Kimi Code requires the private MazeBench MCP endpoint.");
+  }
+  const restricted = config.toolUse === "read-only";
+  const name = restricted ? "game" : "mazebench";
+  const enabledTools = restricted
+    ? ["game_start", "game_observe", "game_action"]
+    : ["maze_start", "maze_observe", "maze_action", "python_exec"];
+  return JSON.stringify({
+    mcpServers: {
+      [name]: {
+        url: config.mcpUrl,
+        enabled: true,
+        enabledTools,
+        toolTimeoutMs: 300_000,
+        startupTimeoutMs: 15_000
+      }
+    }
+  }, null, 2) + "\n";
+}
+
+function prepareKimiRuntime(config) {
+  const sourceHome = config.kimiAuthDir || process.env.KIMI_CODE_HOME || path.join(os.homedir(), ".kimi-code");
+  const sourceConfig = path.join(sourceHome, "config.toml");
+  if (!fs.existsSync(sourceConfig)) {
+    throw new Error(`Kimi Code is not configured at ${sourceConfig}. Run \`kimi login\` first.`);
+  }
+
+  fs.mkdirSync(config.kimiRuntimeDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(config.kimiRuntimeDir, 0o700);
+  fs.mkdirSync(config.kimiSkillsDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    path.join(config.kimiRuntimeDir, "config.toml"),
+    sanitizeKimiConfig(fs.readFileSync(sourceConfig, "utf8"), config),
+    { mode: 0o600 }
+  );
+  fs.writeFileSync(path.join(config.kimiRuntimeDir, "mcp.json"), kimiMcpConfig(config), { mode: 0o600 });
+
+  const sourceCredentials = path.join(sourceHome, "credentials");
+  const runtimeCredentials = path.join(config.kimiRuntimeDir, "credentials");
+  fs.rmSync(runtimeCredentials, { recursive: true, force: true });
+  if (fs.existsSync(sourceCredentials)) {
+    fs.cpSync(sourceCredentials, runtimeCredentials, { recursive: true, mode: fs.constants.COPYFILE_FICLONE });
+    fs.chmodSync(runtimeCredentials, 0o700);
+  }
+  const sourceDeviceId = path.join(sourceHome, "device_id");
+  if (fs.existsSync(sourceDeviceId)) {
+    fs.copyFileSync(sourceDeviceId, path.join(config.kimiRuntimeDir, "device_id"));
+    fs.chmodSync(path.join(config.kimiRuntimeDir, "device_id"), 0o600);
+  }
+}
+
+function scrubKimiRuntimeSecrets(config) {
+  if (config.model !== "kimi" || !config.kimiRuntimeDir) return;
+  for (const entry of ["config.toml", "mcp.json", "credentials", "device_id"]) {
+    fs.rmSync(path.join(config.kimiRuntimeDir, entry), { recursive: true, force: true });
+  }
+}
+
 function prepareAgentRuntime(config) {
   if (!config.mcpEnabled) return;
   fs.mkdirSync(config.workspaceDir, { recursive: true });
   fs.mkdirSync(config.swarmDir, { recursive: true });
   fs.mkdirSync(config.swarmWorkspaceDir, { recursive: true });
   if (config.model === "codex") prepareCodexRuntime(config);
+}
+
+function verifyToolIsolation(config) {
+  if (config.toolUse !== "offline") return null;
+  const report = preflightPythonSandbox({
+    scratchDir: config.workspaceDir,
+    stateDir: config.pythonSandboxStateDir,
+    deniedPaths: [ROOT_DIR, config.outDir, config.inContainer ? "/home" : os.homedir()],
+    codexBin: config.codexBin,
+    pythonBin: config.pythonBin
+  });
+  fs.writeFileSync(
+    path.join(config.outDir, "tool-isolation.json"),
+    `${JSON.stringify(report, null, 2)}\n`,
+    { mode: 0o600 }
+  );
+  return report;
 }
 
 async function startPrivateMcpServer(config) {
@@ -760,7 +1007,7 @@ async function startPrivateMcpServer(config) {
 }
 
 function needsPrivateMcpServer(config) {
-  return Boolean(config.mcpEnabled && (config.inContainer || config.model === "claude"));
+  return Boolean(config.mcpEnabled && (config.inContainer || ["claude", "kimi"].includes(config.model)));
 }
 
 function isolatedDockerAgentCommand(config, command) {
@@ -816,6 +1063,12 @@ function isolatedDockerAgentCommand(config, command) {
     "--proc", "/proc",
     "--bind", config.workspaceDir, config.agentWorkspaceDir,
     "--bind", config.swarmWorkspaceDir, config.agentSwarmWorkspaceDir,
+    ...(fs.existsSync(config.codexRuntimeDir)
+      ? [
+          "--dir", config.agentCodexRuntimeDir,
+          "--ro-bind", config.codexRuntimeDir, config.agentCodexRuntimeDir
+        ]
+      : []),
     "--chdir", config.agentWorkspaceDir,
     "--setenv", "HOME", "/home/pwuser",
     "--setenv", "USER", "pwuser",
@@ -844,7 +1097,6 @@ function agentCommand(config, prompt) {
   const maxTurns = config.unlimited ? "" : String(config.swarm ? config.moves + 30 : config.moves + 10);
 
   if (config.model === "codex") {
-    const sandboxMode = config.toolUse === "offline" ? "workspace-write" : "read-only";
     const commandRoot = config.agentWorkspaceDir;
     // --json streams structured events (agent messages, reasoning, shell calls)
     // on stdout so we can build a per-move reasoning log. `exec resume <id>`
@@ -857,51 +1109,48 @@ function agentCommand(config, prompt) {
     // project-scoped worker profiles under this run's workspace.
     argv.push(
       "--ignore-user-config",
+      "--ignore-rules",
+      "--strict-config",
       "-c", 'approval_policy="never"',
-      "-c", `sandbox_mode=${tomlString(sandboxMode)}`,
       "-c", 'web_search="disabled"',
       "-c", "tools.web_search=false",
       "-c", "agents.max_depth=1",
-      "-c", "sandbox_workspace_write.network_access=false",
-      "-c", `sandbox_workspace_write.writable_roots=[${codexWritableRoots(config).map(tomlString).join(", ")}]`,
+      "-c", "project_doc_max_bytes=0",
+      "-c", "memories.use_memories=false",
+      "-c", "memories.generate_memories=false",
+      "-c", "apps._default.enabled=false",
+      "-c", "skills.include_instructions=false",
+      "-c", "skills.bundled.enabled=false",
+      "-c", "include_apps_instructions=false",
+      "-c", "include_collaboration_mode_instructions=false",
+      "-c", "include_environment_context=false",
+      ...codexPermissionConfigArgs(config),
       ...codexAgentConfigArgs(config),
-      ...codexMcpConfigArgs(config)
+      ...codexMcpConfigArgs(config),
+      "--disable", "shell_tool",
+      "--disable", "memories",
+      "--disable", "apps",
+      "--disable", "plugins",
+      "--disable", "enable_mcp_apps",
+      "--disable", "tool_search",
+      "--disable", "tool_suggest",
+      "--disable", "standalone_web_search",
+      "--disable", "image_generation",
+      "--disable", "computer_use",
+      "--disable", "in_app_browser",
+      "--disable", "browser_use",
+      "--disable", "remote_plugin",
+      "--disable", "plugin_sharing"
     );
     if (config.toolUse === "read-only") {
-      const restrictedCodexDir = path.posix.join(config.agentWorkspaceDir, ".codex");
+      const restrictedCodexDir = config.agentCodexRuntimeDir || config.codexRuntimeDir || path.join(config.outDir, ".codex-runtime");
       const guardCommand = `${process.execPath} ${path.posix.join(restrictedCodexDir, "tool-guard.js")}`;
       argv.push(
         "-c", "suppress_unstable_features_warning=true",
         "-c", `model_instructions_file=${tomlString(path.posix.join(restrictedCodexDir, "restricted-instructions.txt"))}`,
-        "-c", "memories.use_memories=false",
-        "-c", "memories.generate_memories=false",
-        "-c", "apps._default.enabled=false",
-        "-c", "skills.include_instructions=false",
-        "-c", "skills.bundled.enabled=false",
-        "-c", "include_apps_instructions=false",
-        "-c", "include_collaboration_mode_instructions=false",
-        "-c", "include_environment_context=false",
-        "-c", 'features.code_mode.enabled=true',
-        "-c", 'features.code_mode.direct_only_tool_namespaces=["mcp__game"]',
-        "-c", 'features.code_mode.excluded_tool_namespaces=["mcp__codex_apps","codex_app","image_gen","web"]',
         "-c", `hooks.PreToolUse=[{ matcher="^exec$", hooks=[{ type="command", command=${tomlString(guardCommand)}, timeout=5, statusMessage="Enforcing game-only mode" }] }]`,
-        "--dangerously-bypass-hook-trust",
-        "--disable", "memories",
-        "--disable", "apps",
-        "--disable", "plugins",
-        "--disable", "enable_mcp_apps",
-        "--disable", "tool_search",
-        "--disable", "standalone_web_search",
-        "--disable", "image_generation",
-        "--disable", "in_app_browser",
-        "--disable", "browser_use",
-        "--disable", "remote_plugin",
-        "--disable", "plugin_sharing"
+        "--dangerously-bypass-hook-trust"
       );
-    }
-    if (!config.resume) argv.push("--sandbox", sandboxMode);
-    if (!config.resume && config.hostAccess && config.toolUse === "offline") {
-      argv.push("--add-dir", ROOT_DIR);
     }
     argv.push(config.swarm ? "--enable" : "--disable", "multi_agent");
     // Ask Codex for fuller reasoning summaries (it emits `reasoning` items in
@@ -955,11 +1204,10 @@ function agentCommand(config, prompt) {
             "mcp__mazebench__maze_start",
             "mcp__mazebench__maze_observe",
             "mcp__mazebench__maze_action",
+            "mcp__mazebench__python_exec",
             ...(config.swarm ? ["mcp__mazebench__maze_workers"] : [])
           ];
-      const localTools = config.toolUse === "offline"
-        ? ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "Skill", "TaskOutput", "TaskStop"]
-        : [];
+      const localTools = [];
       // Claude Code has called this built-in both `Task` and `Agent` across
       // releases. Permit both names so the lead can delegate, while the
       // worker definition itself deliberately omits either tool.
@@ -978,12 +1226,15 @@ function agentCommand(config, prompt) {
         "--allowedTools", [...localTools, ...mcpTools].join(","),
         "--disallowedTools", [
           "WebFetch", "WebSearch",
-          ...(restricted ? CLAUDE_RESTRICTED_BUILTIN_TOOLS : []),
-          ...(config.swarm ? [] : ["Task", "Agent"])
+          ...CLAUDE_RESTRICTED_BUILTIN_TOOLS.filter(
+            (tool) => !config.swarm || !["Task", "Agent"].includes(tool)
+          )
         ].join(","),
-        ...(restricted ? ["--append-system-prompt", "You are solving the current grid-game task. Use only the explicitly configured game controls and your current conversation memory."] : ["--add-dir", config.agentSwarmWorkspaceDir])
+        "--append-system-prompt",
+        restricted
+          ? "You are solving the current grid-game task. Use only the explicitly configured game controls and your current conversation memory."
+          : "Use only the configured game controls and python_exec. Host shell, files, repositories, web, apps, and connectors are unavailable."
       );
-      if (config.hostAccess && !restricted) argv.push("--add-dir", ROOT_DIR);
       const agents = claudeAgents(config);
       if (agents) argv.push("--agents", agents);
     } else if (config.tools) {
@@ -1013,7 +1264,33 @@ function agentCommand(config, prompt) {
     return { bin: config.claudeBin, argv };
   }
 
-  throw new Error(`Unknown model: ${config.model} (expected "codex" or "claude")`);
+  if (config.model === "kimi") {
+    const argv = [];
+    if (config.resume) argv.push("--session", config.resume);
+    if (config.modelName) argv.push("--model", config.modelName);
+    argv.push(
+      "--prompt", prompt,
+      "--output-format", "stream-json",
+      "--skills-dir", config.agentKimiSkillsDir
+    );
+    return {
+      bin: config.kimiBin,
+      argv,
+      env: {
+        KIMI_CODE_HOME: config.agentKimiRuntimeDir,
+        KIMI_DISABLE_TELEMETRY: "1",
+        KIMI_CODE_NO_AUTO_UPDATE: "1",
+        KIMI_DISABLE_CRON: "1",
+        KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT: "0",
+        KIMI_LOG_LEVEL: "warn",
+        NO_COLOR: "1",
+        CI: "1",
+        ...(config.reasoning ? { KIMI_MODEL_THINKING_EFFORT: config.reasoning } : {})
+      }
+    };
+  }
+
+  throw new Error(`Unknown model: ${config.model} (expected "codex", "claude", or "kimi")`);
 }
 
 function ensureAgentAvailable(bin) {
@@ -1021,7 +1298,7 @@ function ensureAgentAvailable(bin) {
   if (probe.status !== 0) {
     throw new Error(
       `Agent CLI not found on PATH: ${bin}\n` +
-        `Install it (or pass ${bin === "codex" ? "codex_bin=" : "claude_bin="}<path>) and try again.`
+        `Install it (or pass ${bin === "codex" ? "codex_bin=" : bin === "claude" ? "claude_bin=" : "kimi_bin="}<path>) and try again.`
     );
   }
 }
@@ -1319,6 +1596,82 @@ function distillClaudeEvents(raw) {
   return { entries, transcript: transcript.join("\n\n"), finalMessage };
 }
 
+// Kimi Code's stream-json format uses OpenAI-style Assistant/Tool messages.
+// Match each MCP action call to its following Tool result so the live page has
+// the same per-move reasoning shape as Codex and Claude Code runs.
+function distillKimiEvents(raw) {
+  const entries = [];
+  const transcript = [];
+  const pending = new Map();
+  let commentary = "";
+  let move = 0;
+  let finalMessage = "";
+
+  for (const line of String(raw || "").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let event;
+    try {
+      event = JSON.parse(trimmed);
+    } catch (_error) {
+      continue;
+    }
+
+    if (event.role === "assistant") {
+      const text = toolResultText(event.content).trim();
+      if (text) {
+        commentary = [commentary, text].filter(Boolean).join("\n\n");
+        finalMessage = text;
+        transcript.push(`[agent] ${text}`);
+      }
+      for (const call of Array.isArray(event.tool_calls) ? event.tool_calls : []) {
+        const fn = call.function || call;
+        const name = fn.name || call.name || "";
+        let input = fn.arguments ?? call.arguments ?? call.input ?? {};
+        if (typeof input === "string") {
+          try {
+            input = JSON.parse(input);
+          } catch (_error) {
+            input = {};
+          }
+        }
+        const actions = actionsFromToolCall(name, input);
+        transcript.push(`[tool] ${name || "mcp"} ${JSON.stringify(input)}`);
+        if (actions.length && call.id) {
+          pending.set(call.id, {
+            actions,
+            reasoning: commentary.trim(),
+            timestamp: event._mazebench_received_at || event.timestamp || null
+          });
+          commentary = "";
+        }
+      }
+      continue;
+    }
+
+    if (event.role === "tool") {
+      const id = event.tool_call_id || event.id;
+      const batch = pending.get(id);
+      if (!batch) continue;
+      const output = toolResultText(event.content ?? event.output ?? event.result);
+      const failed = event.is_error === true || event.error;
+      if (!failed) {
+        const results = resultsFromOutput(output);
+        const executed = results.length ? batch.actions.slice(0, results.length) : batch.actions;
+        const timestamp = event._mazebench_received_at || event.timestamp || batch.timestamp || null;
+        executed.forEach((action, index) => {
+          move += 1;
+          entries.push({ move, action, reasoning: batch.reasoning, timestamp, ...(results[index] || {}) });
+        });
+      }
+      if (output) transcript.push(`${failed ? "[tool error] " : ""}${output.split("\n").slice(0, 3).join("\n")}`);
+      pending.delete(id);
+    }
+  }
+
+  return { entries, transcript: transcript.join("\n\n"), finalMessage };
+}
+
 function writeReasoningArtifacts(config, raw, distilled, options = {}) {
   try {
     // When the caller already streamed agent-events.jsonl live, don't rewrite it.
@@ -1384,6 +1737,14 @@ function providerFailureFromEvents(raw, provider) {
       };
     }
     if (provider === "codex" && ["turn.completed", "thread.started"].includes(event.type)) return null;
+    if (provider === "kimi" && event.role === "meta" && /(?:error|failed)/i.test(String(event.type || ""))) {
+      return {
+        provider,
+        status: Number(event.status || event.status_code) || null,
+        message: String(event.content || event.message || event.error || "Kimi Code request failed.").trim().slice(0, 500)
+      };
+    }
+    if (provider === "kimi" && ["assistant", "tool"].includes(event.role)) return null;
   }
   return null;
 }
@@ -1428,25 +1789,29 @@ function recordNoMoveIfIdle(config, actionCountBefore) {
 }
 
 function runAgent(config, prompt) {
-  const { bin, argv } = isolatedDockerAgentCommand(config, agentCommand(config, prompt));
+  const { bin, argv, env: commandEnv = {} } = isolatedDockerAgentCommand(config, agentCommand(config, prompt));
   ensureAgentAvailable(bin);
 
   console.log(`\n=== Launching local ${config.model} agent (${bin}) ===`);
   console.log(`Session: ${config.sessionFile}`);
   console.log(
-    `${config.hostAccess ? "Host access" : "Docker"} | Tool-use ${config.toolUse.toUpperCase()}${config.swarm ? " + SWARM" : ""} | ` +
+    `${config.hostAccess ? "Verified native sandbox" : "Docker isolation"} | Tool-use ${config.toolUse.toUpperCase()}${config.swarm ? " + SWARM" : ""} | ` +
       `Mode ${config.mode}${config.mode === "vision" ? ` (${config.visionWidth}x${config.visionHeight})` : ""} | ` +
       `Game ${config.gameId} | Level ${config.levelId} | view ${config.view} | yaw ${config.yaw} | budget ${config.unlimited ? "unlimited" : `${config.moves} moves`}\n`
   );
 
-  // Both agents emit a structured JSONL event stream on stdout (codex --json /
-  // claude --output-format stream-json). Append it to agent-events.jsonl AS IT
+  // All local agents emit a structured JSONL event stream on stdout. Append it
+  // to agent-events.jsonl AS IT
   // ARRIVES so the web UI can distill live per-move reasoning while the agent is
   // still playing. We use synchronous appends (not a buffered WriteStream) so
   // the on-disk file the web UI tails never lags behind — important for Codex,
   // whose events are sparse (one short message per move) and would otherwise
   // sit unflushed in a stream buffer until the very end.
-  const distill = config.model === "codex" ? distillCodexEvents : distillClaudeEvents;
+  const distill = config.model === "codex"
+    ? distillCodexEvents
+    : config.model === "claude"
+      ? distillClaudeEvents
+      : distillKimiEvents;
   const eventsPath = path.join(config.outDir, "agent-events.jsonl");
   // On a resume we keep the prior run's events and append the new turns, so the
   // reasoning feed shows the whole journey. A fresh run starts the file empty.
@@ -1456,7 +1821,15 @@ function runAgent(config, prompt) {
   fs.rmSync(path.join(config.outDir, "provider-failure.json"), { force: true });
 
   return new Promise((resolve) => {
-    const env = { ...process.env };
+    const env = config.model === "kimi"
+      ? {
+          PATH: process.env.PATH || "",
+          HOME: process.env.HOME || os.homedir(),
+          TMPDIR: process.env.TMPDIR || os.tmpdir(),
+          LANG: process.env.LANG || "C.UTF-8",
+          ...commandEnv
+        }
+      : { ...process.env, ...commandEnv };
     if (config.model === "claude" && config.mcpEnabled) {
       if (config.swarm && config.modelName) env.CLAUDE_CODE_SUBAGENT_MODEL = config.modelName;
     }
@@ -1905,11 +2278,12 @@ async function runWizard(raw) {
 
   out.model = await promptSelect("Which agent?", [
     { label: "Codex CLI", value: "codex", hint: "uses your OpenAI/ChatGPT login" },
-    { label: "Claude Code", value: "claude", hint: "uses your Claude subscription" }
+    { label: "Claude Code", value: "claude", hint: "uses your Claude subscription" },
+    { label: "Kimi Code", value: "kimi", hint: "uses your configured Kimi account" }
   ]);
 
   const topModel = await promptSelect("Which model?", [
-    { label: "Default", value: "__default__", hint: out.model === "claude" ? "subscription default" : "codex default" },
+    { label: "Default", value: "__default__", hint: out.model === "codex" ? "codex default" : "account default" },
     { label: "Custom…", value: "__custom__", hint: "pick from the full list" }
   ]);
   let selectedModelInfo = null;
@@ -1920,17 +2294,32 @@ async function runWizard(raw) {
     if (out.model === "codex") {
       modelInfos = loadCodexModels();
       listOptions = modelInfos.map((m) => ({ label: m.displayName, value: m.slug, hint: m.description }));
-    } else {
+    } else if (out.model === "claude") {
       listOptions = [
         { label: "Opus", value: "opus" },
         { label: "Sonnet", value: "sonnet" },
         { label: "Haiku", value: "haiku" }
       ];
+    } else {
+      const result = spawnSync(out.kimi_bin || "kimi", ["provider", "list", "--json"], {
+        encoding: "utf8",
+        timeout: 5000
+      });
+      try {
+        const payload = JSON.parse(String(result.stdout || "{}"));
+        listOptions = Object.entries(payload.models || {}).map(([id, model]) => ({
+          label: String(model?.displayName || id),
+          value: id,
+          hint: String(model?.model || "")
+        }));
+      } catch (_error) {
+        listOptions = [];
+      }
     }
     listOptions.push({ label: "Type an id manually…", value: "__type__" });
     let picked = await promptSelect("Choose a model", listOptions);
     if (picked === "__type__") {
-      picked = await promptText("Model id", out.model === "claude" ? "opus" : "gpt-5.5");
+      picked = await promptText("Model id", out.model === "claude" ? "opus" : out.model === "kimi" ? "kimi/k3" : "gpt-5.5");
     } else if (out.model === "codex") {
       selectedModelInfo = modelInfos.find((m) => m.slug === picked) || null;
     }
@@ -1960,6 +2349,12 @@ async function runWizard(raw) {
         { label: "Yes", value: "true" }
       ]);
     }
+  } else if (out.model === "kimi") {
+    out.reasoning = await promptSelect("Reasoning effort?", [
+      { label: "low", value: "low" },
+      { label: "high", value: "high" },
+      { label: "max", value: "max" }
+    ]);
   }
 
   let moves = await promptSelect("Action budget (moves)?", [
@@ -1999,17 +2394,19 @@ async function runWizard(raw) {
     }
   }
 
-  out.container = await promptSelect("Access?", [
-    { label: "Container", value: "true", hint: "isolated from your files — recommended" },
-    { label: "Host", value: "false", hint: "weaker isolation" }
-  ]);
+  out.container = out.model === "kimi"
+    ? "false"
+    : await promptSelect("Access?", [
+        { label: "Container", value: "true", hint: "isolated from your files — recommended" },
+        { label: "Host", value: "false", hint: "native OS sandbox with launch-time verification" }
+      ]);
 
-  out.tool_use = await promptSelect("Tool-use (Not guaranteed)?", [
+  out.tool_use = await promptSelect("Tool use?", [
     { label: "No Tools", value: "read-only", hint: "game controls only; no files, shell, web, memory, or workers" },
-    { label: "[CLI] Tools", value: "offline", hint: "write files and execute code; no network" }
+    { label: "[PY] Tools", value: "offline", hint: "isolated Python scratchpad; no host files or network" }
   ]);
 
-  if (out.tool_use === "offline") {
+  if (out.tool_use === "offline" && out.model !== "kimi") {
     out.swarm = await promptSelect("Orchestration?", [
       { label: "Single", value: "false", hint: "one lead agent" },
       { label: "Swarm", value: "true", hint: "lead controls identical-model workers" }
@@ -2063,9 +2460,9 @@ async function main() {
 
   const model = String(raw.model || "").toLowerCase();
 
-  if (!model || !["codex", "claude"].includes(model)) {
+  if (!model || !["codex", "claude", "kimi"].includes(model)) {
     console.error(
-      "Usage: node scripts/maze-agent-local.js --model <codex|claude> [moves=N level=HxI ...]"
+      "Usage: node scripts/maze-agent-local.js --model <codex|claude|kimi> [moves=N level=HxI ...]"
     );
     process.exit(2);
   }
@@ -2083,13 +2480,23 @@ async function main() {
     : isTruthy(raw.tools, false)
       ? "offline"
       : "read-only";
-  const swarm = toolUse === "offline" && isTruthy(raw.swarm, false);
+  const requestedSwarm = toolUse === "offline" && isTruthy(raw.swarm, false);
+  if (model === "kimi" && requestedSwarm) {
+    throw new Error("Kimi Code local runs currently support a single isolated agent, not swarm workers.");
+  }
+  const swarm = requestedSwarm;
   const unlimited = isTruthy(raw.unlimited, false);
   const hostAccess = !wantsContainer && !inContainer;
   const agentHomeStat = inContainer ? fs.statSync("/home/pwuser") : null;
-  const workspaceDir = path.join(outDir, "workspace");
+  const workspaceKey = crypto.createHash("sha256").update(outDir).digest("hex").slice(0, 24);
+  const workspaceRoot = path.join(os.tmpdir(), "mazebench-agent-workspaces", workspaceKey);
+  const workspaceDir = path.join(workspaceRoot, "workspace");
   const swarmDir = path.join(outDir, "swarm");
-  const swarmWorkspaceDir = path.join(outDir, "swarm-workspaces");
+  const swarmWorkspaceDir = path.join(workspaceRoot, "swarm-workspaces");
+  const codexRuntimeDir = path.join(outDir, ".codex-runtime");
+  const pythonSandboxStateDir = path.join(outDir, ".python-sandbox");
+  const kimiRuntimeDir = path.join(workspaceRoot, "kimi-home");
+  const kimiSkillsDir = path.join(kimiRuntimeDir, "empty-skills");
 
   const requestedMode = String(raw.mode || raw.observation || "text").toLowerCase();
   const mode = ["json", "vision"].includes(requestedMode) ? requestedMode : "text";
@@ -2097,6 +2504,9 @@ async function main() {
     claudeBin: raw.claude_bin || "claude",
     claudeAllowedTools: raw.claude_allowed_tools || "",
     codexBin: raw.codex_bin || "codex",
+    kimiBin: raw.kimi_bin || "kimi",
+    kimiAuthDir: raw.kimi_auth ? path.resolve(expandTilde(raw.kimi_auth)) : "",
+    pythonBin: raw.python_bin || "",
     container: wantsContainer,
     dockerBin: raw.docker_bin || "docker",
     image: raw.image || "mazebench-agent",
@@ -2135,8 +2545,15 @@ async function main() {
     workspaceDir,
     swarmDir,
     swarmWorkspaceDir,
+    codexRuntimeDir,
+    kimiRuntimeDir,
+    kimiSkillsDir,
+    pythonSandboxStateDir,
     agentWorkspaceDir: inContainer ? "/app/workspace" : workspaceDir,
     agentSwarmWorkspaceDir: inContainer ? "/app/swarm-workspaces" : swarmWorkspaceDir,
+    agentCodexRuntimeDir: inContainer ? "/run/mazebench-codex-runtime" : codexRuntimeDir,
+    agentKimiRuntimeDir: kimiRuntimeDir,
+    agentKimiSkillsDir: kimiSkillsDir,
     // The outer Docker launcher re-execs before starting an agent. Actual host
     // and in-container agents both use MCP so maze persistence stays outside
     // their file/tool sandbox.
@@ -2160,6 +2577,11 @@ async function main() {
     yaw: ((positiveInt(raw.yaw, 0) % 4) + 4) % 4
   };
 
+  if (config.model === "kimi" && (config.container || inContainer)) {
+    throw new Error("Kimi Code local runs use the verified host permission boundary; pass container=false.");
+  }
+  if (config.model === "kimi") verifyKimiCliCompatibility(config);
+
   // Default: isolate the whole run inside a container. `container=false` (or the
   // in-container re-exec, flagged by MAZEBENCH_IN_CONTAINER) runs on the host.
   if (config.container && !inContainer) {
@@ -2177,10 +2599,22 @@ async function main() {
   // outrun that connection and receive no game tools. Start the existing
   // authenticated localhost transport before launching Claude so its tools are
   // ready immediately. Containers already require the same transport.
+  prepareAgentRuntime(config);
+  if (!isTruthy(raw.dry_run, false) && config.toolUse === "offline") {
+    verifyToolIsolation(config);
+    console.log("Tool isolation verified: Python scratch writes allowed; repository, host files, symlink escapes, subprocesses, and network blocked.");
+  }
   const privateMcp = needsPrivateMcpServer(config)
     ? await startPrivateMcpServer(config)
     : null;
-  prepareAgentRuntime(config);
+  if (config.model === "kimi") {
+    try {
+      prepareKimiRuntime(config);
+    } catch (error) {
+      privateMcp?.stop();
+      throw error;
+    }
+  }
 
   const prompt = buildPrompt(config);
 
@@ -2191,6 +2625,7 @@ async function main() {
     console.log([bin, ...shown].join(" "));
     console.log(`# with <prompt>:\n${prompt}`);
     console.log(`\n# artifacts would land in: ${config.outDir}`);
+    scrubKimiRuntimeSecrets(config);
     privateMcp?.stop();
     return;
   }
@@ -2214,6 +2649,7 @@ async function main() {
     }
     recordNoMoveIfIdle(config, actionCountBefore);
   } finally {
+    scrubKimiRuntimeSecrets(config);
     privateMcp?.stop();
   }
 
@@ -2266,13 +2702,17 @@ module.exports = {
   containerRuntimeMountArgs,
   distillClaudeEvents,
   distillCodexEvents,
+  distillKimiEvents,
+  kimiAllowedTools,
+  kimiMcpConfig,
   loadCodexModels,
   migrateSeedSessionObservation,
   needsPrivateMcpServer,
   providerFailureFromEvents,
   recordNoMoveIfIdle,
   resultFromOutput,
-  resultsFromOutput
+  resultsFromOutput,
+  sanitizeKimiConfig
 };
 
 if (require.main === module) {

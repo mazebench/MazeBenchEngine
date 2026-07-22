@@ -36,11 +36,14 @@ only the game controls, not the repository or host filesystem.
 mazebench build
 mazebench model=codex moves=10
 mazebench model=claude moves=10
+mazebench model=kimi moves=10
 ```
 
-Codex runs require the Codex CLI; Claude runs require Claude Code. Replay video
-also requires a Chromium-family browser and `ffmpeg`. Run `mazebench --help`
-for commands and options.
+Codex runs require the Codex CLI; Claude runs require Claude Code; Kimi runs
+require Kimi Code CLI. The Agent page launches each from an empty workspace and
+exposes only isolated game controls, plus isolated Python when Tools is selected.
+Replay video also requires a Chromium-family browser and `ffmpeg`. Run
+`mazebench --help` for commands and options.
 
 For Prime Intellect Verifiers:
 

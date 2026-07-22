@@ -6,6 +6,7 @@ const { spawn, spawnSync } = require("child_process");
 const {
   distillClaudeEvents,
   distillCodexEvents,
+  distillKimiEvents,
   loadCodexModels
 } = require("../scripts/maze-agent-local");
 const {
@@ -54,6 +55,7 @@ function enrichedPathEnv() {
     path.dirname(fs.realpathSync(process.execPath)),
     path.join(os.homedir(), ".local", "bin"),
     path.join(os.homedir(), ".claude", "local"),
+    path.join(os.homedir(), ".kimi-code", "bin"),
     "/opt/homebrew/bin",
     "/usr/local/bin"
   ];
@@ -92,8 +94,8 @@ function normalizeEventTimestamp(value) {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-// Agent Mode backend: launches scripts/maze-agent-local.js (Codex CLI / Claude
-// Code) or `prime eval run` as detached child processes, one directory per run
+// Agent Mode backend: launches scripts/maze-agent-local.js (Codex CLI, Claude
+// Code, or Kimi Code) or `prime eval run` as detached child processes, one directory per run
 // under outputs/maze-local/site/. The runner writes actions.jsonl + session.json
 // into that directory as the agent plays, so progress endpoints just read files
 // — no state beyond run.json survives a server restart, and none is needed.
@@ -550,7 +552,7 @@ function createAgentRunService({
   function requireLegacyLocalLaunch() {
     if (!allowLegacyLocalLaunch) {
       throw new Error(
-        'Subscription-backed local Codex and Claude Code launches are disabled. Choose the Prime harness "Codex" or "Claude Code".'
+        "Local Codex, Claude Code, and Kimi Code launches are disabled. Choose the corresponding Prime harness."
       );
     }
   }
@@ -562,9 +564,9 @@ function createAgentRunService({
       ? agentEnvironment({ fresh: true })
       : {};
     if (!environment[provider]) {
-      const label = provider === "claude" ? "Claude Code" : "Codex";
-      const login = provider === "claude" ? "claude auth login" : "codex login";
-      throw new Error(`${label} needs an active local subscription session. Run \`${login}\`, then refresh the Agent page.`);
+      const label = { claude: "Claude Code", kimi: "Kimi Code", codex: "Codex" }[provider] || provider;
+      const login = { claude: "claude auth login", kimi: "kimi login", codex: "codex login" }[provider] || "";
+      throw new Error(`${label} needs an active local account. Run \`${login}\`, then refresh the Agent page.`);
     }
   }
 
@@ -682,6 +684,11 @@ function createAgentRunService({
     }
 
     return path.join(runsDir, runId);
+  }
+
+  function agentWorkspaceRootFor(runId) {
+    const key = crypto.createHash("sha256").update(runDirFor(runId)).digest("hex").slice(0, 24);
+    return path.join(os.tmpdir(), "mazebench-agent-workspaces", key);
   }
 
   function runMetaPath(runId) {
@@ -2424,7 +2431,7 @@ function createAgentRunService({
       ),
       prime_evaluation_score:
         Number.isFinite(Number(primeEvaluation?.avg_score)) ? Number(primeEvaluation.avg_score) : null,
-      // Grouping key for the runs-list provider filter (codex | claude | prime).
+      // Grouping key for the runs-list provider filter (codex | claude | kimi | prime).
       provider: meta.kind === "prime" ? "prime" : meta.model,
       pausable:
         meta.status === "running" &&
@@ -2638,7 +2645,11 @@ function createAgentRunService({
 
     try {
       const raw = fs.readFileSync(eventsPath, "utf8");
-      const distilled = model === "claude" ? distillClaudeEvents(raw) : distillCodexEvents(raw);
+      const distilled = model === "claude"
+        ? distillClaudeEvents(raw)
+        : model === "kimi"
+          ? distillKimiEvents(raw)
+          : distillCodexEvents(raw);
       const liveReasoning = distilled.entries || [];
       const liveWithText = liveReasoning.filter((entry) => entry.reasoning).length;
       const finalWithText = finalReasoning.filter((entry) => entry.reasoning).length;
@@ -3036,6 +3047,14 @@ function createAgentRunService({
         }
       } else if (summary.provider === "claude") {
         value = parseClaudeEvents(fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath, "utf8") : "");
+      } else if (summary.provider === "kimi") {
+        value = {
+          provider: "kimi",
+          available: false,
+          exact: false,
+          note: "Kimi Code does not currently include token usage in its stream-json output.",
+          actions: []
+        };
       } else {
         const hasFinalResults = primeResultsPath && fs.statSync(primeResultsPath).size > 0;
         value = hasFinalResults
@@ -4222,6 +4241,76 @@ function createAgentRunService({
     };
   }
 
+  function kimiModelCatalog() {
+    const result = spawnSync("kimi", ["provider", "list", "--json"], {
+      encoding: "utf8",
+      env: enrichedPathEnv(),
+      timeout: 5000,
+      maxBuffer: 2 * 1024 * 1024
+    });
+    const version = spawnSync("kimi", ["--version"], {
+      encoding: "utf8",
+      env: enrichedPathEnv(),
+      timeout: 3000
+    });
+    const versionText = String(version.stdout || "").trim();
+
+    if (result.status !== 0) {
+      return {
+        models: [],
+        source: versionText ? `Kimi Code ${versionText}` : "Installed Kimi Code CLI",
+        checked_at: modelCatalogCheckedAt(),
+        note: "Kimi Code did not expose a configured model catalog. Run `kimi login`, then reopen this page."
+      };
+    }
+
+    try {
+      const payload = JSON.parse(String(result.stdout || "{}"));
+      const rows = Object.entries(payload.models || {}).map(([id, model]) => {
+        const capabilities = Array.isArray(model?.capabilities) ? model.capabilities : [];
+        const efforts = Array.isArray(model?.supportEfforts) && model.supportEfforts.length
+          ? model.supportEfforts.map(String)
+          : capabilities.includes("thinking")
+            ? [String(model?.defaultEffort || "high")]
+            : [];
+        return {
+          id,
+          label: String(model?.displayName || id),
+          description: `${String(model?.model || id)} via ${String(model?.provider || "Kimi")}`,
+          reasoning_levels: [...new Set(efforts)],
+          default_reasoning: String(model?.defaultEffort || efforts[0] || ""),
+          vision: capabilities.includes("image_in")
+        };
+      });
+      let configuredDefault = "";
+      try {
+        const kimiHome = process.env.KIMI_CODE_HOME || path.join(os.homedir(), ".kimi-code");
+        const configText = fs.readFileSync(path.join(kimiHome, "config.toml"), "utf8");
+        configuredDefault = String(configText.match(/^\s*default_model\s*=\s*["']([^"']+)["']/m)?.[1] || "");
+      } catch (_error) {
+        /* the catalog still works without a configured default */
+      }
+      const defaultId = String(payload.defaultModel || payload.default_model || configuredDefault);
+      rows.sort((left, right) => Number(right.id === defaultId) - Number(left.id === defaultId));
+      return {
+        models: rows,
+        source: versionText ? `Kimi Code ${versionText}` : "Installed Kimi Code CLI",
+        checked_at: modelCatalogCheckedAt(),
+        default_model_id: defaultId || rows[0]?.id || "",
+        note: rows.length
+          ? "Models loaded from the installed Kimi Code CLI; MazeBench launches them with only isolated game and Python MCP tools."
+          : "Kimi Code is configured but has no models. Run `kimi login` or add a provider."
+      };
+    } catch (_error) {
+      return {
+        models: [],
+        source: versionText ? `Kimi Code ${versionText}` : "Installed Kimi Code CLI",
+        checked_at: modelCatalogCheckedAt(),
+        note: "Could not parse the Kimi Code model catalog."
+      };
+    }
+  }
+
   // Prime's model list (OpenAI-style /models) exposes no modality field, so we
   // infer image-input support from the model id: an allowlist of known
   // multimodal families, with text-only variants (…-mini reasoning models,
@@ -4348,7 +4437,7 @@ function createAgentRunService({
   function listProviderModels(provider, { fresh = false, harness = "none" } = {}) {
     const normalized = String(provider || "").toLowerCase();
 
-    if (!["codex", "claude", "prime"].includes(normalized)) {
+    if (!["codex", "claude", "kimi", "prime"].includes(normalized)) {
       throw new Error(`Unknown provider "${provider}".`);
     }
 
@@ -4366,7 +4455,11 @@ function createAgentRunService({
         : cached.value;
     }
 
-    const value = normalized === "claude" ? claudeModelCatalog() : primeModelCatalog();
+    const value = normalized === "claude"
+      ? claudeModelCatalog()
+      : normalized === "kimi"
+        ? kimiModelCatalog()
+        : primeModelCatalog();
     const ttl = value.models.length ? PROVIDER_MODEL_TTL_MS : PROVIDER_MODEL_ERROR_TTL_MS;
 
     providerModelCache.set(normalized, { value, expiresAt: Date.now() + ttl });
@@ -4397,8 +4490,8 @@ function createAgentRunService({
   function buildLocalRunArgs(runId, params, game) {
     const model = String(params.model || "").toLowerCase();
 
-    if (!["codex", "claude"].includes(model)) {
-      throw new Error('model must be "codex" or "claude".');
+    if (!["codex", "claude", "kimi"].includes(model)) {
+      throw new Error('model must be "codex", "claude", or "kimi".');
     }
 
     const levelId = String(params.level_id || worldMaps.defaultLevelIdForGame(game));
@@ -4422,7 +4515,7 @@ function createAgentRunService({
       : wantTools
         ? "offline"
         : "read-only";
-    const swarm = toolUse === "offline" && (params.swarm === true || params.swarm === "true");
+    const swarm = model !== "kimi" && toolUse === "offline" && (params.swarm === true || params.swarm === "true");
     const allowQuit = !(params.allow_quit === false || params.allow_quit === "false");
     const autoQuit = normalizeAutoQuitConfig(params);
     const mode = normalizeObservationMode(params.mode);
@@ -4432,6 +4525,9 @@ function createAgentRunService({
 
     // Safety net for the UI toggle: container mode needs Docker installed AND
     // its daemon running.
+    if (model === "kimi" && wantContainer) {
+      throw new Error("Kimi Code local runs require container=false so MazeBench can apply the CLI's verified permission boundary.");
+    }
     if (wantContainer && !dockerAvailable()) {
       throw new Error(
         dockerInstalled()
@@ -4494,6 +4590,14 @@ function createAgentRunService({
               ? `${exactModelId} supports Claude effort: ${supported.join(", ")}.`
               : `${exactModelId} does not support Claude effort. Choose off.`
           );
+        }
+      } else if (model === "kimi" && params.model_name) {
+        const exact = listProviderModels("kimi", { fresh: false }).models.find(
+          (entry) => String(entry.id) === String(params.model_name)
+        );
+        const supported = Array.isArray(exact?.reasoning_levels) ? exact.reasoning_levels : [];
+        if (exact && supported.length && !supported.includes(reasoning)) {
+          throw new Error(`${exact.id} supports Kimi effort: ${supported.join(", ")}.`);
         }
       }
 
@@ -5041,7 +5145,7 @@ function createAgentRunService({
     return rest;
   }
 
-  // Launch N runs of the same config at once. Both local CLIs support parallel
+  // Launch N runs of the same config at once. Local CLIs support parallel
   // sessions; provider subscription limits are enforced by their own service.
   function launchRuns(params = {}) {
     const count = Math.max(1, Math.min(8, Math.floor(Number(params.count) || 1)));
@@ -5899,6 +6003,7 @@ function createAgentRunService({
   function deleteRun(runId) {
     const meta = readRunMeta(runId);
     const runDir = runDirFor(runId);
+    const agentWorkspaceRoot = agentWorkspaceRootFor(runId);
 
     const primeSync = primeSyncChildren.get(runId);
     if (primeSync?.pid) {
@@ -5966,6 +6071,7 @@ function createAgentRunService({
     for (const filePath of jsonLineIndexes.keys()) {
       if (filePath.startsWith(`${runDir}${path.sep}`)) jsonLineIndexes.delete(filePath);
     }
+    fs.rmSync(agentWorkspaceRoot, { recursive: true, force: true });
     fs.rmSync(runDir, { recursive: true, force: true });
     if (meta?.model === "claude") startNextWaitingClaudeRun();
     return { id: runId, deleted: true };

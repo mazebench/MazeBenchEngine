@@ -9,6 +9,7 @@ Examples
 --------
     mazebench model=codex moves=10
     mazebench model=claude moves=10 level=HxI video=off
+    mazebench model=kimi moves=10 container=false
     mazebench codex moves=10            # shorthand for model=codex
     mazebench replay outputs/maze-local/codex/<run>/    # (re)make the video
     mazebench play                      # interactive human REPL
@@ -50,14 +51,17 @@ Launch the website (Play / Build / Agent modes in your browser):
 Interactive setup (pick options with arrow keys):
   mazebench wizard
 
-Local coding agent (uses YOUR Codex/Claude auth, no Prime):
+Local coding agent (uses YOUR Codex/Claude/Kimi account, no Prime):
   mazebench model=codex moves=10 [tools=false mode=text|vision level=HxI gems=100 video=on]
   mazebench model=claude moves=10 [tools=true mode=vision vision_width=512 model_name=<llm>]
+  mazebench model=kimi moves=10 [tools=true mode=text model_name=kimi/k3]
   mazebench codex moves=10                 shorthand for model=codex
   mazebench claude moves=10 mode=vision    shorthand for model=claude
+  mazebench kimi moves=10                  shorthand for model=kimi
 
   tools=false (default) sandboxes the agent to the maze only — no reading your
-  files, no writing, no network. tools=true grants full file/command/network access.
+  files, no writing, no network. tools=true adds isolated Python computation;
+  host files, shell commands, and web tools remain unavailable.
 
   Local runs execute inside a container by default (host filesystem isolated;
   only the output dir is mounted). Build the image once with `mazebench build`.
@@ -212,6 +216,8 @@ def _pairs_to_kv(pairs: dict[str, str]) -> list[str]:
 
 def run_local(root: Path, model: str, pairs: dict[str, str], flags: list[str]) -> int:
     _require(_node_bin(), "Install Node.js (the maze engine runs on Node).")
+    if model == "kimi":
+        pairs = {"container": "false", **pairs}
     pairs = {"model": model, **{k: v for k, v in pairs.items() if k != "model"}}
     cmd = [_node_bin(), str(root / "scripts" / "maze-agent-local.js"), *_pairs_to_kv(pairs), *flags]
     return _run(cmd, root)
@@ -576,13 +582,13 @@ def main(argv: list[str] | None = None) -> int:
             return run_replay(root, words[1:], pairs, flags)
         if command == "play":
             return run_play(root, pairs, flags)
-        if command in ("codex", "claude"):
+        if command in ("codex", "claude", "kimi"):
             return run_local(root, command, pairs, flags)
         if command in ("local", "run", ""):
             model = pairs.get("model", "").lower()
-            if model not in ("codex", "claude"):
+            if model not in ("codex", "claude", "kimi"):
                 raise CliError(
-                    "Specify which local agent: model=codex or model=claude "
+                    "Specify which local agent: model=codex, model=claude, or model=kimi "
                     "(e.g. `mazebench model=codex moves=10`)."
                 )
             return run_local(root, model, pairs, flags)

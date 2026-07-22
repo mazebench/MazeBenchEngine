@@ -204,7 +204,7 @@ function createPageRenderer({
       title: "Maze Bench",
       main: `<div class="world-grid home-mode-grid">
           ${modeCard("/build", "build", "Build and Play", "Create, edit, and play the official Maze Bench environment or your local drafts.")}
-          ${modeCard("/agent", "agent", "Agent", "Run Codex, Claude Code, or Prime Verifiers on any world and watch live.")}
+          ${modeCard("/agent", "agent", "Agent", "Run Codex, Claude Code, Kimi Code, or Prime Verifiers on any world and watch live.")}
           ${modeCard("/train", "train", "Train", "Train models on Maze Bench with Prime Verifiers.")}
         </div>
         ${otherGamesSection}`
@@ -848,6 +848,7 @@ function createPageRenderer({
       title: "Agent — Maze Bench",
       extraHeadHtml: `<link rel="preload" as="image" href="/logos/codex.png" type="image/png" fetchpriority="high">
     <link rel="preload" as="image" href="/logos/claude.png" type="image/png" fetchpriority="high">
+    <link rel="preload" as="image" href="/logos/kimi.svg" type="image/svg+xml" fetchpriority="high">
     <link rel="preload" as="image" href="/logos/prime.png" type="image/png" fetchpriority="high">`,
       main: `<div class="page-head agent-page-head">
           <h1>Agent</h1>
@@ -977,11 +978,11 @@ function createPageRenderer({
                 </div>
               </article>
               <article class="setting-card setting-card--tool-use is-gated" inert aria-hidden="true">
-                <div class="setting-card__head"><span>Tool-use (Not guaranteed)</span></div>
-                <div class="animated-segmented" id="tool-use-picker" role="radiogroup" aria-label="Tool-use (Not guaranteed)">
+                <div class="setting-card__head"><span>Tool use</span></div>
+                <div class="animated-segmented" id="tool-use-picker" role="radiogroup" aria-label="Tool use">
                   <span class="segmented__glider" aria-hidden="true"></span>
                   <button type="button" class="segmented__option" data-tool-use="read-only" aria-pressed="false"><span class="segmented__icon">NO</span><span>No Tools</span></button>
-                  <button type="button" class="segmented__option" data-tool-use="offline" aria-pressed="false"><span class="segmented__icon">CLI</span><span>Tools</span></button>
+                  <button type="button" class="segmented__option" data-tool-use="offline" aria-pressed="false" title="Isolated Python scratchpad; no host files or network"><span class="segmented__icon">PY</span><span>Tools</span></button>
                 </div>
               </article>
               <article class="setting-card setting-card--orchestration is-gated" inert aria-hidden="true">

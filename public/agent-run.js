@@ -950,7 +950,7 @@
       const toolUse = String(configuredValue(params, "tool_use", run.tool_use || "read-only"));
       const swarm = configuredFlag(params, "swarm", run.swarm);
       items.push(
-        ["Isolation", container ? "Docker" : "Host access"],
+        ["Isolation", container ? "Docker" : "Native sandbox"],
         ["Tool use", toolUse === "offline" ? "[CLI] Tools" : "No Tools"],
         ["Orchestration", swarm ? "Swarm" : "Single", swarm]
       );

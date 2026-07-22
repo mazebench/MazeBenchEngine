@@ -54,11 +54,12 @@ try {
     "utf8"
   ));
 
-  assert.match(agentSource, /id: "none",\s*name: "Prime Intellect",\s*logo: '<img src="\/logos\/prime\.png"/);
+  assert.doesNotMatch(agentSource, /id: "none",\s*name: "Prime Intellect"/);
+  assert.match(agentSource, /id: "custom",\s*name: "Prime Intellect",\s*logo: '<img src="\/logos\/prime\.png"/);
   assert.doesNotMatch(agentSource, /<circle cx=\"24\" cy=\"24\" r=\"17\.5\"><\/circle><path d=\"M12\.5 35\.5 35\.5 12\.5\"><\/path>/);
   assert.match(agentSource, /id: "codex",\s*name: "Codex"/);
   assert.match(agentSource, /id: "claude-code",\s*name: "Claude Code"/);
-  assert.match(agentSource, /id: "custom",\s*name: "Custom"/);
+  assert.match(agentSource, /id: "kimi-code",\s*name: "Kimi Code",\s*logo: '<img src="\/logos\/kimi\.svg"/);
   assert.match(agentSource, /harness: effectiveHarnessId\(\)/);
   assert.match(agentSource, /harness_config: state\.harness === "custom"/);
   assert.match(agentSource, /kind: "local",\s*subscription: true/);
@@ -97,8 +98,9 @@ try {
   assert.match(appSource, /allowLegacyLocalLaunch: true/);
   assert.match(appSource, /codex.*\["login", "status"\]/s);
   assert.match(appSource, /claude.*\["auth", "status", "--json"\]/s);
+  assert.match(appSource, /kimi.*\["provider", "list", "--json"\]/s);
   assert.match(appSource, /logged in using chatgpt/i);
-  assert.match(runsSource, /Subscription-backed local Codex and Claude Code launches are disabled/);
+  assert.match(runsSource, /Local Codex, Claude Code, and Kimi Code launches are disabled/);
   assert.match(runsSource, /prime-harness-catalog\.json/);
   assert.match(runsSource, /catalog_fingerprint/);
   assert.match(runsSource, /do not hide Codex, Claude Code, or future harnesses/);
@@ -418,7 +420,7 @@ print("kimi observe break ready")`
   });
   assert.throws(
     () => primeOnlyService.launchRuns({ kind: "local", model: "codex" }),
-    /Subscription-backed local Codex and Claude Code launches are disabled/
+    /Local Codex, Claude Code, and Kimi Code launches are disabled/
   );
 
   const inactiveLocalService = createAgentRunService({
@@ -433,7 +435,7 @@ print("kimi observe break ready")`
   });
   assert.throws(
     () => inactiveLocalService.launchRuns({ kind: "local", model: "codex", subscription: true }),
-    /active local subscription session/
+    /Codex needs an active local account/
   );
 
   const parsedCodex = parseArgs([

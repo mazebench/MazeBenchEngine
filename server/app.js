@@ -67,6 +67,7 @@ const PUBLIC_FILE_ROUTES = new Map(
     "/favicon.svg",
     "/logos/codex.png",
     "/logos/claude.png",
+    "/logos/kimi.svg",
     "/logos/prime.png"
   ].map((routePath) => [routePath, path.join(PUBLIC_DIR, routePath.slice(1))])
 );
@@ -314,6 +315,25 @@ function claudeSubscriptionStatus(result) {
   };
 }
 
+function kimiAccountStatus(result) {
+  let payload = {};
+  try {
+    payload = JSON.parse(String(result?.stdout || "{}"));
+  } catch (_error) {
+    /* a non-JSON result is not a confirmed configured account */
+  }
+  const providers = Object.values(payload.providers || {});
+  const models = Object.keys(payload.models || {});
+  const apiKey = providers.some((provider) => Boolean(String(provider?.apiKey || provider?.api_key || "")));
+  const oauth = providers.some((provider) => Boolean(provider?.oauth));
+  const authenticated = result?.status === 0 && models.length > 0 && (apiKey || oauth);
+  return {
+    authenticated,
+    subscription: authenticated,
+    method: oauth ? "kimi-oauth" : apiKey ? "api-key" : ""
+  };
+}
+
 function agentEnvironment(options = {}) {
   if (!options.fresh && agentEnvironmentCache && Date.now() - agentEnvironmentCache.at < 15000) {
     return agentEnvironmentCache.value;
@@ -339,12 +359,16 @@ function agentEnvironment(options = {}) {
     });
   const codexInstalled = probe("codex");
   const claudeInstalled = probe("claude");
+  const kimiInstalled = probe("kimi");
   const primeInstalled = probe("prime");
   const codexAuth = codexSubscriptionStatus(
     codexInstalled ? probeCommand("codex", ["login", "status"]) : null
   );
   const claudeAuth = claudeSubscriptionStatus(
     claudeInstalled ? probeCommand("claude", ["auth", "status", "--json"]) : null
+  );
+  const kimiAuth = kimiAccountStatus(
+    kimiInstalled ? probeCommand("kimi", ["provider", "list", "--json"]) : null
   );
   // An API key can remain in the environment after it expires. Ask Prime to
   // validate the current credentials instead of treating presence as proof.
@@ -364,6 +388,11 @@ function agentEnvironment(options = {}) {
     claude_subscription: claudeAuth.subscription,
     claude_auth_method: claudeAuth.method,
     claude_subscription_type: claudeAuth.subscriptionType,
+    kimi: kimiInstalled && kimiAuth.subscription,
+    kimi_installed: kimiInstalled,
+    kimi_authenticated: kimiAuth.authenticated,
+    kimi_subscription: kimiAuth.subscription,
+    kimi_auth_method: kimiAuth.method,
     // `docker` means "ready for a container run" — installed AND daemon up.
     docker: docker.running,
     docker_installed: docker.installed,
@@ -412,21 +441,24 @@ async function agentEnvironmentAsync(options = {}) {
   };
 
   agentEnvironmentPromise = (async () => {
-    const [codexInstalled, claudeInstalled, primeInstalled, uvInstalled, dockerInstalled] = await Promise.all([
+    const [codexInstalled, claudeInstalled, kimiInstalled, primeInstalled, uvInstalled, dockerInstalled] = await Promise.all([
       commandExists("codex"),
       commandExists("claude"),
+      commandExists("kimi"),
       commandExists("prime"),
       commandExists("uv"),
       commandExists("docker")
     ]);
-    const [codexResult, claudeResult, primeResult, dockerResult] = await Promise.all([
+    const [codexResult, claudeResult, kimiResult, primeResult, dockerResult] = await Promise.all([
       codexInstalled ? runCommand("codex", ["login", "status"]) : null,
       claudeInstalled ? runCommand("claude", ["auth", "status", "--json"]) : null,
+      kimiInstalled ? runCommand("kimi", ["provider", "list", "--json"]) : null,
       primeInstalled ? runCommand("prime", ["whoami"], 8000) : null,
       dockerInstalled ? runCommand("docker", ["info", "--format", "{{.ServerVersion}}"], 8000) : null
     ]);
     const codexAuth = codexSubscriptionStatus(codexResult ? { ...codexResult, status: 0 } : null);
     const claudeAuth = claudeSubscriptionStatus(claudeResult ? { ...claudeResult, status: 0 } : null);
+    const kimiAuth = kimiAccountStatus(kimiResult ? { ...kimiResult, status: 0 } : null);
     const primeAuthenticated = Boolean(primeResult);
     const dockerRunning = Boolean(dockerResult && String(dockerResult.stdout || "").trim());
     const value = {
@@ -442,6 +474,11 @@ async function agentEnvironmentAsync(options = {}) {
       claude_subscription: claudeAuth.subscription,
       claude_auth_method: claudeAuth.method,
       claude_subscription_type: claudeAuth.subscriptionType,
+      kimi: kimiInstalled && kimiAuth.subscription,
+      kimi_installed: kimiInstalled,
+      kimi_authenticated: kimiAuth.authenticated,
+      kimi_subscription: kimiAuth.subscription,
+      kimi_auth_method: kimiAuth.method,
       docker: Boolean(dockerRunning),
       docker_installed: dockerInstalled,
       docker_running: Boolean(dockerRunning),
