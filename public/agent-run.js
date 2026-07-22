@@ -87,6 +87,8 @@
   const toolsSection = document.getElementById("run-tools-section");
   const toolsLive = document.getElementById("run-tools-live");
   const toolsExecutionCount = document.getElementById("run-tools-execution-count");
+  let toolsDuration = document.getElementById("run-tools-duration");
+  let toolsCpuTime = document.getElementById("run-tools-cpu-time");
   const toolsCommandCount = document.getElementById("run-tools-command-count");
   const toolsFileCount = document.getElementById("run-tools-file-count");
   const toolsWorkspaceSelect = document.getElementById("run-tools-workspace");
@@ -102,6 +104,37 @@
   const toolsInspectorMeta = document.getElementById("run-tools-inspector-meta");
   const toolsInspectorBody = document.getElementById("run-tools-inspector-body");
   const toolsInspectorClose = document.getElementById("run-tools-inspector-close");
+
+  // Static assets can update while the local Node server keeps serving older
+  // run-page markup. Add the aggregate timing tile on refresh in that case.
+  if (toolsSection && (!toolsDuration || !toolsCpuTime)) {
+    const stats = toolsSection.querySelector(".run-tools__stats");
+    if (stats) {
+      const addTimingTile = (id, labelText, after) => {
+        const tile = document.createElement("span");
+        const value = document.createElement("strong");
+        value.id = id;
+        value.textContent = "0 ms";
+        const label = document.createElement("small");
+        label.textContent = labelText;
+        tile.append(value, label);
+        after?.insertAdjacentElement("afterend", tile);
+        return { tile, value };
+      };
+      const executionTile = toolsExecutionCount?.parentElement;
+      if (!toolsDuration) {
+        const added = addTimingTile("run-tools-duration", "Total wall time", executionTile);
+        toolsDuration = added.value;
+      } else {
+        const label = toolsDuration.nextElementSibling;
+        if (label) label.textContent = "Total wall time";
+      }
+      if (!toolsCpuTime) {
+        const added = addTimingTile("run-tools-cpu-time", "Total CPU time", toolsDuration.parentElement);
+        toolsCpuTime = added.value;
+      }
+    }
+  }
 
   // Keep already-open servers compatible with the JSON run UI. The run page
   // HTML comes from a long-lived Node process, while this static script reloads
@@ -273,6 +306,14 @@
     return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
   }
 
+  function formatToolDuration(value) {
+    const milliseconds = Math.max(0, Math.round(Number(value) || 0));
+    if (milliseconds < 1000) return `${milliseconds.toLocaleString()} ms`;
+    if (milliseconds < 10000) return `${(milliseconds / 1000).toFixed(2).replace(/0+$/, "").replace(/\.$/, "")} s`;
+    if (milliseconds < 60000) return `${(milliseconds / 1000).toFixed(1).replace(/\.0$/, "")} s`;
+    return formatDuration(milliseconds);
+  }
+
   function toolsStatusLabel(execution) {
     if (execution.status === "running") {
       const started = Date.parse(execution.started_at || "");
@@ -312,6 +353,8 @@
     toolsSection.hidden = false;
     const counts = data.counts || {};
     toolsExecutionCount.textContent = Number(counts.executions || 0).toLocaleString();
+    if (toolsDuration) toolsDuration.textContent = formatToolDuration(counts.duration_ms);
+    if (toolsCpuTime) toolsCpuTime.textContent = formatToolDuration(counts.cpu_time_ms);
     toolsCommandCount.textContent = Number(counts.unique_commands || 0).toLocaleString();
     toolsFileCount.textContent = Number(counts.files || 0).toLocaleString();
     const active = Number(counts.active || 0);
@@ -348,10 +391,13 @@
         const changes = execution.workspace_changes || {};
         const changed = [changes.created, changes.modified, changes.deleted]
           .reduce((sum, entries) => sum + (Array.isArray(entries) ? entries.length : 0), 0);
+        const cpuTime = execution.cpu_time_ms === null || execution.cpu_time_ms === undefined
+          ? ""
+          : `<span>${escapeText(formatToolDuration(execution.cpu_time_ms))} CPU</span>`;
         return `<button type="button" class="run-tools__execution is-${escapeText(execution.status || "completed")}" data-tool-execution="${escapeText(execution.id)}">
           <span class="run-tools__execution-index">#${Number(execution.sequence || 0).toLocaleString()}</span>
           <span class="run-tools__execution-copy"><strong>${escapeText(execution.code_preview || "Python command")}</strong><small>${escapeText(execution.output_preview || "No output")}</small></span>
-          <span class="run-tools__execution-meta">${repeat}${changed ? `<span>${changed.toLocaleString()} file change${changed === 1 ? "" : "s"}</span>` : ""}<span>${escapeText(toolsStatusLabel(execution))}</span></span>
+          <span class="run-tools__execution-meta">${repeat}${changed ? `<span>${changed.toLocaleString()} file change${changed === 1 ? "" : "s"}</span>` : ""}${cpuTime}<span>${escapeText(toolsStatusLabel(execution))}</span></span>
         </button>`;
       }).join("");
     }
@@ -408,7 +454,7 @@
       showToolsInspector({
         kind: "Python execution",
         title: `Execution #${Number(execution.sequence || 0).toLocaleString()}`,
-        meta: `${execution.actor || "lead"} · ${toolsStatusLabel(execution)} · ${formatBytes(execution.code_bytes)}${Number(execution.repeat_count || 1) > 1 ? ` · same source run ${execution.repeat_count} times` : ""}`,
+        meta: `${execution.actor || "lead"} · ${toolsStatusLabel(execution)}${execution.cpu_time_ms === null || execution.cpu_time_ms === undefined ? "" : ` wall · ${formatToolDuration(execution.cpu_time_ms)} CPU`} · ${formatBytes(execution.code_bytes)}${Number(execution.repeat_count || 1) > 1 ? ` · same source run ${execution.repeat_count} times` : ""}`,
         sections: [
           { label: "Exact Python source", text: execution.code, className: "is-code" },
           { label: "Standard output", text: execution.stdout, optional: true },

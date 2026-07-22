@@ -1364,6 +1364,8 @@ function createPageRenderer({
           </div>
           <div class="run-tools__stats" aria-label="Tools workspace summary">
             <span><strong id="run-tools-execution-count">0</strong><small>Executions</small></span>
+            <span><strong id="run-tools-duration">0 ms</strong><small>Total wall time</small></span>
+            <span><strong id="run-tools-cpu-time">0 ms</strong><small>Total CPU time</small></span>
             <span><strong id="run-tools-command-count">0</strong><small>Unique commands</small></span>
             <span><strong id="run-tools-file-count">0</strong><small>Files</small></span>
           </div>

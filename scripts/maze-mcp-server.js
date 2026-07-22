@@ -1102,7 +1102,7 @@ function publicToolValue(value) {
   for (const [key, item] of Object.entries(value)) {
     // These are trusted-runner paths. They are not useful to the provider and
     // exposing them makes the isolation boundary needlessly discoverable.
-    if (["session", "source_session", "workspace"].includes(key)) continue;
+    if (["session", "source_session", "workspace", "cpu_time_ms"].includes(key)) continue;
     printable[key] = key === "frame_image" ? "attached:image/png" : publicToolValue(item);
   }
   return printable;
@@ -1303,6 +1303,9 @@ async function handle(
                 exit_code: value.exit_code,
                 stdout: String(value.stdout || ""),
                 stderr: String(value.stderr || ""),
+                cpu_time_ms: Number.isFinite(Number(value.cpu_time_ms))
+                  ? Math.max(0, Number(value.cpu_time_ms))
+                  : null,
                 timed_out: Boolean(value.timed_out),
                 output_truncated: Boolean(value.output_truncated)
               },

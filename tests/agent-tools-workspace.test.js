@@ -91,7 +91,7 @@ try {
       duration_ms: 125,
       status: "completed",
       python_code_hash: repeatedHash,
-      python_result: { exit_code: 0, stdout: "route\n", stderr: "", timed_out: false, output_truncated: false },
+      python_result: { exit_code: 0, stdout: "route\n", stderr: "", cpu_time_ms: 12.5, timed_out: false, output_truncated: false },
       workspace_changes: { created: ["plan.py"], modified: [], deleted: [], truncated: false }
     },
     {
@@ -105,7 +105,7 @@ try {
       python_code: repeatedCode,
       python_code_hash: repeatedHash,
       timeout_seconds: 10,
-      python_result: { exit_code: 0, stdout: "route\n", stderr: "", timed_out: false, output_truncated: false }
+      python_result: { exit_code: 0, stdout: "route\n", stderr: "", cpu_time_ms: 7.5, timed_out: false, output_truncated: false }
     },
     {
       id: "python-3",
@@ -124,6 +124,8 @@ try {
   assert.equal(progress.tools_workspace.available, true);
   assert.deepEqual(progress.tools_workspace.counts, {
     executions: 3,
+    duration_ms: 175,
+    cpu_time_ms: 20,
     active: 1,
     unique_commands: 2,
     files: 2
@@ -140,6 +142,7 @@ try {
   const detail = service.getToolExecution(runId, "python-1");
   assert.equal(detail.code, repeatedCode);
   assert.equal(detail.stdout, "route\n");
+  assert.equal(detail.cpu_time_ms, 12.5);
   assert.deepEqual(detail.workspace_changes.created, ["plan.py"]);
 
   const file = service.getToolWorkspaceFile(runId, "primary", "maps/room.txt");
@@ -185,8 +188,12 @@ try {
   const theme = fs.readFileSync(path.join(projectRoot, "public", "local-site.css"), "utf8");
   const router = fs.readFileSync(path.join(projectRoot, "server", "router.js"), "utf8");
   assert.match(pages, /id="run-tools-section"/);
+  assert.match(pages, /id="run-tools-duration"/);
+  assert.match(pages, /id="run-tools-cpu-time"/);
   assert.match(pages, /Inline commands run as <code>&lt;mazebench-python&gt;<\/code>/);
   assert.match(client, /function renderToolsWorkspace\(data\)/);
+  assert.match(client, /formatToolDuration\(counts\.duration_ms\)/);
+  assert.match(client, /formatToolDuration\(counts\.cpu_time_ms\)/);
   assert.match(client, /data-tool-execution/);
   assert.match(client, /data-workspace-file/);
   assert.match(theme, /\.run-tools__grid \{/);

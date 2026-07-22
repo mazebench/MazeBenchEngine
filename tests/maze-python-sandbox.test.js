@@ -91,6 +91,9 @@ print(json.dumps(result, sort_keys=True))
 `;
   const execution = runSandboxedPython(source, { ...options, timeoutSeconds: 5 });
   assert.equal(execution.exit_code, 0, execution.stderr);
+  assert(Number.isFinite(execution.cpu_time_ms));
+  assert(execution.cpu_time_ms >= 0);
+  assert.doesNotMatch(execution.stderr, /MAZEBENCH_CPU_TIME_NS/);
   const result = JSON.parse(execution.stdout.trim());
   assert.deepEqual(result, {
     network: "blocked",

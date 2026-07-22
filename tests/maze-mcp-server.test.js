@@ -82,6 +82,11 @@ try {
   assert.equal(fs.existsSync(path.join(runDir, "current-render-state.json")), false);
   assert.equal(responses.find((response) => response.id === 6)?.result?.isError, true, "the MCP boundary enforces the lead budget");
   assert.equal(responses.find((response) => response.id === 7)?.result?.structuredContent?.stdout, "up\n");
+  assert.equal(
+    responses.find((response) => response.id === 7)?.result?.structuredContent?.cpu_time_ms,
+    undefined,
+    "trusted CPU telemetry must not be exposed to the evaluated agent"
+  );
   assert.equal(fs.readFileSync(path.join(leadWorkspace, "notes.txt"), "utf8"), "mapped");
   assert.match(fs.readFileSync(path.join(leadWorkspace, "planner.py"), "utf8"), /def next_move/);
 
@@ -262,6 +267,7 @@ try {
   assert.match(pythonStarted.python_code, /Path\('notes\.txt'\)/);
   assert.match(pythonStarted.python_code_hash, /^[a-f0-9]{64}$/);
   assert.equal(pythonCompleted.python_result.stdout, "up\n");
+  assert(Number.isFinite(pythonCompleted.python_result.cpu_time_ms));
   assert.deepEqual(new Set(pythonCompleted.workspace_changes.created), new Set(["notes.txt", "planner.py"]));
   const instanceEvents = fs.readFileSync(path.join(runDir, "maze-instance-events.jsonl"), "utf8")
     .trim()

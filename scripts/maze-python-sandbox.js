@@ -16,6 +16,7 @@ const MAX_TIMEOUT_SECONDS = 60;
 const PYTHON_BOOTSTRAP = String.raw`
 import os
 import sys
+import time
 try:
     import resource
     cpu = int(sys.argv[1])
@@ -68,8 +69,20 @@ sys.addaudithook(_deny_process_escape)
 sys.path.insert(0, os.getcwd())
 source = sys.stdin.read()
 scope = {"__name__": "__main__", "__file__": "<mazebench-python>"}
-exec(compile(source, "<mazebench-python>", "exec"), scope, scope)
+_mazebench_process_time_ns = time.process_time_ns
+_mazebench_stderr_write = os.write
+_mazebench_cpu_started_ns = _mazebench_process_time_ns()
+try:
+    exec(compile(source, "<mazebench-python>", "exec"), scope, scope)
+finally:
+    _mazebench_cpu_elapsed_ns = max(0, _mazebench_process_time_ns() - _mazebench_cpu_started_ns)
+    try:
+        _mazebench_stderr_write(2, f"\x1eMAZEBENCH_CPU_TIME_NS={_mazebench_cpu_elapsed_ns}\x1e".encode("ascii"))
+    except OSError:
+        pass
 `.trim();
+
+const CPU_TELEMETRY_PATTERN = /\u001eMAZEBENCH_CPU_TIME_NS=(\d+)\u001e/g;
 
 function tomlString(value) {
   return JSON.stringify(String(value));
@@ -213,6 +226,19 @@ function boundedText(value, limit = Math.floor(MAX_OUTPUT_BYTES / 2)) {
   return { text: buffer.subarray(0, limit).toString("utf8"), truncated: true };
 }
 
+function extractPythonTelemetry(value) {
+  let cpuTimeNanoseconds = null;
+  const stderr = String(value || "").replace(CPU_TELEMETRY_PATTERN, (_marker, nanoseconds) => {
+    const parsed = Number(nanoseconds);
+    if (Number.isFinite(parsed)) cpuTimeNanoseconds = Math.max(0, parsed);
+    return "";
+  });
+  return {
+    stderr,
+    cpuTimeMs: cpuTimeNanoseconds === null ? null : cpuTimeNanoseconds / 1_000_000
+  };
+}
+
 function runSandboxedPython(code, options = {}) {
   const source = String(code || "");
   if (!source.trim()) throw new Error("Python code is required.");
@@ -234,12 +260,14 @@ function runSandboxedPython(code, options = {}) {
     killSignal: "SIGKILL"
   });
   const stdout = boundedText(result.stdout);
-  const stderr = boundedText(result.stderr);
+  const telemetry = extractPythonTelemetry(result.stderr);
+  const stderr = boundedText(telemetry.stderr);
   const timedOut = result.error?.code === "ETIMEDOUT";
   return {
     exit_code: Number.isInteger(result.status) ? result.status : null,
     stdout: stdout.text,
     stderr: stderr.text || (result.error && !timedOut ? String(result.error.message || result.error) : ""),
+    cpu_time_ms: telemetry.cpuTimeMs,
     timed_out: timedOut,
     output_truncated: stdout.truncated || stderr.truncated || result.error?.code === "ENOBUFS"
   };
