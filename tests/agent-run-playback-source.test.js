@@ -12,7 +12,10 @@ const { asciiGlyphPalette } = require(path.join(root, "shared", "maze-ascii-pale
 
 assert.match(runScript, /type="number" min="1" max="60" step="1"[^>]+data-replay-rate/);
 assert.match(runScript, />FPS<\/span>/);
+assert.match(runScript, /const DEFAULT_REPLAY_FPS = 30/);
+assert.match(runScript, /: DEFAULT_REPLAY_FPS;/);
 assert.doesNotMatch(runScript, /<select data-replay-rate/);
+assert.match(pages, /agent-run\.js\?v=20260721-replay-30fps-1/);
 assert.match(runScript, /function updateReplayControlsInPlace\(container, viewId\)/);
 assert.match(runScript, /function fitAsciiBoard\(\)/);
 assert.match(runScript, /function drawAsciiBitmap\(board, turn = null\)/);
