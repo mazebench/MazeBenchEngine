@@ -1491,6 +1491,12 @@ function syntheticFloor(width, height) {
 }
 
 {
+  const output = runTerminal(["--level", "cxd", "--once"]);
+
+  assert.match(output, /maze level_CxD \| view=top-diagonal yaw=0/);
+}
+
+{
   const output = runTerminal(["--level", "level_AxA", "--view", "top", "--once"]);
 
   assert.match(output, /maze level_AxA \| view=top yaw=0/);

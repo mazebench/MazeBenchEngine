@@ -26,6 +26,13 @@ jobs:
         with:
           node-version: 22
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python CLI tests
+        run: python -m unittest tests/test_mazebench_cli.py
+
       - name: Core PR smoke suite
         run: npm run test:pr
 
@@ -53,6 +60,9 @@ jobs:
           cache-dependency-glob: environments/mazebench/uv.lock
 
       - run: npm ci
+
+      - name: Python CLI tests
+        run: python -m unittest tests/test_mazebench_cli.py
 
       - name: Install Chromium for vision integration tests
         run: npx playwright-core install --with-deps chromium
@@ -102,6 +112,8 @@ jobs:
           python -m venv /tmp/mzvenv
           /tmp/mzvenv/bin/pip install --quiet "$(ls dist/mazebench-*.whl)[prime]"
           cd /
+          MAZEBENCH_HOME=/tmp/mzhome /tmp/mzvenv/bin/mazebench ascii --level CxD --once > /tmp/ascii.txt
+          grep -q 'maze level_CxD' /tmp/ascii.txt
           MAZEBENCH_HOME=/tmp/mzhome nohup /tmp/mzvenv/bin/mazebench launch port=3311 open=false > /tmp/launch.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT

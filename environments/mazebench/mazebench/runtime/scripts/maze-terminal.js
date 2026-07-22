@@ -267,6 +267,12 @@ function hideAsciiGlyphNames(text, seed) {
   ).join("");
 }
 
+function normalizeLevelId(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(?:level_)?([A-Za-z])x([A-Za-z])$/);
+  return match ? `level_${match[1].toUpperCase()}x${match[2].toUpperCase()}` : raw;
+}
+
 function parseArgs(argv) {
   const options = {
     gameId: "maze",
@@ -298,7 +304,7 @@ function parseArgs(argv) {
     if (arg === "--game") {
       options.gameId = next();
     } else if (arg === "--level") {
-      options.levelId = next();
+      options.levelId = normalizeLevelId(next());
     } else if (arg === "--moves") {
       options.moves = next();
       options.once = true;
@@ -357,10 +363,12 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: npm run maze:terminal -- [options]
+  console.log(`Usage: mazebench ascii [options]
+       npm run maze:terminal -- [options]
 
 Options:
-  --level <id>       Maze world level id. Defaults to level_HxI.
+  --level <id>       Maze world level id (CxD or level_CxD).
+                     Defaults to level_HxI.
   --moves <UDLR>     Apply moves and print the resulting board once.
   --view <name>      top, top-diagonal, diagonal, side-diagonal, or side.
                      Defaults to top-diagonal.

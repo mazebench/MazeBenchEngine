@@ -12,6 +12,7 @@ Examples
     mazebench model=kimi moves=10 container=false
     mazebench codex moves=10            # shorthand for model=codex
     mazebench replay outputs/maze-local/codex/<run>/    # (re)make the video
+    mazebench ascii --level CxD         # interactive ASCII game
     mazebench play                      # interactive human REPL
     mazebench prime install             # prime env install mazebench
     mazebench prime eval model=openai/gpt-5-nano n=1 r=1
@@ -73,7 +74,10 @@ Build the container image (one-time):
 Replay / video from a finished run or a Prime eval dir:
   mazebench replay <session-dir | session.json | results.jsonl> [video=on fast=on]
 
-Interactive human REPL:
+Interactive ASCII game (arrow-key controls):
+  mazebench ascii [--level CxD] [--view top-diagonal]
+
+Interactive command REPL:
   mazebench play [level=HxI view=top-diagonal]
 
 Prime Intellect Verifiers:
@@ -244,6 +248,18 @@ def run_replay(root: Path, words: list[str], pairs: dict[str, str], flags: list[
 def run_play(root: Path, pairs: dict[str, str], flags: list[str]) -> int:
     _require(_node_bin(), "Install Node.js.")
     cmd = [_node_bin(), str(root / "scripts" / "maze-model-repl.js")]
+    if "level" in pairs:
+        cmd.extend(["--level", pairs["level"]])
+    if "view" in pairs:
+        cmd.extend(["--view", pairs["view"]])
+    cmd.extend(flags)
+    return _run(cmd, root)
+
+
+def run_ascii(root: Path, pairs: dict[str, str], flags: list[str]) -> int:
+    """Launch the interactive arrow-key ASCII renderer."""
+    _require(_node_bin(), "Install Node.js (the maze engine runs on Node).")
+    cmd = [_node_bin(), str(root / "scripts" / "maze-terminal.js")]
     if "level" in pairs:
         cmd.extend(["--level", pairs["level"]])
     if "view" in pairs:
@@ -551,6 +567,11 @@ def run_prime(root: Path, words: list[str], pairs: dict[str, str], flags: list[s
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+
+    if argv and argv[0].lower() in ("help", "-h", "--help"):
+        print(USAGE)
+        return 0
+
     words, pairs, flags = parse_args(argv)
 
     if not words and not pairs and not flags:
@@ -561,9 +582,6 @@ def main(argv: list[str] | None = None) -> int:
         root = resolve_root()
         command = words[0].lower() if words else ""
 
-        if command in ("help", "-h", "--help"):
-            print(USAGE)
-            return 0
         if command in ("launch", "serve", "site", "web"):
             return run_launch(root, words[1:], pairs, flags)
         if command in ("stop", "shutdown", "kill"):
@@ -580,6 +598,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_prime(root, words[1:], pairs, flags)
         if command == "replay":
             return run_replay(root, words[1:], pairs, flags)
+        if command == "ascii":
+            return run_ascii(root, pairs, flags)
         if command == "play":
             return run_play(root, pairs, flags)
         if command in ("codex", "claude", "kimi"):

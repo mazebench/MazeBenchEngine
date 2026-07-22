@@ -47,6 +47,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Python CLI tests
+        run: python -m unittest tests/test_mazebench_cli.py
+
       - name: Install Chromium for vision integration tests
         run: npx playwright-core install --with-deps chromium
 

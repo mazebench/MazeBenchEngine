@@ -1,0 +1,51 @@
+from pathlib import Path
+from unittest import TestCase, mock
+
+import mazebench_cli
+
+
+class AsciiCommandTests(TestCase):
+    @mock.patch("builtins.print")
+    @mock.patch.object(mazebench_cli, "resolve_root")
+    def test_global_help_does_not_require_a_runtime(self, resolve_root, print_output):
+        result = mazebench_cli.main(["--help"])
+
+        self.assertEqual(result, 0)
+        resolve_root.assert_not_called()
+        print_output.assert_called_once_with(mazebench_cli.USAGE)
+
+    @mock.patch.object(mazebench_cli, "run_ascii", return_value=23)
+    @mock.patch.object(mazebench_cli, "resolve_root", return_value=Path("/maze"))
+    def test_main_routes_ascii_flags(self, _resolve_root, run_ascii):
+        result = mazebench_cli.main(["ascii", "--level", "level_CxD", "--once"])
+
+        self.assertEqual(result, 23)
+        run_ascii.assert_called_once_with(
+            Path("/maze"), {}, ["--level", "level_CxD", "--once"]
+        )
+
+    @mock.patch.object(mazebench_cli, "_run", return_value=0)
+    @mock.patch.object(mazebench_cli, "_require")
+    @mock.patch.object(mazebench_cli, "_node_bin", return_value="node")
+    def test_ascii_supports_existing_key_value_style(
+        self, _node_bin, _require, run_command
+    ):
+        root = Path("/maze")
+
+        result = mazebench_cli.run_ascii(
+            root, {"level": "CxD", "view": "top"}, ["--once"]
+        )
+
+        self.assertEqual(result, 0)
+        run_command.assert_called_once_with(
+            [
+                "node",
+                str(root / "scripts" / "maze-terminal.js"),
+                "--level",
+                "CxD",
+                "--view",
+                "top",
+                "--once",
+            ],
+            root,
+        )
