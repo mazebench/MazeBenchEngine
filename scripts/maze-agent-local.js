@@ -352,6 +352,14 @@ game is won or the user stops the run.`
   const validActions = config.allowQuit
     ? "up, down, left, right, rotate camera left/right/up/down, undo, reset, quit, and go to level H I"
     : "up, down, left, right, rotate camera left/right/up/down, undo, reset, and go to level H I";
+  const kimiObservePolicy = config.model === "kimi"
+    ? `Kimi Code compatibility rule: after five consecutive ${controls.action}
+calls with the same normalized action, you must call ${controls.observe} once
+before any further ${controls.action}. A different action resets the repetition
+count. The fifth identical action result reports observe_required=true and
+next_required_tool=${controls.observe}; obey it. ${controls.observe} resets the
+count and does not consume a game action.`
+    : "";
 
   const intro = restricted
     ? `You are solving a 3D grid game. Control it only through ${controls.start},
@@ -368,6 +376,7 @@ ${movementFeedback}
 ${capability}
 ${swarm}
 ${quitPolicy}
+${kimiObservePolicy}
 
 ${firstStep}
 
@@ -515,6 +524,7 @@ function mcpEnvironment(config, workerOnly = false) {
     MAZEBENCH_OMNISCIENT: config.omniscient ? "1" : "0",
     MAZEBENCH_HIDE_NAMES: config.hideNames ? "1" : "0",
     MAZEBENCH_HIDE_NAMES_SEED: config.hideNamesSeed || "",
+    MAZEBENCH_PROVIDER: config.model,
     MAZEBENCH_RESTRICTED_MODE: config.toolUse === "read-only" ? "1" : "0",
     MAZEBENCH_VISION_WIDTH: String(config.visionWidth),
     MAZEBENCH_VISION_HEIGHT: String(config.visionHeight),

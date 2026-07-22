@@ -329,6 +329,109 @@ try {
   assert.equal(unlimitedSession.actions.length, 3, "unlimited mode must not enforce a hidden segment budget");
   assert.equal(unlimitedSession.maxActions, null, "unlimited mode must not persist a hidden helper cap");
 
+  const kimiLoopDir = path.join(runDir, "kimi-identical-action-loop");
+  fs.mkdirSync(kimiLoopDir, { recursive: true });
+  const kimiLoopRequests = [
+    { jsonrpc: "2.0", id: 50, method: "initialize", params: { protocolVersion: "2024-11-05" } },
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+    { jsonrpc: "2.0", id: 51, method: "tools/call", params: { name: "maze_start", arguments: {} } },
+    ...Array.from({ length: 4 }, (_, index) => ({
+      jsonrpc: "2.0",
+      id: 52 + index,
+      method: "tools/call",
+      params: { name: "maze_action", arguments: { action: "rotate camera left" } }
+    })),
+    ...Array.from({ length: 5 }, (_, index) => ({
+      jsonrpc: "2.0",
+      id: 56 + index,
+      method: "tools/call",
+      params: { name: "maze_action", arguments: { action: index === 4 ? "  ROTATE   CAMERA RIGHT  " : "rotate camera right" } }
+    })),
+    { jsonrpc: "2.0", id: 61, method: "tools/call", params: { name: "maze_action", arguments: { action: "up" } } },
+    { jsonrpc: "2.0", id: 62, method: "tools/call", params: { name: "maze_observe", arguments: {} } },
+    { jsonrpc: "2.0", id: 63, method: "tools/call", params: { name: "maze_action", arguments: { action: "up" } } }
+  ];
+  const kimiLoopResult = spawnSync(process.execPath, [path.join(rootDir, "scripts", "maze-mcp-server.js")], {
+    cwd: rootDir,
+    encoding: "utf8",
+    input: `${kimiLoopRequests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+    env: {
+      ...process.env,
+      MAZEBENCH_REPO_ROOT: rootDir,
+      MAZEBENCH_RUN_DIR: kimiLoopDir,
+      MAZEBENCH_SESSION_FILE: path.join(kimiLoopDir, "session.json"),
+      MAZEBENCH_PROVIDER: "kimi",
+      MAZEBENCH_MOVE_BUDGET: "unlimited",
+      MAZEBENCH_ALLOW_QUIT: "0"
+    }
+  });
+  assert.equal(kimiLoopResult.status, 0, kimiLoopResult.stderr);
+  const kimiLoopResponses = kimiLoopResult.stdout.trim().split("\n").map((line) => JSON.parse(line));
+  const kimiPayload = (id) => kimiLoopResponses.find((response) => response.id === id)?.result;
+  assert.equal(kimiPayload(51)?.structuredContent?.next_required_tool, "maze_action");
+  assert.equal(kimiPayload(55)?.structuredContent?.observe_required, undefined);
+  assert.equal(kimiPayload(56)?.structuredContent?.observe_required, undefined, "a different action resets the streak");
+  assert.equal(kimiPayload(60)?.structuredContent?.observe_required, true);
+  assert.equal(kimiPayload(60)?.structuredContent?.next_required_tool, "maze_observe");
+  assert.equal(kimiPayload(61)?.isError, true, "even a different sixth action is blocked until observe");
+  assert.match(kimiPayload(61)?.content?.[0]?.text || "", /Call maze_observe before another maze_action/);
+  assert.equal(kimiPayload(62)?.structuredContent?.observe_required, undefined);
+  assert.equal(kimiPayload(62)?.structuredContent?.next_required_tool, "maze_action");
+  assert.equal(kimiPayload(63)?.isError, false);
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(kimiLoopDir, "session.json"), "utf8")).actions.length,
+    10,
+    "the required observe is free and the blocked sixth action consumes no move"
+  );
+
+  const restrictedKimiLoopDir = path.join(runDir, "restricted-kimi-identical-action-loop");
+  fs.mkdirSync(restrictedKimiLoopDir, { recursive: true });
+  const restrictedKimiLoopRequests = [
+    { jsonrpc: "2.0", id: 70, method: "initialize", params: { protocolVersion: "2024-11-05" } },
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+    { jsonrpc: "2.0", id: 71, method: "tools/call", params: { name: "game_start", arguments: {} } },
+    ...Array.from({ length: 5 }, (_, index) => ({
+      jsonrpc: "2.0",
+      id: 72 + index,
+      method: "tools/call",
+      params: { name: "game_action", arguments: { action: "rotate camera left" } }
+    })),
+    { jsonrpc: "2.0", id: 77, method: "tools/call", params: { name: "game_action", arguments: { action: "right" } } },
+    { jsonrpc: "2.0", id: 78, method: "tools/call", params: { name: "game_observe", arguments: {} } },
+    { jsonrpc: "2.0", id: 79, method: "tools/call", params: { name: "game_action", arguments: { action: "right" } } }
+  ];
+  const restrictedKimiLoopResult = spawnSync(
+    process.execPath,
+    [path.join(rootDir, "scripts", "maze-mcp-server.js")],
+    {
+      cwd: rootDir,
+      encoding: "utf8",
+      input: `${restrictedKimiLoopRequests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+      env: {
+        ...process.env,
+        MAZEBENCH_REPO_ROOT: rootDir,
+        MAZEBENCH_RUN_DIR: restrictedKimiLoopDir,
+        MAZEBENCH_SESSION_FILE: path.join(restrictedKimiLoopDir, "session.json"),
+        MAZEBENCH_PROVIDER: "kimi",
+        MAZEBENCH_RESTRICTED_MODE: "1",
+        MAZEBENCH_MOVE_BUDGET: "unlimited",
+        MAZEBENCH_ALLOW_QUIT: "0"
+      }
+    }
+  );
+  assert.equal(restrictedKimiLoopResult.status, 0, restrictedKimiLoopResult.stderr);
+  const restrictedKimiLoopResponses = restrictedKimiLoopResult.stdout
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const restrictedKimiPayload = (id) => restrictedKimiLoopResponses.find((response) => response.id === id)?.result;
+  assert.equal(restrictedKimiPayload(76)?.structuredContent?.observe_required, true);
+  assert.equal(restrictedKimiPayload(76)?.structuredContent?.next_required_tool, "game_observe");
+  assert.equal(restrictedKimiPayload(77)?.isError, true);
+  assert.match(restrictedKimiPayload(77)?.content?.[0]?.text || "", /Call game_observe before another game_action/);
+  assert.equal(restrictedKimiPayload(78)?.structuredContent?.next_required_tool, "game_action");
+  assert.equal(restrictedKimiPayload(79)?.isError, false);
+
   const largeBudgetDir = path.join(runDir, "large-budget");
   fs.mkdirSync(largeBudgetDir, { recursive: true });
   const largeBudgetRequests = [

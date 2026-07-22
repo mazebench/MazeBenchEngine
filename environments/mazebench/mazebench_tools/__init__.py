@@ -43,7 +43,7 @@ from mazebench.mazebench import (
 )
 
 
-KIMI_CODE_OBSERVE_INTERVAL = 5
+KIMI_CODE_IDENTICAL_ACTION_INTERVAL = 5
 
 
 def _prime_harness_id() -> str:
@@ -167,8 +167,9 @@ def _tool_prompt(task: MazeBenchTaskData) -> str:
         "\n\nKimi Code compatibility rule: while a result reports "
         "`completion_allowed: false`, every response must call exactly the "
         "`next_required_tool`; never provide a final response or substitute another tool. "
-        "After five consecutive `game_action` calls, you must call `game_observe` once "
-        "before any further `game_action`. "
+        "After five consecutive `game_action` calls with the same normalized action, "
+        "you must call `game_observe` once before any further `game_action`. "
+        "A different action resets the repetition count. "
         "The fifth action result reports `observe_required: true`; treat it as mandatory. "
         "`game_observe` resets the count and does not consume a game action."
         if _prime_harness_id() == "kimi_code"
@@ -229,10 +230,13 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
         self._lock = asyncio.Lock()
         self._closed = False
         self._actions: list[dict[str, Any]] = []
-        self._observe_break_interval = (
-            KIMI_CODE_OBSERVE_INTERVAL if _prime_harness_id() == "kimi_code" else 0
+        self._identical_action_interval = (
+            KIMI_CODE_IDENTICAL_ACTION_INTERVAL
+            if _prime_harness_id() == "kimi_code"
+            else 0
         )
-        self._actions_since_observe = 0
+        self._last_action_key: str | None = None
+        self._identical_action_streak = 0
         self._auto_quit: dict[str, Any] = {}
         self._scorecard: dict[str, Any] = {}
         self._status_error = ""
@@ -404,10 +408,10 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
             ),
             "ended": self._terminal(),
         }
-        if not result["ended"] and self._observe_break_interval:
+        if not result["ended"] and self._identical_action_interval:
             result["completion_allowed"] = False
             result["next_required_tool"] = "game_action"
-            if self._actions_since_observe >= self._observe_break_interval:
+            if self._identical_action_streak >= self._identical_action_interval:
                 result["observe_required"] = True
                 result["next_required_tool"] = "game_observe"
         if error:
@@ -449,7 +453,8 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
         """Return the current sanitized observation without consuming an action."""
 
         async with self._lock:
-            self._actions_since_observe = 0
+            self._last_action_key = None
+            self._identical_action_streak = 0
             return await self._tool_response(self._result())
 
     @vf.tool
@@ -462,16 +467,21 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
                     self._result(error="The run has ended; no further action is available.")
                 )
             if (
-                self._observe_break_interval
-                and self._actions_since_observe >= self._observe_break_interval
+                self._identical_action_interval
+                and self._identical_action_streak >= self._identical_action_interval
             ):
                 return await self._tool_response(
                     self._result(error="Call game_observe before another game_action.")
                 )
 
-            self._actions_since_observe += 1
-
             raw = str(action or "").strip()
+            action_key = " ".join(raw.casefold().split())
+            if action_key == self._last_action_key:
+                self._identical_action_streak += 1
+            else:
+                self._last_action_key = action_key
+                self._identical_action_streak = 1
+
             blocked_quit = False
             try:
                 command, action_args = parse_text_action(raw)

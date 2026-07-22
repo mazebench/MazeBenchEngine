@@ -156,7 +156,8 @@ try {
   assert.match(toolsTasksetSource, /user = None/);
   assert.match(toolsTasksetSource, /trace\.state = trusted_state/);
   assert.match(toolsTasksetSource, /__all__ = \["MazeBenchToolTaskset"\]/);
-  assert.match(toolsTasksetSource, /KIMI_CODE_OBSERVE_INTERVAL = 5/);
+  assert.match(toolsTasksetSource, /KIMI_CODE_IDENTICAL_ACTION_INTERVAL = 5/);
+  assert.match(toolsTasksetSource, /A different action resets the repetition count/);
   assert.match(toolsTasksetSource, /next_required_tool.*game_observe/s);
   assert.match(toolsTasksetSource, /Call game_observe before another game_action/);
   assert.match(kimiHarnessSource, /KIMI_MODEL_CAPABILITIES/);
@@ -280,8 +281,9 @@ async def probe():
     toolset._lock = asyncio.Lock()
     toolset._closed = False
     toolset._actions = []
-    toolset._observe_break_interval = module.KIMI_CODE_OBSERVE_INTERVAL
-    toolset._actions_since_observe = 0
+    toolset._identical_action_interval = module.KIMI_CODE_IDENTICAL_ACTION_INTERVAL
+    toolset._last_action_key = None
+    toolset._identical_action_streak = 0
     toolset._auto_quit = {}
     toolset._scorecard = {}
     toolset._status_error = ""
@@ -310,25 +312,37 @@ async def probe():
 
     module.run_blocking = fake_run_blocking
 
-    for index in range(5):
-        fifth = await toolset.action("up")
-        assert fifth["completion_allowed"] is False
-        if index < 4:
+    for _index in range(4):
+        before_change = await toolset.action("up")
+        assert before_change["completion_allowed"] is False
+        assert before_change["next_required_tool"] == "game_action"
+        assert "observe_required" not in before_change
+
+    changed = await toolset.action("right")
+    assert changed["actions_used"] == 5
+    assert changed["next_required_tool"] == "game_action"
+    assert "observe_required" not in changed
+
+    for index in range(4):
+        fifth = await toolset.action("  RIGHT  ")
+        if index < 3:
             assert fifth["next_required_tool"] == "game_action"
-    assert fifth["actions_used"] == 5
+            assert "observe_required" not in fifth
+    assert fifth["actions_used"] == 9
     assert fifth["observe_required"] is True
     assert fifth["next_required_tool"] == "game_observe"
 
-    blocked = await toolset.action("up")
-    assert blocked["actions_used"] == 5
+    blocked = await toolset.action("left")
+    assert blocked["actions_used"] == 9
     assert blocked["error"] == "Call game_observe before another game_action."
 
     observed = await toolset.observe()
     assert "observe_required" not in observed
     assert observed["completion_allowed"] is False
     assert observed["next_required_tool"] == "game_action"
-    resumed = await toolset.action("up")
-    assert resumed["actions_used"] == 6
+    resumed = await toolset.action("left")
+    assert resumed["actions_used"] == 10
+    assert "observe_required" not in resumed
 
 
 asyncio.run(probe())

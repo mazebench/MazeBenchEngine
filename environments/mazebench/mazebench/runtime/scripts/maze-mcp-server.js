@@ -58,6 +58,8 @@ const WORKER_ONLY = process.env.MAZEBENCH_WORKER_ONLY === "1";
 const SWARM_REQUIRED = process.env.MAZEBENCH_SWARM === "1";
 const MAX_SWARM_WORKERS = Math.min(32, positiveInt(process.env.MAZEBENCH_MAX_SWARM_WORKERS, 8));
 const RESTRICTED_MODE = process.env.MAZEBENCH_RESTRICTED_MODE === "1";
+const KIMI_OBSERVE_BREAK_ENABLED = process.env.MAZEBENCH_PROVIDER === "kimi";
+const KIMI_IDENTICAL_ACTION_INTERVAL = 5;
 const HTTP_TOKEN = String(process.env.MAZEBENCH_MCP_HTTP_TOKEN || "");
 const WORKER_ALLOCATION_LOCK = path.join(SWARM_DIR, ".instance-allocation.lock");
 const PYTHON_PREFLIGHTS = new Map();
@@ -641,7 +643,69 @@ function createRequestContext({ workerOnly = false, workerKey = "" } = {}) {
   return {
     workerOnly: Boolean(workerOnly),
     workerKey: safeWorkerId(workerKey || `swarm-worker-${crypto.randomBytes(6).toString("hex")}`),
-    assignedCloneId: ""
+    assignedCloneId: "",
+    lastActionKey: null,
+    identicalActionStreak: 0,
+    observeRequired: false
+  };
+}
+
+function normalizedActionKey(action) {
+  return String(action || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function resetKimiActionStreak(context) {
+  context.lastActionKey = null;
+  context.identicalActionStreak = 0;
+  context.observeRequired = false;
+}
+
+function noteKimiAction(context, action) {
+  const actionKey = normalizedActionKey(action);
+  if (actionKey === context.lastActionKey) {
+    context.identicalActionStreak += 1;
+  } else {
+    context.lastActionKey = actionKey;
+    context.identicalActionStreak = 1;
+  }
+  context.observeRequired = context.identicalActionStreak >= KIMI_IDENTICAL_ACTION_INTERVAL;
+}
+
+function kimiToolName(kind) {
+  return `${RESTRICTED_MODE ? "game" : "maze"}_${kind}`;
+}
+
+function kimiResultIsTerminal(value, input) {
+  const status = value?.status && typeof value.status === "object" ? value.status : value;
+  if (
+    status?.game_won ||
+    status?.game_lost ||
+    status?.quit ||
+    status?.solved ||
+    status?.user_pause_requested
+  ) {
+    return true;
+  }
+  return Boolean(
+    !input?.clone_id &&
+    (primaryPauseBoundary() ||
+      (PRIMARY_MOVE_BUDGET != null &&
+        sessionActionCount(PRIMARY_SESSION) - PRIMARY_INITIAL_ACTION_COUNT >= PRIMARY_MOVE_BUDGET))
+  );
+}
+
+function kimiLoopControl(name, value, input, context) {
+  if (
+    !KIMI_OBSERVE_BREAK_ENABLED ||
+    !["maze_start", "maze_observe", "maze_action"].includes(name) ||
+    kimiResultIsTerminal(value, input)
+  ) {
+    return null;
+  }
+  return {
+    completion_allowed: false,
+    next_required_tool: kimiToolName(context.observeRequired ? "observe" : "action"),
+    ...(context.observeRequired ? { observe_required: true } : {})
   };
 }
 
@@ -819,8 +883,11 @@ function publicToolValue(value) {
   return printable;
 }
 
-function toolContent(value) {
+function toolContent(value, control = null) {
   const printable = publicToolValue(value);
+  if (control && printable && typeof printable === "object" && !Array.isArray(printable)) {
+    Object.assign(printable, control);
+  }
   const content = [{ type: "text", text: JSON.stringify(printable, null, 2) }];
   const framePath = value && typeof value === "object" ? String(value.frame_image || "") : "";
   if (framePath) {
@@ -925,8 +992,20 @@ async function handle(
       moves_after: movesBefore
     });
     try {
+      if (KIMI_OBSERVE_BREAK_ENABLED && name === "maze_action" && context.observeRequired) {
+        throw new Error(`Call ${kimiToolName("observe")} before another ${kimiToolName("action")}.`);
+      }
+      if (KIMI_OBSERVE_BREAK_ENABLED && name === "maze_observe") {
+        resetKimiActionStreak(context);
+      } else if (KIMI_OBSERVE_BREAK_ENABLED && name === "maze_action") {
+        noteKimiAction(context, input.action);
+      }
       const value = callTool(name, input, context);
-      success(send, request.id, toolContent(value));
+      success(
+        send,
+        request.id,
+        toolContent(value, kimiLoopControl(name, value, effectiveInput, context))
+      );
       const completedAt = new Date();
       const movesAfter = actionCountForInput(effectiveInput);
       appendToolActivity({
@@ -966,8 +1045,15 @@ async function handle(
         updateInstanceTelemetry(effectiveInput, instanceEvent);
       }
     } catch (error) {
+      const errorMessage = safeErrorMessage(error);
+      const control = kimiLoopControl(name, null, effectiveInput, context);
+      const errorPayload = control ? { error: errorMessage, ...control } : null;
       success(send, request.id, {
-        content: [{ type: "text", text: safeErrorMessage(error) }],
+        content: [{
+          type: "text",
+          text: errorPayload ? JSON.stringify(errorPayload, null, 2) : errorMessage
+        }],
+        ...(errorPayload ? { structuredContent: errorPayload } : {}),
         isError: true
       });
       const completedAt = new Date();
@@ -985,7 +1071,7 @@ async function handle(
         move_calls: name === "maze_action" ? 1 : 0,
         moves_before: movesBefore,
         moves_after: movesAfter,
-        error: safeErrorMessage(error)
+        error: errorMessage
       });
       if (name === "maze_action" && (!effectiveInput.clone_id || instanceMetadata)) {
         const instanceEvent = {
@@ -1004,7 +1090,7 @@ async function handle(
           own_action_count: effectiveInput.clone_id
             ? Math.max(0, movesAfter - Number(instanceMetadata?.fork_action_count || 0))
             : movesAfter,
-          error: safeErrorMessage(error),
+          error: errorMessage,
           status: movesAfter > movesBefore ? lastStatusForInput(input) : null
         };
         appendJsonLine(INSTANCE_EVENTS_LOG, instanceEvent);
