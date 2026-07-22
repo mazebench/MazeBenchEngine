@@ -723,6 +723,152 @@ function parseClaudeEvents(raw) {
   };
 }
 
+function kimiUsageShape(usage = {}) {
+  const uncached = number(usage.inputOther);
+  const cacheRead = number(usage.inputCacheRead);
+  const cacheCreation = number(usage.inputCacheCreation);
+  const input = uncached + cacheRead + cacheCreation;
+  const output = number(usage.output);
+  return {
+    input_tokens: input,
+    cached_input_tokens: cacheRead + cacheCreation,
+    output_tokens: output,
+    reasoning_tokens: 0,
+    total_tokens: input + output,
+    uncached_input_tokens: uncached,
+    cache_read_input_tokens: cacheRead,
+    cache_creation_input_tokens: cacheCreation
+  };
+}
+
+function kimiToolResultPayload(event = {}) {
+  const output = event.result?.output ?? event.output ?? event.result;
+  return parsedJson(output, null);
+}
+
+function parseKimiWire(raw) {
+  const points = [];
+  const pendingActionCalls = new Map();
+  const totals = {
+    input_tokens: 0,
+    cached_input_tokens: 0,
+    output_tokens: 0,
+    reasoning_tokens: 0,
+    total_tokens: 0
+  };
+  const details = {
+    uncached_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0
+  };
+  let previousActionTotals = { ...totals };
+  let completedActionCount = 0;
+  let latest = null;
+  let usageRecords = 0;
+  let requestRecords = 0;
+  let contextWindow = 0;
+  let latestRequestMaxTokens = 0;
+
+  for (const record of jsonLines(raw)) {
+    if (record.type === "llm.request") {
+      const maxTokens = number(record.maxTokens);
+      if (maxTokens > 0) {
+        requestRecords += 1;
+        contextWindow = Math.max(contextWindow, maxTokens);
+        latestRequestMaxTokens = maxTokens;
+      }
+      continue;
+    }
+
+    if (record.type === "context.append_loop_event") {
+      const event = record.event || {};
+      if (event.type === "tool.call") {
+        const count = mazeToolActionCount(event.name, event.args);
+        if (count && event.toolCallId) {
+          pendingActionCalls.set(event.toolCallId, { count, name: event.name });
+        }
+      } else if (event.type === "tool.result" && pendingActionCalls.has(event.toolCallId)) {
+        const pending = pendingActionCalls.get(event.toolCallId);
+        pendingActionCalls.delete(event.toolCallId);
+        const payload = kimiToolResultPayload(event);
+        const failed = Boolean(
+          event.error ||
+          event.isError ||
+          event.result?.error ||
+          event.result?.isError ||
+          payload?.error ||
+          payload?.isError
+        );
+        if (!failed) {
+          const completed = /maze_action_sequence$/i.test(String(pending.name || "")) &&
+            Number.isFinite(Number(payload?.completed_count))
+            ? Math.max(0, Number(payload.completed_count))
+            : pending.count;
+          completedActionCount += completed;
+        }
+      }
+      continue;
+    }
+
+    if (record.type !== "usage.record" || record.usageScope !== "turn") continue;
+    latest = kimiUsageShape(record.usage);
+    usageRecords += 1;
+    Object.keys(totals).forEach((key) => {
+      totals[key] += latest[key];
+    });
+    details.uncached_input_tokens += latest.uncached_input_tokens;
+    details.cache_read_input_tokens += latest.cache_read_input_tokens;
+    details.cache_creation_input_tokens += latest.cache_creation_input_tokens;
+
+    if (!completedActionCount) continue;
+    const delta = {};
+    Object.keys(totals).forEach((key) => {
+      delta[key] = Math.max(0, totals[key] - previousActionTotals[key]);
+    });
+    previousActionTotals = { ...totals };
+    for (let index = 0; index < completedActionCount; index += 1) {
+      points.push({
+        action: points.length + 1,
+        total_tokens: Math.round(delta.total_tokens / completedActionCount),
+        input_tokens: Math.round(delta.input_tokens / completedActionCount),
+        cached_input_tokens: Math.round(delta.cached_input_tokens / completedActionCount),
+        output_tokens: Math.round(delta.output_tokens / completedActionCount),
+        reasoning_tokens: 0,
+        context_tokens: latest.input_tokens,
+        active_agents: 1
+      });
+    }
+    completedActionCount = 0;
+  }
+
+  reconcilePointTotals(points, totals);
+  const currentContext = latest
+    ? requestRecords > usageRecords && contextWindow && latestRequestMaxTokens
+      ? Math.max(0, contextWindow - latestRequestMaxTokens)
+      : latest.total_tokens
+    : null;
+
+  return {
+    ...finishUsage({
+      provider: "kimi",
+      points,
+      totals,
+      currentContext,
+      contextWindow,
+      exact: usageRecords > 0,
+      note: usageRecords > 0
+        ? "Kimi Code · isolated session usage"
+        : "Waiting for Kimi Code usage…",
+      averageTokensPerAction: points.length && totals.total_tokens
+        ? totals.total_tokens / points.length
+        : null,
+      agentsCurrent: 1,
+      agentsTotal: 1
+    }),
+    ...details
+  };
+}
+
 function parsePrimeResults(raw) {
   const row = jsonLines(raw)[0] || {};
   const sampled = Array.isArray(row.nodes) ? row.nodes.filter((node) => node?.sampled && node.usage) : [];
@@ -898,15 +1044,38 @@ function findPrimeResultsFile(runDir) {
   );
 }
 
+function findKimiWireFile(kimiHome) {
+  return findFiles(
+    path.join(kimiHome || "", "sessions"),
+    (name) => name === "wire.jsonl"
+  ).sort((left, right) => {
+    let leftMtime = 0;
+    let rightMtime = 0;
+    try {
+      leftMtime = fs.statSync(left).mtimeMs;
+    } catch (_error) {
+      /* unreadable candidates sort last */
+    }
+    try {
+      rightMtime = fs.statSync(right).mtimeMs;
+    } catch (_error) {
+      /* unreadable candidates sort last */
+    }
+    return rightMtime - leftMtime || right.localeCompare(left);
+  })[0] || "";
+}
+
 module.exports = {
   findClaudeSessionFile,
   findCodexSessionFile,
   findCodexSessionFiles,
+  findKimiWireFile,
   findPrimeResultsFile,
   parseClaudeEvents,
   parseCodexEvents,
   parseCodexSession,
   parseCodexSwarmSessions,
+  parseKimiWire,
   parsePrimeLiveUsage,
   parsePrimeResults,
   withApiCostEstimate
