@@ -28,7 +28,9 @@ const {
   applyMove,
   BOARD_STATE_HASH_VERSION,
   boardStateHash,
+  buildAsciiLegend,
   buildJsonObservation,
+  buildObservationInventory,
   buildScorecard,
   cameraDirectionForInteractiveKey,
   createTerminalContext,
@@ -483,6 +485,106 @@ function syntheticFloor(width, height) {
 }
 
 {
+  const parsing = JSON.parse(
+    fs.readFileSync(path.join(ROOT_DIR, "games", "maze", "level_parsing.json"), "utf8")
+  );
+  const actorTypes = new Set([
+    "box",
+    "circle_player",
+    "clone",
+    "floating_floor",
+    "gem",
+    "orange_button",
+    "player",
+    "puncher",
+    "weightless_box"
+  ]);
+  const terrainSources = [];
+  const actors = [];
+
+  Object.entries(parsing.objects).forEach(([name, definition]) => {
+    const type = definition.type || name;
+    const tokenEntries = Array.isArray(definition.tokens)
+      ? definition.tokens
+      : [definition.token || name];
+
+    tokenEntries.forEach((entryValue) => {
+      const entry = typeof entryValue === "string" ? { token: entryValue } : entryValue;
+      const source = {
+        type,
+        direction: entry.direction || null,
+        groupId: ["clone", "weightless_box"].includes(type) ? entry.token : null,
+        label: entry.label || definition.label || name,
+        modelUrl: definition.model ? `/assets/maze/${definition.model}` : null,
+        styleKey: entry.style_key || null,
+        token: entry.token
+      };
+      if (actorTypes.has(type)) actors.push(source);
+      else terrainSources.push(source);
+    });
+  });
+
+  terrainSources.push({ type: "empty" }, { type: "hole" });
+  actors.push(
+    { type: "clone", groupId: "c999" },
+    { type: "clone", groupId: "c999", shape: "slope", direction: "up" },
+    { type: "weightless_box", groupId: "M712" },
+    { type: "weightless_box", groupId: "M712", shape: "slope", direction: "left" },
+    { type: "attached_lift", raised: false },
+    { type: "attached_gate" }
+  );
+
+  const width = terrainSources.length + actors.length;
+  const terrain = syntheticFloor(width, 1);
+  terrainSources.forEach((source, x) => {
+    terrain[0][x] = source.type === "empty"
+      ? { type: "empty" }
+      : { type: source.type, ...source, layers: [{ elevation: 0, ...source }] };
+  });
+  const actorOffset = terrainSources.length;
+  const playData = {
+    actors: actors.map((actor, index) => ({
+      ...actor,
+      elevation: 0,
+      removed: false,
+      x: actorOffset + index,
+      y: 0
+    })),
+    gameId: "maze",
+    height: 1,
+    levelId: "complete_observation_inventory",
+    terrain,
+    width
+  };
+  const context = syntheticContext(playData, { pitch: 0, yaw: 0 });
+  const report = buildObservationInventory(context);
+  const sourceTypes = new Set(report.map((entry) => entry.sourceType));
+  const names = new Set(report.map((entry) => entry.name));
+
+  Object.entries(parsing.objects).forEach(([name, definition]) => {
+    assert.equal(
+      sourceTypes.has(definition.type || name),
+      true,
+      `${name} must be covered by the observation inventory`
+    );
+  });
+  report.forEach((entry) => {
+    assert.notEqual(entry.name, "unknown", `${entry.sourceType} must have a semantic JSON name`);
+    assert.notDeepEqual(entry.glyph, { top: "|", side: "\\" }, `${entry.sourceType} must have an actor glyph`);
+    assert.notDeepEqual(entry.glyph, { top: "`", side: "'" }, `${entry.sourceType} must have a terrain glyph`);
+  });
+  [
+    "black_ice_slope_up",
+    "orange_ice_slope_down",
+    "clone_c999",
+    "ramped_clone_c999_up",
+    "weightless_push_box_M712",
+    "ramped_weightless_push_box_M712_left",
+    "attached_player_lift_lowered"
+  ].forEach((name) => assert.equal(names.has(name), true, `${name} must be lifted`));
+}
+
+{
   const playData = {
     actors: [{ type: "player", x: 0, y: 0, elevation: 0, removed: false }],
     gameId: "maze",
@@ -904,6 +1006,156 @@ function syntheticFloor(width, height) {
 }
 
 {
+  const terrain = syntheticFloor(3, 1);
+  terrain[0][2] = {
+    type: "orange_ice_slope",
+    layers: [{
+      type: "orange_ice_slope",
+      direction: "up",
+      elevation: 0,
+      styleKey: "orange"
+    }]
+  };
+  const playData = {
+    actors: [
+      { type: "player", x: 1, y: 0, removed: false, elevation: 0 },
+      { type: "orange_button", x: 0, y: 0, removed: false, elevation: 0 }
+    ],
+    gameId: "maze",
+    height: 1,
+    levelId: "orange_ice_slope_observation",
+    terrain,
+    width: 3
+  };
+  const context = syntheticContext(playData, { pitch: 0, yaw: 0 });
+  const raised = buildJsonObservation(context, { omniscient: true });
+
+  assert.deepEqual(raised.objects.orange_ice_slope_up, [[2, 0, 1]]);
+  assert.match(body(renderScreen(context)), /↑↑↑↑/);
+
+  context.options.yaw = 1;
+  const rotated = buildJsonObservation(context, { omniscient: true });
+  assert.deepEqual(rotated.objects.orange_ice_slope_right, [[2, 0, 1]]);
+  assert.match(body(renderScreen(context)), /→→→→/);
+
+  context.options.yaw = 0;
+  assert.equal(context.engine.move(context.state, -1, 0).moved, true);
+  const lowered = buildJsonObservation(context, { omniscient: true });
+  assert.deepEqual(lowered.objects.orange_ice_slope_up, [[2, 0, 0]]);
+  context.options.pitch = 4;
+  assert.doesNotMatch(body(renderScreen(context)), /⇧/);
+}
+
+{
+  const terrain = [[{
+    type: "ice_slope",
+    layers: [{
+      type: "ice_slope",
+      direction: "left",
+      elevation: 0,
+      styleKey: "wall"
+    }]
+  }]];
+  const playData = {
+    actors: [],
+    gameId: "maze",
+    height: 1,
+    levelId: "black_ice_slope_observation",
+    terrain,
+    width: 1
+  };
+  const context = syntheticContext(playData, { pitch: 0, yaw: 0 });
+  assert.deepEqual(
+    buildJsonObservation(context, { omniscient: true }).objects.black_ice_slope_left,
+    [[0, 0, 1]]
+  );
+  assert.equal(body(renderScreen(context)), ["◀◀◀◀", "◀◀◀◀", "◀◀◀◀", "◀◀◀◀"].join("\n"));
+}
+
+{
+  const playData = {
+    actors: [
+      { type: "clone", groupId: "c27", x: 0, y: 0, removed: false, elevation: 0 },
+      { type: "clone", groupId: "c27", x: 1, y: 0, removed: false, elevation: 0 },
+      {
+        type: "clone",
+        groupId: "c27",
+        shape: "slope",
+        direction: "up",
+        x: 2,
+        y: 0,
+        removed: false,
+        elevation: 0
+      },
+      { type: "weightless_box", groupId: "M712", x: 3, y: 0, removed: false, elevation: 0 },
+      {
+        type: "weightless_box",
+        groupId: "M712",
+        shape: "slope",
+        direction: "left",
+        x: 4,
+        y: 0,
+        removed: false,
+        elevation: 0
+      },
+      { type: "circle_player", x: 5, y: 0, removed: false, elevation: 0 }
+    ],
+    gameId: "maze",
+    height: 1,
+    levelId: "arbitrary_group_observation",
+    terrain: syntheticFloor(6, 1),
+    width: 6
+  };
+  const context = syntheticContext(playData, { pitch: 0, yaw: 0 });
+  const json = buildJsonObservation(context, { omniscient: true });
+  const legend = buildAsciiLegend(context);
+  const topGlyphs = legend.map((entry) => entry.top);
+
+  assert.equal(json.schema_version, 2);
+  assert.deepEqual(json.objects.clone_c27, [[0, 0, 1], [1, 0, 1]]);
+  assert.deepEqual(json.objects.ramped_clone_c27_up, [[2, 0, 1]]);
+  assert.deepEqual(json.objects.weightless_push_box_M712, [[3, 0, 1]]);
+  assert.deepEqual(json.objects.ramped_weightless_push_box_M712_left, [[4, 0, 1]]);
+  assert.deepEqual(json.objects.player, [[5, 0, 1]]);
+  assert.equal(legend.length, 4);
+  assert.equal(new Set(topGlyphs).size, 4);
+  topGlyphs.forEach((glyph) => assert.match(body(renderScreen(context)), new RegExp(glyph.repeat(4))));
+
+  context.options.yaw = 1;
+  const rotated = buildJsonObservation(context, { omniscient: true });
+  assert.deepEqual(rotated.objects.ramped_clone_c27_right, [[2, 0, 1]]);
+  assert.deepEqual(rotated.objects.ramped_weightless_push_box_M712_up, [[4, 0, 1]]);
+}
+
+{
+  const playData = {
+    actors: [
+      { type: "player", x: 0, y: 0, removed: false, elevation: 0 },
+      { type: "weightless_box", groupId: "M0", x: 1, y: 0, removed: false, elevation: 0 },
+      { type: "attached_lift", x: 1, y: 0, removed: false, elevation: 1, raised: false },
+      { type: "weightless_box", groupId: "M1", x: 3, y: 0, removed: false, elevation: 0 },
+      { type: "attached_gate", x: 3, y: 0, removed: false, elevation: 1 }
+    ],
+    gameId: "maze",
+    height: 1,
+    levelId: "attached_device_observation",
+    terrain: syntheticFloor(4, 1),
+    width: 4
+  };
+  const context = syntheticContext(playData, { pitch: 0 });
+  const lowered = buildJsonObservation(context, { omniscient: true });
+
+  assert.deepEqual(lowered.objects.attached_player_lift_lowered, [[1, 0, 1]]);
+  assert.deepEqual(lowered.objects.attached_player_gate_lowered, [[3, 0, 1]]);
+
+  context.state.liftRaised[1] = 1;
+  context.state.actorX[0] = 2;
+  const raised = buildJsonObservation(context, { omniscient: true });
+  assert.deepEqual(raised.objects.attached_player_lift_raised, [[1, 0, 2]]);
+  assert.deepEqual(raised.objects.attached_player_gate_raised, [[3, 0, 2]]);
+}
+
+{
   const playData = {
     actors: [
       { type: "box", x: 0, y: 0, removed: false, elevation: 0 },
@@ -1293,10 +1545,14 @@ function syntheticFloor(width, height) {
 
   assert.equal(rows.length, 50, "level_GxE keeps all 16 projected grid rows");
   assert.equal(rows.every((row) => row.length === 64), true);
+  const hiddenEmptyGlyph = rows[0][0];
   rows.slice(0, 18).forEach((row) => {
-    assert.equal(row, "}".repeat(64));
+    assert.equal(row, hiddenEmptyGlyph.repeat(64));
   });
-  assert.equal(rows[18], "}}}}}}}}}}}}jjjj}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}");
+  assert.equal(rows[18].slice(0, 12), hiddenEmptyGlyph.repeat(12));
+  assert.equal(rows[18].slice(16), hiddenEmptyGlyph.repeat(48));
+  assert.equal(new Set(Array.from(rows[18].slice(12, 16))).size, 1);
+  assert.notEqual(rows[18][12], hiddenEmptyGlyph);
 
   [1, 2, 3].forEach((yaw) => {
     const rotatedRows = renderRows(yaw);
@@ -1816,7 +2072,7 @@ function syntheticFloor(width, height) {
   assert.equal(rotated.json_observation.objects.player.length > 0, true);
   assert.equal(
     Object.keys(rotated.json_observation.objects).every(
-      (name) => ["player", "gem"].includes(name) || /^[A-Za-z]$/.test(name)
+      (name) => ["player", "gem"].includes(name) || /^[A-Za-z]+$/.test(name)
     ),
     true
   );

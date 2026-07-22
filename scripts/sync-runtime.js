@@ -70,6 +70,7 @@ const MIRRORED_FILES = [
   "shared/board-state.js",
   "shared/default-world-template.js",
   "shared/maze-ascii-palette.js",
+  "shared/maze-observation-contract.js",
   "scripts/maze-agent-local.js",
   "scripts/maze-bridge.js",
   "scripts/codex-play.js",

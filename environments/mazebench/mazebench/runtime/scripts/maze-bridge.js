@@ -6,6 +6,7 @@ const {
   applyMove,
   BOARD_STATE_HASH_VERSION,
   boardStateHash,
+  buildAsciiLegend,
   buildJsonObservation,
   buildScorecard,
   createTerminalContext,
@@ -457,6 +458,9 @@ function sessionSnapshot(session, extra = {}) {
     novel_push_count: session.novelPushStates.size,
     push_count: session.pushCount,
     level: rendered.level,
+    ascii_legend: session.initialOptions.observationMode === "text"
+      ? buildAsciiLegend(context)
+      : [],
     player,
     player_dead: playerDead,
     solved: context.engine.isSolved(context.state),
