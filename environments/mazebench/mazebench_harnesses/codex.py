@@ -99,7 +99,7 @@ class MazeBenchCodexHarness(CodexHarness):
         allowed_tools = [
             f"mcp__{name}__{tool}"
             for name in mcp_urls
-            for tool in ("start", "observe", "action")
+            for tool in ("start", "observe", "action", "action_sequence")
         ]
         guard_path = f".vf-codex-game-only-{trace.id}.js"
         guard_source = f"""const allowed = new Set({json.dumps(allowed_tools)});
@@ -146,7 +146,7 @@ process.stdin.on("end", () => {{
                 "-c",
                 f"{prefix}.default_tools_approval_mode=auto",
                 "-c",
-                f'{prefix}.enabled_tools=["start","observe","action"]',
+                f'{prefix}.enabled_tools=["start","observe","action","action_sequence"]',
             ]
         argv = [
             CODEX_BIN,

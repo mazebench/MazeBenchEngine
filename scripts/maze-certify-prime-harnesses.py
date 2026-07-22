@@ -225,7 +225,7 @@ async def certify() -> dict:
     )
     command = "\n".join(runtime.argv)
     assert "mcp_servers.mazebench.url" in command
-    assert 'enabled_tools=["start","observe","action"]' in command
+    assert 'enabled_tools=["start","observe","action","action_sequence"]' in command
     assert "--ephemeral" in runtime.argv
     assert "--ignore-user-config" in runtime.argv
     assert "--ignore-rules" in runtime.argv
@@ -259,6 +259,7 @@ async def certify() -> dict:
     assert "mcp__mazebench__start" in guard_source
     assert "mcp__mazebench__observe" in guard_source
     assert "mcp__mazebench__action" in guard_source
+    assert "mcp__mazebench__action_sequence" in guard_source
     assert "External tools are disabled" in guard_source
     assert str(ROOT) not in command
 
@@ -287,7 +288,7 @@ async def certify() -> dict:
         "boundary": {
             "harness_runtime": "disposable-prime-sandbox",
             "game_runtime": "evaluator-owned-external-tool-server",
-            "allowed_controls": ["start", "observe", "action"],
+            "allowed_controls": ["start", "observe", "action", "action_sequence"],
             "forbidden_task_fields": [
                 "repo_root",
                 "resume_checkpoint_path",

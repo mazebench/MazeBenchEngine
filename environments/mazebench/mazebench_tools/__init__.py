@@ -118,7 +118,10 @@ def _vision_tool_result(result: dict[str, Any], frame: str) -> CallToolResult:
         raise RuntimeError("MazeBench vision renderer did not return a PNG image")
     encoded = frame[len(prefix) :]
     base64.b64decode(encoded, validate=True)
-    result["observation"]["frame_image"] = "attached:image/png"
+    observation = result.get("observation") or result.get("final_observation")
+    if not isinstance(observation, dict):
+        raise RuntimeError("MazeBench vision result did not contain an observation")
+    observation["frame_image"] = "attached:image/png"
     return CallToolResult(
         content=[
             TextContent(type="text", text=json.dumps(result, indent=2)),
@@ -146,17 +149,20 @@ def _tool_prompt(task: MazeBenchTaskData) -> str:
     )
     if task.observation_mode == "json":
         mode = "structured JSON"
-        vision_policy = ""
+        mode_policy = """
+In JSON mode, the structured board is the `json_observation` field inside each returned
+`observation` (or inside `final_observation` for an action sequence). Programs should parse
+that object directly rather than transcribing it into a different format."""
     elif task.observation_mode == "vision":
         mode = "perspective image"
-        vision_policy = (
+        mode_policy = (
             " Each result includes an MCP image block containing the complete board "
             "observation for that turn. Inspect that image before choosing the next action; "
             "there is no ASCII or JSON board fallback."
         )
     else:
         mode = "ASCII"
-        vision_policy = ""
+        mode_policy = ""
     objective = target_text_for_row(
         {
             "game_won_gem_count": task.game_won_gem_count,
@@ -178,10 +184,15 @@ def _tool_prompt(task: MazeBenchTaskData) -> str:
     return f"""Play the hidden 3D grid game using only the supplied game controls.
 
 Call `game_start` exactly once first. Inspect its sanitized {mode} observation, then call
-`game_action` with one action at a time. Use `game_observe` only when you need to inspect the
-current state without consuming an action. Valid actions include up, down, left, right,
+`game_action` for a single action. A saved solver may instead call `game_action_sequence`
+with its complete ordered `actions` array; there is no sequence-length cap. By default the
+sequence result contains compact step summaries plus `final_observation`. Set
+`include_intermediate_observations: true` to also receive every completed step before the
+final one in `intermediate_observations`, each with its action, index, and sanitized
+observation. Use `game_observe` only when you need to inspect the current state without
+consuming an action. Valid actions include up, down, left, right,
 rotate camera up, rotate camera down, rotate camera left, rotate camera right, undo, reset,
-and go to level X Y.{vision_policy}{kimi_observe_policy}
+and go to level X Y.{mode_policy}{kimi_observe_policy}
 The controls do not report whether a movement was blocked; infer its effect only from the
 returned observation.
 
@@ -221,7 +232,7 @@ still be called exactly once by this new harness process.
 
 
 class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
-    """Three narrow controls backed by evaluator-owned MazeBench state."""
+    """Four narrow controls backed by evaluator-owned MazeBench state."""
 
     TOOL_PREFIX = "game"
 
@@ -482,61 +493,169 @@ class MazeBenchToolset(vf.Toolset[MazeBenchToolsetConfig]):
                 self._last_action_key = action_key
                 self._identical_action_streak = 1
 
-            blocked_quit = False
+            error, _recorded = await self._apply_action(raw)
+            return await self._tool_response(self._result(error=error))
+
+    async def _apply_action(self, raw: str) -> tuple[str, bool]:
+        """Apply one action while the caller holds the toolset lock."""
+
+        action_count_before = len(self._actions)
+        blocked_quit = False
+        try:
+            command, action_args = parse_text_action(raw)
+            if command == "quit" and not self.task.allow_quit:
+                blocked_quit = True
+                raise ValueError("Quit is disabled for this run.")
+            status = apply_quit_policy(
+                await run_blocking(self._session.request, command, **action_args),
+                self.task.allow_quit,
+            )
+            self._status = status
+            state = {"maze_actions": self._actions}
+            record_maze_action(
+                state,
+                action_args=action_args,
+                command=command,
+                raw_response=raw,
+                status=status,
+            )
+            self._actions = list(state["maze_actions"])
+            error = ""
+        except Exception as exception:
+            error = str(exception).splitlines()[0][:300]
+            self._status_error = error
             try:
-                command, action_args = parse_text_action(raw)
-                if command == "quit" and not self.task.allow_quit:
-                    blocked_quit = True
-                    raise ValueError("Quit is disabled for this run.")
-                status = apply_quit_policy(
-                    await run_blocking(self._session.request, command, **action_args),
+                self._status = apply_quit_policy(
+                    await run_blocking(self._session.request, "observe"),
                     self.task.allow_quit,
                 )
-                self._status = status
+            except Exception:
+                pass
+            if not blocked_quit:
                 state = {"maze_actions": self._actions}
                 record_maze_action(
                     state,
-                    action_args=action_args,
-                    command=command,
+                    error=error,
                     raw_response=raw,
-                    status=status,
+                    status=self._status,
                 )
                 self._actions = list(state["maze_actions"])
-                error = ""
-            except Exception as exception:
-                error = str(exception).splitlines()[0][:300]
-                self._status_error = error
-                try:
-                    self._status = apply_quit_policy(
-                        await run_blocking(self._session.request, "observe"),
-                        self.task.allow_quit,
-                    )
-                except Exception:
-                    pass
-                if not blocked_quit:
-                    state = {"maze_actions": self._actions}
-                    record_maze_action(
-                        state,
-                        error=error,
-                        raw_response=raw,
-                        status=self._status,
-                    )
-                    self._actions = list(state["maze_actions"])
 
-            if not self._terminal():
-                evaluation = evaluate_auto_quit(
-                    self._initial_hash,
-                    self._actions,
-                    enabled=self.task.auto_quit,
-                    threshold=self.task.auto_quit_threshold,
-                    mode=self.task.auto_quit_mode,
-                    window=self.task.auto_quit_window,
+        if not self._terminal():
+            evaluation = evaluate_auto_quit(
+                self._initial_hash,
+                self._actions,
+                enabled=self.task.auto_quit,
+                threshold=self.task.auto_quit_threshold,
+                mode=self.task.auto_quit_mode,
+                window=self.task.auto_quit_window,
+            )
+            if evaluation is not None:
+                self._auto_quit = evaluation
+        await self._finish_if_needed()
+        self._write_snapshot()
+        return error, len(self._actions) > action_count_before
+
+    @vf.tool
+    async def action_sequence(
+        self,
+        actions: list[str],
+        include_intermediate_observations: bool = False,
+    ) -> Any:
+        """Apply a solver-generated action list and return the final sanitized observation."""
+
+        if not isinstance(actions, list) or not actions:
+            raise ValueError("actions must contain at least one item.")
+        normalized: list[str] = []
+        for index, action in enumerate(actions):
+            if not isinstance(action, str) or not action.strip():
+                raise ValueError(f"actions[{index}] must be a non-empty string.")
+            normalized.append(action.strip())
+        if not isinstance(include_intermediate_observations, bool):
+            raise ValueError("include_intermediate_observations must be a boolean.")
+
+        async with self._lock:
+            self._last_action_key = None
+            self._identical_action_streak = 0
+            observations: list[dict[str, Any]] = []
+            steps: list[dict[str, Any]] = []
+            stop_reason = "completed"
+
+            for index, raw in enumerate(normalized, start=1):
+                if self._terminal():
+                    stop_reason = "run_ended"
+                    break
+                action_count_before = len(self._actions)
+                error, recorded = await self._apply_action(raw)
+                observation = _public_observation(
+                    self._status or {}, self.task.observation_mode
                 )
-                if evaluation is not None:
-                    self._auto_quit = evaluation
-            await self._finish_if_needed()
-            self._write_snapshot()
-            return await self._tool_response(self._result(error=error))
+                observations.append(observation)
+                steps.append(
+                    {
+                        "index": index,
+                        "action": raw,
+                        "recorded": recorded,
+                        "action_count_before": action_count_before,
+                        "action_count_after": len(self._actions),
+                        **({"error": error} if error else {}),
+                        "status": {
+                            "current_room": observation.get("current_room", ""),
+                            "current_view": observation.get("current_view", ""),
+                            "yaw": observation.get("yaw", 0),
+                            "gem_count": observation.get("gem_count", 0),
+                            "player_dead": observation.get("player_dead", False),
+                            "game_won": observation.get("game_won", False),
+                            "game_lost": observation.get("game_lost", False),
+                        },
+                    }
+                )
+                if error:
+                    stop_reason = "action_error"
+                    break
+                if self._terminal() and index < len(normalized):
+                    stop_reason = "run_ended"
+                    break
+
+            self._last_action_key = None
+            self._identical_action_streak = 0
+            final_observation = observations[-1] if observations else _public_observation(
+                self._status or {}, self.task.observation_mode
+            )
+            result: dict[str, Any] = {
+                "requested_count": len(normalized),
+                "attempted_count": len(steps),
+                "completed_count": len(observations),
+                "stopped_early": len(steps) < len(normalized) or stop_reason != "completed",
+                "stop_reason": stop_reason,
+                "steps": steps,
+                **(
+                    {
+                        "intermediate_observations": [
+                            {
+                                "index": entry["index"],
+                                "action": entry["action"],
+                                "observation": observation,
+                            }
+                            for entry, observation in zip(steps[:-1], observations[:-1])
+                        ]
+                    }
+                    if include_intermediate_observations
+                    else {}
+                ),
+                "final_observation": final_observation,
+                "actions_used": len(self._actions),
+                "actions_remaining": (
+                    None
+                    if self.task.max_actions is None
+                    else max(0, int(self.task.max_actions) - len(self._actions))
+                ),
+                "ended": self._terminal(),
+            }
+            if not result["ended"] and self._identical_action_interval:
+                result["completion_allowed"] = False
+                result["next_required_tool"] = "game_action"
+            return await self._tool_response(result)
 
 
 class MazeBenchToolTaskConfig(MazeBenchTaskConfig):

@@ -7,6 +7,8 @@ const { spawn, spawnSync } = require("child_process");
 const rootDir = path.resolve(__dirname, "..");
 const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "mazebench-mcp-test-"));
 const leadWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "mazebench-mcp-workspace-"));
+const jsonBridgeWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "mazebench-json-workspace-"));
+const routeEscapeDir = fs.mkdtempSync(path.join(os.tmpdir(), "mazebench-route-escape-"));
 const codexAvailable = spawnSync("codex", ["--version"], { encoding: "utf8" }).status === 0;
 let httpChild = null;
 
@@ -566,6 +568,147 @@ try {
     "mcp-repeatable-seed"
   );
 
+  const jsonBridgeDir = path.join(runDir, "json-solver-bridge");
+  fs.mkdirSync(jsonBridgeDir, { recursive: true });
+  const outsideRoute = path.join(routeEscapeDir, "outside-route.json");
+  fs.writeFileSync(outsideRoute, `${JSON.stringify(["rotate camera left"])}\n`);
+  const relativeOutsideRoute = path.relative(jsonBridgeWorkspace, outsideRoute);
+  fs.symlinkSync(outsideRoute, path.join(jsonBridgeWorkspace, "escape-route.json"));
+  fs.writeFileSync(
+    path.join(jsonBridgeWorkspace, "route.json"),
+    `${JSON.stringify({
+      observation_revision: 0,
+      actions: ["rotate camera left", "rotate camera right"]
+    }, null, 2)}\n`
+  );
+  const jsonPlannerCode = `from pathlib import Path
+import runpy
+program = '''import json
+from pathlib import Path
+observation = json.loads(Path("observations/current.json").read_text())
+assert observation["observation_mode"] == "json"
+route = {
+    "observation_revision": observation["observation_revision"],
+    "actions": ["rotate camera left", "rotate camera right"],
+}
+Path("route.json").write_text(json.dumps(route), encoding="utf-8")
+print(len(observation["json_observation"]["objects"]["player"]))
+'''
+Path("planner.py").write_text(program, encoding="utf-8")
+runpy.run_path("planner.py")`;
+  const jsonBridgeRequests = [
+    { jsonrpc: "2.0", id: 28, method: "initialize", params: { protocolVersion: "2024-11-05" } },
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+    { jsonrpc: "2.0", id: 29, method: "tools/list", params: {} },
+    { jsonrpc: "2.0", id: 30, method: "tools/call", params: { name: "maze_start", arguments: {} } },
+    { jsonrpc: "2.0", id: 31, method: "tools/call", params: { name: "python_exec", arguments: { code: jsonPlannerCode } } },
+    {
+      jsonrpc: "2.0",
+      id: 32,
+      method: "tools/call",
+      params: {
+        name: "maze_action_sequence",
+        arguments: { route_file: "route.json", include_intermediate_observations: true }
+      }
+    },
+    {
+      jsonrpc: "2.0",
+      id: 33,
+      method: "tools/call",
+      params: { name: "maze_action_sequence", arguments: { route_file: "route.json" } }
+    },
+    {
+      jsonrpc: "2.0",
+      id: 34,
+      method: "tools/call",
+      params: { name: "maze_action_sequence", arguments: { route_file: relativeOutsideRoute } }
+    },
+    {
+      jsonrpc: "2.0",
+      id: 35,
+      method: "tools/call",
+      params: { name: "maze_action_sequence", arguments: { route_file: "escape-route.json" } }
+    }
+  ];
+  const jsonBridgeResult = spawnSync(
+    process.execPath,
+    [path.join(rootDir, "scripts", "maze-mcp-server.js")],
+    {
+      cwd: rootDir,
+      encoding: "utf8",
+      input: `${jsonBridgeRequests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+      env: {
+        ...process.env,
+        MAZEBENCH_REPO_ROOT: rootDir,
+        MAZEBENCH_RUN_DIR: jsonBridgeDir,
+        MAZEBENCH_SESSION_FILE: path.join(jsonBridgeDir, "session.json"),
+        MAZEBENCH_AGENT_WORKSPACE_DIR: jsonBridgeWorkspace,
+        MAZEBENCH_MODE: "json",
+        MAZEBENCH_OMNISCIENT: "1",
+        MAZEBENCH_AUTO_RUN_TOOLS: "1",
+        MAZEBENCH_AUTO_RUN_ALL_FRAMES: "1",
+        MAZEBENCH_MOVE_BUDGET: "4"
+      }
+    }
+  );
+  assert.equal(jsonBridgeResult.status, 0, jsonBridgeResult.stderr);
+  const jsonBridgeResponses = jsonBridgeResult.stdout.trim().split("\n").map((line) => JSON.parse(line));
+  const jsonBridgeTools = jsonBridgeResponses.find((response) => response.id === 29)?.result?.tools || [];
+  assert.match(
+    jsonBridgeTools.find((tool) => tool.name === "python_exec")?.description || "",
+    /observations\/current\.json is automatically synchronized/
+  );
+  assert.equal(
+    jsonBridgeTools.find((tool) => tool.name === "maze_action_sequence")?.inputSchema?.properties?.route_file?.type,
+    "string"
+  );
+  const jsonBridgeStart = jsonBridgeResponses.find((response) => response.id === 30)?.result?.structuredContent;
+  assert.equal(jsonBridgeStart.observation_workspace.current_file, "observations/current.json");
+  assert.equal(jsonBridgeStart.observation_workspace.observation_revision, 0);
+  const pythonPlanner = jsonBridgeResponses.find((response) => response.id === 31)?.result;
+  if (codexAvailable) {
+    assert.equal(pythonPlanner?.structuredContent?.stdout, "1\n");
+    assert.match(fs.readFileSync(path.join(jsonBridgeWorkspace, "planner.py"), "utf8"), /observations\/current\.json/);
+  } else {
+    assert.equal(pythonPlanner?.isError, true);
+  }
+  const jsonSequence = jsonBridgeResponses.find((response) => response.id === 32)?.result?.structuredContent;
+  assert.equal(jsonSequence.requested_count, 2);
+  assert.equal(jsonSequence.completed_count, 2);
+  assert.equal(jsonSequence.route_file, "route.json");
+  assert.equal(jsonSequence.route_observation_revision, 0);
+  assert.equal(jsonSequence.intermediate_observations.length, 1);
+  assert.equal(jsonSequence.intermediate_observations[0].observation.observation_mode, "json");
+  assert.equal(jsonSequence.final_observation.observation_mode, "json");
+  assert.equal(jsonSequence.observation_workspace.snapshots_written, 2);
+  assert.equal(jsonSequence.observation_workspace.observation_revision, 2);
+  assert.doesNotMatch(JSON.stringify(jsonSequence), /board_state_hash|scorecard|collected_gems/);
+  const currentJsonObservation = JSON.parse(
+    fs.readFileSync(path.join(jsonBridgeWorkspace, "observations", "current.json"), "utf8")
+  );
+  assert.equal(currentJsonObservation.observation_revision, 2);
+  assert.equal(currentJsonObservation.observation_mode, "json");
+  assert.equal(currentJsonObservation.json_observation.omniscient, true);
+  assert.equal(
+    fs.readFileSync(path.join(jsonBridgeWorkspace, "observations", "history.jsonl"), "utf8").trim().split("\n").length,
+    3,
+    "start plus both delivered sequence frames must be available to saved programs"
+  );
+  assert(fs.existsSync(path.join(jsonBridgeWorkspace, "observations", "000000.json")));
+  assert(fs.existsSync(path.join(jsonBridgeWorkspace, "observations", "000001.json")));
+  assert(fs.existsSync(path.join(jsonBridgeWorkspace, "observations", "000002.json")));
+  const staleRoute = jsonBridgeResponses.find((response) => response.id === 33)?.result;
+  assert.equal(staleRoute?.isError, true);
+  assert.match(staleRoute?.content?.[0]?.text || "", /route_file is stale/);
+  assert.match(
+    jsonBridgeResponses.find((response) => response.id === 34)?.result?.content?.[0]?.text || "",
+    /route_file must stay inside the solver workspace/
+  );
+  assert.match(
+    jsonBridgeResponses.find((response) => response.id === 35)?.result?.content?.[0]?.text || "",
+    /route_file must not resolve outside the solver workspace/
+  );
+
   const unlimitedDir = path.join(runDir, "unlimited");
   fs.mkdirSync(unlimitedDir, { recursive: true });
   const unlimitedRequests = [
@@ -1080,6 +1223,8 @@ try {
 } finally {
   if (httpChild) httpChild.kill("SIGTERM");
   fs.rmSync(leadWorkspace, { recursive: true, force: true });
+  fs.rmSync(jsonBridgeWorkspace, { recursive: true, force: true });
+  fs.rmSync(routeEscapeDir, { recursive: true, force: true });
   fs.rmSync(runDir, { recursive: true, force: true });
 }
 

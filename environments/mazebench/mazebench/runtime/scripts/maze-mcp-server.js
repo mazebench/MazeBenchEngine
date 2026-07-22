@@ -66,6 +66,8 @@ const HTTP_TOKEN = String(process.env.MAZEBENCH_MCP_HTTP_TOKEN || "");
 const WORKER_ALLOCATION_LOCK = path.join(SWARM_DIR, ".instance-allocation.lock");
 const PYTHON_PREFLIGHTS = new Map();
 const PYTHON_WORKSPACE_SNAPSHOT_LIMIT = 2000;
+const MAX_ROUTE_FILE_BYTES = 1024 * 1024;
+const OBSERVATION_DIRECTORY = "observations";
 
 function sessionActionCount(file) {
   try {
@@ -563,6 +565,164 @@ function pythonWorkspaceChanges(before, after) {
   };
 }
 
+function pathInsideWorkspace(workspace, candidate) {
+  const relative = path.relative(path.resolve(workspace), path.resolve(candidate));
+  return relative === "" || (
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
+function workspaceFile(workspace, requestedPath, label) {
+  const raw = String(requestedPath || "").trim();
+  if (!raw) throw new Error(`${label} is required.`);
+  if (path.isAbsolute(raw)) throw new Error(`${label} must be relative to the solver workspace.`);
+  fs.mkdirSync(workspace, { recursive: true, mode: 0o700 });
+  const root = fs.realpathSync(workspace);
+  const resolved = path.resolve(root, raw);
+  if (!pathInsideWorkspace(root, resolved)) {
+    throw new Error(`${label} must stay inside the solver workspace.`);
+  }
+  let canonical;
+  try {
+    canonical = fs.realpathSync(resolved);
+  } catch (error) {
+    if (error?.code === "ENOENT") throw new Error(`${label} does not exist.`);
+    throw error;
+  }
+  if (!pathInsideWorkspace(root, canonical)) {
+    throw new Error(`${label} must not resolve outside the solver workspace.`);
+  }
+  const stat = fs.statSync(canonical);
+  if (!stat.isFile()) throw new Error(`${label} must name a regular file.`);
+  if (stat.size > MAX_ROUTE_FILE_BYTES) {
+    throw new Error(`${label} exceeds ${MAX_ROUTE_FILE_BYTES} bytes.`);
+  }
+  return canonical;
+}
+
+function sequencePlan(input, effectiveInput) {
+  if (Array.isArray(input.actions)) {
+    return { actions: input.actions, routeFile: "", observationRevision: null };
+  }
+  const workspace = pythonWorkspaceForInput(effectiveInput);
+  const routeFile = String(input.route_file || "").trim();
+  const absolute = workspaceFile(workspace, routeFile, "route_file");
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(absolute, "utf8"));
+  } catch (error) {
+    throw new Error(`route_file must contain valid JSON: ${safeErrorMessage(error)}`);
+  }
+  const actions = Array.isArray(parsed) ? parsed : parsed?.actions;
+  if (!Array.isArray(actions) || actions.length < 1) {
+    throw new Error("route_file must contain a non-empty actions array.");
+  }
+  const normalizedActions = actions.map((action, index) => {
+    if (typeof action !== "string" || !action.trim()) {
+      throw new Error(`route_file actions[${index}] must be a non-empty string.`);
+    }
+    return action.trim();
+  });
+  const rawRevision = Array.isArray(parsed)
+    ? null
+    : parsed.observation_revision ?? parsed.revision ?? null;
+  const observationRevision = rawRevision === null ? null : Number(rawRevision);
+  if (
+    observationRevision !== null &&
+    (!Number.isInteger(observationRevision) || observationRevision < 0)
+  ) {
+    throw new Error("route_file observation_revision must be a non-negative integer.");
+  }
+  const currentRevision = actionCountForInput(effectiveInput);
+  if (observationRevision !== null && observationRevision !== currentRevision) {
+    throw new Error(
+      `route_file is stale: it was planned from observation revision ${observationRevision}, ` +
+      `but the live maze is at revision ${currentRevision}. Rerun the saved planner.`
+    );
+  }
+  return { actions: normalizedActions, routeFile, observationRevision };
+}
+
+function rawObservation(value) {
+  if (!value || typeof value !== "object") return null;
+  const status = value.status && typeof value.status === "object" ? value.status : value;
+  if (!status.json_observation) return null;
+  return publicObservationStatus(status, { mode: "json" });
+}
+
+function observationWorkspaceDirectory(workspace) {
+  fs.mkdirSync(workspace, { recursive: true, mode: 0o700 });
+  const root = fs.realpathSync(workspace);
+  const directory = path.join(root, OBSERVATION_DIRECTORY);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const canonical = fs.realpathSync(directory);
+  if (!pathInsideWorkspace(root, canonical)) {
+    throw new Error("The observation directory must stay inside the solver workspace.");
+  }
+  return canonical;
+}
+
+function deliveredObservationRecords(value, effectiveInput) {
+  if (process.env.MAZEBENCH_MODE !== "json" || !value || typeof value !== "object") return [];
+  if (!Object.prototype.hasOwnProperty.call(value, "final_observation")) {
+    const observation = rawObservation(value);
+    return observation
+      ? [{ observation, revision: actionCountForInput(effectiveInput) }]
+      : [];
+  }
+  const steps = Array.isArray(value.steps) ? value.steps : [];
+  const records = [];
+  for (const entry of value.intermediate_observations || []) {
+    const observation = rawObservation(entry.observation);
+    if (!observation) continue;
+    const step = steps.find((candidate) => Number(candidate.index) === Number(entry.index));
+    records.push({
+      observation,
+      revision: Math.max(0, Number(step?.action_count_after) || Number(entry.index) || 0)
+    });
+  }
+  const finalObservation = rawObservation(value.final_observation);
+  if (finalObservation) {
+    const finalStep = steps.at(-1);
+    records.push({
+      observation: finalObservation,
+      revision: Math.max(
+        0,
+        Number(finalStep?.action_count_after) || actionCountForInput(effectiveInput)
+      )
+    });
+  }
+  return records;
+}
+
+function syncObservationWorkspace(value, effectiveInput) {
+  const records = deliveredObservationRecords(value, effectiveInput);
+  if (!records.length) return null;
+  const workspace = pythonWorkspaceForInput(effectiveInput);
+  const directory = observationWorkspaceDirectory(workspace);
+  for (const record of records) {
+    const snapshot = {
+      ...record.observation,
+      observation_revision: record.revision
+    };
+    writeJson(
+      path.join(directory, `${String(record.revision).padStart(6, "0")}.json`),
+      snapshot
+    );
+    appendJsonLine(path.join(directory, "history.jsonl"), snapshot);
+    writeJson(path.join(directory, "current.json"), snapshot);
+  }
+  const latest = records.at(-1);
+  return {
+    current_file: `${OBSERVATION_DIRECTORY}/current.json`,
+    history_file: `${OBSERVATION_DIRECTORY}/history.jsonl`,
+    observation_revision: latest.revision,
+    snapshots_written: records.length
+  };
+}
+
 function runPythonTool(input = {}) {
   if (RESTRICTED_MODE) throw new Error("Python is disabled in game-only mode.");
   const workspace = pythonWorkspaceForInput(input);
@@ -610,7 +770,7 @@ const LEAD_TOOLS = [
   },
   {
     name: "maze_action_sequence",
-    description: "Apply a solver-generated action sequence in order. Returns compact per-step summaries and the final observation by default; optionally returns every intermediate observation.",
+    description: "Apply a solver-generated action sequence in order. Pass actions directly or route_file for a JSON route saved in the isolated solver workspace. Returns compact per-step summaries and the final observation by default; optionally returns every intermediate observation.",
     inputSchema: {
       type: "object",
       properties: {
@@ -620,6 +780,11 @@ const LEAD_TOOLS = [
           items: { type: "string", minLength: 1 },
           description: "An ordered action list produced by the saved solver."
         },
+        route_file: {
+          type: "string",
+          minLength: 1,
+          description: "A relative JSON file in the solver workspace containing either an actions array or {observation_revision, actions}."
+        },
         include_intermediate_observations: {
           type: "boolean",
           default: AUTO_RUN_ALL_FRAMES,
@@ -628,7 +793,7 @@ const LEAD_TOOLS = [
             : "When true, also return every intermediate ASCII board, JSON observation, or vision frame."
         }
       },
-      required: ["actions"],
+      oneOf: [{ required: ["actions"] }, { required: ["route_file"] }],
       additionalProperties: false
     }
   },
@@ -639,7 +804,7 @@ const LEAD_TOOLS = [
   },
   {
     name: "python_exec",
-    description: "Run Python in this agent's writable persistent isolated scratch workspace. Each call uses a fresh Python process, while relative-path files in the current working directory persist for the run. Create and reuse Python programs with pathlib/open and execute them with runpy/import. Repository files, host files, run artifacts, subprocesses, and network access are blocked.",
+    description: "Run Python in this agent's writable persistent isolated scratch workspace. In JSON mode, observations/current.json is automatically synchronized from the latest sanitized game result, so programs can import it without copying MCP output. Each call uses a fresh Python process, while relative-path files in the current working directory persist for the run. Create and reuse Python programs with pathlib/open and execute them with runpy/import. Repository files, host files, run artifacts, subprocesses, and network access are blocked.",
     inputSchema: {
       type: "object",
       properties: {
@@ -682,7 +847,7 @@ const WORKER_TOOLS = [
   },
   {
     name: "maze_action_sequence",
-    description: "Apply a solver-generated action sequence in order to this worker's private maze. Returns compact summaries and the final observation unless intermediate observations are requested.",
+    description: "Apply a solver-generated action sequence in order to this worker's private maze. Pass actions directly or route_file for a JSON route saved in this worker's isolated solver workspace. Returns compact summaries and the final observation unless intermediate observations are requested.",
     inputSchema: {
       type: "object",
       properties: {
@@ -691,15 +856,16 @@ const WORKER_TOOLS = [
           minItems: 1,
           items: { type: "string", minLength: 1 }
         },
+        route_file: { type: "string", minLength: 1 },
         include_intermediate_observations: { type: "boolean", default: AUTO_RUN_ALL_FRAMES }
       },
-      required: ["actions"],
+      oneOf: [{ required: ["actions"] }, { required: ["route_file"] }],
       additionalProperties: false
     }
   },
   {
     name: "python_exec",
-    description: "Run Python in this worker's private writable persistent isolated scratch workspace. Each call uses a fresh Python process, while relative-path files in the current working directory persist for the run. Create and reuse Python programs with pathlib/open and execute them with runpy/import. Repository files, host files, run artifacts, subprocesses, and network access are blocked.",
+    description: "Run Python in this worker's private writable persistent isolated scratch workspace. In JSON mode, observations/current.json is automatically synchronized from the latest sanitized game result, so programs can import it without copying MCP output. Each call uses a fresh Python process, while relative-path files in the current working directory persist for the run. Create and reuse Python programs with pathlib/open and execute them with runpy/import. Repository files, host files, run artifacts, subprocesses, and network access are blocked.",
     inputSchema: {
       type: "object",
       properties: {
@@ -838,7 +1004,7 @@ function normalizedToolCall(name, input = {}, { workerOnly = false } = {}) {
     const allowedKeys = name === "maze_action"
       ? new Set(["action"])
       : name === "maze_action_sequence"
-        ? new Set(["actions", "include_intermediate_observations"])
+        ? new Set(["actions", "route_file", "include_intermediate_observations"])
       : name === "python_exec"
         ? new Set(["code", "timeout_seconds"])
         : new Set();
@@ -846,15 +1012,21 @@ function normalizedToolCall(name, input = {}, { workerOnly = false } = {}) {
     if (extraKey) throw new Error(`Unsupported argument "${extraKey}" for ${name}.`);
     if (name === "maze_action") return { name, input: { action: input.action } };
     if (name === "maze_action_sequence") {
-      if (!Array.isArray(input.actions) || input.actions.length < 1) {
-        throw new Error("actions must contain at least one item.");
+      const hasActions = Array.isArray(input.actions);
+      const routeFile = String(input.route_file || "").trim();
+      if (hasActions === Boolean(routeFile)) {
+        throw new Error("Supply exactly one of actions or route_file.");
       }
-      const actions = input.actions.map((action, index) => {
-        if (typeof action !== "string" || !action.trim()) {
-          throw new Error(`actions[${index}] must be a non-empty string.`);
-        }
-        return action.trim();
-      });
+      let actions;
+      if (hasActions) {
+        if (input.actions.length < 1) throw new Error("actions must contain at least one item.");
+        actions = input.actions.map((action, index) => {
+          if (typeof action !== "string" || !action.trim()) {
+            throw new Error(`actions[${index}] must be a non-empty string.`);
+          }
+          return action.trim();
+        });
+      }
       if (
         input.include_intermediate_observations !== undefined &&
         typeof input.include_intermediate_observations !== "boolean"
@@ -864,7 +1036,7 @@ function normalizedToolCall(name, input = {}, { workerOnly = false } = {}) {
       return {
         name,
         input: {
-          actions,
+          ...(hasActions ? { actions } : { route_file: routeFile }),
           include_intermediate_observations:
             AUTO_RUN_ALL_FRAMES || input.include_intermediate_observations === true
         }
@@ -896,13 +1068,14 @@ function runActionSequence(input, context) {
   const workerOnly = Boolean(context?.workerOnly);
   const cloneId = workerOnly ? ensureWorkerAssignment(context) : "";
   const effectiveInput = cloneId ? { ...input, clone_id: cloneId } : input;
+  const plan = sequencePlan(input, effectiveInput);
   if (workerOnly && primaryPauseRequest()) {
     throw new Error("The user is pausing this run. Stop worker exploration and report back to the lead now.");
   }
   const batch = runHelper(
     ["action-sequence", "--state", sessionFor(effectiveInput.clone_id)],
     {
-      input: JSON.stringify({ actions: input.actions, primary: !effectiveInput.clone_id }),
+      input: JSON.stringify({ actions: plan.actions, primary: !effectiveInput.clone_id }),
       timeout: 0
     }
   );
@@ -926,22 +1099,28 @@ function runActionSequence(input, context) {
   const completedCount = observations.length;
   const finalObservation = observations.at(-1) || null;
   return {
-    requested_count: input.actions.length,
+    requested_count: plan.actions.length,
     attempted_count: Math.max(0, Number(batch.attempted_count) || 0),
     completed_count: completedCount,
-    stopped_early: completedCount < input.actions.length,
+    stopped_early: completedCount < plan.actions.length,
     stop_reason: String(batch.stop_reason || "completed"),
     steps,
     ...(input.include_intermediate_observations
       ? {
           intermediate_observations: observations.slice(0, -1).map((observation, index) => ({
             index: index + 1,
-            action: input.actions[index],
+            action: plan.actions[index],
             observation
           }))
         }
       : {}),
-    final_observation: finalObservation
+    final_observation: finalObservation,
+    ...(plan.routeFile
+      ? {
+          route_file: plan.routeFile,
+          route_observation_revision: plan.observationRevision
+        }
+      : {})
   };
 }
 
@@ -1052,6 +1231,7 @@ function publicToolValue(value) {
   const mode = ["json", "vision"].includes(process.env.MAZEBENCH_MODE)
     ? process.env.MAZEBENCH_MODE
     : "text";
+  if (Array.isArray(value)) return value.map(publicToolValue);
   const status = value?.status && typeof value.status === "object" ? value.status : value;
   const hasObservation = status && typeof status === "object" && (
     typeof status.level === "string" ||
@@ -1063,8 +1243,18 @@ function publicToolValue(value) {
     if (printable.frame_image) printable.frame_image = "attached:image/png";
     return printable;
   }
+  const observationWrapper = value && typeof value === "object" && (
+    Object.prototype.hasOwnProperty.call(value, "observation") ||
+    Object.prototype.hasOwnProperty.call(value, "final_observation")
+  );
+  if (observationWrapper) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !["session", "source_session", "workspace", "cpu_time_ms"].includes(key))
+        .map(([key, item]) => [key, publicToolValue(item)])
+    );
+  }
   value = redactAgentStatus(value, { mode });
-  if (Array.isArray(value)) return value.map(publicToolValue);
   if (!value || typeof value !== "object") return value;
   const printable = {};
   for (const [key, item] of Object.entries(value)) {
@@ -1210,7 +1400,9 @@ async function handle(
       actor: workerOnly ? "worker" : "lead",
       clone_id: String(effectiveInput.clone_id || ""),
       action: String(input.action || ""),
-      ...(name === "maze_action_sequence" ? { actions: input.actions } : {}),
+      ...(name === "maze_action_sequence"
+        ? { actions: input.actions, route_file: String(input.route_file || "") }
+        : {}),
       started_at: startedAt.toISOString(),
       status: "running",
       move_calls: 0,
@@ -1236,10 +1428,16 @@ async function handle(
         resetKimiActionStreak(context);
       }
       const value = callTool(name, input, context);
+      const observationWorkspace = syncObservationWorkspace(value, effectiveInput);
+      const loopControl = kimiLoopControl(name, value, effectiveInput, context);
+      const control = {
+        ...(loopControl || {}),
+        ...(observationWorkspace ? { observation_workspace: observationWorkspace } : {})
+      };
       success(
         send,
         request.id,
-        toolContent(value, kimiLoopControl(name, value, effectiveInput, context))
+        toolContent(value, Object.keys(control).length ? control : null)
       );
       const completedAt = new Date();
       const movesAfter = actionCountForInput(effectiveInput);
@@ -1252,7 +1450,9 @@ async function handle(
         actor: workerOnly ? "worker" : "lead",
         clone_id: String(effectiveInput.clone_id || ""),
         action: String(input.action || ""),
-        ...(name === "maze_action_sequence" ? { actions: input.actions } : {}),
+        ...(name === "maze_action_sequence"
+          ? { actions: input.actions, route_file: String(input.route_file || "") }
+          : {}),
         started_at: startedAt.toISOString(),
         completed_at: completedAt.toISOString(),
         duration_ms: completedAt.getTime() - startedAt.getTime(),
@@ -1350,7 +1550,9 @@ async function handle(
         actor: workerOnly ? "worker" : "lead",
         clone_id: String(effectiveInput.clone_id || ""),
         action: String(input.action || ""),
-        ...(name === "maze_action_sequence" ? { actions: input.actions } : {}),
+        ...(name === "maze_action_sequence"
+          ? { actions: input.actions, route_file: String(input.route_file || "") }
+          : {}),
         started_at: startedAt.toISOString(),
         completed_at: completedAt.toISOString(),
         duration_ms: completedAt.getTime() - startedAt.getTime(),

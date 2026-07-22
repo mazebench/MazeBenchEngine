@@ -282,7 +282,11 @@ maze_action_sequence for quickly applying a route produced by a saved Python
 planner or solver.
 
 - Call maze_action_sequence only with an ordered action list that your saved
-  Python program actually generated. Review the route once before submitting it.
+  Python program actually generated. Prefer route_file="route.json" so the MCP server reads
+  the saved route directly instead of making you copy a long action list.
+- A saved route may be a JSON action array or an object with actions and the
+  observation_revision it was planned from. Revision-aware routes are rejected
+  if the live game changed, so rerun the planner instead of executing stale moves.
 - If that saved program produces two or more moves, use maze_action_sequence for
   the entire remaining route instead of replaying those moves one call at a time.
 - A single call may contain the solver's full route. Each action is still validated,
@@ -357,6 +361,27 @@ files, do not run shell commands, and do not spawn any sub-agents. This is
 TOOLS-OFF mode. Do not access repositories, connectors, resource listings,
 prior-run memory, workers, or private branches. Use only the three game controls
 named below and your current conversation memory.`;
+  const jsonWorkspace = config.toolUse === "offline" && config.mode === "json"
+    ? `JSON SOLVER WORKSPACE BRIDGE. After maze_start, maze_observe, maze_action,
+or maze_action_sequence, the trusted MCP server atomically writes the exact
+sanitized observation you just received to observations/current.json inside
+your Python scratch workspace. It also appends delivered observations to
+observations/history.jsonl. Do not copy or retype JSON from the tool result.
+Instead, have saved Python programs load it directly with:
+
+  observation = json.loads(Path("observations/current.json").read_text())
+
+Your first Python call after the initial observation MUST create a real reusable
+planner.py or solver.py file containing that load, then execute the saved file
+with runpy.run_path. Inline-only JSON analysis does not satisfy this requirement.
+Revise and rerun that saved program as the observation changes.
+
+The file includes observation_revision. A solver that produces a route must
+write route.json as {"observation_revision": observation["observation_revision"],
+"actions": [...]}. When auto-run tools are available, submit it with
+maze_action_sequence(route_file="route.json"). The server validates the path,
+action strings, live revision, budget, pause state, and every individual move.`
+    : "";
   const autoRunTools = autoRunToolsInstructions(config);
   const firstStep = config.resume || config.seed
     ? `Call ${controls.observe} first. This is the same primary game; do not call ${controls.start}.`
@@ -417,6 +442,7 @@ session JSON directly or create, select, or branch game instances yourself.`;
 ${observation}
 ${movementFeedback}
 ${capability}
+${jsonWorkspace}
 ${autoRunTools}
 ${swarm}
 ${quitPolicy}
@@ -1480,10 +1506,25 @@ function completedSequenceCount(output) {
   return match ? Math.max(0, Number(match[1]) || 0) : null;
 }
 
+function sequenceActionsFromOutput(output) {
+  for (const value of jsonValuesFromOutput(output)) {
+    if (!Array.isArray(value?.steps)) continue;
+    const completed = Math.max(0, Number(value.completed_count) || value.steps.length);
+    return value.steps
+      .slice(0, completed)
+      .map((step) => String(step?.action || "").trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
 function executedToolActions(actions, results, output, sequence) {
   if (sequence) {
+    const reportedActions = sequenceActionsFromOutput(output);
+    const plannedActions = reportedActions.length ? reportedActions : actions;
     const completedCount = completedSequenceCount(output);
-    if (completedCount != null) return actions.slice(0, completedCount);
+    if (completedCount != null) return plannedActions.slice(0, completedCount);
+    return results.length ? plannedActions.slice(0, results.length) : plannedActions;
   }
   return results.length ? actions.slice(0, results.length) : actions;
 }
@@ -1498,7 +1539,7 @@ function resultShape(status) {
   };
 }
 
-function resultsFromOutput(output) {
+function jsonValuesFromOutput(output) {
   const raw = String(output || "").trim();
   if (!raw) return [];
   const values = [];
@@ -1526,14 +1567,7 @@ function resultsFromOutput(output) {
       depth -= 1;
       if (depth === 0 && start >= 0) {
         try {
-          const value = JSON.parse(raw.slice(start, index + 1));
-          if (Array.isArray(value?.steps) && Number.isFinite(Number(value.completed_count))) {
-            values.push(...value.steps
-              .slice(0, Math.max(0, Number(value.completed_count) || 0))
-              .map((step) => resultShape(step?.status || {})));
-          } else {
-            values.push(resultShape(value));
-          }
+          values.push(JSON.parse(raw.slice(start, index + 1)));
         } catch (_error) {
           /* skip non-status JSON */
         }
@@ -1543,6 +1577,17 @@ function resultsFromOutput(output) {
   }
 
   return values;
+}
+
+function resultsFromOutput(output) {
+  return jsonValuesFromOutput(output).flatMap((value) => {
+    if (Array.isArray(value?.steps) && Number.isFinite(Number(value.completed_count))) {
+      return value.steps
+        .slice(0, Math.max(0, Number(value.completed_count) || 0))
+        .map((step) => resultShape(step?.status || {}));
+    }
+    return [resultShape(value)];
+  });
 }
 
 function resultFromOutput(output) {
@@ -1598,12 +1643,13 @@ function distillCodexEvents(raw) {
       const name = item.tool || item.name || item.tool_name;
       const input = item.arguments || item.input || {};
       const actions = actionsFromToolCall(name, input);
+      const sequence = isActionSequenceTool(name);
       transcript.push(`[tool] ${name || "mcp"} ${JSON.stringify(input)}`);
-      if (actions.length && item.status !== "failed" && !item.error) {
+      if ((actions.length || sequence) && item.status !== "failed" && !item.error) {
         const reasoning = commentary.join("\n\n").trim();
         const output = toolResultText(item.result || item.output || item.content);
         const results = resultsFromOutput(output);
-        const executed = executedToolActions(actions, results, output, isActionSequenceTool(name));
+        const executed = executedToolActions(actions, results, output, sequence);
         executed.forEach((action, index) => {
           move += 1;
           entries.push({ move, action, reasoning, timestamp, ...(results[index] || {}) });
@@ -1670,12 +1716,13 @@ function distillClaudeEvents(raw) {
         const actions = command
           ? actionsFromShellCommand(command)
           : actionsFromToolCall(block.name, block.input);
-        if (actions.length) {
+        const sequence = isActionSequenceTool(block.name);
+        if (actions.length || sequence) {
           hasActions = true;
           if (reasoning) transcript.push(`[reasoning] ${reasoning}`);
           if (block.id) pending.set(block.id, {
             actions,
-            sequence: isActionSequenceTool(block.name),
+            sequence,
             reasoning,
             timestamp: event._mazebench_received_at || event.timestamp || null
           });
@@ -1751,11 +1798,12 @@ function distillKimiEvents(raw) {
           }
         }
         const actions = actionsFromToolCall(name, input);
+        const sequence = isActionSequenceTool(name);
         transcript.push(`[tool] ${name || "mcp"} ${JSON.stringify(input)}`);
-        if (actions.length && call.id) {
+        if ((actions.length || sequence) && call.id) {
           pending.set(call.id, {
             actions,
-            sequence: isActionSequenceTool(name),
+            sequence,
             reasoning: commentary.trim(),
             timestamp: event._mazebench_received_at || event.timestamp || null
           });

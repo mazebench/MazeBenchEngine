@@ -9,7 +9,8 @@
     "allowed_controls": [
       "start",
       "observe",
-      "action"
+      "action",
+      "action_sequence"
     ],
     "forbidden_task_fields": [
       "repo_root",

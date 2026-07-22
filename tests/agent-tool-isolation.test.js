@@ -8,6 +8,8 @@ const {
   buildMcpPrompt,
   claudeSandboxSettings,
   codexMcpConfigArgs,
+  distillClaudeEvents,
+  distillCodexEvents,
   distillKimiEvents,
   kimiMcpConfig,
   migrateSeedSessionObservation,
@@ -115,6 +117,26 @@ assert.doesNotMatch(toolsOnPrompt, /maze_scorecard/);
 assert.doesNotMatch(toolsOnPrompt, /AUTO-RUN TOOLS HARNESS IS ENABLED/);
 assert.match(localAgentSource, /isTruthy\(raw\.auto_run_tools, true\)/);
 assert.match(localAgentSource, /isTruthy\(raw\.auto_run_all_frames, true\)/);
+
+const jsonToolsPrompt = buildMcpPrompt({
+  ...toolsOnConfig,
+  mode: "json",
+  hideNames: false,
+  omniscient: true,
+  autoRunTools: true,
+  autoRunAllFrames: true
+});
+assert.match(jsonToolsPrompt, /JSON SOLVER WORKSPACE BRIDGE/);
+assert.match(jsonToolsPrompt, /observations\/current\.json/);
+assert.match(jsonToolsPrompt, /observations\/history\.jsonl/);
+assert.match(jsonToolsPrompt, /Do not copy or retype JSON/);
+assert.match(jsonToolsPrompt, /json\.loads\(Path\("observations\/current\.json"\)\.read_text\(\)\)/);
+assert.match(jsonToolsPrompt, /MUST create a real reusable[\s\S]*planner\.py or solver\.py/);
+assert.match(jsonToolsPrompt, /Inline-only JSON analysis does not satisfy this requirement/);
+assert.match(jsonToolsPrompt, /runpy\.run_path/);
+assert.match(jsonToolsPrompt, /observation_revision/);
+assert.match(jsonToolsPrompt, /maze_action_sequence\(route_file="route\.json"\)/);
+assert.match(jsonToolsPrompt, /observation is omniscient/);
 
 const autoRunToolsPrompt = buildMcpPrompt({
   ...toolsOnConfig,
@@ -377,9 +399,7 @@ assert.deepEqual(distillKimiEvents(kimiEvents).entries, [{
   room_changed: false,
   player_dead: false
 }]);
-const kimiSequenceEvents = [
-  { role: "assistant", content: "Run the saved route.", tool_calls: [{ id: "sequence-1", type: "function", function: { name: "mcp__mazebench__maze_action_sequence", arguments: JSON.stringify({ actions: ["up", "right", "down"] }) } }] },
-  { role: "tool", tool_call_id: "sequence-1", content: JSON.stringify({
+const savedRouteSequenceResult = {
     requested_count: 3,
     completed_count: 2,
     steps: [
@@ -388,10 +408,57 @@ const kimiSequenceEvents = [
       { action: "down", error: "budget exhausted", status: null }
     ],
     final_observation: { current_room: "level_HxJ", gem_count: 1 }
-  }) }
+};
+const kimiSequenceEvents = [
+  { role: "assistant", content: "Run the saved route.", tool_calls: [{ id: "sequence-1", type: "function", function: { name: "mcp__mazebench__maze_action_sequence", arguments: JSON.stringify({ route_file: "route.json" }) } }] },
+  { role: "tool", tool_call_id: "sequence-1", content: JSON.stringify(savedRouteSequenceResult) }
 ].map(JSON.stringify).join("\n");
 assert.deepEqual(
   distillKimiEvents(kimiSequenceEvents).entries.map((entry) => entry.action),
+  ["up", "right"]
+);
+const codexSequenceEvents = [
+  { type: "item.completed", item: { type: "reasoning", text: "Run the saved route." } },
+  {
+    type: "item.completed",
+    item: {
+      type: "mcp_tool_call",
+      name: "maze_action_sequence",
+      arguments: { route_file: "route.json" },
+      status: "completed",
+      result: { structuredContent: savedRouteSequenceResult }
+    }
+  }
+].map(JSON.stringify).join("\n");
+assert.deepEqual(
+  distillCodexEvents(codexSequenceEvents).entries.map((entry) => entry.action),
+  ["up", "right"]
+);
+const claudeSequenceEvents = [
+  {
+    type: "assistant",
+    message: {
+      content: [{
+        type: "tool_use",
+        id: "sequence-claude",
+        name: "mcp__mazebench__maze_action_sequence",
+        input: { route_file: "route.json" }
+      }]
+    }
+  },
+  {
+    type: "user",
+    message: {
+      content: [{
+        type: "tool_result",
+        tool_use_id: "sequence-claude",
+        content: JSON.stringify(savedRouteSequenceResult)
+      }]
+    }
+  }
+].map(JSON.stringify).join("\n");
+assert.deepEqual(
+  distillClaudeEvents(claudeSequenceEvents).entries.map((entry) => entry.action),
   ["up", "right"]
 );
 

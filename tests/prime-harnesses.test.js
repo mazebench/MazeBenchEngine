@@ -40,6 +40,14 @@ try {
     path.join(root, "environments", "mazebench", "mazebench_harnesses", "kimi.py"),
     "utf8"
   );
+  const codexHarnessSource = fs.readFileSync(
+    path.join(root, "environments", "mazebench", "mazebench_harnesses", "codex.py"),
+    "utf8"
+  );
+  const commonHarnessSource = fs.readFileSync(
+    path.join(root, "environments", "mazebench", "mazebench_harnesses", "common.py"),
+    "utf8"
+  );
   const mazeTasksetSource = fs.readFileSync(
     path.join(root, "environments", "mazebench", "mazebench", "mazebench.py"),
     "utf8"
@@ -160,6 +168,16 @@ try {
   assert.match(toolsTasksetSource, /A different action resets the repetition count/);
   assert.match(toolsTasksetSource, /next_required_tool.*game_observe/s);
   assert.match(toolsTasksetSource, /Call game_observe before another game_action/);
+  assert.match(toolsTasksetSource, /async def action_sequence/);
+  assert.match(toolsTasksetSource, /include_intermediate_observations/);
+  assert.match(toolsTasksetSource, /there is no sequence-length cap/);
+  assert.match(toolsTasksetSource, /`json_observation` field/);
+  assert.match(codexHarnessSource, /"start", "observe", "action", "action_sequence"/);
+  assert.match(codexHarnessSource, /enabled_tools=\["start","observe","action","action_sequence"\]/);
+  assert.match(commonHarnessSource, /observations\/current\.json/);
+  assert.match(commonHarnessSource, /observations\/history\.jsonl/);
+  assert.match(commonHarnessSource, /action-sequence route\.json --all-frames/);
+  assert.match(commonHarnessSource, /there is no route-length cap/);
   assert.match(kimiHarnessSource, /KIMI_MODEL_CAPABILITIES/);
   assert.match(kimiHarnessSource, /capabilities\.append\("image_in"\)/);
 
@@ -203,6 +221,13 @@ assert "never provide a final" in prompt
 assert "completion_allowed: false" in prompt
 os.environ["MAZEBENCH_PRIME_HARNESS"] = "codex"
 assert "Kimi Code compatibility rule" not in module._tool_prompt(prompt_task)
+json_prompt_task = SimpleNamespace(**{**prompt_task.__dict__, "observation_mode": "json"})
+json_prompt = module._tool_prompt(json_prompt_task)
+assert "game_action_sequence" in json_prompt
+assert "there is no sequence-length cap" in json_prompt
+assert "include_intermediate_observations: true" in json_prompt
+assert "json_observation" in json_prompt
+assert "final_observation" in json_prompt
 
 public_observation = module._public_observation(
     {
@@ -276,7 +301,7 @@ async def probe():
         auto_quit_window=100,
         game_won_gem_count=999,
         max_actions=None,
-        observation_mode="ascii",
+        observation_mode="json",
     )
     toolset._lock = asyncio.Lock()
     toolset._closed = False
@@ -295,6 +320,10 @@ async def probe():
         "game_won": False,
         "quit": False,
         "gem_count": 0,
+        "json_observation": {
+            "omniscient": True,
+            "objects": {"player": [[1, 2, 0]], "gem": [[2, 2, 0]]},
+        },
     }
     toolset._session = SimpleNamespace(request=lambda *args, **kwargs: None)
     toolset._write_snapshot = lambda: None
@@ -343,6 +372,28 @@ async def probe():
     resumed = await toolset.action("left")
     assert resumed["actions_used"] == 10
     assert "observe_required" not in resumed
+
+    route = [
+        "rotate camera left" if index % 2 == 0 else "rotate camera right"
+        for index in range(40)
+    ]
+    sequence = await toolset.action_sequence(
+        route,
+        include_intermediate_observations=True,
+    )
+    assert sequence["requested_count"] == 40
+    assert sequence["attempted_count"] == 40
+    assert sequence["completed_count"] == 40
+    assert sequence["stopped_early"] is False
+    assert sequence["stop_reason"] == "completed"
+    assert sequence["actions_used"] == 50
+    assert len(sequence["steps"]) == 40
+    assert len(sequence["intermediate_observations"]) == 39
+    assert sequence["intermediate_observations"][0]["observation"]["observation_mode"] == "json"
+    assert sequence["final_observation"]["json_observation"]["omniscient"] is True
+    assert "observation" not in sequence
+    assert sequence["next_required_tool"] == "game_action"
+    assert toolset._identical_action_streak == 0
 
 
 asyncio.run(probe())
