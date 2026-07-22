@@ -1367,6 +1367,7 @@ function createPageRenderer({
             <span><strong id="run-tools-duration">0 ms</strong><small>Total wall time</small></span>
             <span><strong id="run-tools-command-count">0</strong><small>Unique commands</small></span>
             <span><strong id="run-tools-file-count">0</strong><small>Files</small></span>
+            <span><strong id="run-tools-file-size">0 B</strong><small>Total file size</small></span>
           </div>
           <div class="run-tools__grid">
             <section class="run-tools__pane run-tools__files" aria-labelledby="run-tools-files-heading">
@@ -1493,7 +1494,7 @@ function createPageRenderer({
         </section>
         ${replayExportSection}
         <script>window.__AGENT_RUN__ = ${serializeForScript(clientRun)}; window.__AGENT_RUN_WORLD__ = ${serializeForScript(runWorld)};</script>
-        <script src="/agent-run.js?v=20260722-readable-chart-axis-1" defer></script>`
+        <script src="/agent-run.js?v=20260722-readable-chart-axis-2" defer></script>`
     });
   }
 
