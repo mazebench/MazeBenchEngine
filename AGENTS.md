@@ -13,6 +13,7 @@ Benchmark agents must never be able to inspect MazeBenchEngine or any other repo
 - Block access to source code, level definitions, world maps, solver code, tests, fixtures, hidden-state assets, scorecards, session files, run outputs, logs, prior-run artifacts, and sibling repositories. Do not allow indirect access through child processes, workers, clones, inherited file descriptors, symlinks, environment variables, or helper services.
 - Give each evaluated agent a fresh, empty, run-scoped workspace containing no copied or linked repository content. Keep any agent-created notes or artifacts there only when the benchmark explicitly permits them.
 - Launchers must fail closed before starting a run if the requested configuration, sandbox, tool set, working directory, mount set, or environment would expose repository or host files. Never silently launch with broader access.
+- Kimi Code versions are wildcard-compatible: do not reject a Kimi launch solely because its reported semantic version has changed. Treat Kimi's built-in tool names and permission behavior as stable across versions, while retaining the fixed built-in denylist, exact MazeBench MCP allowlist, isolated runtime configuration, and all other launch checks.
 - When changing agent launch code, preserve this boundary with automated tests that assert the evaluated agent cannot read repository files or invoke general shell/file tools. A run that crosses this boundary is invalid even if it never changes game state.
 
 ## Branch-first development

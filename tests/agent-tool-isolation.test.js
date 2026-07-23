@@ -299,8 +299,8 @@ for (const builtin of ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetc
 assert.equal(claudeToolsOn.argv.includes("--add-dir"), false);
 
 const kimiConfig = { ...baseConfig, model: "kimi", modelName: "kimi/k3", reasoning: "high" };
-assert.match(localAgentSource, /SUPPORTED_KIMI_CODE_VERSIONS = new Set\(\["0\.28\.1"\]\)/);
-assert.match(localAgentSource, /if \(config\.model === "kimi"\) verifyKimiCliCompatibility\(config\)/);
+assert.doesNotMatch(localAgentSource, /SUPPORTED_KIMI_CODE_VERSIONS/);
+assert.match(localAgentSource, /if \(config\.model === "kimi"\) verifyKimiCliAvailable\(config\)/);
 const kimiPrompt = buildMcpPrompt(kimiConfig);
 assert.match(kimiPrompt, /after five consecutive game_action[\s\S]*same normalized action/i);
 assert.match(kimiPrompt, /A different action resets the repetition[\s\S]*game_observe resets the[\s\S]*count/i);
@@ -363,8 +363,10 @@ for (const tool of [
   assert.match(safeKimiConfig, new RegExp(`decision = "allow"\\s+pattern = "${tool}"`));
 }
 for (const builtin of [
-  "Bash", "Read", "Write", "Grep", "Glob", "WebSearch", "FetchURL", "Agent", "Skill",
-  "CreateGoal", "GetGoal", "SetGoalBudget", "UpdateGoal"
+  "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CronCreate", "CronDelete", "CronList",
+  "CreateGoal", "Edit", "EnterPlanMode", "ExitPlanMode", "FetchURL", "Glob", "Grep", "GetGoal",
+  "Read", "ReadMediaFile", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop",
+  "TodoList", "UpdateGoal", "WebSearch", "Write"
 ]) {
   assert.match(safeKimiConfig, new RegExp(`decision = "deny"\\s+pattern = "${builtin}"`));
 }

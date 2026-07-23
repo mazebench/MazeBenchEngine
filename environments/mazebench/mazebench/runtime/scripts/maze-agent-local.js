@@ -69,7 +69,6 @@ const {
   preflightPythonSandbox
 } = require("./maze-python-sandbox");
 const DEFAULT_MAX_SWARM_WORKERS = 8;
-const SUPPORTED_KIMI_CODE_VERSIONS = new Set(["0.28.1"]);
 
 // Claude Code discovers MCP tools only when its default tool registry is
 // enabled. Keep that registry on, then explicitly remove every non-game tool
@@ -115,8 +114,8 @@ const CLAUDE_RESTRICTED_BUILTIN_TOOLS = [
 
 // Kimi Code evaluates deny policies before allow policies, so an overlapping
 // catch-all deny would also block MazeBench MCP. Deny every built-in exposed by
-// the certified CLI version instead, allow exact MCP tools, and reject any
-// unreviewed Kimi version before launch. mcp.json also pins the exact tool list.
+// Kimi instead and allow exact MCP tools. Kimi versions are wildcard-compatible
+// by repository policy; mcp.json still pins the exact game-tool list.
 const KIMI_RESTRICTED_BUILTIN_TOOLS = [
   "Agent",
   "AgentSwarm",
@@ -987,16 +986,15 @@ function sanitizeKimiConfig(source, config) {
   ].join("\n").replace(/\n{4,}/g, "\n\n\n").trim() + "\n";
 }
 
-function verifyKimiCliCompatibility(config) {
+function verifyKimiCliAvailable(config) {
   const probe = spawnSync(config.kimiBin, ["--version"], {
     encoding: "utf8",
     timeout: 5000
   });
   const version = String(probe.stdout || probe.stderr || "").trim().match(/\d+\.\d+\.\d+/)?.[0] || "";
-  if (probe.status !== 0 || !SUPPORTED_KIMI_CODE_VERSIONS.has(version)) {
+  if (probe.status !== 0 || !version) {
     throw new Error(
-      `Kimi Code ${version || "unknown"} has not passed MazeBench's built-in tool isolation review. ` +
-      `Supported version: ${[...SUPPORTED_KIMI_CODE_VERSIONS].join(", ")}.`
+      "Kimi Code is unavailable or did not report a semantic version from `kimi --version`."
     );
   }
   return version;
@@ -2780,7 +2778,7 @@ async function main() {
   if (config.model === "kimi" && (config.container || inContainer)) {
     throw new Error("Kimi Code local runs use the verified host permission boundary; pass container=false.");
   }
-  if (config.model === "kimi") verifyKimiCliCompatibility(config);
+  if (config.model === "kimi") verifyKimiCliAvailable(config);
 
   // Default: isolate the whole run inside a container. `container=false` (or the
   // in-container re-exec, flagged by MAZEBENCH_IN_CONTAINER) runs on the host.
