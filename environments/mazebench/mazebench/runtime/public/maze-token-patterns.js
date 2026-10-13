@@ -56,11 +56,28 @@
   const BLUE_SLOPE_PATTERN = /^S([rlud])M(\d+)$/;
   const YELLOW_SLOPE_PATTERN = /^S([rlud])c(\d+)$/;
   const BLACK_SLOPE_PATTERN = /^S([rlud])#$/;
-  const ORANGE_SLOPE_PATTERN = /^S([rlud])O$/;
+  const ORANGE_SLOPE_PATTERN = /^S([rlud])O(\d*)$/;
+  const ORANGE_DEVICE_PATTERN = /^([oO])(\d+)$/;
 
   function resolvePatternToken(token) {
     const value = String(token || "");
-    let match = BOX_PATTERN.exec(value);
+    let match = ORANGE_DEVICE_PATTERN.exec(value);
+
+    if (match) {
+      const type = match[1] === "o" ? "orange_button" : "orange_wall";
+      // Read older numbered maps as ordinary orange devices. The suffix
+      // carries no control or display meaning and is never offered in Build.
+      return {
+        token: value,
+        family: type,
+        type,
+        direction: null,
+        styleKey: null,
+        label: type === "orange_button" ? "Orange Button" : "Orange Wall"
+      };
+    }
+
+    match = BOX_PATTERN.exec(value);
 
     if (match) {
       return {

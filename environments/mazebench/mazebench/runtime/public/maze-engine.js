@@ -2679,33 +2679,15 @@
     }
 
     function areOrangeButtonsPressed(state) {
-      if (orangeButtonCells.length === 0 && orangeButtonActors.length === 0) {
-        return false;
-      }
-
-      for (let index = 0; index < orangeButtonCells.length; index += 1) {
-        const cell = orangeButtonCells[index];
-        const buttonLayers = terrainLayersForCell(state, cell).filter(
-          (layer) => layer.type === terrainTypes.orange_button
-        );
-
-        if (
-          buttonLayers.length === 0 ||
-          !buttonLayers.every((layer) => isOrangeButtonPressed(state, cell, layer))
-        ) {
-          return false;
-        }
-      }
-
-      for (let index = 0; index < orangeButtonActors.length; index += 1) {
-        const button = orangeButtonActors[index];
-
-        if (state.actorRemoved[button] || !isOrangeButtonActorPressed(state, button)) {
-          return false;
-        }
-      }
-
-      return true;
+      // Orange buttons share one room-wide circuit. Any occupied button
+      // lowers every orange wall; old orangeId metadata has no effect.
+      return orangeButtonCells.some((cell) =>
+        terrainLayersForCell(state, cell).some((layer) =>
+          layer.type === terrainTypes.orange_button && isOrangeButtonPressed(state, cell, layer)
+        )
+      ) || orangeButtonActors.some((button) =>
+        !state.actorRemoved[button] && isOrangeButtonActorPressed(state, button)
+      );
     }
 
     function orangeComponentRideActors(state, component, gateState, raisedOrangeTerrain) {

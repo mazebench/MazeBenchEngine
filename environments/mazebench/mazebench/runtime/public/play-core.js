@@ -2109,36 +2109,13 @@
     }
 
     function areOrangeButtonsPressed(actors = app.state.actors) {
-      let hasOrangeButton = false;
-      const buttonCells = getTerrainFeatureIndex().orangeButtons;
-
-      for (let i = 0; i < buttonCells.length; i += 1) {
-        const { x, y } = buttonCells[i];
-
-        hasOrangeButton = true;
-
-        if (
-          !terrainLayersOfType(x, y, "orange_button").every((layer) =>
+      return getTerrainFeatureIndex().orangeButtons.some(({ x, y }) =>
+          terrainLayersOfType(x, y, "orange_button").some((layer) =>
             isOrangeButtonPressed(x, y, actors, layer.elevation ?? 0)
           )
-        ) {
-          return false;
-        }
-      }
-
-      for (const button of actors) {
-        if (button.removed || button.type !== "orange_button") {
-          continue;
-        }
-
-        hasOrangeButton = true;
-
-        if (!isOrangeButtonActorPressed(button, actors)) {
-          return false;
-        }
-      }
-
-      return hasOrangeButton;
+      ) || actors.some((button) =>
+        !button.removed && button.type === "orange_button" && isOrangeButtonActorPressed(button, actors)
+      );
     }
 
     let liveSurfaceActorCodes = null;

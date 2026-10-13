@@ -356,8 +356,43 @@ function assertParity(context, app, engine, engineState) {
 
 // --- Main ---
 
+function assertGlobalOrangeHistoryRoundTrips() {
+  const terrain = Array.from({ length: 3 }, () => Array.from({ length: 6 }, () => ({ type: "floor" })));
+  terrain[0][3] = { type: "orange_wall", orangeId: "1" };
+  terrain[0][4] = { type: "orange_wall", orangeId: "2" };
+  const playData = {
+    gameId: "maze", levelId: "__global_orange__", width: 6, height: 3, terrain,
+    actors: [
+      { type: "player", x: 0, y: 1 },
+      { type: "orange_button", orangeId: "1", x: 1, y: 1 },
+      { type: "orange_button", orangeId: "7", x: 2, y: 1 },
+      { type: "orange_button", orangeId: "2", x: 3, y: 1 }
+    ]
+  };
+  const app = createRuntimeApp(JSON.parse(JSON.stringify(playData)));
+  app.render = () => {};
+  const engine = window.MazeEngine.createEngine(playData);
+  const state = engine.cloneState(engine.initialState);
+  const raised = () => Array.from(app.computeRaisedOrangeWallSet()).sort();
+  const allWalls = ["3,0", "4,0"];
+  assert.deepEqual(raised(), allWalls);
+  for (let step = 0; step < 3; step += 1) {
+    app.movement.performPlayerMove(1, 0, { animate: false, recordHistory: true });
+    engine.move(state, 1, 0);
+    assert.deepEqual(raised(), [], "each button lowers every rendered wall");
+    assert.deepEqual(raised(), engine.raisedOrangeWallKeys(state), "browser and solver ignore old ids equally");
+  }
+  app.movement.performPlayerMove(0, 1, { animate: false, recordHistory: true });
+  assert.deepEqual(raised(), allWalls, "leaving the last pressed button raises every wall");
+  app.undoMove({ instantRestore: true });
+  assert.deepEqual(raised(), [], "undo restores the pressed button and lowers every wall");
+  app.resetPositions();
+  assert.deepEqual(raised(), allWalls, "reset restores the released buttons");
+}
+
 const startedAtMs = performance.now();
 assertAttachedLiftHistoryRoundTrips();
+assertGlobalOrangeHistoryRoundTrips();
 const pickedLevels = pickLevels();
 
 assert.equal(

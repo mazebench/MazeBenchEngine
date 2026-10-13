@@ -86,12 +86,12 @@
     },
     "O": {
       "name": "Orange Wall",
-      "description": "A wall that drops and rises whenever an orange button is pressed and released.",
+      "description": "All orange walls in the room lower while any orange button is held. They rise when every button is released.",
       "demo": { "layout": ["p .+o . .+O ."], "moves": "RRRR" }
     },
     "o": {
       "name": "Orange Button",
-      "description": "A pressure button that toggles down every orange wall in the room. When multiple orange buttons reside in a level, all must be pressed at the same time for them to activate.",
+      "description": "A pressure button that lowers every orange wall in the room. Any one of several buttons can hold the walls down; release all buttons to raise them.",
       "demo": { "layout": ["p .+o . .+O ."], "moves": "RRRR" }
     },
     "pr": {

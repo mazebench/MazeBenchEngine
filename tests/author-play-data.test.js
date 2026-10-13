@@ -612,6 +612,21 @@ console.log("author play data tests passed");
   assert.equal(orangeSlope?.direction, "down");
 }
 
+{
+  const orangeAdapter = window.AuthorPlayData.createAdapter(authorData);
+  const playData = orangeAdapter.buildPlayData({
+    width: 5, height: 1, cells: [["P", ".+o12", ".+O2", ".+SrO3", ".+o"]]
+  });
+  const buttons = playData.actors.filter((actor) => actor.type === "orange_button");
+  assert.equal(buttons.length, 2, "old numbered and ordinary buttons both load");
+  assert.ok(buttons.every((actor) => actor.orangeId === undefined));
+  assert.equal(playData.terrain[0][2].layers.at(-1).type, "orange_wall");
+  assert.equal(playData.terrain[0][2].layers.at(-1).label, "Orange Wall");
+  assert.equal(playData.terrain[0][2].layers.at(-1).orangeId, undefined);
+  assert.equal(playData.terrain[0][3].layers.at(-1).type, "orange_ice_slope");
+  assert.equal(playData.terrain[0][3].layers.at(-1).orangeId, undefined);
+}
+
 // Owner rule (2026-07): lift/gate stacked directly on a movable carrier
 // converts to a stuck rider actor (attached_lift / attached_gate).
 {
