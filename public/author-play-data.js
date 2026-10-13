@@ -81,6 +81,7 @@
 
       const synthesized = {
         ...base,
+        ...(pattern.orangeId != null ? { orangeId: pattern.orangeId } : {}),
         direction: pattern.direction,
         groupId: pattern.groupId || null,
         label: pattern.label,
@@ -544,6 +545,7 @@
     function buildTerrainCell(type, tool = null, options = {}) {
       return {
         type,
+        ...(tool?.orangeId != null ? { orangeId: tool.orangeId } : {}),
         direction: tool?.direction || null,
         label: tool?.label || titleCaseName(type),
         imageUrl: tool?.imageUrl || null,
@@ -559,6 +561,7 @@
 
       return {
         type,
+        ...(tool?.orangeId != null ? { orangeId: tool.orangeId } : {}),
         label: tool?.label || titleCaseName(type),
         imageUrl: tool?.imageUrl || null,
         modelUrl: tool?.modelUrl || null,
@@ -919,6 +922,7 @@
 
             actors.push({
               type: toolType(tool),
+              ...(tool.orangeId != null ? { orangeId: tool.orangeId } : {}),
               groupId:
                 toolType(tool) === "weightless_box" || toolType(tool) === "clone"
                   ? tool.groupId || tool.token

@@ -1362,6 +1362,7 @@
 
     function cloneActorState(actor) {
       return {
+        ...(actor.orangeId != null ? { orangeId: actor.orangeId } : {}),
         type: actor.type,
         groupId: actor.groupId ?? null,
         label: actor.label,
@@ -1935,6 +1936,7 @@
         : [
             {
               type: cell.type,
+              orangeId: cell.orangeId,
               elevation: 0,
               raised: cell.raised === true
             }
@@ -1981,7 +1983,7 @@
       }
 
       if (layer.type === "orange_wall" || layer.type === "orange_ice_slope") {
-        return orangeWallState.has(posKey(x, y)) ? elevation + 1 : elevation;
+        return orangeWallState.has(orangeWallKey(x, y, layer.orangeId)) ? elevation + 1 : elevation;
       }
 
       return elevation;
@@ -2087,9 +2089,26 @@
       }
     }
 
+    function orangeChannelId(value) {
+      const id = String(value ?? "0");
+      return /^\d+$/.test(id) ? id.replace(/^0+(?=\d)/, "") : "0";
+    }
+
+    function orangeWallKey(x, y, orangeId) {
+      const id = orangeChannelId(orangeId);
+      return posKey(x, y) + (id === "0" ? "" : `:${id}`);
+    }
+
     function eachOrangeWall(callback) {
       getTerrainFeatureIndex().orangeWalls.forEach((cell) => {
-        callback(cell.x, cell.y, cell.key);
+        const seen = new Set();
+        terrainLayersAt(cell.x, cell.y).forEach((layer) => {
+          if (layer.type !== "orange_wall" && layer.type !== "orange_ice_slope") return;
+          const key = orangeWallKey(cell.x, cell.y, layer.orangeId);
+          if (seen.has(key)) return;
+          seen.add(key);
+          callback(cell.x, cell.y, key, layer);
+        });
       });
     }
 
@@ -2108,21 +2127,17 @@
       return isOrangeButtonPressed(button.x, button.y, actors, actorElevation(button));
     }
 
-    function areOrangeButtonsPressed(actors = app.state.actors) {
-      let hasOrangeButton = false;
+    function pressedOrangeChannels(actors = app.state.actors) {
+      const pressed = new Set();
       const buttonCells = getTerrainFeatureIndex().orangeButtons;
 
       for (let i = 0; i < buttonCells.length; i += 1) {
         const { x, y } = buttonCells[i];
 
-        hasOrangeButton = true;
-
-        if (
-          !terrainLayersOfType(x, y, "orange_button").every((layer) =>
-            isOrangeButtonPressed(x, y, actors, layer.elevation ?? 0)
-          )
-        ) {
-          return false;
+        for (const layer of terrainLayersOfType(x, y, "orange_button")) {
+          if (isOrangeButtonPressed(x, y, actors, layer.elevation ?? 0)) {
+            pressed.add(orangeChannelId(layer.orangeId));
+          }
         }
       }
 
@@ -2131,14 +2146,16 @@
           continue;
         }
 
-        hasOrangeButton = true;
-
-        if (!isOrangeButtonActorPressed(button, actors)) {
-          return false;
+        if (isOrangeButtonActorPressed(button, actors)) {
+          pressed.add(orangeChannelId(button.orangeId));
         }
       }
 
-      return hasOrangeButton;
+      return pressed;
+    }
+
+    function areOrangeButtonsPressed(actors = app.state.actors, orangeId = "0") {
+      return pressedOrangeChannels(actors).has(orangeChannelId(orangeId));
     }
 
     let liveSurfaceActorCodes = null;
@@ -2150,6 +2167,7 @@
         actor.x,
         actor.y,
         actorElevation(actor),
+        orangeChannelId(actor.orangeId),
         actor.removed ? 1 : 0
       ].join(",");
     }
@@ -2189,18 +2207,15 @@
 
     function computeRaisedOrangeWallSet(actors = app.state.actors) {
       const raised = new Set();
-
-      if (!app.isEditorRenderApp && areOrangeButtonsPressed(actors)) {
-        return raised;
-      }
+      const pressed = app.isEditorRenderApp ? new Set() : pressedOrangeChannels(actors);
 
       const resolvedState =
         actors === app.state.actors && app.orangeWallRaisedState instanceof Set
           ? app.orangeWallRaisedState
           : null;
 
-      eachOrangeWall((x, y, key) => {
-        if (!resolvedState || resolvedState.has(key)) {
+      eachOrangeWall((x, y, key, layer) => {
+        if (!pressed.has(orangeChannelId(layer.orangeId)) && (!resolvedState || resolvedState.has(key))) {
           raised.add(key);
         }
       });
@@ -2217,7 +2232,7 @@
     }
 
     function isRaisedOrangeWall(x, y, orangeWallState = app.liveRaisedOrangeWalls) {
-      return isOrangeWall(x, y) && orangeWallState.has(posKey(x, y));
+      return isOrangeWall(x, y) && orangeWallState.has(orangeWallKey(x, y, terrainAt(x, y).orangeId));
     }
 
     function eachPlayerLift(callback) {
@@ -2918,8 +2933,8 @@
       }
     }
 
-    function orangeWallLiftAt(x, y, now = performance.now()) {
-      const key = posKey(x, y);
+    function orangeWallLiftAt(x, y, now = performance.now(), orangeId = terrainAt(x, y).orangeId) {
+      const key = orangeWallKey(x, y, orangeId);
       const animation = app.orangeWallAnimations.get(key);
       const target = app.liveRaisedOrangeWalls.has(key) ? 1 : 0;
       const value = animation ? gateAnimationValue(animation, now) : target;
@@ -3516,6 +3531,8 @@
       isOrangeWall,
       isOrangeButton,
       eachOrangeWall,
+      orangeChannelId,
+      orangeWallKey,
       isOrangeButtonPressed,
       areOrangeButtonsPressed,
       computeRaisedOrangeWallSet,

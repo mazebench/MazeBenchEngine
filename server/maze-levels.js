@@ -245,6 +245,7 @@ function createMazeLevelService({
 
       const synthesized = {
         ...base,
+        ...(pattern.orangeId != null ? { orangeId: pattern.orangeId } : {}),
         direction: pattern.direction,
         groupId: pattern.groupId || null,
         initialRaised: false,
@@ -288,6 +289,7 @@ function createMazeLevelService({
   function buildTerrainCell(type, definition = null, options = {}) {
     return {
       type,
+      ...(definition?.orangeId != null ? { orangeId: definition.orangeId } : {}),
       direction: definition?.direction || null,
       label: definition?.label || titleCase(type),
       imageUrl: definition?.imageUrl || null,
@@ -379,6 +381,7 @@ function createMazeLevelService({
 
     return {
       type,
+      ...(definition?.orangeId != null ? { orangeId: definition.orangeId } : {}),
       label: definition?.label || titleCase(type),
       imageUrl: definition?.imageUrl || null,
       modelUrl: definition?.modelUrl || null,
@@ -603,6 +606,7 @@ function createMazeLevelService({
         cellStack.actors.forEach(({ definition, elevation }) => {
           actors.push({
             type: definitionType(definition),
+            ...(definition.orangeId != null ? { orangeId: definition.orangeId } : {}),
             groupId:
               definitionType(definition) === "weightless_box" ||
               definitionType(definition) === "clone"

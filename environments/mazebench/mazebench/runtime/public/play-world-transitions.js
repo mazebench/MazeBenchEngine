@@ -223,6 +223,7 @@
         ? [
             {
               type: cell.type,
+              orangeId: cell.orangeId,
               elevation: 0,
               raised: cell.raised === true
             }
@@ -263,7 +264,7 @@
 
           if (layer.type === "orange_ice_slope") {
             const isRaised = options.raisedOrangeWalls
-              ? options.raisedOrangeWalls.has(`${x},${y}`)
+              ? options.raisedOrangeWalls.has(app.orangeWallKey(x, y, layer.orangeId))
               : true;
 
             if (!isRaised) {
@@ -365,7 +366,7 @@
 
       if (layer?.type === "orange_wall" || layer?.type === "orange_ice_slope") {
         if (options.raisedOrangeWalls) {
-          return options.raisedOrangeWalls.has(`${x},${y}`) ? elevation + 1 : elevation;
+          return options.raisedOrangeWalls.has(app.orangeWallKey(x, y, layer.orangeId)) ? elevation + 1 : elevation;
         }
 
         return elevation + 1;
@@ -391,7 +392,7 @@
 
       if (layer?.type === "orange_ice_slope") {
         const isRaised = options.raisedOrangeWalls
-          ? options.raisedOrangeWalls.has(`${x},${y}`)
+          ? options.raisedOrangeWalls.has(app.orangeWallKey(x, y, layer.orangeId))
           : true;
 
         if (isRaised) {
@@ -431,7 +432,7 @@
 
       if (layer?.type === "orange_wall") {
         const isRaised = options.raisedOrangeWalls
-          ? options.raisedOrangeWalls.has(`${x},${y}`)
+          ? options.raisedOrangeWalls.has(app.orangeWallKey(x, y, layer.orangeId))
           : true;
 
         if (isRaised) {

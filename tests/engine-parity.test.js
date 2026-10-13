@@ -356,8 +356,43 @@ function assertParity(context, app, engine, engineState) {
 
 // --- Main ---
 
+function assertOrangeChannelHistoryRoundTrips() {
+  const terrain = Array.from({ length: 3 }, () => Array.from({ length: 6 }, () => ({ type: "floor" })));
+  terrain[0][3] = { type: "orange_wall", orangeId: "1" };
+  terrain[0][4] = { type: "orange_wall", orangeId: "2" };
+  const playData = {
+    gameId: "maze", levelId: "__orange_channels__", width: 6, height: 3, terrain,
+    actors: [
+      { type: "player", x: 0, y: 1 },
+      { type: "orange_button", orangeId: "1", x: 1, y: 1 },
+      { type: "orange_button", orangeId: "1", x: 2, y: 1 },
+      { type: "orange_button", orangeId: "2", x: 3, y: 1 }
+    ]
+  };
+  const app = createRuntimeApp(JSON.parse(JSON.stringify(playData)));
+  app.render = () => {};
+  const engine = window.MazeEngine.createEngine(playData);
+  const state = engine.cloneState(engine.initialState);
+  const context = { fileName: "orange-channels", moveNumber: 0, history: [] };
+  const raised = () => Array.from(app.computeRaisedOrangeWallSet()).sort();
+  assert.deepEqual(raised(), ["3,0:1", "4,0:2"]);
+  for (let step = 0; step < 3; step += 1) {
+    app.movement.performPlayerMove(1, 0, { animate: false, recordHistory: true });
+    engine.move(state, 1, 0);
+    assert.deepEqual(raised(), engine.raisedOrangeWallKeys(state).sort(), "browser wall state matches the solver per channel");
+    assertParity(context, app, engine, state);
+  }
+  assert.deepEqual(raised(), ["3,0:1"]);
+  app.undoMove({ instantRestore: true });
+  assert.deepEqual(raised(), ["4,0:2"], "undo restores which channel is pressed");
+  app.resetPositions();
+  assert.deepEqual(raised(), ["3,0:1", "4,0:2"], "reset restores both unpressed channels");
+  assert.deepEqual(app.cloneActorStateList().slice(1).map((actor) => actor.orangeId), ["1", "1", "2"], "snapshots retain orange ids");
+}
+
 const startedAtMs = performance.now();
 assertAttachedLiftHistoryRoundTrips();
+assertOrangeChannelHistoryRoundTrips();
 const pickedLevels = pickLevels();
 
 assert.equal(

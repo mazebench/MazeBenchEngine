@@ -56,11 +56,26 @@
   const BLUE_SLOPE_PATTERN = /^S([rlud])M(\d+)$/;
   const YELLOW_SLOPE_PATTERN = /^S([rlud])c(\d+)$/;
   const BLACK_SLOPE_PATTERN = /^S([rlud])#$/;
-  const ORANGE_SLOPE_PATTERN = /^S([rlud])O$/;
+  const ORANGE_SLOPE_PATTERN = /^S([rlud])O(\d*)$/;
+  const ORANGE_DEVICE_PATTERN = /^([oO])(\d+)$/;
 
   function resolvePatternToken(token) {
     const value = String(token || "");
-    let match = BOX_PATTERN.exec(value);
+    let match = ORANGE_DEVICE_PATTERN.exec(value);
+
+    if (match) {
+      const type = match[1] === "o" ? "orange_button" : "orange_wall";
+      const orangeId = match[2].replace(/^0+(?=\d)/, "");
+      return {
+        token: value,
+        family: type,
+        type,
+        orangeId,
+        label: (type === "orange_button" ? "Orange Button " : "Orange Wall ") + orangeId
+      };
+    }
+
+    match = BOX_PATTERN.exec(value);
 
     if (match) {
       return {
@@ -147,9 +162,10 @@
         token: value,
         family: "orange_ice_slope",
         type: "orange_ice_slope",
+        orangeId: (match[2] || "0").replace(/^0+(?=\d)/, ""),
         direction,
         styleKey: "orange",
-        label: "Orange Ice Slope " + DIRECTION_LABELS[direction]
+        label: "Orange Ice Slope " + (match[2] || "0") + " " + DIRECTION_LABELS[direction]
       };
     }
 

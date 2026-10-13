@@ -612,6 +612,18 @@ console.log("author play data tests passed");
   assert.equal(orangeSlope?.direction, "down");
 }
 
+{
+  const orangeAdapter = window.AuthorPlayData.createAdapter(authorData);
+  const cells = [["P", ".+o12", ".+O12", ".+O2", ".+SrO12", ".+o0"]];
+  const playData = orangeAdapter.buildPlayData({ width: 6, height: 1, cells });
+  assert.deepEqual(playData.actors.filter((actor) => actor.type === "orange_button").map((actor) => actor.orangeId), ["12", "0"]);
+  assert.equal(playData.terrain[0][2].layers.at(-1).orangeId, "12");
+  assert.equal(playData.terrain[0][3].layers.at(-1).orangeId, "2");
+  assert.equal(playData.terrain[0][4].layers.at(-1).orangeId, "12");
+  assert.equal(orangeAdapter.normalizeAuthoringCellValue(".+O12+o2"), ".+O12+o2");
+  assert.equal(window.MazeTokenPatterns.transformDirectionalToken("SrO12", "rotate-left"), "SuO12");
+}
+
 // Owner rule (2026-07): lift/gate stacked directly on a movable carrier
 // converts to a stuck rider actor (attached_lift / attached_gate).
 {
