@@ -347,16 +347,14 @@ assert.deepEqual(
 );
 
 game.parser.objects.orange_wall = { token: "O", label: "Orange Wall" };
-fs.writeFileSync(path.join(levelDir, "test-empty.txt"), ".+o12 .+O12 .+O2 .+SrO12 .+o0 .+O0\n", "utf8");
-const numberedOrangeState = service.getLevelState(game, game.worldMap.byPosition.get("level_AxA"));
-assert.deepEqual(numberedOrangeState.actors.map((actor) => [actor.type, actor.orangeId]), [
-  ["orange_button", "12"], ["orange_button", "0"]
-]);
-assert.equal(numberedOrangeState.terrain[0][1].layers.at(-1).orangeId, "12");
-assert.equal(numberedOrangeState.terrain[0][2].layers.at(-1).orangeId, "2");
-assert.equal(numberedOrangeState.terrain[0][3].layers.at(-1).orangeId, "12");
-assert.equal(numberedOrangeState.terrain[0][3].layers.at(-1).type, "orange_ice_slope");
-assert.equal(numberedOrangeState.terrain[0][5].layers.at(-1).orangeId, "0");
+fs.writeFileSync(path.join(levelDir, "test-empty.txt"), ".+o12 .+O2 .+SrO3 .+o .+O\n", "utf8");
+const legacyOrangeState = service.getLevelState(game, game.worldMap.byPosition.get("level_AxA"));
+assert.equal(legacyOrangeState.actors.filter((actor) => actor.type === "orange_button").length, 2);
+assert.ok(legacyOrangeState.actors.every((actor) => actor.orangeId === undefined));
+assert.equal(legacyOrangeState.terrain[0][1].layers.at(-1).type, "orange_wall");
+assert.equal(legacyOrangeState.terrain[0][1].layers.at(-1).label, "Orange Wall");
+assert.equal(legacyOrangeState.terrain[0][1].layers.at(-1).orangeId, undefined);
+assert.equal(legacyOrangeState.terrain[0][2].layers.at(-1).type, "orange_ice_slope");
 
 fs.rmSync(tempRoot, { recursive: true, force: true });
 

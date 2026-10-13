@@ -10,12 +10,9 @@ Examples:
 - `.+#+#+#+#+#` is floor with five walls stacked above it.
 - `.+#+++#+#` is floor, one wall, two empty layers, then two walls.
 
-Orange devices use a shared numeric channel id: `o1` is Orange Button 1,
-`O1` is Orange Wall 1, and `SrO1` is a right-facing orange ice slope on
-channel 1. Any pressed button lowers the orange terrain with the same id;
-it rises when all buttons on that channel are released, subject to the
-existing clearance rules. Channels are local to a room. Several buttons
-and several walls may share an id, while different ids operate independently.
-Unnumbered `o`, `O`, and `SrO` use channel 0 (equivalent to `o0`, `O0`,
-and `SrO0`). Button occupancy still requires matching position and elevation.
-The Build toolbox provides Orange Button N and Orange Wall N id selectors.
+Orange buttons (`o`) control all orange walls (`O`) and orange ice slopes
+in the same room. Any pressed button lowers them; they rise when every
+button is released, subject to the existing clearance rules. Several
+buttons may be used, and no numbering or matching is required. Older
+numbered tokens such as `o1`, `O2`, and `SrO3` remain readable as ordinary
+orange devices; their numeric suffixes and any `orangeId` metadata are ignored.

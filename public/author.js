@@ -267,9 +267,6 @@
   const clonePromptToken = "__clone_prompt__";
   const blueSlopePromptToken = "__blue_slope_prompt__";
   const yellowSlopePromptToken = "__yellow_slope_prompt__";
-  const orangeWallPromptToken = "__orange_wall_prompt__";
-  const orangeButtonPromptToken = "__orange_button_prompt__";
-  const orangeSlopePromptToken = "__orange_slope_prompt__";
   const tokenPatternHelpers = window.MazeTokenPatterns || null;
 
   function buildPromptPaletteTool(token, groupName, fallbackLabel, prompt) {
@@ -308,21 +305,6 @@
       message:
         "Choose the box id this slope belongs to. It moves with box group N and faces the camera when placed."
     }),
-    buildPromptPaletteTool(orangeWallPromptToken, "orange_wall", "Orange Wall N", {
-      defaultId: 1,
-      makeToken: (id) => "O" + id,
-      message: "Choose the orange channel id. Any pressed button with this id lowers these walls; all released buttons let them rise."
-    }),
-    buildPromptPaletteTool(orangeButtonPromptToken, "orange_button", "Orange Button N", {
-      defaultId: 1,
-      makeToken: (id) => "o" + id,
-      message: "Choose the orange channel id. This button lowers only walls with the same id. Buttons sharing an id work independently."
-    }),
-    buildPromptPaletteTool(orangeSlopePromptToken, "ice_slope", "Orange Ice Slope N", {
-      defaultId: 1,
-      makeToken: (id) => "SrO" + id,
-      message: "Choose the orange channel id. Any pressed button with this id lowers this slope."
-    }),
     buildPromptPaletteTool(yellowSlopePromptToken, "ice_slope", "Clone Ice Slope N", {
       defaultId: 0,
       makeToken: (id) =>
@@ -338,9 +320,6 @@
   }
 
   function promptToolPreviewSpec(token) {
-    if (token === orangeWallPromptToken) return { token: "O0", orangeId: "N" };
-    if (token === orangeButtonPromptToken) return { token: "o0", orangeId: "N" };
-    if (token === orangeSlopePromptToken) return { token: "SrO0", orangeId: "N" };
     if (token === boxPromptToken) {
       return { groupId: "MN", token: "M0" };
     }
@@ -405,10 +384,6 @@
     }
     if (suffix === "O") {
       return "Orange Ice Slope";
-    }
-    const orangeMatch = /^O(\d+)$/.exec(suffix);
-    if (orangeMatch) {
-      return "Orange Ice Slope " + orangeMatch[1];
     }
     const boxMatch = /^M(\d+)$/.exec(suffix);
     if (boxMatch) {
@@ -2785,7 +2760,6 @@
     return (
       slopeTokenStyleSuffix(tool?.token) !== null ||
       tool?.token === blueSlopePromptToken ||
-      tool?.token === orangeSlopePromptToken ||
       tool?.token === yellowSlopePromptToken
     );
   }
@@ -2992,9 +2966,6 @@
   // demand. Until that capture finishes, show the matching generic N portrait
   // so resolved tools never flash back to the old flat canvas illustration.
   function promptPreviewTokenForPatternToken(token) {
-    if (/^O\d+$/.test(token)) return orangeWallPromptToken;
-    if (/^o\d+$/.test(token)) return orangeButtonPromptToken;
-    if (/^S[rlud]O\d+$/.test(token)) return orangeSlopePromptToken;
     if (/^M\d+$/.test(token)) return boxPromptToken;
     if (/^c\d+$/.test(token)) return clonePromptToken;
     if (/^S[rlud]M\d+$/.test(token)) return blueSlopePromptToken;
@@ -4330,7 +4301,7 @@
     const previewCellToken = ownedSlopePreview?.actorToken || previewToken;
 
     cells[0][0] =
-      kind === "orange_button" || tool.token === orangeButtonPromptToken
+      kind === "orange_button"
         ? appendCellToken(authorData.defaultFloorToken, previewCellToken)
         : previewCellToken;
 
@@ -4364,18 +4335,10 @@
       });
     } else if (promptPreview) {
       playData.actors.forEach((actor) => {
-        if (actor.type === "orange_button") actor.orangeId = promptPreview.orangeId;
         if (actor.type === "weightless_box" || actor.type === "clone") {
           actor.groupId = promptPreview.groupId;
         }
       });
-      if (promptPreview.orangeId) {
-        playData.terrain.flat().forEach((cell) => {
-          (cell.layers || []).forEach((layer) => {
-            if (layer.type.startsWith("orange_")) layer.orangeId = promptPreview.orangeId;
-          });
-        });
-      }
     }
 
     return {

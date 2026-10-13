@@ -134,13 +134,6 @@
     return terrainTypes[type] ?? terrainTypes.empty;
   }
 
-  // Unnumbered orange devices belong to channel 0. Keep ids as strings so
-  // open-ended authored ids do not lose precision when parsed as numbers.
-  function orangeChannelId(value) {
-    const id = String(value ?? "0");
-    return /^\d+$/.test(id) ? id.replace(/^0+(?=\d)/, "") : "0";
-  }
-
   function normalizedTerrainLayers(cell, fallbackType = terrainTypes.empty) {
     const sourceLayers = Array.isArray(cell?.layers) ? cell.layers : null;
     const layers =
@@ -151,7 +144,6 @@
           : [
               {
                 type: cell?.type || "empty",
-                orangeId: cell?.orangeId,
                 elevation: 0,
                 raised: cell?.raised === true
               }
@@ -163,7 +155,6 @@
 
         return {
           type: normalizedTerrainType(layer?.type),
-          orangeId: orangeChannelId(layer?.orangeId),
           elevation: Math.max(0, elevation),
           direction: typeof layer?.direction === "string" ? layer.direction : null,
           raised: layer?.raised === true
@@ -335,48 +326,46 @@
       }
     }
 
+    const orangeTerrainCellMask = new Uint8Array(cellCount);
     const orangeTerrainComponents = [];
-    const orangeCellsByChannel = new Map();
 
     orangeTerrainCells.forEach((cell) => {
-      terrainLayers[cell].filter((layer) => isOrangeTerrainLayerType(layer.type)).forEach((layer) => {
-        if (!orangeCellsByChannel.has(layer.orangeId)) {
-          orangeCellsByChannel.set(layer.orangeId, new Set());
-        }
-        orangeCellsByChannel.get(layer.orangeId).add(cell);
-      });
+      orangeTerrainCellMask[cell] = 1;
     });
 
-    for (const [orangeId, channelCells] of orangeCellsByChannel) {
-      const remaining = new Set(channelCells);
-      while (remaining.size > 0) {
-        const startCell = remaining.values().next().value;
-        const component = [];
-        const queue = [startCell];
-        remaining.delete(startCell);
+    for (const startCell of orangeTerrainCells) {
+      if (orangeTerrainCellMask[startCell] !== 1) {
+        continue;
+      }
 
-        for (let head = 0; head < queue.length; head += 1) {
-          const cell = queue[head];
-          const x = cell % width;
-          const y = Math.floor(cell / width);
-          component.push(cell);
+      const component = [];
+      const queue = [startCell];
+      orangeTerrainCellMask[startCell] = 2;
 
-          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-            const nextX = x + dx;
-            const nextY = y + dy;
+      for (let head = 0; head < queue.length; head += 1) {
+        const cell = queue[head];
+        const x = cell % width;
+        const y = Math.floor(cell / width);
+        component.push(cell);
 
-            if (!isInsideBoard(nextX, nextY)) continue;
-            const nextCell = cellIndex(nextX, nextY);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nextX = x + dx;
+          const nextY = y + dy;
 
-            if (remaining.has(nextCell)) {
-              remaining.delete(nextCell);
-              queue.push(nextCell);
-            }
+          if (!isInsideBoard(nextX, nextY)) {
+            continue;
+          }
+
+          const nextCell = cellIndex(nextX, nextY);
+
+          if (orangeTerrainCellMask[nextCell] === 1) {
+            orangeTerrainCellMask[nextCell] = 2;
+            queue.push(nextCell);
           }
         }
-
-        orangeTerrainComponents.push({ cells: component, orangeId });
       }
+
+      orangeTerrainComponents.push(component);
     }
 
     initializeWeightlessRelativeElevations();
@@ -1485,13 +1474,9 @@
       return type === terrainTypes.orange_wall || type === terrainTypes.orange_ice_slope;
     }
 
-    function orangeTerrainKey(cell, orangeId = "0") {
-      return orangeId === "0" ? cell : `${cell}:${orangeId}`;
-    }
-
-    function isOrangeTerrainRaisedAtCell(cell, orangeState, layer = null) {
+    function isOrangeTerrainRaisedAtCell(cell, orangeState) {
       if (orangeState instanceof Set) {
-        return orangeState.has(orangeTerrainKey(cell, layer?.orangeId || "0"));
+        return orangeState.has(cell);
       }
 
       if (ArrayBuffer.isView(orangeState)) {
@@ -1606,13 +1591,17 @@
       const gateState = computeRaisedPlayerGateSet(state);
       const orangeState = computeRaisedOrangeTerrainCells(state, gateState);
 
+      if (orangeState.has(cell)) {
+        return false;
+      }
+
       const layer = terrainLayersForCell(state, cell).find(
         (candidate) =>
           candidate.type === terrainTypes.orange_wall &&
           (candidate.elevation ?? 0) === elevation
       );
 
-      if (!layer || isOrangeTerrainRaisedAtCell(cell, orangeState, layer)) {
+      if (!layer) {
         return false;
       }
 
@@ -1645,7 +1634,7 @@
       }
 
       if (layer.type === terrainTypes.orange_ice_slope) {
-        return isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed, layer)
+        return isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed)
           ? layer.elevation + 1
           : layer.elevation;
       }
@@ -1663,7 +1652,7 @@
       }
 
       if (layer.type === terrainTypes.orange_wall) {
-        return isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed, layer)
+        return isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed)
           ? layer.elevation + 1
           : layer.elevation;
       }
@@ -1891,7 +1880,7 @@
             return;
           }
 
-          if (isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed, layer)) {
+          if (isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed)) {
             layers.push(layer);
             return;
           }
@@ -2689,29 +2678,20 @@
       return false;
     }
 
-    function pressedOrangeChannels(state) {
-      const pressed = new Set();
-      for (const cell of orangeButtonCells) {
-        for (const layer of terrainLayersForCell(state, cell)) {
-          if (layer.type === terrainTypes.orange_button && isOrangeButtonPressed(state, cell, layer)) {
-            pressed.add(layer.orangeId);
-          }
-        }
-      }
-      for (const button of orangeButtonActors) {
-        if (!state.actorRemoved[button] && isOrangeButtonActorPressed(state, button)) {
-          pressed.add(orangeChannelId(actorSource[button]?.orangeId));
-        }
-      }
-      return pressed;
-    }
-
-    function areOrangeButtonsPressed(state, orangeId = "0") {
-      return pressedOrangeChannels(state).has(orangeChannelId(orangeId));
+    function areOrangeButtonsPressed(state) {
+      // Orange buttons share one room-wide circuit. Any occupied button
+      // lowers every orange wall; old orangeId metadata has no effect.
+      return orangeButtonCells.some((cell) =>
+        terrainLayersForCell(state, cell).some((layer) =>
+          layer.type === terrainTypes.orange_button && isOrangeButtonPressed(state, cell, layer)
+        )
+      ) || orangeButtonActors.some((button) =>
+        !state.actorRemoved[button] && isOrangeButtonActorPressed(state, button)
+      );
     }
 
     function orangeComponentRideActors(state, component, gateState, raisedOrangeTerrain) {
-      const componentCells = new Set(component.cells);
+      const componentCells = new Set(component);
       const riders = new Set();
 
       function addActorAndRigidGroup(actor) {
@@ -2759,7 +2739,6 @@
         const ridesLoweredSurface = terrainLayersForCell(state, cell).some(
           (layer) =>
             isOrangeTerrainLayerType(layer.type) &&
-            layer.orangeId === component.orangeId &&
             terrainLayerSurfaceHeight(state, cell, layer, gateState, true) === elevation
         );
 
@@ -2880,24 +2859,20 @@
     function computeRaisedOrangeTerrainCells(
       state,
       gateState = computeRaisedPlayerGateSet(state),
-      buttonsPressed = pressedOrangeChannels(state)
+      buttonsPressed = areOrangeButtonsPressed(state)
     ) {
       const raised = new Set();
 
-      if (buttonsPressed === true) {
+      if (buttonsPressed) {
         return raised;
       }
 
       for (const component of orangeTerrainComponents) {
-        if (buttonsPressed instanceof Set && buttonsPressed.has(component.orangeId)) {
-          continue;
-        }
         const candidateRaised = new Set(raised);
-        const keys = component.cells.map((cell) => orangeTerrainKey(cell, component.orangeId));
-        keys.forEach((key) => candidateRaised.add(key));
+        component.forEach((cell) => candidateRaised.add(cell));
 
         if (orangeComponentRideActors(state, component, gateState, candidateRaised) !== null) {
-          keys.forEach((key) => raised.add(key));
+          component.forEach((cell) => raised.add(cell));
         }
       }
 
@@ -2907,20 +2882,15 @@
     function raisedOrangeWallKeys(state) {
       const raised = computeRaisedOrangeTerrainCells(state);
 
-      const keys = [];
-      for (const [orangeId, cells] of orangeCellsByChannel) {
-        for (const cell of cells) {
-          if (raised.has(orangeTerrainKey(cell, orangeId))) {
-            keys.push(`${cell % width},${Math.floor(cell / width)}` + (orangeId === "0" ? "" : `:${orangeId}`));
-          }
-        }
-      }
-      return keys;
+      return orangeTerrainCells
+        .filter((cell) => raised.has(cell))
+        .map((cell) => `${cell % width},${Math.floor(cell / width)}`);
     }
 
     function isRaisedOrangeWall(x, y, orangeButtonsPressed) {
-      return terrainLayersOfType(x, y, terrainTypes.orange_wall).some(
-        (layer) => isOrangeTerrainRaisedAtCell(cellIndex(x, y), orangeButtonsPressed, layer)
+      return (
+        isOrangeWall(x, y) &&
+        isOrangeTerrainRaisedAtCell(cellIndex(x, y), orangeButtonsPressed)
       );
     }
 
@@ -3090,7 +3060,7 @@
       }
 
       if (layer.type === terrainTypes.orange_ice_slope) {
-        if (isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed, layer)) {
+        if (isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed)) {
           return elevation === layerElevation || elevation === layerElevation + 1;
         }
 
@@ -3127,7 +3097,7 @@
       }
 
       if (layer.type === terrainTypes.orange_wall) {
-        if (isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed, layer)) {
+        if (isOrangeTerrainRaisedAtCell(cell, orangeButtonsPressed)) {
           return layerElevation === elevation;
         }
 
@@ -12059,7 +12029,6 @@
 
   window.MazeEngine = {
     createEngine,
-    orangeChannelId,
     terrainTypes
   };
 })();

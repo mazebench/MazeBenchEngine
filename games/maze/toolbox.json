@@ -85,13 +85,13 @@
       "demo": { "layout": [".+#+p .+# .+L . . ."], "moves": "RRRRLLL" }
     },
     "O": {
-      "name": "Orange Wall 0",
-      "description": "Channel 0 wall. Any pressed Orange Button 0 lowers it; it rises when all channel 0 buttons are released. Use Orange Wall N to choose another id.",
+      "name": "Orange Wall",
+      "description": "All orange walls in the room lower while any orange button is held. They rise when every button is released.",
       "demo": { "layout": ["p .+o . .+O ."], "moves": "RRRR" }
     },
     "o": {
-      "name": "Orange Button 0",
-      "description": "Channel 0 pressure button. Any pressed button lowers walls with the same id. Use Orange Button N to choose another id.",
+      "name": "Orange Button",
+      "description": "A pressure button that lowers every orange wall in the room. Any one of several buttons can hold the walls down; release all buttons to raise them.",
       "demo": { "layout": ["p .+o . .+O ."], "moves": "RRRR" }
     },
     "pr": {
@@ -128,18 +128,6 @@
       "name": "Box 4",
       "description": "A weightless box that can be pushed by anything. All boxes with the same id are connected and move together. They cannot be pushed out of a room.",
       "demo": { "layout": [". . . . $ . . + + +", "p . $ $ $ . . + + +", ". . . . $ . . + + +"], "moves": "RRRRRR" }
-    },
-    "__orange_wall_prompt__": {
-      "name": "Orange Wall N",
-      "description": "Choose an id, then paint walls controlled by orange buttons with that id. Any matching button lowers the walls."
-    },
-    "__orange_button_prompt__": {
-      "name": "Orange Button N",
-      "description": "Choose an id, then paint buttons controlling walls with that id. Any matching button can hold the walls down."
-    },
-    "__orange_slope_prompt__": {
-      "name": "Orange Ice Slope N",
-      "description": "Choose an orange channel id for this slope. Any matching button lowers it."
     },
     "__box_prompt__": {
       "name": "Box N",

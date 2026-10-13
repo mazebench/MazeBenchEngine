@@ -65,13 +65,15 @@
 
     if (match) {
       const type = match[1] === "o" ? "orange_button" : "orange_wall";
-      const orangeId = match[2].replace(/^0+(?=\d)/, "");
+      // Read older numbered maps as ordinary orange devices. The suffix
+      // carries no control or display meaning and is never offered in Build.
       return {
         token: value,
         family: type,
         type,
-        orangeId,
-        label: (type === "orange_button" ? "Orange Button " : "Orange Wall ") + orangeId
+        direction: null,
+        styleKey: null,
+        label: type === "orange_button" ? "Orange Button" : "Orange Wall"
       };
     }
 
@@ -162,10 +164,9 @@
         token: value,
         family: "orange_ice_slope",
         type: "orange_ice_slope",
-        orangeId: (match[2] || "0").replace(/^0+(?=\d)/, ""),
         direction,
         styleKey: "orange",
-        label: "Orange Ice Slope " + (match[2] || "0") + " " + DIRECTION_LABELS[direction]
+        label: "Orange Ice Slope " + DIRECTION_LABELS[direction]
       };
     }
 

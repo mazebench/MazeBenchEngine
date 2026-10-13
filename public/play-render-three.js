@@ -1750,7 +1750,7 @@
           context.textAlign = "center";
           context.textBaseline = "middle";
           context.fillStyle = "rgba(0, 0, 0, 0.9)";
-          context.fillText(normalizedLabel, size / 2, size / 2 + 3, size - 12);
+          context.fillText(normalizedLabel, size / 2, size / 2 + 3);
         }
 
         const texture = new THREE.CanvasTexture(canvas);
@@ -4890,7 +4890,6 @@
         : [
             {
               type: cell.type,
-              orangeId: cell.orangeId,
               elevation: 0,
               modelUrl: cell.modelUrl || null,
               raised: cell.raised === true
@@ -5713,7 +5712,7 @@
     }
 
     function renderOrangeWallLiftValue(x, y, layer, now = performance.now()) {
-      const key = app.orangeWallKey(x, y, layer.orangeId);
+      const key = `${x},${y}`;
       const surfaceLiftValue =
         activeRenderContext?.surfaceLiftValues?.get(`${layer.type}:${key}`) ??
         activeRenderContext?.surfaceLiftValues?.get(`orange_wall:${key}`);
@@ -5727,7 +5726,7 @@
       }
 
       return renderState() === app.state
-        ? app.orangeWallLiftAt(x, y, now, layer.orangeId)
+        ? app.orangeWallLiftAt(x, y, now)
         : layer.raised === true ? 1 : 0;
     }
 
@@ -5963,18 +5962,7 @@
       return unit * 0.21;
     }
 
-    function addOrangeChannelLabel(center, topY, orangeId, opacity, scale = 1) {
-      const labelMaterial = groupLabelMaterial(String(orangeId ?? "0"), opacity);
-      if (!labelMaterial) return;
-      const label = new THREE.Mesh(groupLabelPlaneGeometry("top"), labelMaterial);
-      label.position.set(center.x, topY + Math.max(0.9, unit * 0.014), center.z);
-      label.scale.setScalar(scale);
-      label.castShadow = false;
-      label.receiveShadow = false;
-      scene.add(label);
-    }
-
-    function addOrangeButtonMesh(center, baseY, opacity, edgeOpacity, editorPick = null, orangeId = "0") {
+    function addOrangeButtonMesh(center, baseY, opacity, edgeOpacity, editorPick = null) {
       const buttonHeight = orangeButtonHeight();
 
       addOutlinedMesh(
@@ -5994,7 +5982,6 @@
           editorPick
         }
       );
-      addOrangeChannelLabel(center, baseY + buttonHeight, orangeId, opacity, 0.55);
     }
 
     function orangeButtonTerrainEditorPick(x, y, elevation, baseY) {
@@ -6038,16 +6025,8 @@
                 baseY,
                 visibility,
                 visibility,
-                orangeButtonTerrainEditorPick(x, y, elevation, baseY),
-                layer.orangeId
+                orangeButtonTerrainEditorPick(x, y, elevation, baseY)
               );
-            });
-
-          renderTerrainLayersAt(x, y, state)
-            .filter((layer) => layer.type === "orange_wall")
-            .forEach((layer) => {
-              const topY = ((layer.elevation ?? 0) + renderOrangeWallLiftValue(x, y, layer, now)) * elevationUnit + actorVisualLift;
-              addOrangeChannelLabel(cellCenter(x, y), topY, layer.orangeId, visibility);
             });
         }
       }
@@ -8506,7 +8485,7 @@
           sourceLayer
         };
 
-        addOrangeButtonMesh(center, baseY, opacity, fade * visibility, editorPick, actor.orangeId);
+        addOrangeButtonMesh(center, baseY, opacity, fade * visibility, editorPick);
         return;
       }
 
@@ -8825,7 +8804,7 @@
       if (layer.type === "orange_wall" || layer.type === "orange_ice_slope") {
         const raisedOrangeWalls = transitionSet(state?.raisedOrangeWalls);
         return raisedOrangeWalls
-          ? raisedOrangeWalls.has(app.orangeWallKey(x, y, layer.orangeId)) ? 1 : 0
+          ? raisedOrangeWalls.has(key) ? 1 : 0
           : layer.raised === true ? 1 : 0;
       }
 
@@ -8861,10 +8840,7 @@
               ? transitionLiftLayerValue(targetState, targetLayer, x, y)
               : fromLift;
 
-            const key = layer.type === "orange_wall" || layer.type === "orange_ice_slope"
-              ? app.orangeWallKey(x, y, layer.orangeId)
-              : `${x},${y}`;
-            lifts.set(`${layer.type}:${key}`, lerp(fromLift, targetLift ?? fromLift, progress));
+            lifts.set(`${layer.type}:${x},${y}`, lerp(fromLift, targetLift ?? fromLift, progress));
           });
         }
       }
@@ -9031,8 +9007,8 @@
           parts.push(`AG${index}:${Math.round((app.attachedGateLiftAt?.(actor, now) || 0) * 1000)}`);
         }
       });
-      app.eachOrangeWall?.((x, y, key, layer) => {
-        parts.push(`O${key}:${Math.round(app.orangeWallLiftAt(x, y, now, layer?.orangeId) * 1000)}`);
+      app.eachOrangeWall?.((x, y) => {
+        parts.push(`O${x},${y}:${Math.round(app.orangeWallLiftAt(x, y, now) * 1000)}`);
       });
       app.eachPlayerLift?.((x, y) => {
         parts.push(`L${x},${y}:${Math.round(app.playerLiftAt(x, y, now) * 1000)}`);
@@ -9780,7 +9756,6 @@
       return [
         actor.type,
         actor.groupId || "",
-        actor.orangeId ?? "0",
         actor.modelUrl || "",
         actor.direction || actor.facing || "",
         actor.removed ? 1 : 0,

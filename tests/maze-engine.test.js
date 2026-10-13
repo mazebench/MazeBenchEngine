@@ -95,15 +95,14 @@ function createState(playData) {
   };
 }
 
-// Orange channels: both terrain buttons and attached actor buttons use OR
-// within a channel. Adjacent walls with different ids remain independent.
+// Every button controls every wall, including maps carrying obsolete ids.
 for (const buttonsAsActors of [false, true]) {
   const terrain = floorTerrain(6, 3);
   terrain[0][3] = { type: "orange_wall", orangeId: "1" };
-  terrain[0][4] = { type: "orange_wall", orangeId: 2 };
-  terrain[0][5] = { type: "orange_wall", orangeId: "1" };
+  terrain[0][4] = { type: "orange_wall", orangeId: "2" };
+  terrain[0][5] = { type: "orange_wall" };
   const actors = [{ type: "player", x: 0, y: 1 }];
-  ["1", "01", "2"].forEach((orangeId, index) => {
+  ["1", "7", "2"].forEach((orangeId, index) => {
     if (buttonsAsActors) {
       actors.push({ type: "orange_button", orangeId, x: index + 1, y: 1 });
     } else {
@@ -115,59 +114,43 @@ for (const buttonsAsActors of [false, true]) {
   });
   const { engine, state } = createState({ width: 6, height: 3, terrain, actors });
   const raised = () => engine.raisedOrangeWallKeys(state).sort();
-  assert.deepEqual(raised(), ["3,0:1", "4,0:2", "5,0:1"]);
-  assert.equal(engine.move(state, 1, 0).moved, true);
-  assert.deepEqual(raised(), ["4,0:2"], "first channel 1 button lowers all channel 1 walls");
-  assert.equal(engine.move(state, 1, 0).moved, true);
-  assert.deepEqual(raised(), ["4,0:2"], "second matching button holds walls down after first releases");
-  assert.equal(engine.move(state, 1, 0).moved, true);
-  assert.deepEqual(raised(), ["3,0:1", "5,0:1"], "releasing 1 and pressing 2 switches only those channels");
+  assert.deepEqual(raised(), ["3,0", "4,0", "5,0"]);
+  for (let step = 0; step < 3; step += 1) {
+    assert.equal(engine.move(state, 1, 0).moved, true);
+    assert.deepEqual(raised(), [], "each button lowers all walls regardless of ids");
+  }
   assert.equal(engine.move(state, 0, 1).moved, true);
-  assert.deepEqual(raised(), ["3,0:1", "4,0:2", "5,0:1"], "all buttons released raises the walls");
+  assert.deepEqual(raised(), ["3,0", "4,0", "5,0"], "releasing the last button raises all walls");
 }
 
 {
-  const terrain = floorTerrain(4, 2);
-  terrain[0][1] = { type: "orange_wall", orangeId: "1" };
-  terrain[0][2] = { type: "orange_wall", orangeId: "2" };
-  const { engine, state } = createState({ width: 4, height: 2, terrain, actors: [
-    { type: "player", x: 0, y: 0 },
-    { type: "orange_button", orangeId: "1", x: 3, y: 1 },
-    { type: "box", x: 3, y: 1 }
+  const terrain = floorTerrain(5, 3);
+  terrain[0][3] = { type: "orange_wall", orangeId: "99" };
+  const { engine, state } = createState({ width: 5, height: 3, terrain, actors: [
+    { type: "player", x: 1, y: 1 },
+    { type: "box", x: 2, y: 1 },
+    { type: "orange_button", x: 1, y: 1, orangeId: "1" },
+    { type: "orange_button", x: 2, y: 1, orangeId: "2" }
   ] });
-  assert.equal(engine.move(state, 1, 0).moved, true, "matching lowered wall is traversable");
-  assert.equal(engine.move(state, 1, 0).moved, false, "unmatched raised wall remains solid");
+  assert.deepEqual(engine.raisedOrangeWallKeys(state), [], "two pressed buttons lower the wall");
+  assert.equal(engine.move(state, 1, 0).moved, true);
+  assert.deepEqual(engine.raisedOrangeWallKeys(state), [], "releasing one of two buttons keeps the wall down");
+  assert.equal(engine.move(state, 0, 1).moved, true);
+  assert.deepEqual(engine.raisedOrangeWallKeys(state), ["3,0"], "only releasing the last button raises the wall");
 }
 
 {
   const terrain = floorTerrain(4, 2);
-  terrain[0][2] = { type: "orange_wall", layers: [
-    { type: "orange_wall", elevation: 0, orangeId: "1" },
-    { type: "orange_wall", elevation: 2, orangeId: "2" }
-  ] };
-  terrain[0][3] = { type: "orange_ice_slope", layers: [
-    { type: "orange_ice_slope", elevation: 0, direction: "right", orangeId: "1" }
-  ] };
+  terrain[0][3] = { type: "orange_wall" };
   const { engine, state } = createState({ width: 4, height: 2, terrain, actors: [
     { type: "player", x: 0, y: 1 },
-    { type: "orange_button", x: 0, y: 1, orangeId: "1" },
-    { type: "orange_button", x: 0, y: 1, orangeId: "2", elevation: 1 },
-    { type: "orange_button", x: 0, y: 1, orangeId: "2", removed: true }
+    { type: "orange_button", x: 0, y: 1, elevation: 1 },
+    { type: "orange_button", x: 0, y: 1, removed: true },
+    { type: "orange_button", x: 2, y: 1 },
+    { type: "gem", x: 2, y: 1 }
   ] });
-  assert.deepEqual(engine.raisedOrangeWallKeys(state), ["2,0:2"], "stacked ids and orange slopes resolve per channel");
-  assert.equal(engine.areOrangeButtonsPressed(state, "1"), true);
-  assert.equal(engine.areOrangeButtonsPressed(state, "2"), false, "wrong elevation and removed buttons do not activate");
-}
-
-{
-  const terrain = floorTerrain(3, 1);
-  terrain[0][1] = { type: "orange_wall" };
-  const { engine, state } = createState({ width: 3, height: 1, terrain, actors: [
-    { type: "player", x: 0, y: 0 },
-    { type: "orange_button", x: 0, y: 0, orangeId: "0" },
-    { type: "orange_button", x: 2, y: 0 }
-  ] });
-  assert.deepEqual(engine.raisedOrangeWallKeys(state), [], "numbered 0 buttons match legacy walls even with an idle legacy button");
+  assert.equal(engine.areOrangeButtonsPressed(state), false, "removed buttons, wrong elevations and gems do not press buttons");
+  assert.deepEqual(engine.raisedOrangeWallKeys(state), ["3,0"]);
 }
 
 {
@@ -2298,7 +2281,7 @@ for (const { name, dx, dy } of [
 
   const result = engine.move(state, 1, 0);
 
-  assert.equal(result.moved, true, "any pressed channel 0 button lowers its wall");
+  assert.equal(result.moved, true, "one pressed button opens the wall even while another is idle");
   assert.deepEqual([state.actorX[0], state.actorY[0]], [1, 0]);
 }
 
@@ -5134,14 +5117,14 @@ for (const landingType of ["player", "clone"]) {
     actors: [
       { type: "player", x: 0, y: 0, removed: false },
       { type: "orange_button", x: 1, y: 0, removed: false },
-      { type: "orange_button", orangeId: "1", x: 2, y: 0, elevation: 1, removed: false },
-      { type: "weightless_box", groupId: "M9", x: 2, y: 0, elevation: 1, removed: false },
+      { type: "orange_button", x: 2, y: 0, elevation: 1, removed: false },
+      { type: "weightless_box", groupId: "M9", x: 4, y: 0, elevation: 0, removed: false },
       { type: "attached_lift", x: 3, y: 0, elevation: 1, removed: false }
     ]
   });
 
-  // The occupied rider button is on channel 1. The ground button activates
-  // channel 0, lowering these walls and carrying the other channel's button.
+  // The wall-top button is idle. Pressing the ground button alone lowers
+  // the walls and carries both the rider button and attached lift down.
   const lower = engine.move(state, 1, 0);
   assert.equal(state.actorElevation[2], 0, "rider button descends with its wall");
   assert.equal(state.actorElevation[4], 0, "attached lift descends with its wall");
@@ -5165,8 +5148,7 @@ for (const landingType of ["player", "clone"]) {
     "unmoved ground button gets no record"
   );
 
-  // Stepping back off releases the AND — walls raise, riders ride up, again
-  // with records.
+  // Releasing the last occupied button raises the walls and both riders.
   const raise = engine.move(state, -1, 0);
   assert.equal(state.actorElevation[2], 1, "rider button rides the wall back up");
   assert.equal(state.actorElevation[4], 1, "attached lift rides the wall back up");
