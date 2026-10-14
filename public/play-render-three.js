@@ -12987,7 +12987,8 @@
       }
 
       const transitionDuration = Math.max(1, app.levelTransition?.durationMs || app.LEVEL_TRANSITION_DURATION_MS || 500);
-      const moveWindow = Math.max(0.08, Math.min(0.24, (app.MOVE_DURATION_MS || 100) / transitionDuration));
+      const handoffDuration = (app.MOVE_DURATION_MS || 100) / (Number(app.savedActionPlaybackSpeed) || 1);
+      const moveWindow = Math.max(0.08, Math.min(0.24, handoffDuration / transitionDuration));
       const continuationStartedAtMs = Number(transition.continuationStartedAtMs);
       const hasContinuationHandoff =
         transition.followIncomingPlayerDuringContinuation === true &&
@@ -12996,7 +12997,7 @@
         ? Math.max(0, now - continuationStartedAtMs)
         : progress * transitionDuration;
       const handoffProgress = hasContinuationHandoff
-        ? clamp01(handoffElapsedMs / Math.max(app.MOVE_DURATION_MS || 100, 1))
+        ? clamp01(handoffElapsedMs / Math.max(handoffDuration, 1))
         : localProgress(progress, 0, moveWindow);
       const moveProgress = handoffProgress;
       const followLiveTarget =

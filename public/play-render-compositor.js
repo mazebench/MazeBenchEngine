@@ -381,7 +381,7 @@
       fromForeground = null,
       options = {}
     ) {
-      if (app.isReplayingSavedActions) {
+      if (app.isReplayingSavedActions && !app.animateSavedActions) {
         app.levelTransition = null; app.isTransitioningLevel = false;
         options.onComplete?.();
         return;

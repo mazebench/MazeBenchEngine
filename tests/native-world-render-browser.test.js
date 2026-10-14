@@ -30,7 +30,9 @@ function fixture() {
   rooms.level_DxA.actors = [{ type: "player", x: 0, y: 1, elevation: 0 }, gem(2, 2)];
   rooms.level_ExA.actors = [gem(1, 1)];
   // Native physics collects at the settled stop; the gem on E's ice remains.
-  rooms.level_FxA.actors = [gem(1, 1), gem(2, 2)];
+  // Hydrated neighbors have renderX/Y at this authored spawn. The native
+  // transfer must render the actual endpoint instead when the command settles.
+  rooms.level_FxA.actors = [{ type: "player", x: 3, y: 2, elevation: 0 }, gem(1, 1), gem(2, 2)];
   return rooms;
 }
 
@@ -107,7 +109,17 @@ test("real Three scene retains distant rooms and gem phase through a native ice 
         return result;
       };
       app.worldViewSynchronousBuild = false;
-      window.__nativeRenderTest = { frames, samples, scene, farGroup, now: performance.now() };
+      function settledPlayerPose() {
+        const actor = app.state.actors.find(actor => app.isMainPlayerActor(actor) && !actor.removed);
+        const bodies = [];
+        scene.traverse(object => {
+          if (!object.isMesh || object.material?.color?.getHex() !== 0x5aa95c || object.userData.editorPick?.kind !== "actor") return;
+          const bounds = new THREE.Box3().setFromObject(object), center = bounds.getCenter(new THREE.Vector3());
+          bodies.push({x:center.x / app.TILE_SIZE - 0.5,y:center.z / app.TILE_SIZE - 0.5,elevation:bounds.max.y / app.TILE_SIZE - 1});
+        });
+        return {logical:[actor.x,actor.y,actor.elevation],render:[actor.renderX,actor.renderY,actor.renderElevation],bodies};
+      }
+      window.__nativeRenderTest = { frames, samples, scene, farGroup, settledPlayerPose, now: performance.now() };
       app.movePlayers(1, 0);
     }, rooms);
     await session.page.waitForFunction(() => !window.__PIXEL_GAME_APP__.isPlanningWorldAction);
@@ -125,6 +137,7 @@ test("real Three scene retains distant rooms and gem phase through a native ice 
       return { samples: test.samples, isAnimating: app.isAnimating, error: app.engineLoadError?.message || null,
         engine: app.engineVersion, levelId: app.currentLevelId,
         player: app.state.actors.find((actor) => app.isMainPlayerActor(actor) && !actor.removed),
+        settledPose: test.settledPlayerPose(),
         collected: app.collectedGemIds.size,
         pixels: app.sceneCanvas.getContext("2d").getImageData(0, 0, app.sceneCanvas.width, app.sceneCanvas.height).data.filter((byte, index) => index % 4 !== 3 && byte > 20).length };
     });
@@ -134,6 +147,13 @@ test("real Three scene retains distant rooms and gem phase through a native ice 
     assert.equal(result.isAnimating, false);
     assert.equal(result.levelId, "level_FxA");
     assert.equal(result.player.x, 1);
+    const assertSettledPlayerPose = (pose) => {
+      assert.deepEqual(pose.render,pose.logical,"settled runtime render pose matches the native endpoint");
+      assert.equal(pose.bodies.length,1,"the real Three scene has one active player body");
+      const body=pose.bodies[0];
+      [body.x,body.y,body.elevation].forEach((value,index)=>assert.ok(Math.abs(value-pose.logical[index])<0.001,"the real player mesh settles at physics coordinates, not the authored spawn"));
+    };
+    assertSettledPlayerPose(result.settledPose);
     assert.equal(result.collected, 1);
     assert.ok(result.samples.length >= 8, "sample multiple real rendered tween frames");
     assert.ok(result.pixels > 100, "the actual canvas contains rendered geometry");
@@ -173,6 +193,7 @@ test("real Three scene retains distant rooms and gem phase through a native ice 
         images.push(app.sceneCanvas.toDataURL("image/png"));
         return images;
       }));
+      assertSettledPlayerPose(await session.page.evaluate(()=>window.__nativeRenderTest.settledPlayerPose()));
     }
     assert.deepEqual(await session.page.evaluate(collectedVisual), { collected: true, ghost: true, alpha: 0.5, meshOpacity: 0.5 });
     assert.deepEqual(errors, []);

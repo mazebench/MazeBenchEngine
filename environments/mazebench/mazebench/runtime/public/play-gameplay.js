@@ -57,13 +57,14 @@
 
     function createAnimationElapsedTracker() {
       const replayFrameStepMs = Number(app.replayAnimationFrameStepMs);
+      const playbackSpeed = Number(app.savedActionPlaybackSpeed) || 1;
 
       if (Number.isFinite(replayFrameStepMs) && replayFrameStepMs > 0) {
         let replayElapsedMs = 0;
 
         return function replayAnimationElapsed() {
           replayElapsedMs += replayFrameStepMs;
-          return replayElapsedMs;
+          return replayElapsedMs * playbackSpeed;
         };
       }
 
@@ -78,7 +79,7 @@
             ANIMATION_STARTUP_GRACE_MS
           );
           previousNow = now;
-          return elapsedMs;
+          return elapsedMs * playbackSpeed;
         }
 
         let deltaMs = now - previousNow;
@@ -89,7 +90,7 @@
 
         elapsedMs += Math.min(Math.max(0, deltaMs), MAX_ANIMATION_FRAME_STEP_MS);
         previousNow = now;
-        return elapsedMs;
+        return elapsedMs * playbackSpeed;
       };
     }
 
@@ -739,7 +740,7 @@
       if (moves.length === 0) {
         return;
       }
-      if (app.isReplayingSavedActions) {
+      if (app.isReplayingSavedActions && !app.animateSavedActions) {
         options.startLiftPhase?.();
         finishAnimation(moves, options);
         return;
@@ -3199,7 +3200,7 @@
         app.animationFrameId = window.requestAnimationFrame(step);
       }
 
-      if (app.isReplayingSavedActions) { finish(); return true; }
+      if (app.isReplayingSavedActions && !app.animateSavedActions) { finish(); return true; }
       app.animationFrameId = window.requestAnimationFrame(step);
       return true;
     }
@@ -3603,6 +3604,7 @@
               app.isAnimating = false; app.worldActionAnimation = null; app.animationFrameId = null;
             }
             app.engineLoadError = error;
+            if (app.isReplayingSavedActions) app.lastReplayError = error;
             console.error(error);
             if (app.onEngineError) app.onEngineError(error);
             else window.alert?.(`Unable to animate v1.1 command: ${error.message}`);
@@ -3612,6 +3614,7 @@
       } catch (error) {
         app.isPlanningWorldAction = false; app.isAnimating = false; app.worldActionAnimation = null;
         app.engineLoadError = error;
+        if (app.isReplayingSavedActions) app.lastReplayError = error;
         if (options.instant === true) throw error;
         console.error(error);
         if (app.onEngineError) app.onEngineError(error);
@@ -3991,11 +3994,18 @@
     }
 
     async function replaySavedAction(action, options = {}) {
-      if (app.isAnimating || app.isTransitioningLevel || app.isPlanningWorldAction) throw new Error("The previous action must finish before replaying the next action.");
+      if (app.isAnimating || app.isTransitioningLevel || app.isPlanningWorldAction || app.isReplayingSavedActions) throw new Error("The previous action must finish before replaying the next action.");
+      const animate = options.animate === true;
+      const speed = Number(options.playbackSpeed ?? 1);
+      if (!Number.isFinite(speed) || speed < 0.25 || speed > 4) throw new Error("Playback speed must be between 0.25 and 4.");
       const previousReplay = app.isReplayingSavedActions;
+      const previousAnimatedReplay = app.animateSavedActions;
+      const previousPlaybackSpeed = app.savedActionPlaybackSpeed;
       const previousPitRecovery = app.autoUndoPlayerFalls;
       if (typeof options.autoUndoPlayerFalls === "boolean") app.autoUndoPlayerFalls = options.autoUndoPlayerFalls;
       app.isReplayingSavedActions = true;
+      app.animateSavedActions = animate;
+      app.savedActionPlaybackSpeed = animate && app.readOnlyReplay ? speed : 1;
       app.lastReplayError = null;
       try {
         const command = action.command || action.type;
@@ -4005,13 +4015,13 @@
           const explicit = Number.isInteger(action.dx) && Number.isInteger(action.dy);
           const [dx, dy] = explicit ? [action.dx, action.dy] : direction && options.worldDirections !== true && app.mapCameraRelativeDirection ? app.mapCameraRelativeDirection(...direction) : direction || [];
           if (!Number.isInteger(dx) || !Number.isInteger(dy) || Math.abs(dx) + Math.abs(dy) !== 1) throw new Error("This saved move has an invalid direction.");
-          if (app.engineVersion === "v1.1") await startModernWorldCommand(dx, dy, { instant: true });
+          if (app.engineVersion === "v1.1") await startModernWorldCommand(dx, dy, { instant: !animate });
           else movePlayers(dx, dy);
         } else if (command === "rotate_camera") {
           if (!["left", "right"].includes(action.direction)) throw new Error("This saved camera action is invalid.");
-          app.threeRenderer?.setDebugCameraView?.({ yaw: (app.threeRenderer.getDebugCameraYaw?.() || 0) + (action.direction === "left" ? -1 : 1) * Math.PI / 2, animate: false });
+          app.threeRenderer?.setDebugCameraView?.({ yaw: (app.threeRenderer.getDebugCameraYaw?.() || 0) + (action.direction === "left" ? -1 : 1) * Math.PI / 2, animate, durationMs: 260 / app.savedActionPlaybackSpeed });
         } else if (command === "quit") { /* No physics state changes. */ }
-        else if (command === "undo") undoMove({ instantRestore: true });
+        else if (command === "undo") undoMove({ instantRestore: !animate });
         else if (["reset", "reset_level", "reset_level_undoable"].includes(command)) {
           resetPositions();
           if (command === "reset_level") moveHistory.length = 0;
@@ -4028,16 +4038,21 @@
           applyLevelState(room, { resetHistory: true, resetLevelEntry: true, updateUrl: true });
           if (app.engineVersion === "v1.1") app.v11WorldRooms = { ...(app.v11WorldRooms || {}), [app.currentLevelId]: app.cloneLevelSnapshot() };
         } else throw new Error(`Unsupported saved action: ${command}`);
-        const deadline = performance.now() + 30000;
+        const deadline = performance.now() + 30000 / Math.min(app.savedActionPlaybackSpeed, 1);
         // Legacy transitions fetch rooms asynchronously even when animations are
         // skipped. Wait for their continuation callbacks before the next action.
         do {
           await new Promise((resolve) => setTimeout(resolve, 0));
           if (performance.now() > deadline) throw new Error("Timed out restoring a saved room transition.");
-        } while (app.isAnimating || app.isTransitioningLevel || app.isPlanningWorldAction);
+        } while (app.isAnimating || app.isTransitioningLevel || app.isPlanningWorldAction || (animate && app.threeRenderer?.isDebugCameraAnimating?.()));
         if (app.lastReplayError) throw app.lastReplayError;
         return { levelId: app.currentLevelId, engineVersion: app.engineVersion };
-      } finally { app.isReplayingSavedActions = previousReplay; app.autoUndoPlayerFalls = previousPitRecovery; }
+      } finally {
+        app.isReplayingSavedActions = previousReplay;
+        app.animateSavedActions = previousAnimatedReplay;
+        app.savedActionPlaybackSpeed = previousPlaybackSpeed;
+        app.autoUndoPlayerFalls = previousPitRecovery;
+      }
     }
 
     // Bindings honor the shared controls config (window.__MAZEBENCH_CONTROLS__)
