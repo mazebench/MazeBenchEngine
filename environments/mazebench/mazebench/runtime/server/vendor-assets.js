@@ -26,4 +26,23 @@ function createVendorRecoveryAssets(rootDir) {
   return assets;
 }
 
-module.exports = { createVendorRecoveryAssets };
+function createVendorRecoveryAssetLoader(rootDir) {
+  let assets;
+  return (url) => {
+    // The engine's ASCII/physics and isolated runtimes need no browser vendor
+    // dependencies. Do not read them until a known browser module is requested.
+    const match = /^\/vendor\/retry-[12]\/([^/]+)$/.exec(url);
+    if (!match || !Object.hasOwn(VENDOR_FILES, match[1])) return null;
+    if (!assets) {
+      try {
+        assets = createVendorRecoveryAssets(rootDir);
+      } catch (error) {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      }
+    }
+    return assets.get(url) ?? null;
+  };
+}
+
+module.exports = { createVendorRecoveryAssets, createVendorRecoveryAssetLoader };
