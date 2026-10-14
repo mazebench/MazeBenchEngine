@@ -165,13 +165,13 @@
           if (type === "orange_wall") {
             const anchor = layer.v11AnchorElevation ?? elevation;
             const depth = layer.v11GenericId ?? 0;
-            if (anchor === 0 && !state.terrainState[y][x].layers.some((candidate) => surfaceTypes.has(candidate.type) && (candidate.elevation || 0) === 0)) {
+            if (layer.v11ImplicitSupport !== false && anchor === 0 && !state.terrainState[y][x].layers.some((candidate) => surfaceTypes.has(candidate.type) && (candidate.elevation || 0) === 0)) {
               add(x, y, 0, "floor", -1, { x, y, layerIndex, implicitSupport: true });
             }
             return add(x, y, anchor + 1, "orange-wall", depth, entry);
           }
           if (type === "orange_button") return add(x, y, elevation + 1, "orange-button", layer.v11GenericId ?? 0, entry);
-          for (let z = 0; z < (type === "tree" ? 3 : 1); z++) add(x, y, elevation + z + 1, type === "ice_block" ? "ice" : "wall", -1, entry);
+          for (let z = 0; z < (type === "tree" ? 3 : 1); z++) add(x, y, elevation + z + 1, type === "ice_block" ? "ice" : layer.v11RoleId === "solid" ? "solid" : "wall", -1, entry);
         });
       }
       if (entries.length > physics.voxel_capacity()) throw new Error(`v1.1 supports at most ${physics.voxel_capacity()} voxels per room.`);

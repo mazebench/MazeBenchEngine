@@ -79,6 +79,16 @@ async function main() {
   data.terrain[1][4]=cell('orange_wall');
   ({state}=execute(data)); assert.equal(state.terrainState[1][4].layers[0].v11GenericId,2);
   assert.equal(state.terrainState[1][4].layers[0].v11Hidden,true,'two buttons lower a base orange wall below its support');
+  // Native campaigns author holes explicitly. A lowered wall over a hole
+  // must not acquire the legacy room format's implicit floor and passage.
+  for (const exactNative of [false, true]) {
+    data=room([actor('player',1,1),actor('orange_button',0,0),actor('box',0,0)]);
+    data.terrain[1][2]=cell('orange_wall');
+    if (exactNative) data.terrain[1][2].layers[0].v11ImplicitSupport=false;
+    ({state}=execute(data));
+    assert.equal(state.actorX[0],exactNative?1:2,'preserve native void geometry while retaining old-room compatibility');
+    assert.equal(state.terrainState[1][2].layers[0].v11SupportZ,exactNative?-2147483648:0);
+  }
   const a = room([actor('player',1,1),actor('orange_button',2,1)]);
   a.levelId='A'; a.terrain[1][4]=cell('orange_wall');
   const b = room([actor('player',0,1),actor('clone',2,1,{groupId:'M0'}),actor('weightless_box',4,2,{groupId:'M0'})]);
