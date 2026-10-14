@@ -852,6 +852,9 @@
     }
 
     function resetCollectionProgress() {
+      // Native history can share its room-entry snapshot with this reset.
+      // Discard encoded history before changing those collection flags.
+      resetResumeEncodingCache();
       const previouslyCollected = new Set(app.collectedGemIds);
       app.collectedGemIds.clear();
       saveCollectedGemIds();
@@ -1612,25 +1615,66 @@
       };
     }
 
+    let resumeHistoryEncoding = new WeakMap();
+    let resumeRoomEncoding = new WeakMap();
+    let resumeEncodingNodes = new Map();
+    let nextResumeEncodingId = 0;
+
+    function resetResumeEncodingCache() {
+      resumeHistoryEncoding = new WeakMap();
+      resumeRoomEncoding = new WeakMap();
+      resumeEncodingNodes = new Map();
+      nextResumeEncodingId = 0;
+    }
+
     function exportResumeState() {
       if (app.isAnimating || app.isTransitioningLevel || app.isPlanningWorldAction || app.isReplayingSavedActions) {
         throw new Error("Wait for the current move to finish before saving its exact state.");
       }
       // A content-addressed object table retains full undo and room state while
       // storing repeated terrain, actor metadata, and historical rooms once.
-      const nodes = [], signatures = new Map(), identities = new WeakMap();
+      // Undo records are immutable after a move settles. Reuse their encoded
+      // DAGs instead of walking every cloned terrain cell on every autosave.
+      // Live actors/terrain are always encoded afresh. Native stored rooms are
+      // also immutable: commands and collection resets replace changed rooms.
+      const identities = new WeakMap();
       function encode(value) {
         if (value === null || typeof value !== "object") return value;
-        if (identities.has(value)) return { r: identities.get(value) };
+        if (identities.has(value)) return identities.get(value);
         const array = Array.isArray(value);
         const entries = array ? value.map((item) => encode(item) ?? null) : Object.keys(value).sort()
           .filter((key) => !key.startsWith("render") && typeof value[key] !== "function" && value[key] !== undefined)
           .map((key) => [key, encode(value[key])]);
-        const node = [array ? "a" : "o", entries], signature = JSON.stringify(node);
-        let index = signatures.get(signature);
-        if (index === undefined) { index = nodes.length; signatures.set(signature, index); nodes.push(node); }
-        identities.set(value, index);
-        return { r: index };
+        const reference = (item) => item && typeof item === "object" ? { r: item.id } : item;
+        const signature = JSON.stringify([array ? "a" : "o", array
+          ? entries.map(reference) : entries.map(([key, item]) => [key, reference(item)])]);
+        let node = resumeEncodingNodes.get(signature);
+        if (!node) {
+          node = { id: nextResumeEncodingId++, type: array ? "a" : "o", entries, signature };
+          resumeEncodingNodes.set(signature, node);
+        }
+        identities.set(value, node);
+        return node;
+      }
+      function encodeStoredRooms(rooms) {
+        for (const room of Object.values(rooms || {})) {
+          let encoded = resumeRoomEncoding.get(room);
+          if (!encoded) {
+            encoded = encode(room);
+            resumeRoomEncoding.set(room, encoded);
+          }
+          identities.set(room, encoded);
+        }
+      }
+      encodeStoredRooms(app.v11WorldRooms);
+      for (const entry of app.moveHistory) {
+        let encoded = resumeHistoryEncoding.get(entry);
+        if (!encoded) {
+          encodeStoredRooms(entry.levelSnapshot?.v11WorldRooms);
+          encoded = encode(entry);
+          resumeHistoryEncoding.set(entry, encoded);
+        }
+        identities.set(entry, encoded);
       }
       const current = {
         engineVersion: app.engineVersion, gameId: app.currentGameId, levelId: app.currentLevelId,
@@ -1638,15 +1682,34 @@
         terrain: app.state.terrain, actors: app.state.actors,
         raisedOrangeWalls: Array.from(computeRaisedOrangeWallSet())
       };
-      const root = encode({ current, entry: app.levelEntrySnapshot, initialPositions: app.initialPositions,
+      const encodedRoot = encode({ current, entry: app.levelEntrySnapshot, initialPositions: app.initialPositions,
         initialTerrain: app.initialTerrain, worldRooms: app.v11WorldRooms || {}, history: app.moveHistory,
         collectedGemIds: Array.from(app.collectedGemIds),
         camera: { x: app.cameraX, y: app.cameraY, targetX: app.cameraTargetX, targetY: app.cameraTargetY,
           mode: app.threeRenderer?.getDebugCameraMode?.(), yaw: app.threeRenderer?.getDebugCameraYaw?.(),
           tilt: app.threeRenderer?.getDebugCameraTilt?.(), zoom: app.threeRenderer?.getDebugCameraZoom?.() } });
+      const nodes = [], references = new Map(), retained = new Map();
+      function serialize(value) {
+        if (value === null || typeof value !== "object") return value;
+        if (references.has(value)) return { r: references.get(value) };
+        const entries = value.type === "a" ? value.entries.map(serialize)
+          : value.entries.map(([key, item]) => [key, serialize(item)]);
+        const index = nodes.length;
+        nodes.push([value.type, entries]);
+        references.set(value, index);
+        retained.set(value.signature, value);
+        return { r: index };
+      }
+      const root = serialize(encodedRoot);
+      // Retain only nodes reachable from this save. Undo trimming, reset and
+      // new runs cannot accumulate old rooms in a permanent interning table.
+      resumeEncodingNodes = retained;
       const snapshot = { format: "mazebench-runtime-state-v1", engine_version: app.engineVersion,
         game_id: app.currentGameId, root, nodes };
-      if (JSON.stringify(snapshot).length > 16 * 1024 * 1024) throw new Error("This exact save exceeds the 16 MiB state limit. Its current run has not been changed.");
+      if (JSON.stringify(snapshot).length > 16 * 1024 * 1024) {
+        resetResumeEncodingCache();
+        throw new Error("This exact save exceeds the 16 MiB state limit. Its current run has not been changed.");
+      }
       return snapshot;
     }
 
@@ -1753,6 +1816,7 @@
       const copy = (value) => JSON.parse(JSON.stringify(value));
       const presentation = options.animate === true ? captureResumePresentation() : null;
       // All validation and asynchronous loading precede live state mutation.
+      resetResumeEncodingCache();
       app.collectedGemIds = new Set(saved.collectedGemIds);
       app.v11WorldRooms = copy(saved.worldRooms || {});
       app.queuedAction = null;
