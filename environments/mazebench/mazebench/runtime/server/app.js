@@ -12,6 +12,7 @@ const { createMazePreviewService } = require("./maze-preview");
 const { createMazeWorldMapService } = require("./maze-world-map");
 const { createPageRenderer } = require("./pages");
 const { createRequestRouter } = require("./router");
+const { createVendorRecoveryAssets } = require("./vendor-assets");
 const { createSolverExportService } = require("./solver-exports");
 const {
   ensureDirectory,
@@ -734,6 +735,7 @@ const { handleRequest } = createRequestRouter({
   gamesDir: GAMES_DIR,
   loadJson,
   publicFileRoutes: PUBLIC_FILE_ROUTES,
+  publicModuleSources: createVendorRecoveryAssets(ROOT_DIR),
   readJsonBody,
   remote,
   renderAgentPage,

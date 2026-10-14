@@ -22,6 +22,7 @@
     let GLTFLoaderClass = null;
     let gltfLoaderClassPromise = null;
     let gltfLoaderImportFailures = 0;
+    let threeModuleRetry = 0;
     let raycaster = null;
     let lastWidth = 0;
     let lastHeight = 0;
@@ -175,7 +176,8 @@
       ].join(":");
     }
 
-    function invalidateSceneCache() {
+    function invalidateSceneCache(options = {}) {
+      if (options.assets) modelAssetsVersion += 1;
       lastSceneSignature = "";
       lastSceneContentSignature = "";
       lastShadowSceneSignature = "";
@@ -1609,20 +1611,20 @@
 
       // Browsers can cache a failed module fetch for the lifetime of the
       // document. Use a fresh URL after failure, with only two retry variants.
-      const retry = Math.min(gltfLoaderImportFailures, 2);
+      const retry = Math.min(Math.max(gltfLoaderImportFailures, threeModuleRetry), 2);
       const loaderUrl = retry
-        ? `${gltfLoaderModuleUrl}${gltfLoaderModuleUrl.includes("?") ? "&" : "?"}retry=${retry}`
+        ? assetUrl(`/vendor/retry-${retry}/GLTFLoader.js`)
         : gltfLoaderModuleUrl;
       gltfLoaderClassPromise = import(loaderUrl)
         .then((loaderModule) => {
           GLTFLoaderClass = loaderModule.GLTFLoader || null;
-          if (!GLTFLoaderClass) gltfLoaderClassPromise = null;
+          if (!GLTFLoaderClass) throw new Error("GLTF loader module has no loader export");
           return GLTFLoaderClass;
         })
         .catch(() => {
           GLTFLoaderClass = null;
           gltfLoaderClassPromise = null;
-          gltfLoaderImportFailures += 1;
+          gltfLoaderImportFailures = retry + 1;
           return null;
         });
 
@@ -1659,6 +1661,7 @@
 
     const MODEL_RETRY_DELAY_MS = 8000;
     const MODEL_AUTO_RETRY_LIMIT = 2;
+    const MODEL_LOAD_TIMEOUT_MS = 15000;
 
     function requestModelAsset(url) {
       if (!url || !THREE || rendererDisposed) {
@@ -1685,11 +1688,26 @@
       }
 
       const attempts = (cached?.attempts || 0) + 1;
+      const controller = new AbortController();
+      let settled = false;
+      let finish;
+      const promise = new Promise((resolve) => { finish = resolve; });
+      const timer = window.setTimeout(() => {
+        controller.abort();
+        finalizeModel(null);
+      }, MODEL_LOAD_TIMEOUT_MS);
       const finalizeModel = (model) => {
-        if (rendererDisposed) {
+        if (settled || rendererDisposed) {
           model?.parts?.forEach((part) => part.geometry?.dispose?.());
+          if (!settled) {
+            settled = true;
+            window.clearTimeout(timer);
+            finish();
+          }
           return;
         }
+        settled = true;
+        window.clearTimeout(timer);
         modelAssetCache.set(
           url,
           model
@@ -1719,22 +1737,20 @@
         if (typeof app.render === "function") {
           window.requestAnimationFrame((now) => (app.renderOncePerFrame || app.render)(now));
         }
+        finish();
       };
 
       const cachedData = app.modelTextCache?.get(url);
-
-      if (cachedData instanceof ArrayBuffer || ArrayBuffer.isView(cachedData)) {
-        modelAssetCache.set(url, {
-          status: "loading",
-          attempts,
-          promise: parseModelAsset(url, cachedData).then(finalizeModel)
-        });
-        return null;
-      }
-
-      const promise = fetch(url, { cache: failedModelAssetUrls.has(url) ? "reload" : "default" })
-        .then((response) => (response.ok ? response.arrayBuffer() : null))
+      const cachedBytes = cachedData instanceof ArrayBuffer || ArrayBuffer.isView(cachedData);
+      const dataPromise = cachedBytes
+        ? Promise.resolve(cachedData)
+        : Promise.resolve().then(() => fetch(url, {
+            signal: controller.signal,
+            cache: failedModelAssetUrls.has(url) ? "reload" : "default"
+          })).then((response) => (response.ok ? response.arrayBuffer() : null));
+      dataPromise
         .then((data) => {
+          if (settled || rendererDisposed) return null;
           if (data && app.modelTextCache) {
             app.modelTextCache.set(url, data);
           }
@@ -1747,7 +1763,10 @@
           finalizeModel(null);
         });
 
-      modelAssetCache.set(url, { status: "loading", promise, attempts });
+      modelAssetCache.set(url, { status: "loading", promise, attempts, cancel() {
+        controller.abort();
+        finalizeModel(null);
+      } });
       return null;
     }
 
@@ -4932,7 +4951,7 @@
     // wall. Ids are differentiated by the editor's number labels, never by
     // shade (same convention as the boxes and clones themselves).
     function slopeStyleColor(styleKey, fallback) {
-      if (!styleKey) {
+      if (typeof styleKey !== "string" || !styleKey) {
         return fallback;
       }
 
@@ -8489,6 +8508,76 @@
       );
     }
 
+    function attachedGateRenderLift(actor, now) {
+      if (Number.isInteger(actor.v11GenericId)) return actor.v11GenericId & 1;
+      return app.attachedGateLiftAt?.(actor, now) ??
+        (app.liveRaisedPlayerGates?.has?.(`${actor.x},${actor.y}`) ? 1 : 0);
+    }
+
+    function sideFixtureLayout(actor, center, elevation, scale, sink) {
+      const orientation = actor.direction || actor.orientation;
+      const normal = {
+        north: { x: 0, z: -1 }, east: { x: 1, z: 0 },
+        south: { x: 0, z: 1 }, west: { x: -1, z: 0 }
+      }[orientation];
+      if (!normal) return null;
+      const isButton = actor.type === "orange_button";
+      const thickness = isButton ? orangeButtonHeight()
+        : actor.raised ? unit * scale : playerLiftPlateThickness();
+      const backOffset = (unit * scale - thickness) / 2;
+      return {
+        orientation, normal, thickness,
+        x: center.x - normal.x * backOffset,
+        y: elevation * elevationUnit - sink + actorVisualLift + unit * scale / 2,
+        z: center.z - normal.z * backOffset,
+        width: normal.x ? thickness : unit * scale,
+        height: unit * scale,
+        depth: normal.z ? thickness : unit * scale
+      };
+    }
+
+    function addSideFixture(actor, center, elevation, scale, sink, opacity, edgeOpacity) {
+      const layout = sideFixtureLayout(actor, center, elevation, scale, sink);
+      if (!layout) return false;
+      const isButton = actor.type === "orange_button";
+      let geometry;
+      if (isButton) {
+        // Rotate the geometry itself so outlines and picking share its pose.
+        geometry = new THREE.CylinderGeometry(orangeButtonRadius(), orangeButtonRadius(), layout.thickness, 24);
+        if (layout.normal.z) geometry.rotateX(layout.normal.z * Math.PI / 2);
+        else geometry.rotateZ(-layout.normal.x * Math.PI / 2);
+      } else {
+        geometry = new THREE.BoxGeometry(layout.width, layout.height, layout.depth);
+      }
+      addOutlinedMesh(geometry, terrainColor(isButton ? "orange_button" : "player_lift"), layout, {
+        opacity, edgeOpacity, castShadow: renderContextCastsShadows(), receiveShadow: false,
+        editorPick: {
+          kind: "actor", cells: [{ gridX: actor.x, gridY: actor.y,
+            left: center.x - unit / 2, right: center.x + unit / 2,
+            top: center.z - unit / 2, bottom: center.z + unit / 2 }],
+          logicalBottomLayer: Math.max(0, Math.floor(Number(actor.elevation) || 0)),
+          logicalLayerCount: 1, logicalSourceFollowsPaint: true,
+          sourceLayer: Math.max(0, Math.floor(Number(actor.elevation) || 0)),
+          bottomY: layout.y - layout.height / 2, topY: layout.y + layout.height / 2
+        }
+      });
+      if (!isButton) {
+        const pointY = (actor.raised ? 0.22 : -0.22) * unit;
+        const baseY = (actor.raised ? -0.16 : 0.16) * unit;
+        const markerGeometry = new THREE.BufferGeometry();
+        markerGeometry.setAttribute("position", new THREE.Float32BufferAttribute([
+          0, pointY, 0, unit * 0.17, baseY, 0, -unit * 0.17, baseY, 0
+        ], 3));
+        markerGeometry.computeVertexNormals();
+        const marker = new THREE.Mesh(markerGeometry, material("#050608", opacity, { doubleSide: true }));
+        marker.rotation.y = Math.atan2(layout.normal.x, layout.normal.z);
+        const offset = layout.thickness / 2 + playerLiftPlateOffset();
+        marker.position.set(layout.x + layout.normal.x * offset, layout.y, layout.z + layout.normal.z * offset);
+        scene.add(marker);
+      }
+      return true;
+    }
+
     function addActor(actor, now = performance.now()) {
       if (!actorIsVisible(actor)) {
         return;
@@ -8508,6 +8597,11 @@
       const sink = actor.renderSink ?? 0;
       const fade = actorFadeVisibility(actor);
       const opacity = actorOpacity(actor) * visibility;
+
+      if ((actor.type === "attached_lift" || actor.type === "orange_button") &&
+          addSideFixture(actor, center, elevation, scale, sink, opacity, fade * visibility)) {
+        return;
+      }
 
       if (actor.type === "gem") {
         addGem(actor, center.x, center.z, elevation, now);
@@ -8564,8 +8658,7 @@
         const isRaisedLift = isLift && actor.raised === true;
         const gateLift = isLift
           ? 0
-          : app.attachedGateLiftAt?.(actor, now) ??
-            (app.liveRaisedPlayerGates?.has?.(`${actor.x},${actor.y}`) ? 1 : 0);
+          : attachedGateRenderLift(actor, now);
         const deviceLift = isLift ? (isRaisedLift ? 1 : 0) : gateLift;
         const surfaceY = elevation * elevationUnit - sink + actorVisualLift;
         const plateThickness = playerLiftPlateThickness();
@@ -9080,6 +9173,8 @@
     function actorSignature(actor) {
       return [
         actor.type,
+        actor.raised ? 1 : 0,
+        actor.v11GenericId ?? "",
         actor.groupId || "",
         actor.shape || "",
         actor.styleKey || "",
@@ -9815,6 +9910,8 @@
       // applies as position deltas.
       return [
         actor.type,
+        actor.raised ? 1 : 0,
+        actor.v11GenericId ?? "",
         actor.groupId || "",
         actor.modelUrl || "",
         actor.direction || actor.facing || "",
@@ -11501,7 +11598,8 @@
     // Kick fetch+parse of every GLB and resolve once they are all ready (or
     // permanently failed). Hosts and the bake harness await this so the first
     // build already has real models instead of fallback primitives.
-    function preloadModelAssets(urls) {
+    async function preloadModelAssets(urls) {
+      await app.threeRendererReady;
       const pending = [];
 
       (urls instanceof Set ? Array.from(urls) : urls || []).forEach((url) => {
@@ -13330,6 +13428,11 @@
 
     function disposeRenderer() {
       rendererDisposed = true;
+      modelAssetCache.forEach((entry) => {
+        entry.cancel?.();
+        entry.model?.parts?.forEach((part) => part.geometry?.dispose?.());
+      });
+      modelAssetCache.clear();
       modelAssetRetryTimers.forEach((timer) => window.clearTimeout(timer));
       modelAssetRetryTimers.clear();
       failedModelAssetUrls.clear();
@@ -13384,11 +13487,27 @@
       }
     }
 
-    app.threeRendererReady = import(threeModuleUrl)
+    async function importThreeModule() {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (rendererDisposed) return null;
+        const url = attempt
+          ? assetUrl(`/vendor/retry-${attempt}/three.module.js`)
+          : threeModuleUrl;
+        try {
+          const module = await import(url);
+          threeModuleRetry = attempt;
+          return module;
+        } catch (error) {
+          if (attempt === 2) throw error;
+        }
+      }
+      return null;
+    }
+
+    app.threeRendererReady = importThreeModule()
       .then((module) => {
+        if (rendererDisposed || !module) return;
         THREE = module;
-      })
-      .then(() => {
         renderer = new THREE.WebGLRenderer({
           // alpha is load-bearing: the edge-outline overlay pass clears the
           // drawing buffer to transparent before compositing onto the 2D canvas.
@@ -13424,9 +13543,10 @@
           window.requestAnimationFrame((now) => (app.renderOncePerFrame || app.render)(now));
         }
       })
-      .catch(() => {
+      .catch((error) => {
+        console.warn("3D renderer initialization failed", error);
+        disposeRenderer();
         THREE = null;
-        renderer = null;
       });
 
     app.threeRenderer = {

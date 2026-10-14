@@ -1408,6 +1408,10 @@
       return terrain.map((row) => row.map((cell) => cloneTerrainCell(cell)));
     }
 
+    const imageLoads = new Map();
+    const modelLoads = new Map();
+    const ASSET_LOAD_TIMEOUT_MS = 15000;
+
     function preloadImageUrl(url) {
       if (typeof url !== "string" || url.length === 0) {
         return Promise.resolve();
@@ -1415,22 +1419,41 @@
 
       registerImageUrl(url);
 
-      if (app.imageCache.has(url)) {
+      if (app.imageCache.get(url)) {
         return Promise.resolve();
       }
-
-      return new Promise((resolve) => {
-        const image = new Image();
-        image.onload = function () {
+      if (imageLoads.has(url)) return imageLoads.get(url);
+      const promise = (async () => {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const image = await new Promise((resolve) => {
+            const candidate = new Image();
+            const timer = window.setTimeout(() => finish(null), ASSET_LOAD_TIMEOUT_MS);
+            function finish(value) {
+              window.clearTimeout(timer);
+              candidate.onload = null;
+              candidate.onerror = null;
+              if (!value) candidate.src = "";
+              resolve(value);
+            }
+            candidate.onload = () => finish(candidate);
+            candidate.onerror = () => finish(null);
+            candidate.src = attempt
+              ? `${url}${url.includes("?") ? "&" : "?"}retry=${attempt}`
+              : url;
+          });
+          if (!image) continue;
           app.imageCache.set(url, image);
-          resolve();
-        };
-        image.onerror = function () {
-          app.imageCache.set(url, null);
-          resolve();
-        };
-        image.src = url;
-      });
+          // Cached world/camera-flight groups may already contain a fallback.
+          app.threeRenderer?.invalidateSceneCache?.({ assets: true });
+          if (typeof app.render === "function") {
+            window.requestAnimationFrame((now) => (app.renderOncePerFrame || app.render)(now));
+          }
+          return;
+        }
+        app.imageCache.delete(url);
+      })().finally(() => imageLoads.delete(url));
+      imageLoads.set(url, promise);
+      return promise;
     }
 
     function preloadModelUrl(url) {
@@ -1440,28 +1463,46 @@
 
       registerModelUrl(url);
 
-      if (app.modelTextCache.has(url)) {
+      // Let the renderer own GLB fetches, deadlines and parse retries. A second
+      // raw prefetch could otherwise overwrite recovered bytes with a failure.
+      if (/\.glb(?:[?#]|$)/i.test(url) && app.threeRenderer?.preloadModelAssets) {
+        return app.threeRenderer.preloadModelAssets([url]);
+      }
+
+      if (app.modelTextCache.get(url)) {
         return Promise.resolve();
       }
+      if (modelLoads.has(url)) return modelLoads.get(url);
 
       const isBinaryModel = /\.glb(?:[?#]|$)/i.test(url);
 
-      return fetch(url)
+      const controller = new AbortController();
+      let timer;
+      const deadline = new Promise((resolve) => {
+        timer = window.setTimeout(() => { controller.abort(); resolve(null); }, ASSET_LOAD_TIMEOUT_MS);
+      });
+      const request = fetch(url, { signal: controller.signal })
         .then((response) => {
           if (!response.ok) {
             return null;
           }
 
           return isBinaryModel ? response.arrayBuffer() : response.text();
-        })
+        });
+      const promise = Promise.race([request, deadline])
         .then((data) => {
-          app.modelTextCache.set(url, data);
+          if (data) app.modelTextCache.set(url, data);
           app.threeRenderer?.invalidateSceneCache?.();
         })
         .catch(() => {
-          app.modelTextCache.set(url, null);
           app.threeRenderer?.invalidateSceneCache?.();
+        })
+        .finally(() => {
+          window.clearTimeout(timer);
+          modelLoads.delete(url);
         });
+      modelLoads.set(url, promise);
+      return promise;
     }
 
     function collectTerrainAssetUrls(cell, urls, modelUrls) {
