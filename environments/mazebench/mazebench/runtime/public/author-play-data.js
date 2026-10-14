@@ -942,6 +942,7 @@
       }
 
       return {
+        engineVersion: options.engineVersion || authorData?.engineVersion || authorData?.engine_version || "v1",
         gameId: options.gameId || authorData?.game?.id || "maze",
         playApiBaseUrl: options.playApiBaseUrl || authorData?.playApiBaseUrl || "",
         levelId: options.levelId || "__editor__",

@@ -45,6 +45,8 @@ const PUBLIC_FILE_ROUTES = new Map(
     "/play-gameplay.js",
     "/flyover.js",
     "/maze-engine.js",
+    "/maze-engine-versions.js",
+    "/physics/v1.1.wasm",
     "/maze-solver.js",
     "/world-solver.js",
     "/world-solver-worker.js",

@@ -332,6 +332,9 @@
     }
 
     function makeSnap(state, parentSnap, moveResult) {
+      // Native physics also mutates mechanism IDs and layered terrain. Its
+      // snapshots must preserve those fields when the search changes branches.
+      if (engine.engineVersion === "v1.1") return { nativeState: engine.cloneState(state) };
       const arrays = acquireSnapArrays();
 
       arrays.ax.set(state.actorX);
@@ -396,12 +399,16 @@
     }
 
     function releaseSnap(snap) {
-      if (snap) {
+      if (snap && !snap.nativeState) {
         snapArrayPool.push({ ax: snap.ax, ay: snap.ay, ae: snap.ae, ar: snap.ar });
       }
     }
 
     function restoreLive(snap) {
+      if (snap.nativeState) {
+        engine.copyStateInto(live, snap.nativeState);
+        return;
+      }
       // Revert cells the live buffer currently has diverged, then apply the
       // snapshot's divergences. Terrain diffs are always hole fills (floor).
       if (liveTerrainDiffs) {

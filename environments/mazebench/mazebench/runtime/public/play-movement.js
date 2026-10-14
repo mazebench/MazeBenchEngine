@@ -3,6 +3,18 @@
 
   modules.createMovementController = function createMovementController(app) {
     const mazeEngine = window.MazeEngine;
+    const versions = window.MazeEngineVersions;
+    const requestedVersion = app.engineVersion || app.playData?.engineVersion || app.playData?.engine_version || "v1";
+    app.engineVersion = requestedVersion;
+    if (requestedVersion !== "v1") {
+      if (!versions) throw new Error("The versioned physics runtime is missing.");
+      app.engineReady = versions.load(requestedVersion);
+      // Keep failure observable to the host while preventing an unhandled rejection
+      // on direct engine pages that have no host boot promise.
+      app.engineReady.catch((error) => { app.engineLoadError = error; console.error(error); });
+    } else {
+      app.engineReady = Promise.resolve();
+    }
 
     if (!mazeEngine || typeof mazeEngine.createEngine !== "function") {
       throw new Error("maze-engine.js must be loaded before play-movement.js");
@@ -29,6 +41,7 @@
         // Attached lifts round-trip their raised state through the runtime
         // actor so each per-keypress engine rebuild starts from the live bit.
         raised: actor.raised === true,
+        v11GenericId: actor.v11GenericId,
         shape: actor.shape || null,
         type: actor.type,
         x: actor.x,
@@ -37,7 +50,8 @@
     }
 
     function createCurrentEngine() {
-      return mazeEngine.createEngine({
+      return (versions || mazeEngine).createEngine({
+        engineVersion: app.engineVersion,
         actors: state.actors.map(engineActorFromRuntime),
         height: state.height,
         terrain: state.terrain,
@@ -252,6 +266,7 @@
           finalElevation = toElevation,
           visualOnly = false,
           toRemoved = false,
+          toGenericId,
           skipHoleFall = false,
           collectedGemVisual = null
         }) => {
@@ -264,6 +279,10 @@
           actor.renderInHole = false;
           actor.renderPunchEffect = false;
           actor.removed = Boolean(toRemoved);
+          if (Number.isInteger(toGenericId)) {
+            actor.v11GenericId = toGenericId;
+            if (actor.type === "attached_lift" || actor.type === "attached_gate") actor.raised = (toGenericId & 1) === 1;
+          }
 
           if (
             actor.type === "gem" &&
@@ -306,6 +325,61 @@
       });
     }
 
+    function applyModernMechanisms(terrain, genericIds, durationMs = 0) {
+      if (terrain) {
+        const changes = new Map();
+        terrain.forEach((row, y) => row.forEach((cell, x) => (cell.layers || []).forEach((layer, index) => {
+          if (layer.type !== "orange_wall") return;
+          const before = state.terrain[y]?.[x]?.layers?.[index];
+          const from = before?.v11GenericId || 0;
+          if (from !== layer.v11GenericId) changes.set(`${x},${y},${layer.v11AnchorElevation}`, from);
+        })));
+        app.v11TerrainTransition = durationMs > 0 && changes.size ? { changes, startedAt: performance.now(), durationMs } : null;
+        app.restoreTerrainState(terrain);
+      }
+      (genericIds || []).forEach((genericId, index) => {
+        const actor = state.actors[index];
+        if (!actor) return;
+        actor.v11GenericId = genericId;
+        if (actor.type === "attached_lift" || actor.type === "attached_gate") actor.raised = (genericId & 1) === 1;
+      });
+    }
+
+    function animateModernCommand(result, durationMs, onFinish, onMoveFrame) {
+      const ticks = result.ticks || [];
+      let nextTick = 0;
+      function advance() {
+        if (nextTick >= ticks.length) {
+          applyModernMechanisms(result.terrainAfter, result.actorGenericId);
+          if (onFinish) onFinish();
+          return;
+        }
+        const tick = ticks[nextTick++];
+        const moves = tick.moves.map(moveFromEngineRecord).filter(Boolean);
+        const tickDuration = typeof durationMs === "number" ? durationMs / ticks.length : app.MOVE_DURATION_MS;
+        applyModernMechanisms(tick.terrain, tick.actorGenericId, tickDuration);
+        if (!moves.length) {
+          if (!tick.terrain || tickDuration <= 0) { advance(); return; }
+          app.isAnimating = true;
+          let elapsed = 0, last = null;
+          const step = (now) => {
+            elapsed += last === null ? 0 : Math.min(40, Math.max(0, now - last)); last = now;
+            app.render(now);
+            if (elapsed < tickDuration) app.animationFrameId = window.requestAnimationFrame(step);
+            else { app.isAnimating = false; app.animationFrameId = null; advance(); }
+          };
+          app.animationFrameId = window.requestAnimationFrame(step);
+          return;
+        }
+        applyMoveLogicalPositions(moves);
+        app.animateMoves(moves, tickDuration, {
+          onFinish: advance,
+          onMoveFrame: onMoveFrame ? (frame) => onMoveFrame({ ...frame, progress: (nextTick - 1 + frame.progress) / ticks.length }) : null
+        });
+      }
+      advance();
+    }
+
     function performPlayerMove(dx, dy, options = {}) {
       const animate = options.animate !== false;
       const recordHistory = options.recordHistory !== false;
@@ -328,12 +402,13 @@
         edgeFalls: edgeFallsEnabledFor(dx, dy)
       });
       const moves = moveResult.moves.map(moveFromEngineRecord).filter(Boolean);
+      const modern = moveResult.engineVersion === "v1.1";
       // Snapshots are only taken once we know the move actually goes
       // somewhere — blocked moves skip all of the deep clones below. The
       // snapshot must precede recordCollectedGemsFromMoves, which mutates
       // the gem-collection fields cloneActorPositions captures.
       const previousState =
-        moves.length > 0
+        (modern ? moveResult.moved : moves.length > 0)
           ? {
               actors: cloneActorPositions(),
               terrain: cloneTerrainState(state.terrain),
@@ -359,9 +434,9 @@
         raisedOrangeWalls,
         finalRaisedOrangeWalls
       );
-      const hasLogicalMoves = moves.some((move) => move.visualOnly !== true);
+      const hasLogicalMoves = modern ? moveResult.moved : moves.some((move) => move.visualOnly !== true);
 
-      if (moves.length > 0) {
+      if (modern ? moveResult.moved : moves.length > 0) {
         if (beforeAnimate) {
           beforeAnimate({
             moveResult: {
@@ -382,7 +457,14 @@
           }
         }
 
-        if (animate) {
+        if (modern) {
+          if (animate) animateModernCommand(moveResult, durationMs, onFinish, onMoveFrame);
+          else {
+            applyModernMechanisms(moveResult.terrainAfter, moveResult.actorGenericId);
+            applyMoveFinalState(moves);
+            if (onFinish) onFinish();
+          }
+        } else if (animate) {
           applyMoveLogicalPositions(moves);
           app.gateRenderOverride = raisedPlayerGates;
           app.orangeWallRenderOverride = raisedOrangeWalls;
@@ -415,7 +497,7 @@
       }
 
       return {
-        moved: moves.length > 0,
+        moved: modern ? moveResult.moved : moves.length > 0,
         moves,
         previousState
       };
@@ -433,7 +515,7 @@
 
       return {
         ...moveResult,
-        moved: moves.length > 0,
+        moved: moveResult.engineVersion === "v1.1" ? moveResult.moved : moves.length > 0,
         moves
       };
     }

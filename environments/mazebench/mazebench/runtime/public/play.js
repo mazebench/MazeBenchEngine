@@ -209,6 +209,7 @@
   }
 
   function bindInput() {
+    if (playData.hostOwnsPlayControls === true) return;
     if (inputBound) return;
     inputBound = true;
     window.addEventListener("keydown", app.handleKeydown);
@@ -779,6 +780,9 @@
   app.switchPlayWorldLevel = switchPlayWorldLevel;
 
   function installPlayControls() {
+    // A hosted shell must record each command before running it. Installing
+    // these direct handlers as well would move first and bypass its replay.
+    if (playData.hostOwnsPlayControls === true) return;
     const controls = document.querySelector(".mazebench-controls");
     const controlsOverlay = document.getElementById("controls-settings-overlay");
     const worldMapOverlay = document.getElementById("world-map-overlay");

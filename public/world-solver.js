@@ -189,6 +189,8 @@
         : clone(runtime.state.actors || []);
       return {
         actors: (actors || []).filter((actor) => !actor.removed),
+        engineVersion: runtime.engineVersion || "v1",
+        physicsTrace: false,
         gameId: "maze",
         height: runtime.state.height,
         levelId: runtime.currentLevelId,
@@ -261,9 +263,10 @@
           type: "analyze_room",
           id,
           playData,
+          physicsUrl: options.physicsUrl,
           gemTargets,
           positionTargets,
-          maxExpandedStates: options.maxExpandedStates || Number.MAX_SAFE_INTEGER
+          maxExpandedStates: options.maxExpandedStates || (playData.engineVersion === "v1.1" ? 5000 : Number.MAX_SAFE_INTEGER)
         });
       });
     }
@@ -309,12 +312,16 @@
     }
 
     async function executePath(path, version) {
+      const sourceLevelId = currentLevelId();
       for (const label of String(path || "")) {
         if (!running || stopped || version !== loopVersion) return false;
         const moved = await options.moveDirection?.(label);
         if (moved === false) return false;
         await waitForIdle(version);
         recordTrail();
+        // A native ice/punch command can continue through several rooms.
+        // Discard the remainder of a route planned inside the source room.
+        if (app()?.engineVersion === "v1.1" && currentLevelId() !== sourceLevelId) return false;
       }
       return true;
     }
