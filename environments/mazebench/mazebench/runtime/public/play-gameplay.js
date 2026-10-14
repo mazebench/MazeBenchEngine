@@ -739,6 +739,11 @@
       if (moves.length === 0) {
         return;
       }
+      if (app.isReplayingSavedActions) {
+        options.startLiftPhase?.();
+        finishAnimation(moves, options);
+        return;
+      }
 
       moves.sort((left, right) => {
         const leftVisual = isPunchVisualMove(left) ? 1 : 0;
@@ -3193,6 +3198,7 @@
         app.animationFrameId = window.requestAnimationFrame(step);
       }
 
+      if (app.isReplayingSavedActions) { finish(); return true; }
       app.animationFrameId = window.requestAnimationFrame(step);
       return true;
     }
@@ -3352,7 +3358,7 @@
       return true;
     }
 
-    async function startModernWorldCommand(dx, dy) {
+    async function startModernWorldCommand(dx, dy, options = {}) {
       app.isPlanningWorldAction = true;
       const startLevel = app.cloneLevelSnapshot();
       const startEntry = app.levelEntrySnapshot;
@@ -3366,7 +3372,7 @@
           });
         }
         const plan = await window.MazeEngineVersions.planWorldCommand({
-          currentLevelId: app.currentLevelId, currentRoom: startLevel, rooms, dx, dy,
+          currentLevelId: app.currentLevelId, currentRoom: startLevel, rooms, dx, dy, physicsTrace: options.instant !== true,
           adjacentLevelId: (id, x, y) => {
             const next = app.adjacentWorldLevelId?.(id, x, y);
             return known.size && !known.has(next) ? null : next;
@@ -3381,11 +3387,19 @@
         if (!plan.moved) { runQueuedAction(); return; }
         // The command may have discovered rooms that were absent from the live
         // cache at its start. Undo must restore their initial physics too.
-        startLevel.v11WorldRooms = plan.initial.rooms;
+        startLevel.v11WorldRooms = plan.initialRooms;
         moveHistory.push({ levelSnapshot: startLevel, levelEntrySnapshot: startEntry, undoGroupId: null });
         if (moveHistory.length > 500) moveHistory.splice(0, moveHistory.length - 500);
         const collectedMoves = plan.collectedGems.map((gem) => ({ ...gem, actorType: "gem", toRemoved: true }));
         app.recordCollectedGemsFromMoves?.([...plan.moves.filter((move) => move.actorType !== "gem"), ...collectedMoves]);
+        if (options.instant === true) {
+          app.v11WorldRooms = plan.rooms;
+          const crossed = plan.currentLevelId !== startLevel.levelId;
+          applyLevelState(plan.currentRoom, { immediateCamera: true, resetLevelEntry: crossed, updateUrl: crossed });
+          for (const room of Object.values(plan.rooms)) app.rememberHorizontalNeighborLevelState?.(room);
+          if (plan.playerFell && app.autoUndoPlayerFalls) undoMove({ instantRestore: true });
+          return plan;
+        }
         const sequence = [plan.initial, ...plan.ticks];
         const player = startLevel.actors.find((actor) => app.isMainPlayerActor(actor));
         const pathDuration = Math.max(1, plan.ticks.length) * MOVE_DURATION_MS;
@@ -3477,6 +3491,7 @@
       } catch (error) {
         app.isPlanningWorldAction = false; app.isAnimating = false; app.worldActionAnimation = null;
         app.engineLoadError = error;
+        if (options.instant === true) throw error;
         console.error(error);
         if (app.onEngineError) app.onEngineError(error);
         else window.alert?.(`Unable to execute v1.1 command: ${error.message}`);
@@ -3854,6 +3869,56 @@
       }
     }
 
+    async function replaySavedAction(action, options = {}) {
+      if (app.isAnimating || app.isTransitioningLevel || app.isPlanningWorldAction) throw new Error("The previous action must finish before replaying the next action.");
+      const previousReplay = app.isReplayingSavedActions;
+      const previousPitRecovery = app.autoUndoPlayerFalls;
+      if (typeof options.autoUndoPlayerFalls === "boolean") app.autoUndoPlayerFalls = options.autoUndoPlayerFalls;
+      app.isReplayingSavedActions = true;
+      app.lastReplayError = null;
+      try {
+        const command = action.command || action.type;
+        if (await options.applyHostAction?.(action)) return { levelId: app.currentLevelId, engineVersion: app.engineVersion };
+        if (command === "move") {
+          const direction = { up: [0,-1], down: [0,1], left: [-1,0], right: [1,0], U: [0,-1], D: [0,1], L: [-1,0], R: [1,0] }[action.direction];
+          const explicit = Number.isInteger(action.dx) && Number.isInteger(action.dy);
+          const [dx, dy] = explicit ? [action.dx, action.dy] : direction && options.worldDirections !== true && app.mapCameraRelativeDirection ? app.mapCameraRelativeDirection(...direction) : direction || [];
+          if (!Number.isInteger(dx) || !Number.isInteger(dy) || Math.abs(dx) + Math.abs(dy) !== 1) throw new Error("This saved move has an invalid direction.");
+          if (app.engineVersion === "v1.1") await startModernWorldCommand(dx, dy, { instant: true });
+          else movePlayers(dx, dy);
+        } else if (command === "rotate_camera") {
+          if (!["left", "right"].includes(action.direction)) throw new Error("This saved camera action is invalid.");
+          app.threeRenderer?.setDebugCameraView?.({ yaw: (app.threeRenderer.getDebugCameraYaw?.() || 0) + (action.direction === "left" ? -1 : 1) * Math.PI / 2, animate: false });
+        } else if (command === "quit") { /* No physics state changes. */ }
+        else if (command === "undo") undoMove({ instantRestore: true });
+        else if (["reset", "reset_level", "reset_level_undoable"].includes(command)) {
+          resetPositions();
+          if (command === "reset_level") moveHistory.length = 0;
+        } else if (["goto_level", "resume_session"].includes(command)) {
+          let room = await (options.loadLevelState || app.loadLevelState)(action.level_id, action);
+          if (action.checkpoint_id && !options.loadLevelState) {
+            const checkpoint = room.checkpoints?.find((entry) => (entry.id || entry.checkpoint_id) === action.checkpoint_id);
+            if (!checkpoint) throw new Error("The saved checkpoint is unavailable.");
+            room = JSON.parse(JSON.stringify(room));
+            const player = room.actors.find((actor) => app.isMainPlayerActor(actor));
+            if (!player) throw new Error("The saved checkpoint has no player.");
+            Object.assign(player, { x: checkpoint.x, y: checkpoint.y, elevation: checkpoint.elevation || 0, removed: false });
+          }
+          applyLevelState(room, { resetHistory: true, resetLevelEntry: true, updateUrl: true });
+          if (app.engineVersion === "v1.1") app.v11WorldRooms = { ...(app.v11WorldRooms || {}), [app.currentLevelId]: app.cloneLevelSnapshot() };
+        } else throw new Error(`Unsupported saved action: ${command}`);
+        const deadline = performance.now() + 30000;
+        // Legacy transitions fetch rooms asynchronously even when animations are
+        // skipped. Wait for their continuation callbacks before the next action.
+        do {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (performance.now() > deadline) throw new Error("Timed out restoring a saved room transition.");
+        } while (app.isAnimating || app.isTransitioningLevel || app.isPlanningWorldAction);
+        if (app.lastReplayError) throw app.lastReplayError;
+        return { levelId: app.currentLevelId, engineVersion: app.engineVersion };
+      } finally { app.isReplayingSavedActions = previousReplay; app.autoUndoPlayerFalls = previousPitRecovery; }
+    }
+
     // Bindings honor the shared controls config (window.__MAZEBENCH_CONTROLS__)
     // when the host page provides one; otherwise the classic defaults apply.
     function matchesGameplayControl(event, action, fallbackCodes) {
@@ -3922,6 +3987,7 @@
       runQueuedAction,
       finishMoveUndoGroup,
       runAction,
+      replaySavedAction,
       canQueueLateAction,
       queueLateAction,
       cancelQueuedAction,

@@ -381,6 +381,11 @@
       fromForeground = null,
       options = {}
     ) {
+      if (app.isReplayingSavedActions) {
+        app.levelTransition = null; app.isTransitioningLevel = false;
+        options.onComplete?.();
+        return;
+      }
       app.levelTransition = {
         fromCanvas,
         fromScene,
