@@ -13450,6 +13450,7 @@
         else if (typeof app.render === "function") app.render();
       },
       setDebugCameraView,
+      getDebugCameraMode: () => cameraMode,
       getDebugCameraYaw: () => debugCameraTargetYaw,
       getDebugCameraTilt: () => debugCameraTargetTilt,
       getDebugCameraZoom: () => debugCameraTargetZoom,

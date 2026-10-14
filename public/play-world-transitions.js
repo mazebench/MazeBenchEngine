@@ -609,6 +609,7 @@
         app.animationFrameId = window.requestAnimationFrame(step);
       }
 
+      if (app.isReplayingSavedActions) { finishBlink(); return; }
       if (blinkCount === 1) {
         let hiddenAtMs = null;
 
@@ -1262,6 +1263,7 @@
 
         return true;
       } catch (error) {
+        if (app.isReplayingSavedActions) app.lastReplayError = error;
         console.error(error);
         app.isTransitioningLevel = false;
         return false;

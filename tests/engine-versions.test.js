@@ -83,11 +83,11 @@ async function main() {
   a.levelId='A'; a.terrain[1][4]=cell('orange_wall');
   const b = room([actor('player',0,1),actor('clone',2,1,{groupId:'M0'}),actor('weightless_box',4,2,{groupId:'M0'})]);
   b.levelId='B'; b.terrain[1][4]=cell('orange_wall');
-  const composed = await versions.planWorldCommand({ currentLevelId:'A',currentRoom:a,rooms:{},dx:1,dy:0,
+  const composed = await versions.planWorldCommand({ currentLevelId:'A',currentRoom:a,rooms:{B:b},dx:1,dy:0,
     adjacentLevelId:(id,dx,dy)=>dy===0 && (id==='A'&&dx===1||id==='B'&&dx===-1) ? id==='A'?'B':'A':null,
     loadRoom:async id=>id==='B'?b:null,physicsTrace:false });
   assert.equal(composed.rooms.A.terrain[1][4].layers[0].v11GenericId,1);
-  assert.equal(composed.rooms.B.terrain[1][4].layers[0].v11GenericId,0,'orange button pressure stays scoped to its source room');
+  assert.equal(composed.rooms.B.terrain[1][4].layers[0].v11GenericId??0,0,'orange button pressure stays scoped to its source room');
   assert.equal(composed.rooms.B.actors[1].x,2,'remote clones do not receive the directional command');
   assert.equal(composed.rooms.B.actors[0].x,0,'inactive authored player positions are preserved');
   assert.equal(composed.ticks.length,0);
@@ -96,7 +96,30 @@ async function main() {
   assert.throws(()=>versions.validateWorld([room([actor("player",0,0),actor("circle_player",1,0)])]),/one main player/);
   assert.equal(versions.validateWorld([room([])]),true,"incomplete drafts may omit the main player");
   const overflow = Array.from({length:260},()=>room([],Array.from({length:16},()=>Array.from({length:16},()=>cell()))));
-  assert.throws(()=>versions.validateWorld(overflow),/65,536/);
+  assert.equal(versions.validateWorld(overflow),true,"large worlds use bounded per-command scenes");
+  const oversizedRoom=room([],Array.from({length:256},()=>Array.from({length:256},()=>cell("tree"))));
+  assert.throws(()=>versions.validateWorld([oversizedRoom]),/65,536/);
+  const {getGame,getLevelState}=require('../server/app');
+  const game=getGame('maze');
+  const official=Object.fromEntries(game.worldMap.levels.map(level=>{const data=getLevelState(game,level);return [data.levelId,data];}));
+  assert.equal(Object.keys(official).length,256);
+  assert.equal(versions.validateWorld(official),true,'the official world uses supported native mechanics');
+  const officialStart=Object.values(official).find(r=>r.actors.some(a=>a.type==='player'));
+  let fetchCount=0;
+  const adjacent=(id,dx,dy)=>{
+    const match=/^level_([A-Z])x([A-Z])$/.exec(id); if(!match)return null;
+    const next=`level_${String.fromCharCode(match[1].charCodeAt(0)+dx)}x${String.fromCharCode(match[2].charCodeAt(0)+dy)}`;
+    return official[next]?next:null;
+  };
+  const officialMove=await versions.planWorldCommand({currentLevelId:officialStart.levelId,currentRoom:officialStart,dx:1,dy:0,physicsTrace:false,
+    adjacentLevelId:adjacent,loadRoom:async id=>{fetchCount++;return official[id]||null;}});
+  assert.ok(officialMove.currentRoom);
+  assert.ok(fetchCount<20,'a main-world command loads only its reachable frontier, not all256rooms');
+  assert.ok(officialMove.placements.length<20);
+  const untouched={...b,actors:[actor('box',2,1,{elevation:3})]};
+  const local=await versions.planWorldCommand({currentLevelId:'A',currentRoom:a,rooms:{B:untouched},dx:1,dy:0,physicsTrace:false,
+    adjacentLevelId:(id,dx,dy)=>dy===0&&id==='A'&&dx===1?'B':null,loadRoom:async()=>{throw new Error('unreachable room should not load');}});
+  assert.equal(local.rooms.B.actors[0].elevation,3,'unreached rooms do not advance gravity during another room command');
   console.log('Versioned engine tests passed.');
 }
 main().catch((error)=>{console.error(error);process.exitCode=1;});

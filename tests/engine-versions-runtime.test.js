@@ -77,6 +77,7 @@ loadBrowserScript("public/maze-engine.js");
 loadBrowserScript("public/maze-engine-versions.js");
 loadBrowserScript("public/play-core.js");
 loadBrowserScript("public/play-movement.js");
+loadBrowserScript("public/play-render-compositor.js");
 loadBrowserScript("public/play-world-transitions.js");
 loadBrowserScript("public/play-gameplay.js");
 
@@ -90,6 +91,8 @@ function fixture() {
 }
 function runtime(data) {
   const app = window.PlayModules.createPlayCore({playData:data,canvas:createStubCanvas(),playShell:null,playHeader:null,playStage:null,mazeFrame:null,fuzzyToggle:null});
+  app.renderTerrain={paintGround:()=>{}}; app.renderActors={paintDepthSortedScene:()=>{},actorDepthRow:()=>0,paintRaisedPlayer:()=>{}};
+  window.PlayModules.registerRenderCompositorFunctions(app);
   window.PlayModules.registerGameplayFunctions(app); app.render=()=>{}; app.renderOncePerFrame=()=>{};
   return app;
 }
@@ -169,7 +172,7 @@ function drainUntil(done) {
     engineVersion: "v1.1", gameId: "maze", levelId, width: 3, height: 3,
     worldColumns: ["A", "B"], worldRows: ["A"], worldLevelIds: ["level_AxA", "level_BxA"],
     terrain: Array.from({length:3},()=>Array.from({length:3},()=>({type:"floor",layers:[{type:"floor",elevation:0}]}))),
-    actors: levelId === "level_AxA" ? [{type:"player",x:0,y:0,elevation:0}] : [{type:"box",x:2,y:2,elevation:2}]
+    actors: levelId === "level_AxA" ? [{type:"player",x:1,y:0,elevation:0}] : [{type:"box",x:2,y:2,elevation:2}]
   }]));
   const gravity = runtime(gravityRooms.level_AxA);
   for (const room of Object.values(gravityRooms)) gravity.rememberHorizontalNeighborLevelState(room);
@@ -219,5 +222,79 @@ function drainUntil(done) {
   assert.equal(pitFailure.state.actors[0].removed,false,"host callback errors never skip authoritative pit auto-undo");
   assert.equal(pitFailure.state.actors[0].x,1);
   assert.equal(pitFailure.moveHistory.length,0);
+  const resumeSource = runtime(rooms.level_AxA);
+  for(const room of Object.values(rooms)) resumeSource.rememberHorizontalNeighborLevelState(room);
+  await resumeSource.replaySavedAction({command:"move",direction:"right"},{worldDirections:true});
+  assert.equal(resumeSource.currentLevelId,"level_CxA");
+  assert.equal(resumeSource.isAnimating,false);
+  const nativeSnapshot = JSON.parse(JSON.stringify(resumeSource.exportResumeState()));
+  const resumed = runtime(rooms.level_AxA);
+  await resumed.restoreResumeState(nativeSnapshot);
+  assert.equal(resumed.currentLevelId,"level_CxA");
+  assert.equal(resumed.state.actors.find(a=>a.type==="player").x,1);
+  assert.equal(resumed.collectedGemIds.size,1);
+  assert.equal(resumed.moveHistory.length,1,"exact resume preserves cross-room undo history");
+  await resumed.replaySavedAction({command:"undo"});
+  assert.equal(resumed.currentLevelId,"level_AxA");
+  assert.equal(resumed.state.actors[0].x,0);
+  assert.equal(resumed.collectedGemIds.size,1);
+  await resumed.replaySavedAction({command:"move",dx:1,dy:0});
+  assert.equal(resumed.currentLevelId,"level_CxA");
+  assert.equal(resumed.collectedGemIds.size,1);
+  const legacyResumeData = fixture(); legacyResumeData.engineVersion="v1";
+  const legacySource=runtime(legacyResumeData);
+  await legacySource.replaySavedAction({command:"move",dx:1,dy:0});
+  await legacySource.replaySavedAction({command:"move",dx:1,dy:0});
+  const legacySnapshot=JSON.parse(JSON.stringify(legacySource.exportResumeState()));
+  const legacyRestored=runtime(legacyResumeData);
+  await legacyRestored.restoreResumeState(legacySnapshot);
+  assert.equal(legacyRestored.state.actors[0].x,3);
+  assert.equal(legacyRestored.state.actors[1].x,4,"v1 resume restores moved boxes exactly");
+  await legacyRestored.replaySavedAction({command:"undo"});
+  assert.equal(legacyRestored.state.actors[0].x,2);
+  assert.equal(legacyRestored.state.actors[1].x,3);
+  await assert.rejects(()=>legacyRestored.restoreResumeState(nativeSnapshot),/different engine/);
+  const invalid=JSON.parse(JSON.stringify(legacySnapshot)); invalid.root={r:invalid.nodes.length};
+  await assert.rejects(()=>legacyRestored.restoreResumeState(invalid),/invalid reference/);
+  assert.equal(legacyRestored.state.actors[0].x,2,"failed restore leaves the live board untouched");
+  const legacyRooms=Object.fromEntries(["level_AxA","level_BxA"].map(levelId=>[levelId,{
+    engineVersion:"v1",gameId:"maze",levelId,width:2,height:1,worldColumns:["A","B"],worldRows:["A"],
+    terrain:[[{type:"floor"},{type:"floor"}]],actors:[{type:"player",x:0,y:0,elevation:0}]
+  }]));
+  const legacyWorld=runtime(legacyRooms.level_AxA);
+  for(const room of Object.values(legacyRooms)) legacyWorld.rememberHorizontalNeighborLevelState(room);
+  legacyWorld.loadLevelState=async id=>legacyRooms[id];
+  await legacyWorld.replaySavedAction({command:"move",dx:1,dy:0});
+  await legacyWorld.replaySavedAction({command:"move",dx:1,dy:0});
+  assert.equal(legacyWorld.currentLevelId,"level_BxA","legacy instant tail replay includes room crossing");
+  assert.equal(legacyWorld.state.actors[0].x,0);
+  await legacyWorld.replaySavedAction({command:"undo"});
+  assert.equal(legacyWorld.currentLevelId,"level_AxA");
+  assert.equal(legacyWorld.state.actors[0].x,1);
+  const legacyIce=JSON.parse(JSON.stringify(rooms));
+  for(const room of Object.values(legacyIce)) {
+    room.engineVersion="v1";
+    if(!room.actors.some(a=>a.type==="player")) room.actors.push({type:"player",x:0,y:0,elevation:0});
+  }
+  const legacyIceApp=runtime(legacyIce.level_AxA);
+  for(const room of Object.values(legacyIce)) legacyIceApp.rememberHorizontalNeighborLevelState(room);
+  legacyIceApp.loadLevelState=async id=>legacyIce[id];
+  await legacyIceApp.replaySavedAction({command:"move",dx:1,dy:0});
+  assert.equal(legacyIceApp.currentLevelId,"level_CxA","legacy instant replay preserves forced motion across several rooms");
+  assert.equal(legacyIceApp.state.actors.find(a=>a.type==="player").x,1);
+  const legacyPit=runtime({...pitData,engineVersion:"v1"});
+  await legacyPit.replaySavedAction({command:"move",dx:1,dy:0});
+  assert.equal(legacyPit.state.actors[0].removed,false);
+  assert.equal(legacyPit.state.actors[0].x,1,"legacy instant replay completes automatic pit undo without RAF");
+  const {getGame,getLevelState}=require("../server/app");
+  const official=getGame("maze");
+  const fullWorld=Object.fromEntries(official.worldMap.levels.map(level=>{const data=getLevelState(official,level);return [data.levelId,data];}));
+  const officialState=runtime({...Object.values(fullWorld).find(r=>r.actors.some(a=>a.type==="player")),engineVersion:"v1.1"});
+  officialState.v11WorldRooms=fullWorld;
+  const wholeWorldSnapshot=officialState.exportResumeState();
+  assert.ok(JSON.stringify(wholeWorldSnapshot).length<16*1024*1024,"all256 official rooms fit in the exact save envelope");
+  const gzipSize=require("node:zlib").gzipSync(JSON.stringify(wholeWorldSnapshot)).length;
+  assert.ok(gzipSize<512*1024);
+  console.log(`Official world exact save: ${JSON.stringify(wholeWorldSnapshot).length} bytes before gzip; ${gzipSize} bytes compressed.`);
   console.log("Versioned browser runtime parity, animation, and undo tests passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});

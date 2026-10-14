@@ -331,23 +331,60 @@
   }
   function validateWorld(rooms) {
     const list = Array.isArray(rooms) ? rooms : Object.values(rooms || {});
-    let voxelCount = 0;
     const dimensions = new Set();
     for (const room of list) {
       validateLevel(room); dimensions.add(`${room.width},${room.height}`);
       if ((room.actors || []).filter((actor) => (actor.type === "player" || actor.type === "circle_player") && !actor.removed).length > 1) {
         throw new Error("v1.1 world traversal supports one main player per room. Use clones for additional characters.");
       }
-      voxelCount += (room.actors || []).length;
+      let voxelCount = (room.actors || []).length;
       for (const row of room.terrain || []) for (const cell of row || []) for (const layer of layersFor(cell)) voxelCount += layer.type === "tree" ? 3 : layer.type === "orange_wall" ? 2 : 1;
+      if (voxelCount > 65536) throw new Error("This v1.1 room exceeds the 65,536 voxel physics limit.");
     }
     if (dimensions.size > 1) throw new Error("Connected v1.1 rooms must have matching dimensions for continuous physics.");
-    if (voxelCount > 65536) throw new Error("This v1.1 world exceeds the 65,536 voxel physics limit.");
     return true;
+  }
+  // Discover only the rooms a command can interact with. Each expansion reruns
+  // from the same original state: native momentum is never restarted midway.
+  // Nonplayer bodies cannot cross the native room grid, so the full main-player
+  // path (including ice, gravity, and punches) determines frontier expansion.
+  async function planWorldCommand(options) {
+    const sources = { ...(options.rooms || {}), [options.currentLevelId]: options.currentRoom };
+    const included = new Set([options.currentLevelId]), missing = new Set();
+    for (let iteration = 0; iteration < 1024; iteration++) {
+      const sceneOptions = { ...options, rooms: sources, physicsTrace: false,
+        adjacentLevelId: (id, dx, dy) => {
+          const next = options.adjacentLevelId?.(id, dx, dy);
+          return included.has(next) ? next : null;
+        },
+        loadRoom: async (id) => sources[id] || null
+      };
+      const result = await simulateWorldCommand(sceneOptions);
+      const frontier = new Set();
+      for (const point of result.playerPath) {
+        const room = sources[point.levelId];
+        for (const [dx, dy, touches] of [[-1, 0, point.x === 0], [1, 0, point.x === room.width - 1], [0, -1, point.y === 0], [0, 1, point.y === room.height - 1]]) {
+          if (!touches) continue;
+          const id = options.adjacentLevelId?.(point.levelId, dx, dy);
+          if (id && !included.has(id) && !missing.has(id)) frontier.add(id);
+        }
+      }
+      let expanded = false;
+      for (const id of frontier) {
+        const room = sources[id] || await options.loadRoom?.(id);
+        if (!room) { missing.add(id); continue; }
+        sources[id] = room; included.add(id); expanded = true;
+      }
+      if (!expanded) {
+        if (options.physicsTrace === false) return result;
+        return simulateWorldCommand({ ...sceneOptions, physicsTrace: true });
+      }
+    }
+    throw new Error("This v1.1 command traverses too many rooms to simulate safely.");
   }
   // Compose one native command before any mutation. Momentum is native state, so
   // restarting a command after a room boundary would change ice and punch physics.
-  async function planWorldCommand(options) {
+  async function simulateWorldCommand(options) {
     const clone = (value) => JSON.parse(JSON.stringify(value));
     const currentId = options.currentLevelId;
     const savedRooms = clone(options.rooms || {});

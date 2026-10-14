@@ -1561,6 +1561,92 @@
       };
     }
 
+    function exportResumeState() {
+      if (app.isAnimating || app.isTransitioningLevel || app.isPlanningWorldAction || app.isReplayingSavedActions) {
+        throw new Error("Wait for the current move to finish before saving its exact state.");
+      }
+      // A content-addressed object table retains full undo and room state while
+      // storing repeated terrain, actor metadata, and historical rooms once.
+      const nodes = [], signatures = new Map(), identities = new WeakMap();
+      function encode(value) {
+        if (value === null || typeof value !== "object") return value;
+        if (identities.has(value)) return { r: identities.get(value) };
+        const array = Array.isArray(value);
+        const entries = array ? value.map((item) => encode(item) ?? null) : Object.keys(value).sort()
+          .filter((key) => !key.startsWith("render") && typeof value[key] !== "function" && value[key] !== undefined)
+          .map((key) => [key, encode(value[key])]);
+        const node = [array ? "a" : "o", entries], signature = JSON.stringify(node);
+        let index = signatures.get(signature);
+        if (index === undefined) { index = nodes.length; signatures.set(signature, index); nodes.push(node); }
+        identities.set(value, index);
+        return { r: index };
+      }
+      const current = {
+        engineVersion: app.engineVersion, gameId: app.currentGameId, levelId: app.currentLevelId,
+        levelLabel: app.currentLevelLabel, width: app.state.width, height: app.state.height,
+        terrain: app.state.terrain, actors: app.state.actors,
+        raisedOrangeWalls: Array.from(computeRaisedOrangeWallSet())
+      };
+      const root = encode({ current, entry: app.levelEntrySnapshot, initialPositions: app.initialPositions,
+        initialTerrain: app.initialTerrain, worldRooms: app.v11WorldRooms || {}, history: app.moveHistory,
+        collectedGemIds: Array.from(app.collectedGemIds),
+        camera: { x: app.cameraX, y: app.cameraY, targetX: app.cameraTargetX, targetY: app.cameraTargetY,
+          mode: app.threeRenderer?.getDebugCameraMode?.(), yaw: app.threeRenderer?.getDebugCameraYaw?.(),
+          tilt: app.threeRenderer?.getDebugCameraTilt?.(), zoom: app.threeRenderer?.getDebugCameraZoom?.() } });
+      const snapshot = { format: "mazebench-runtime-state-v1", engine_version: app.engineVersion,
+        game_id: app.currentGameId, root, nodes };
+      if (JSON.stringify(snapshot).length > 16 * 1024 * 1024) throw new Error("This exact save exceeds the 16 MiB state limit. Its current run has not been changed.");
+      return snapshot;
+    }
+
+    async function restoreResumeState(snapshot) {
+      if (app.isAnimating || app.isTransitioningLevel || app.isPlanningWorldAction) throw new Error("The current move must finish before restoring a save.");
+      if (snapshot?.format !== "mazebench-runtime-state-v1" || !Array.isArray(snapshot.nodes)) throw new Error("This save has an unsupported state format.");
+      if (snapshot.engine_version !== app.engineVersion) throw new Error("This save belongs to a different engine version.");
+      if (snapshot.game_id !== app.currentGameId) throw new Error("This save belongs to a different game.");
+      if (snapshot.nodes.length > 500000 || JSON.stringify(snapshot).length > 16 * 1024 * 1024) throw new Error("This saved state exceeds the supported size limit.");
+      const decoded = [];
+      function decode(value) {
+        if (value === null || typeof value !== "object") return value;
+        if (Array.isArray(value) || Object.keys(value).length !== 1 || !Number.isInteger(value.r) || value.r < 0 || value.r >= decoded.length) throw new Error("This saved state contains an invalid reference.");
+        return decoded[value.r];
+      }
+      for (const node of snapshot.nodes) {
+        if (!Array.isArray(node) || node.length !== 2 || !Array.isArray(node[1])) throw new Error("This saved state contains an invalid object.");
+        if (node[0] === "a") decoded.push(node[1].map(decode));
+        else if (node[0] === "o") {
+          const result = {};
+          for (const pair of node[1]) {
+            if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string" || ["__proto__", "prototype", "constructor"].includes(pair[0])) throw new Error("This saved state contains an invalid property.");
+            result[pair[0]] = decode(pair[1]);
+          }
+          decoded.push(result);
+        } else throw new Error("This saved state contains an invalid object type.");
+      }
+      const saved = decode(snapshot.root);
+      if (!saved?.current || !Array.isArray(saved.current.actors) || !Array.isArray(saved.current.terrain) || !Array.isArray(saved.history) || saved.history.length > 500 || !Array.isArray(saved.collectedGemIds)) throw new Error("This saved state is incomplete.");
+      if (saved.current.engineVersion !== app.engineVersion || saved.current.gameId !== app.currentGameId) throw new Error("This saved board has an inconsistent identity.");
+      if (app.engineVersion === "v1.1") window.MazeEngineVersions.validateLevel(saved.current);
+      await window.MazeEngineVersions?.load(app.engineVersion);
+      const copy = (value) => JSON.parse(JSON.stringify(value));
+      // All validation and asynchronous loading precede live state mutation.
+      app.collectedGemIds = new Set(saved.collectedGemIds);
+      app.v11WorldRooms = copy(saved.worldRooms || {});
+      app.queuedAction = null;
+      applyLevelState(saved.current, { updateUrl: true, immediateCamera: true, resetHistory: true, deferRender: true });
+      if (saved.entry) app.restoreLevelEntryState?.(saved.entry);
+      app.initialPositions = copy(saved.initialPositions || []);
+      app.initialTerrain = copy(saved.initialTerrain || saved.current.terrain);
+      app.moveHistory.push(...saved.history);
+      for (const room of Object.values(app.v11WorldRooms)) rememberHorizontalNeighborLevelState(room);
+      for (const [target, key] of [["cameraX", "x"], ["cameraY", "y"], ["cameraTargetX", "targetX"], ["cameraTargetY", "targetY"]]) {
+        if (Number.isFinite(saved.camera?.[key])) app[target] = saved.camera[key];
+      }
+      if (saved.camera) app.threeRenderer?.setDebugCameraView?.({ ...saved.camera, animate: false, skipRender: true });
+      saveCollectedGemIds(); syncResetProgressButton(); app.render();
+      return { levelId: app.currentLevelId, engineVersion: app.engineVersion, historyLength: app.moveHistory.length };
+    }
+
     function applyLevelState(levelState, options = {}) {
       if (!levelState) {
         return;
@@ -3518,6 +3604,8 @@
       restoreTerrainState,
       syncDocumentLevelState,
       cloneLevelSnapshot,
+      exportResumeState,
+      restoreResumeState,
       applyLevelState,
       loadLevelState,
       restoreActorPositions,
