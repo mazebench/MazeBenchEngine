@@ -4899,7 +4899,7 @@
         !app.isFlyoverMode &&
         app.worldViewVistaMode !== true &&
         app.homeVectorTheme !== true &&
-        role !== "neighbor" &&
+        (role !== "neighbor" || activeRenderContext.showFloorGrid === true) &&
         role !== "camera-flight"
       );
     }
@@ -12569,6 +12569,15 @@
       return worldActionRoomVisibilityFactor(room, frame);
     }
 
+    function worldActionRoomContainsPlayer(room, point) {
+      const x = Number(point?.x) + 0.5;
+      const y = Number(point?.y) + 0.5;
+      const left = Number(room.offset?.x || 0);
+      const top = Number(room.offset?.y || 0);
+      return x >= left && x < left + room.levelState.width &&
+        y >= top && y < top + room.levelState.height;
+    }
+
     function worldActionPathRoomView(room, frame) {
       const levelState = room?.levelState;
 
@@ -12800,6 +12809,9 @@
           },
           {
             role: "neighbor",
+            // Animated rooms retain neighbor lighting, but the room under
+            // the player keeps the same faint grid as the settled play view.
+            showFloorGrid: worldActionRoomContainsPlayer(view, point),
             alpha: view.alpha,
             brightness: view.brightness,
             hidePlayers: true,
