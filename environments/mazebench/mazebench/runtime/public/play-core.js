@@ -190,7 +190,7 @@
       GEM_DRAW_WIDTH: 64 * 0.56,
       GEM_SHADOW_WIDTH: 64 * 0.3,
       GEM_SHADOW_HEIGHT: 64 * 0.1,
-      COLLECTED_GEM_ALPHA: 0.22,
+      get COLLECTED_GEM_ALPHA() { return this.engineVersion === "v1.1" ? 0.5 : 0.22; },
       FLOATING_FLOOR_HOVER_BASE: 64 * 0.18,
       FLOATING_FLOOR_HOVER_BOB: 64 * 0.045,
       FLOATING_FLOOR_SHADOW_INSET: 64 * 0.16,
@@ -854,7 +854,9 @@
       saveCollectedGemIds();
       app.state.actors.forEach((actor) => clearCollectedGemVisual(actor));
       for (const [levelId, room] of Object.entries(app.v11WorldRooms || {})) {
-        (room.actors || []).forEach((actor, index) => {
+        const actors = (room.actors || []).map(actor => ({ ...actor }));
+        app.v11WorldRooms[levelId] = { ...room, actors };
+        actors.forEach((actor, index) => {
           if (actor.type === "gem" && previouslyCollected.has(actor.collectionId || gemCollectionId(actor, index, levelId))) actor.collected = true;
           clearCollectedGemVisual(actor);
         });
@@ -1385,6 +1387,7 @@
         collectionId: actor.collectionId || null,
         collected: actor.collected === true,
         showCollectedGhost: actor.showCollectedGhost === true,
+        hoverSeed: actor.hoverSeed,
         x: actor.x,
         y: actor.y,
         removed: Boolean(actor.removed),
@@ -1587,10 +1590,10 @@
       }
     }
 
-    function cloneLevelSnapshot() {
+    function cloneLevelSnapshot(options = {}) {
       return {
         engineVersion: app.engineVersion,
-        ...(app.engineVersion === "v1.1" ? { v11WorldRooms: JSON.parse(JSON.stringify(app.v11WorldRooms || {})) } : {}),
+        ...(app.engineVersion === "v1.1" && options.includeWorldRooms !== false ? { v11WorldRooms: JSON.parse(JSON.stringify(app.v11WorldRooms || {})) } : {}),
         gameId: app.currentGameId,
         levelId: app.currentLevelId,
         levelLabel: app.currentLevelLabel,
@@ -1640,7 +1643,78 @@
       return snapshot;
     }
 
-    async function restoreResumeState(snapshot) {
+    function captureResumePresentation() {
+      return {
+        levelId: app.currentLevelId,
+        actors: app.state.actors.map((actor) => ({
+          type: actor.type, x: actor.renderX ?? actor.x, y: actor.renderY ?? actor.y,
+          elevation: actor.renderElevation ?? actor.elevation ?? 0, removed: actor.removed
+        })),
+        camera: {
+          yaw: app.threeRenderer?.getDebugCameraYaw?.(),
+          tilt: app.threeRenderer?.getDebugCameraTilt?.(),
+          zoom: app.threeRenderer?.getDebugCameraZoom?.()
+        }
+      };
+    }
+
+    async function animateResumePresentation(from, durationMs = 400) {
+      const targetCamera = captureResumePresentation().camera;
+      const actors = app.state.actors.map((actor, index) => {
+        const previous = from.levelId === app.currentLevelId ? from.actors[index] : null;
+        return { actor, previous: previous?.type === actor.type && !previous.removed ? previous : null,
+          x: actor.renderX ?? actor.x, y: actor.renderY ?? actor.y,
+          elevation: actor.renderElevation ?? actor.elevation ?? 0 };
+      });
+      const duration = Math.max(1, Number(durationMs) || 400);
+      const yawDelta = Math.atan2(Math.sin(targetCamera.yaw - from.camera.yaw), Math.cos(targetCamera.yaw - from.camera.yaw));
+      function paint(progress, now) {
+        const t = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+        for (const target of actors) {
+          if (!target.previous || target.actor.removed) continue;
+          target.actor.renderX = target.previous.x + (target.x - target.previous.x) * t;
+          target.actor.renderY = target.previous.y + (target.y - target.previous.y) * t;
+          target.actor.renderElevation = target.previous.elevation + (target.elevation - target.previous.elevation) * t;
+        }
+        const view = { animate: false, skipRender: true, skipResize: true, preserveSceneCache: true };
+        for (const key of ["yaw", "tilt", "zoom"]) {
+          if (Number.isFinite(from.camera[key]) && Number.isFinite(targetCamera[key])) {
+            view[key] = from.camera[key] + (key === "yaw" ? yawDelta : targetCamera[key] - from.camera[key]) * t;
+          }
+        }
+        app.threeRenderer?.setDebugCameraView?.(view);
+        (app.renderOncePerFrame || app.render)?.(now);
+      }
+      app.isAnimating = true;
+      let elapsed = 0, lastFrame = null;
+      try {
+        // Show the exact arrival pose before moving toward the restored one.
+        paint(0, performance.now());
+        await new Promise((resolve, reject) => {
+          const step = (now) => {
+            try {
+              if (lastFrame !== null) elapsed += Math.max(0, Math.min(50, now - lastFrame));
+              lastFrame = now;
+              paint(Math.min(1, elapsed / duration), now);
+              if (elapsed >= duration) resolve();
+              else app.animationFrameId = window.requestAnimationFrame(step);
+            } catch (error) { reject(error); }
+          };
+          app.animationFrameId = window.requestAnimationFrame(step);
+        });
+      } finally {
+        for (const target of actors) {
+          target.actor.renderX = target.x;
+          target.actor.renderY = target.y;
+          target.actor.renderElevation = target.elevation;
+        }
+        app.animationFrameId = null;
+        app.isAnimating = false;
+        app.threeRenderer?.setDebugCameraView?.({ ...targetCamera, animate: false, skipRender: true, skipResize: true, preserveSceneCache: true });
+      }
+    }
+
+    async function restoreResumeState(snapshot, options = {}) {
       if (app.isAnimating || app.isTransitioningLevel || app.isPlanningWorldAction) throw new Error("The current move must finish before restoring a save.");
       if (snapshot?.format !== "mazebench-runtime-state-v1" || !Array.isArray(snapshot.nodes)) throw new Error("This save has an unsupported state format.");
       if (snapshot.engine_version !== app.engineVersion) throw new Error("This save belongs to a different engine version.");
@@ -1670,11 +1744,12 @@
       if (app.engineVersion === "v1.1") window.MazeEngineVersions.validateLevel(saved.current);
       await window.MazeEngineVersions?.load(app.engineVersion);
       const copy = (value) => JSON.parse(JSON.stringify(value));
+      const presentation = options.animate === true ? captureResumePresentation() : null;
       // All validation and asynchronous loading precede live state mutation.
       app.collectedGemIds = new Set(saved.collectedGemIds);
       app.v11WorldRooms = copy(saved.worldRooms || {});
       app.queuedAction = null;
-      applyLevelState(saved.current, { updateUrl: true, immediateCamera: true, resetHistory: true, deferRender: true });
+      applyLevelState(saved.current, { updateUrl: true, immediateCamera: true, resetHistory: true, deferRender: true, preserveCollectedGemVisuals: true });
       if (saved.entry) app.restoreLevelEntryState?.(saved.entry);
       app.initialPositions = copy(saved.initialPositions || []);
       app.initialTerrain = copy(saved.initialTerrain || saved.current.terrain);
@@ -1684,7 +1759,18 @@
         if (Number.isFinite(saved.camera?.[key])) app[target] = saved.camera[key];
       }
       if (saved.camera) app.threeRenderer?.setDebugCameraView?.({ ...saved.camera, animate: false, skipRender: true });
-      saveCollectedGemIds(); syncResetProgressButton(); app.render();
+      saveCollectedGemIds(); syncResetProgressButton();
+      if (typeof options.beforeReveal === "function") {
+        // Catch up an offline action tail while the arrival frame stays on
+        // screen, then reveal its final pose in the same restore tween.
+        const render = app.render, renderOnce = app.renderOncePerFrame;
+        app.render = () => {};
+        app.renderOncePerFrame = () => {};
+        try { await options.beforeReveal(); }
+        finally { app.render = render; app.renderOncePerFrame = renderOnce; }
+      }
+      if (presentation) await animateResumePresentation(presentation, options.durationMs);
+      app.render();
       return { levelId: app.currentLevelId, engineVersion: app.engineVersion, historyLength: app.moveHistory.length };
     }
 
@@ -1754,9 +1840,13 @@
       app.state.width = levelState.width;
       app.state.height = levelState.height;
       app.state.terrain = cloneTerrainState(levelState.terrain || []);
-      app.state.actors = (levelState.actors || []).map((actor, index) =>
-        createRuntimeActor(actor, index, levelState.levelId || app.currentLevelId)
-      );
+      app.state.actors = (levelState.actors || []).map((actor, index) => {
+        const runtimeActor = createRuntimeActor(actor, index, levelState.levelId || app.currentLevelId);
+        if (options.preserveCollectedGemVisuals === true && runtimeActor.collected && actor.showCollectedGhost !== true) {
+          hideCollectedGemVisual(runtimeActor);
+        }
+        return runtimeActor;
+      });
       app.orangeWallRaisedState = Array.isArray(levelState.raisedOrangeWalls)
         ? new Set(levelState.raisedOrangeWalls)
         : null;

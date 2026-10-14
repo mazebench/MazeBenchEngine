@@ -82,12 +82,12 @@
     }
     return true;
   }
-  function cloneState(state) {
+  function cloneState(state, shareTerrain = false) {
     return {
       actorX: new Int32Array(state.actorX), actorY: new Int32Array(state.actorY),
       actorElevation: new Int32Array(state.actorElevation), actorRemoved: new Uint8Array(state.actorRemoved),
       actorGenericId: new Int32Array(state.actorGenericId), liftRaised: new Uint8Array(state.liftRaised),
-      terrain: new Uint8Array(state.terrain), terrainState: cloneTerrain(state.terrainState),
+      terrain: new Uint8Array(state.terrain), terrainState: shareTerrain ? state.terrainState : cloneTerrain(state.terrainState),
       engineVersion: "v1.1", hashValid: false
     };
   }
@@ -96,6 +96,8 @@
     validateLevel(data);
     const width = data.width, height = data.height, actorSource = data.actors || [];
     const actorTypes = actorSource.map((actor) => actor.type);
+    const mutableTerrain = actorTypes.includes("floating_floor") || (data.terrain || []).some(row => row.some(cell =>
+      layersFor(cell).some(layer => ["orange_wall", "orange_button", "player_lift", "player_gate"].includes(layer.type))));
     const terrainTypes = legacy.terrainTypes;
     const groups = new Map();
     function groupId(actor, index) {
@@ -280,12 +282,12 @@
       for (let iteration = 0; iteration < 4096; iteration++) {
         const status = physics.step_command_tick(entries.length, width, height, direction);
         if (status < 0) throw new Error(`v1.1 rejected this command (${status}).`);
-        const current = cloneState(previous);
+        const current = cloneState(previous, !mutableTerrain);
         project(view, entries, current);
         const tick = physics.command_tick();
         if (tick !== lastTick || status === 0 && physics.command_cycle_detected()) {
           frames.push({ actorX: current.actorX, actorY: current.actorY, actorElevation: current.actorElevation, actorRemoved: current.actorRemoved });
-          const changedTerrain = JSON.stringify(previous.terrainState) !== JSON.stringify(current.terrainState);
+          const changedTerrain = previous.terrainState !== current.terrainState && JSON.stringify(previous.terrainState) !== JSON.stringify(current.terrainState);
           if (data.composedScene && !changedTerrain) current.terrainState = previous.terrainState;
           if (includeTrace) ticks.push({
             moves: recordsBetween(previous, current, [current]),
@@ -387,7 +389,9 @@
   async function simulateWorldCommand(options) {
     const clone = (value) => JSON.parse(JSON.stringify(value));
     const currentId = options.currentLevelId;
-    const savedRooms = clone(options.rooms || {});
+    // Historical rooms are immutable inputs. Only the bounded active scene is
+    // cloned below; replaying one step must not copy the entire visited world.
+    const savedRooms = { ...(options.rooms || {}) };
     savedRooms[currentId] = clone(options.currentRoom);
     const placements = new Map([[currentId, { id: currentId, gx: 0, gy: 0, room: savedRooms[currentId] }]]);
     const queue = [placements.get(currentId)], missing = new Set();
@@ -454,8 +458,8 @@
     if (mainIndex < 0) throw new Error("This v1.1 room has no main player.");
     const engine = createModernEngine({ width, height, terrain, actors, composedScene: true, physicsTrace: options.physicsTrace !== false });
     const state = engine.cloneState(engine.initialState);
-    const beforeState = engine.cloneState(state);
     const result = engine.move(state, options.dx, options.dy);
+    const beforeState = result.previousState;
     const atPoint = (x, y) => queue.find((r) => x >= r.x && x < r.x + roomWidth && y >= r.y && y < r.y + roomHeight);
     function playerPoint(frame) {
       const x = frame.actorX[mainIndex], y = frame.actorY[mainIndex];
@@ -464,11 +468,21 @@
     }
     let previousProjection = null;
     let previousTerrain = null;
+    const terrainSignatures = new Map();
     function projectRooms(frame) {
       const rooms = { ...savedRooms };
       for (const placement of queue) {
         const { id, room, x, y } = placement;
-        rooms[id] = { ...room, actors: room.actors.map((actor) => ({ ...actor })), engineVersion: "v1.1", terrain: previousTerrain === frame.terrainState ? previousProjection[id].terrain : frame.terrainState.slice(y, y + roomHeight).map((row) => row.slice(x, x + roomWidth).map((cell, localX) => { const copy = clone(cell); delete copy.v11Scope; return copy; })) };
+        let terrain = previousProjection?.[id].terrain;
+        if (previousTerrain !== frame.terrainState) {
+          const cells = frame.terrainState.slice(y, y + roomHeight).map(row => row.slice(x, x + roomWidth));
+          const signature = JSON.stringify(cells);
+          if (terrainSignatures.get(id) !== signature) {
+            terrain = cells.map(row => row.map(cell => { const copy = clone(cell); delete copy.v11Scope; return copy; }));
+            terrainSignatures.set(id, signature);
+          }
+        }
+        rooms[id] = { ...room, actors: room.actors.map((actor) => ({ ...actor })), engineVersion: "v1.1", terrain };
         delete rooms[id].v11WorldRooms;
         rooms[id].raisedOrangeWalls = rooms[id].terrain.flatMap((row, yy) => row.flatMap((cell, xx) => cell.layers?.some((l) => l.type === "orange_wall" && l.raised) ? [`${xx},${yy}`] : []));
       }
@@ -490,7 +504,9 @@
     const ticks = options.physicsTrace === false ? [] : result.ticks.map((tick) => projectRooms(tick.state));
     const projected = ticks.at(-1) || projectRooms(state);
     const playerPath = [beforeState, ...(result.frames || [])].map(playerPoint);
-    const visitedLevelIds = [...new Set(playerPath.map((p) => p.levelId))];
+    // Crossing a room during forced motion is not a visit. Only a living,
+    // settled command endpoint unlocks a room; playerPath remains the full trace.
+    const visitedLevelIds = projected.point.removed ? [] : [projected.currentLevelId];
     const collectedGems = ownership.flatMap((owned, index) => owned.actor.type === "gem" && !beforeState.actorRemoved[index] && state.actorRemoved[index] ? [{ levelId: owned.id, actorIndex: owned.actorIndex, actor: owned.actor }] : []);
     const moves = result.moves.map((move) => {
       const own = ownership[move.actorIndex];

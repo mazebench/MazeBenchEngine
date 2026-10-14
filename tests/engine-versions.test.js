@@ -130,6 +130,7 @@ async function main() {
   const local=await versions.planWorldCommand({currentLevelId:'A',currentRoom:a,rooms:{B:untouched},dx:1,dy:0,physicsTrace:false,
     adjacentLevelId:(id,dx,dy)=>dy===0&&id==='A'&&dx===1?'B':null,loadRoom:async()=>{throw new Error('unreachable room should not load');}});
   assert.equal(local.rooms.B.actors[0].elevation,3,'unreached rooms do not advance gravity during another room command');
+  assert.equal(local.rooms.B,untouched,'untouched historical rooms are shared rather than deep-copied on every command');
   console.log('Versioned engine tests passed.');
 }
 main().catch((error)=>{console.error(error);process.exitCode=1;});

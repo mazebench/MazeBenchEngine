@@ -576,7 +576,7 @@
 
       app.isAnimating = true;
 
-      function finishBlink() {
+      function clearBlinkState() {
         players.forEach((player) => {
           player.renderAlpha = 1;
           player.renderScale = 1;
@@ -585,6 +585,23 @@
         });
         app.isAnimating = false;
         app.animationFrameId = null;
+      }
+
+      function failBlink(error) {
+        if (app.animationFrameId !== null) window.cancelAnimationFrame(app.animationFrameId);
+        clearBlinkState();
+        app.queuedAction = null;
+        app.engineLoadError = error;
+        // The native command's error handler has finished before this RAF.
+        // Recover the visible, playable state even if this render also fails.
+        try { syncFloatingFloorTicker(); } catch (_) { /* Recovery remains complete. */ }
+        try { app.render(); } catch (_) { /* A future render can recover the context. */ }
+        console.error(error);
+        try { app.onEngineError?.(error); } catch (notificationError) { console.error(notificationError); }
+      }
+
+      function finishBlink() {
+        clearBlinkState();
         syncFloatingFloorTicker();
         app.render();
 
@@ -593,7 +610,7 @@
         }
       }
 
-      function step(now) {
+      function stepFrame(now) {
         const progress = Math.min(1, (now - startMs) / durationMs);
 
         if (progress >= 1) {
@@ -609,11 +626,15 @@
         app.animationFrameId = window.requestAnimationFrame(step);
       }
 
+      function step(now) {
+        try { stepFrame(now); } catch (error) { failBlink(error); }
+      }
+
       if (app.isReplayingSavedActions) { finishBlink(); return; }
       if (blinkCount === 1) {
         let hiddenAtMs = null;
 
-        function stepSingleBlink(now) {
+        function stepSingleBlinkFrame(now) {
           if (hiddenAtMs === null) {
             if (now - startMs < visibleDurationMs) {
               app.animationFrameId = window.requestAnimationFrame(stepSingleBlink);
@@ -635,6 +656,10 @@
           }
 
           app.animationFrameId = window.requestAnimationFrame(stepSingleBlink);
+        }
+
+        function stepSingleBlink(now) {
+          try { stepSingleBlinkFrame(now); } catch (error) { failBlink(error); }
         }
 
         app.animationFrameId = window.requestAnimationFrame(stepSingleBlink);
