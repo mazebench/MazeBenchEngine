@@ -299,10 +299,9 @@
     }
 
     function playSurroundingRadius() {
-      // World actions rebuild the scene every frame; render them at the
-      // classic radius so they stay cheap, and restore the wide view with a
-      // single rebuild when they finish.
-      if (app.worldActionAnimation) {
+      // Legacy world actions use immediate geometry at the classic radius.
+      // Native actions retain the cached world groups used by settled play.
+      if (app.worldActionAnimation && app.engineVersion !== "v1.1") {
         return 1;
       }
 
@@ -8084,7 +8083,7 @@
         bottomY: elevation * elevationUnit - sink + actorVisualLift + hover + unit * 0.14,
         center,
         scale: modelScale,
-        spin: ((now % gemSpinPeriodMs) / gemSpinPeriodMs) * Math.PI * 2 + (actor.hoverSeed || 0)
+        spin: actorSpinAngle(actor, now)
       };
     }
 
@@ -9896,7 +9895,12 @@
     }
 
     function actorSpinAngle(actor, now) {
-      return ((now % gemSpinPeriodMs) / gemSpinPeriodMs) * Math.PI * 2 + (actor.hoverSeed || 0);
+      // Cached neighbors and immediate native neighbors use the same fixed
+      // pose. The active room keeps its clock/seed through movement frames.
+      // Preserve the existing v1 adjacent-room transition choreography.
+      const animate = !activeRenderContext || activeRenderContext.animateGems === true ||
+        activeRenderContext.role === "outgoing" || activeRenderContext.role === "incoming";
+      return (animate ? ((now % gemSpinPeriodMs) / gemSpinPeriodMs) * Math.PI * 2 : 0) + (actor.hoverSeed || 0);
     }
 
     function actorHoverOffset(actor, now) {
@@ -11918,10 +11922,11 @@
       const cameraFlightActive =
         Boolean(app.cameraFlightFitOptions) ||
         (Array.isArray(app.cameraFlightLevelViews) && app.cameraFlightLevelViews.length > 0);
+      const nativeWorldActionActive = app.engineVersion === "v1.1" && Boolean(app.worldActionAnimation);
       const buildBudgetMs =
         app.isFlyoverMode || app.worldViewSynchronousBuild === true
           ? Infinity
-          : isWideLevelTransition || cameraFlightActive
+          : isWideLevelTransition || cameraFlightActive || nativeWorldActionActive
             ? 3
             : 32;
       const pendingBuilds = [];
@@ -12748,6 +12753,51 @@
         .filter(Boolean);
     }
 
+    function nativeWorldActionRoomViews(action) {
+      const rooms = action.rooms;
+      const activeRoom = rooms.find((room) => worldActionRoomContainsPlayer(room, action.currentPoint)) ||
+        rooms.find((room) => room.levelId === app.currentLevelId) || rooms[0];
+      const byId = new Map(rooms.map((room) => [room.levelId || room.levelState?.levelId, room]));
+      const anchorId = activeRoom.levelId || activeRoom.levelState.levelId;
+      const coords = [{ levelId: anchorId, dx: 0, dy: 0, distance: 0 },
+        ...worldNeighborCoords(anchorId, surroundingLevelRadius())];
+      return coords.map((coord) => {
+        const room = byId.get(coord.levelId);
+        const levelState = room?.levelState || app.cachedHorizontalNeighborLevelState?.(coord.levelId);
+        if (!levelState?.width || !levelState?.height) return null;
+        const neighborOffset = surroundingLevelOffset(coord.dx, coord.dy, levelState, activeRoom.levelState);
+        const offset = room?.offset
+          ? { x: Number(room.offset.x || 0) * unit, z: Number(room.offset.y || 0) * unit }
+          : { x: Number(activeRoom.offset?.x || 0) * unit + neighborOffset.x,
+              z: Number(activeRoom.offset?.y || 0) * unit + neighborOffset.z };
+        const current = coord.levelId === anchorId;
+        return { ...coord, levelState, current,
+          dynamic: current || room?.renderDynamic === true,
+          offset,
+          brightness: current ? 1 : surroundingLevelBrightness(coord.dx, coord.dy)
+        };
+      }).filter(Boolean);
+    }
+
+    function renderNativeWorldActionRooms(action, now) {
+      const views = nativeWorldActionRoomViews(action);
+      const dynamic = views.filter((view) => view.dynamic);
+      const surrounding = views.filter((view) => !view.dynamic);
+      if (usesRoomGroupWorld()) {
+        // Preserve the same world coverage and cached meshes as settled play.
+        // Only rooms whose actors/terrain are changing need immediate geometry.
+        renderWorldViewRoomGroups(now, surrounding, new Set(dynamic.map((view) => view.levelId)));
+      } else {
+        surrounding.forEach((view) => renderLevelStateAt(view.levelState, view.offset, {
+          role: "neighbor", brightness: view.brightness, hidePlayers: true
+        }, now));
+      }
+      dynamic.forEach((view) => renderLevelStateAt(view.levelState, view.offset, {
+        role: "neighbor", brightness: view.brightness, hidePlayers: true,
+        showFloorGrid: view.current, animateGems: view.current
+      }, now));
+    }
+
     function renderWorldActionAnimation(now) {
       const action = app.worldActionAnimation;
       const rooms = Array.isArray(action?.rooms) ? action.rooms : [];
@@ -12761,11 +12811,12 @@
       }
 
       const cameraFrame = worldActionCameraFrame(action, rooms);
-      const pathRoomViews = rooms
+      const native = app.engineVersion === "v1.1";
+      const pathRoomViews = native ? [] : rooms
         .map((room) => worldActionPathRoomView(room, cameraFrame))
         .filter(Boolean);
-      const surroundingViews = worldActionSurroundingLevelViews(action, cameraFrame);
-      const activePuncherVisuals = worldActionActivePuncherVisuals(action);
+      const surroundingViews = native ? [] : worldActionSurroundingLevelViews(action, cameraFrame);
+      const activePuncherVisuals = native ? [] : worldActionActivePuncherVisuals(action);
       const hiddenPuncherKeysByRoom = new Map();
 
       activePuncherVisuals.forEach((visual) => {
@@ -12779,10 +12830,31 @@
         hiddenPuncherKeysByRoom.set(visual.roomKey, hiddenKeys);
       });
 
-      surroundingViews
-        .slice()
-        .sort((a, b) => b.distance - a.distance)
-        .forEach((view) => {
+      if (native) {
+        renderNativeWorldActionRooms(action, now);
+      } else {
+        surroundingViews
+          .slice()
+          .sort((a, b) => b.distance - a.distance)
+          .forEach((view) => {
+            renderLevelStateAt(
+              view.levelState,
+              {
+                x: Number(view.offset?.x || 0) * unit,
+                z: Number(view.offset?.y || 0) * unit
+              },
+              {
+                role: "neighbor",
+                brightness: view.brightness,
+                hidePlayers: true
+              },
+              now
+            );
+          });
+
+        pathRoomViews.forEach((view) => {
+          const roomKey = worldActionRoomKey({ offset: view.offset });
+
           renderLevelStateAt(
             view.levelState,
             {
@@ -12791,35 +12863,19 @@
             },
             {
               role: "neighbor",
+              // Animated rooms retain neighbor lighting, but the room under
+              // the player keeps the same faint grid as the settled play view.
+              showFloorGrid: worldActionRoomContainsPlayer(view, point),
+              animateGems: worldActionRoomContainsPlayer(view, point),
+              alpha: view.alpha,
               brightness: view.brightness,
-              hidePlayers: true
+              hidePlayers: true,
+              hiddenActorKeys: hiddenPuncherKeysByRoom.get(roomKey)
             },
             now
           );
         });
-
-      pathRoomViews.forEach((view) => {
-        const roomKey = worldActionRoomKey({ offset: view.offset });
-
-        renderLevelStateAt(
-          view.levelState,
-          {
-            x: Number(view.offset?.x || 0) * unit,
-            z: Number(view.offset?.y || 0) * unit
-          },
-          {
-            role: "neighbor",
-            // Animated rooms retain neighbor lighting, but the room under
-            // the player keeps the same faint grid as the settled play view.
-            showFloorGrid: worldActionRoomContainsPlayer(view, point),
-            alpha: view.alpha,
-            brightness: view.brightness,
-            hidePlayers: true,
-            hiddenActorKeys: hiddenPuncherKeysByRoom.get(roomKey)
-          },
-          now
-        );
-      });
+      }
 
       const terminalFallProgress =
         action.terminalPlayerRemoved === true &&

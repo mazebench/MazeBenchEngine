@@ -27,6 +27,12 @@ function renderer(engineVersion) {
     const localProgress = (p, start, duration) => clamp01((p - start) / duration);
     const lerp = (a, b, p) => a + (b - a) * p;
     const stableCameraWorldHeight = () => 64;
+    const surroundingLevelRadius = () => 1, usesRoomGroupWorld = () => false;
+    const surroundingLevelBrightness = () => neighboringRoomBrightness;
+    const worldNeighborCoords = (levelId) => app.worldActionAnimation.rooms
+      .filter((room) => room.levelId !== levelId)
+      .map((room) => ({ levelId: room.levelId, dx: 0, dy: 0, distance: 1 }));
+    ${section("    function surroundingLevelOffset(", "\t    function surroundingLevelViews()")}
     const renderState = () => activeRenderContext?.state || app.state;
     const renderOffsetX = () => activeRenderContext?.offsetX || 0;
     const renderOffsetZ = () => activeRenderContext?.offsetZ || 0;

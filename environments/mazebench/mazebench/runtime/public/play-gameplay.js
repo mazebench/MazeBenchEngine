@@ -2162,7 +2162,8 @@
     function restoreCrossRoomUndoState(levelSnapshot, entrySnapshot) {
       applyLevelState(levelSnapshot, {
         updateUrl: true,
-        immediateCamera: true
+        immediateCamera: true,
+        preserveCollectedGemVisuals: app.engineVersion === "v1.1" && levelSnapshot.levelId === app.currentLevelId
       });
 
       if (app.engineVersion === "v1.1") {
@@ -3358,18 +3359,107 @@
       return true;
     }
 
+    function modernWorldTimeline(sequence, plan) {
+      const segments = [];
+      let cursorMs = 0;
+      for (let index = 1; index < sequence.length; index++) {
+        const a = sequence[index - 1], b = sequence[index];
+        const vector = [b.point.worldX - a.point.worldX, b.point.worldY - a.point.worldY, b.point.elevation - a.point.elevation];
+        const playerDistance = Math.hypot(...vector);
+        let distance = playerDistance, changed = false;
+        for (const { levelId } of plan.placements) {
+          const before = a.rooms[levelId], after = b.rooms[levelId];
+          changed ||= before.terrain !== after.terrain;
+          after.actors.forEach((actor, i) => {
+            if (app.isMainPlayerActor(actor)) return;
+            const old = before.actors[i] || actor;
+            distance = Math.max(distance, Math.hypot(actor.x - old.x, actor.y - old.y, (actor.elevation || 0) - (old.elevation || 0)));
+            changed ||= actor.removed !== old.removed || actor.v11GenericId !== old.v11GenericId;
+          });
+        }
+        // The native engine reports a final stationary tick. It is a physics
+        // boundary, not an extra pause at the end of the rendered movement.
+        if (distance === 0 && !changed) continue;
+        distance = Math.max(distance, changed ? 1 : 0);
+        const key = playerDistance > 0 ? vector.map(value => (value / playerDistance).toFixed(5)).join(":") : "stationary";
+        const previous = segments.at(-1);
+        if (previous && previous.key === key && previous.endIndex === index - 1) {
+          previous.endIndex = index;
+          previous.distance += distance;
+          previous.frameDistances.push(previous.distance);
+        } else {
+          segments.push({ key, startIndex: index - 1, endIndex: index, distance, frameDistances: [0, distance] });
+        }
+      }
+      for (const segment of segments) {
+        segment.continuous = segment.key !== "stationary" && segment.distance > 1.0001;
+        segment.durationMs = segmentDuration(segment.distance, segment.continuous);
+        segment.startMs = cursorMs;
+        cursorMs += segment.durationMs;
+        segment.endMs = cursorMs;
+      }
+      const roomPath = sequence.filter((frame, i) => i === 0 || frame.currentLevelId !== sequence[i - 1].currentLevelId);
+      const continuous = segments.some(segment => segment.continuous);
+      const motionEndMs = Math.max(MOVE_DURATION_MS, cursorMs);
+      // v1 hands an ordinary border step to the destination in MOVE_DURATION,
+      // while its camera continues the full room transition. Forced paths use
+      // the same constant-speed camera and ice duration as v1 world actions.
+      const cameraDurationMs = roomPath.length > 1 && !continuous
+        ? Math.max(motionEndMs, (app.LEVEL_TRANSITION_DURATION_MS || 1000) * (roomPath.length - 1))
+        : motionEndMs;
+      const pathEndMs = Math.max(motionEndMs, cameraDurationMs);
+      return { segments, motionEndMs, cameraDurationMs, continuous, pathEndMs, durationMs: pathEndMs + (plan.playerFell ? HOLE_FALL_DURATION_MS : 0),
+        cameraPath: roomPath.map(frame => {
+          const placement = plan.placements.find(entry => entry.levelId === frame.currentLevelId);
+          return { x: placement.offset.x + state.width / 2, y: placement.offset.y + state.height / 2 };
+        }) };
+    }
+
+    function modernFrameAtTime(sequence, timeline, elapsed) {
+      const segment = timeline.segments.find(entry => elapsed < entry.endMs);
+      if (!segment) return { a: sequence.at(-1), b: sequence.at(-1), t: 1 };
+      const progress = linearMotionProgress(elapsed - segment.startMs, segment.durationMs);
+      const distance = segment.distance * (segment.continuous ? progress : easeInOutQuad(progress));
+      let index = 1;
+      while (index < segment.frameDistances.length - 1 && distance >= segment.frameDistances[index]) index++;
+      const start = segment.frameDistances[index - 1], end = segment.frameDistances[index];
+      return { a: sequence[segment.startIndex + index - 1], b: sequence[segment.startIndex + index], t: (distance - start) / Math.max(0.0001, end - start) };
+    }
+
+    function modernRoomPresentation(plan, sequence) {
+      return plan.placements.map(placement => {
+        const initial = sequence[0].rooms[placement.levelId];
+        const dynamic = sequence.some(frame => {
+          const room = frame.rooms[placement.levelId];
+          return room.terrain !== initial.terrain || room.actors.some((actor, index) => {
+            if (app.isMainPlayerActor(actor)) return false;
+            const before = initial.actors[index];
+            return !before || actor.x !== before.x || actor.y !== before.y || actor.elevation !== before.elevation ||
+              actor.removed !== before.removed || actor.v11GenericId !== before.v11GenericId;
+          });
+        });
+        return { ...placement, renderDynamic: dynamic,
+          levelState: dynamic ? { ...initial, actors: initial.actors.map(actor => ({ ...actor })) } : initial,
+          terrainSource: null, terrainTarget: null, orangeTweens: [] };
+      });
+    }
+
     async function startModernWorldCommand(dx, dy, options = {}) {
       app.isPlanningWorldAction = true;
-      const startLevel = app.cloneLevelSnapshot();
+      const startLevel = app.cloneLevelSnapshot({ includeWorldRooms: false });
       const startEntry = app.levelEntrySnapshot;
       const known = new Set(app.playData?.worldLevelIds || []);
       try {
-        const rooms = JSON.parse(JSON.stringify(app.v11WorldRooms || {}));
+        const rooms = { ...(app.v11WorldRooms || {}) };
         for (const [id, room] of Object.entries(rooms)) {
+          let actors = null;
           (room.actors || []).forEach((actor, index) => {
             const collectionId = actor.collectionId || app.gemCollectionId?.(actor, index, id);
-            if (actor.type === "gem" && collectionId && app.collectedGemIds.has(collectionId)) { actor.removed = true; actor.collected = true; }
+            if (actor.type === "gem" && collectionId && app.collectedGemIds.has(collectionId) && (!actor.removed || !actor.collected)) {
+              actors ||= room.actors.slice(); actors[index] = { ...actor, removed: true, collected: true };
+            }
           });
+          if (actors) rooms[id] = { ...room, actors };
         }
         const plan = await window.MazeEngineVersions.planWorldCommand({
           currentLevelId: app.currentLevelId, currentRoom: startLevel, rooms, dx, dy, physicsTrace: options.instant !== true,
@@ -3391,20 +3481,37 @@
         moveHistory.push({ levelSnapshot: startLevel, levelEntrySnapshot: startEntry, undoGroupId: null });
         if (moveHistory.length > 500) moveHistory.splice(0, moveHistory.length - 500);
         const collectedMoves = plan.collectedGems.map((gem) => ({ ...gem, actorType: "gem", toRemoved: true }));
+        const previouslyCollected = new Set(app.collectedGemIds);
+        const newlyCollected = new Set(collectedMoves.map(move => move.actor.collectionId || app.gemCollectionId(move.actor, move.actorIndex, move.levelId)));
         app.recordCollectedGemsFromMoves?.([...plan.moves.filter((move) => move.actorType !== "gem"), ...collectedMoves]);
+        const sequence = options.instant === true ? [] : [plan.initial, ...plan.ticks];
+        for (const frame of [...sequence, plan]) {
+          for (const { levelId } of plan.placements) {
+            for (const [index, actor] of frame.rooms[levelId].actors.entries()) {
+              if (actor.type !== "gem") continue;
+              const id = actor.collectionId || app.gemCollectionId(actor, index, levelId);
+              if (newlyCollected.has(id) && actor.removed) app.hideCollectedGemVisual(actor);
+              else if (previouslyCollected.has(id)) {
+                if (levelId === startLevel.levelId && actor.showCollectedGhost !== true) app.hideCollectedGemVisual(actor);
+                else app.applyCollectedGemVisual(actor);
+              }
+            }
+          }
+        }
+        const rememberRooms = () => { for (const { levelId } of plan.placements) app.rememberHorizontalNeighborLevelState?.(plan.rooms[levelId]); };
         if (options.instant === true) {
           app.v11WorldRooms = plan.rooms;
           const crossed = plan.currentLevelId !== startLevel.levelId;
-          applyLevelState(plan.currentRoom, { immediateCamera: true, resetLevelEntry: crossed, updateUrl: crossed });
-          for (const room of Object.values(plan.rooms)) app.rememberHorizontalNeighborLevelState?.(room);
+          applyLevelState(plan.currentRoom, { immediateCamera: true, resetLevelEntry: crossed, updateUrl: crossed, preserveCollectedGemVisuals: true });
+          rememberRooms();
           if (plan.playerFell && app.autoUndoPlayerFalls) undoMove({ instantRestore: true });
           return plan;
         }
-        const sequence = [plan.initial, ...plan.ticks];
         const player = startLevel.actors.find((actor) => app.isMainPlayerActor(actor));
-        const pathDuration = Math.max(1, plan.ticks.length) * MOVE_DURATION_MS;
-        const duration = pathDuration + (plan.playerFell ? app.HOLE_FALL_DURATION_MS || 300 : 0);
+        const timeline = modernWorldTimeline(sequence, plan);
+        const duration = timeline.durationMs;
         const startTime = performance.now();
+        const elapsedForFrame = createAnimationElapsedTracker();
         app.isAnimating = true;
         app.inputActionEndsAtMs = startTime + duration;
         const initialPoint = plan.initial.point;
@@ -3412,9 +3519,9 @@
         app.worldActionAnimation = {
           player, currentPoint: { x: initialPoint.worldX, y: initialPoint.worldY, elevation: initialPoint.elevation },
           cameraPoint: { x: startPlacement.offset.x + state.width / 2, y: startPlacement.offset.y + state.height / 2 },
-          rooms: [], stableWidth: state.width, stableHeight: state.height, progress: 0,
+          rooms: modernRoomPresentation(plan, sequence), stableWidth: state.width, stableHeight: state.height, progress: 0,
           path: plan.playerPath.map((p) => ({ x: p.worldX, y: p.worldY, elevation: p.elevation })),
-          terminalPlayerRemoved: plan.playerFell, timeline: { durationMs: duration, pathEndMs: pathDuration }
+          terminalPlayerRemoved: plan.playerFell, timeline
         };
         let completed = false;
         function finish(skipRender = false) {
@@ -3428,8 +3535,8 @@
           app.v11WorldRooms = plan.rooms;
           const crossed = plan.currentLevelId !== startLevel.levelId;
           try {
-            completeStep(() => applyLevelState(plan.currentRoom, { immediateCamera: true, resetLevelEntry: crossed, updateUrl: crossed, preserveAnimation: true, deferRender: true }));
-            completeStep(() => { for (const room of Object.values(plan.rooms)) app.rememberHorizontalNeighborLevelState?.(room); });
+            completeStep(() => applyLevelState(plan.currentRoom, { immediateCamera: true, resetLevelEntry: crossed, updateUrl: crossed, preserveAnimation: true, deferRender: true, preserveCollectedGemVisuals: true }));
+            completeStep(rememberRooms);
             completeStep(() => app.onModernWorldCommand?.(plan));
           } finally {
             app.isAnimating = false;
@@ -3438,37 +3545,47 @@
             if (plan.playerFell && app.autoUndoPlayerFalls) {
               app.queuedAction = null;
               completeStep(() => app.onPlayerPitAutoUndo?.());
-              completeStep(() => undoMove({ instantRestore: true }));
+              completeStep(() => undoMove({ instantRestore: true, blinkRevivedPlayer: true, blinkCount: 1, blinkDurationMs: 50, blinkVisibleDurationMs: 50 }));
             } else if (!skipRender) completeStep(() => app.render());
           }
           if (completionError) { app.queuedAction = null; throw completionError; }
           runQueuedAction();
         }
         function stepFrame(now) {
-          const elapsed = Math.max(0, now - startTime), tick = Math.min(sequence.length - 2, Math.floor(elapsed / MOVE_DURATION_MS));
-          const a = sequence[Math.max(0, tick)], b = sequence[Math.max(1, tick + 1)] || a;
-          const raw = Math.min(1, (elapsed - Math.max(0, tick) * MOVE_DURATION_MS) / MOVE_DURATION_MS);
-          const t = app.easeInOutQuad ? app.easeInOutQuad(raw) : raw;
+          const elapsed = elapsedForFrame(now);
+          const { a, b, t } = modernFrameAtTime(sequence, timeline, elapsed);
           const lerp = (x, y) => x + (y - x) * t;
           const action = app.worldActionAnimation;
           action.elapsedMs = elapsed; action.progress = Math.min(1, elapsed / duration);
           action.currentPoint = { x: lerp(a.point.worldX, b.point.worldX), y: lerp(a.point.worldY, b.point.worldY), elevation: lerp(a.point.elevation, b.point.elevation) };
-          const from = plan.placements.find((p) => p.levelId === a.currentLevelId).offset;
-          const to = plan.placements.find((p) => p.levelId === b.currentLevelId).offset;
-          action.cameraPoint = { x: lerp(from.x, to.x) + state.width / 2, y: lerp(from.y, to.y) + state.height / 2 };
-          action.rooms = plan.placements.filter((placement) => Math.abs(placement.offset.x + state.width / 2 - action.cameraPoint.x) <= state.width * 2 && Math.abs(placement.offset.y + state.height / 2 - action.cameraPoint.y) <= state.height * 2).map((placement) => {
+          const cameraProgress = linearMotionProgress(elapsed, timeline.cameraDurationMs);
+          const cameraEase = timeline.continuous ? cameraProgress : cameraProgress ** 3 * (cameraProgress * (cameraProgress * 6 - 15) + 10);
+          action.cameraPoint = pointAlongCameraPath(timeline.cameraPath, cameraEase);
+          for (const placement of action.rooms) {
+            if (!placement.renderDynamic) continue;
             const before = a.rooms[placement.levelId], after = b.rooms[placement.levelId];
-            return { ...placement, levelState: { ...after,
-              terrain: after.terrain.map((row, y) => row.map((cell, x) => ({ ...cell, layers: cell.layers.map((layer, i) => {
+            const presentation = placement.levelState;
+            if (placement.terrainSource !== before.terrain || placement.terrainTarget !== after.terrain) {
+              placement.terrainSource = before.terrain; placement.terrainTarget = after.terrain;
+              placement.orangeTweens = [];
+              presentation.terrain = before.terrain === after.terrain ? after.terrain : after.terrain.map((row, y) => row.map((cell, x) => ({ ...cell, layers: cell.layers.map((layer, i) => {
                 const old = before.terrain[y][x].layers[i];
-                return layer.type === "orange_wall" && old ? { ...layer, v11GenericId: lerp(old.v11GenericId || 0, layer.v11GenericId || 0) } : layer;
-              }) }))),
-              actors: after.actors.map((actor, i) => {
+                if (layer.type !== "orange_wall" || !old || old.v11GenericId === layer.v11GenericId) return layer;
+                const animated = { ...layer };
+                placement.orangeTweens.push({ layer: animated, from: old.v11GenericId || 0, to: layer.v11GenericId || 0 });
+                return animated;
+              }) })));
+            }
+            for (const tween of placement.orangeTweens) tween.layer.v11GenericId = lerp(tween.from, tween.to);
+            after.actors.forEach((actor, i) => {
                 const old = before.actors[i] || actor;
-                return { ...actor, removed: old.removed && actor.removed, renderX: lerp(old.x, actor.x), renderY: lerp(old.y, actor.y), renderElevation: lerp(old.elevation || 0, actor.elevation || 0), renderAlpha: !old.removed && actor.removed ? 1 - t : 1 };
-              })
-            } };
-          });
+                const target = presentation.actors[i] ||= {};
+                const fading = !old.removed && actor.removed;
+                Object.assign(target, actor, { removed: old.removed && actor.removed, renderX: lerp(old.x, actor.x), renderY: lerp(old.y, actor.y), renderElevation: lerp(old.elevation || 0, actor.elevation || 0),
+                  renderScale: fading ? 1 : actor.renderScale ?? (actor.removed ? 0 : 1),
+                  renderAlpha: fading ? 1 - t : actor.renderAlpha ?? (actor.removed ? 0 : 1) });
+            });
+          }
           action.visualSignature = `${Math.floor(elapsed / 16)}`;
           (app.renderOncePerFrame || app.render)(now);
           if (elapsed >= duration) finish(); else app.animationFrameId = window.requestAnimationFrame(step);
@@ -3480,7 +3597,11 @@
             // renderer or host callback fails, then release the input lock.
             app.queuedAction = null;
             try { finish(true); } catch (finishError) { console.error(finishError); }
-            app.isAnimating = false; app.worldActionAnimation = null; app.animationFrameId = null;
+            // A completed pit undo may already be running the canonical revive
+            // blink. Do not cancel that new animation because an older callback failed.
+            if (app.worldActionAnimation) {
+              app.isAnimating = false; app.worldActionAnimation = null; app.animationFrameId = null;
+            }
             app.engineLoadError = error;
             console.error(error);
             if (app.onEngineError) app.onEngineError(error);
