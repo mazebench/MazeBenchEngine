@@ -517,6 +517,84 @@ async function replayAnimated(app, action, options = {}) {
   await legacyRestored.replaySavedAction({command:"undo"});
   assert.equal(legacyRestored.state.actors[0].x,2);
   assert.equal(legacyRestored.state.actors[1].x,3);
+  for (const engineVersion of ["v1", "v1.1"]) {
+    const data = { ...fixture(), engineVersion };
+    data.actors = [{ type: "player", x: 1, y: 1, elevation: 0 }];
+    const source = runtime(data);
+    for (let index = 0; index < 20; index++) {
+      await source.replaySavedAction({ command: "move", dx: index % 2 ? -1 : 1, dy: 0 });
+    }
+    const first = source.moveHistory[0], levelSnapshot = first.levelSnapshot;
+    let historicalReads = 0;
+    Object.defineProperty(first, "levelSnapshot", { enumerable: true, get() { historicalReads++; return levelSnapshot; } });
+    const firstSave = source.exportResumeState();
+    assert.ok(historicalReads > 0);
+    historicalReads = 0;
+    const repeated = source.exportResumeState();
+    assert.equal(historicalReads, 0, `${engineVersion}: autosave does not revisit already encoded undo terrain`);
+    assert.deepEqual(repeated, firstSave, "memoization preserves the existing wire format");
+    source.state.actors[0].x = 4;
+    const changed = source.exportResumeState();
+    const target = runtime(data);
+    await target.restoreResumeState(changed);
+    assert.equal(target.state.actors[0].x, 4, "mutable live state is never taken from the history cache");
+    assert.equal(target.moveHistory.length, 20, "every undo remains available after a cached export");
+    await target.replaySavedAction({ command: "undo" });
+    assert.equal(target.state.actors[0].x, 2);
+    assert.equal(target.moveHistory.length, 19);
+    // A caller can serialize or change its returned envelope without modifying
+    // the private encoding DAG used for the next autosave.
+    const changedCopy = JSON.parse(JSON.stringify(changed));
+    changed.nodes.length = 0;
+    assert.deepEqual(source.exportResumeState(), changedCopy);
+    source.state.actors[0].x = 1;
+    assert.deepEqual(source.exportResumeState(), firstSave);
+    source.resetCollectionProgress();
+    source.exportResumeState();
+    assert.ok(historicalReads > 0, "collection resets invalidate history that shares room-entry flags");
+    const fullHistory = runtime(data);
+    for (let index = 0; index < 525; index++) {
+      await fullHistory.replaySavedAction({ command: "move", dx: index % 2 ? -1 : 1, dy: 0 });
+      if (index % 25 === 0) fullHistory.exportResumeState();
+    }
+    const fullHistoryTarget = runtime(data);
+    await fullHistoryTarget.restoreResumeState(fullHistory.exportResumeState());
+    assert.equal(fullHistoryTarget.moveHistory.length, 500, `${engineVersion}: cached saves retain the full bounded undo history`);
+    for (let index = 0; index < 500; index++) await fullHistoryTarget.replaySavedAction({ command: "undo" });
+    assert.equal(fullHistoryTarget.state.actors[0].x, 2, "the oldest retained move restores the correct state after history trimming");
+    assert.equal(fullHistoryTarget.moveHistory.length, 0);
+    const exhausted = fullHistoryTarget.exportResumeState();
+    const exhaustedTarget = runtime(data);
+    await exhaustedTarget.restoreResumeState(exhausted);
+    assert.equal(exhaustedTarget.moveHistory.length, 0, "removed history is absent from future snapshots");
+  }
+  const sharedEntryData = fixture();
+  sharedEntryData.actors = [{ type: "player", x: 1, y: 1, elevation: 0 }, { type: "gem", x: 5, y: 1, elevation: 0 }];
+  const sharedEntry = runtime(sharedEntryData);
+  await sharedEntry.replaySavedAction({ command: "move", dx: 1, dy: 0 });
+  sharedEntry.levelEntrySnapshot.actors[1].collected = true;
+  sharedEntry.levelEntrySnapshot.actors[1].removed = true;
+  sharedEntry.exportResumeState();
+  sharedEntry.resetCollectionProgress();
+  const resetRestored = runtime(sharedEntryData);
+  await resetRestored.restoreResumeState(sharedEntry.exportResumeState());
+  assert.equal(resetRestored.levelEntrySnapshot.actors[1].collected, false);
+  await resetRestored.replaySavedAction({ command: "undo" });
+  assert.equal(resetRestored.levelEntrySnapshot.actors[1].collected, false, "shared native entry history does not resurrect stale collection flags");
+  const storedRoomSource = runtime(fixture());
+  const remoteRoom = { ...fixture(), levelId: "level_BxA" }, remoteTerrain = remoteRoom.terrain;
+  let remoteReads = 0;
+  Object.defineProperty(remoteRoom, "terrain", { enumerable: true, get() { remoteReads++; return remoteTerrain; } });
+  storedRoomSource.v11WorldRooms = { level_BxA: remoteRoom };
+  storedRoomSource.exportResumeState();
+  assert.ok(remoteReads > 0);
+  remoteReads = 0;
+  storedRoomSource.exportResumeState();
+  assert.equal(remoteReads, 0, "unchanged distant native rooms are not traversed again during autosave");
+  storedRoomSource.v11WorldRooms.level_BxA = { ...remoteRoom, actors: remoteRoom.actors.map((actor, index) => index === 0 ? { ...actor, x: 5 } : actor) };
+  const storedRoomTarget = runtime(fixture());
+  await storedRoomTarget.restoreResumeState(storedRoomSource.exportResumeState());
+  assert.equal(storedRoomTarget.v11WorldRooms.level_BxA.actors[0].x, 5, "replacing a settled room records its new physics");
   await assert.rejects(()=>legacyRestored.restoreResumeState(nativeSnapshot),/different engine/);
   const invalid=JSON.parse(JSON.stringify(legacySnapshot)); invalid.root={r:invalid.nodes.length};
   await assert.rejects(()=>legacyRestored.restoreResumeState(invalid),/invalid reference/);
