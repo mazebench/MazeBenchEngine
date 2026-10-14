@@ -469,6 +469,13 @@
     let previousProjection = null;
     let previousTerrain = null;
     const terrainSignatures = new Map();
+    function cloneSettledActor(actor) {
+      const copy = { ...actor };
+      // Neighbor rooms may be hydrated renderer snapshots. Their old visual
+      // pose is not part of native physics and must not survive projection.
+      for (const key of ["renderX", "renderY", "renderElevation", "renderScale", "renderAlpha", "renderSink", "renderInHole", "renderPunchEffect", "renderPunchBaseX", "renderPunchBaseY"]) delete copy[key];
+      return copy;
+    }
     function projectRooms(frame) {
       const rooms = { ...savedRooms };
       for (const placement of queue) {
@@ -482,7 +489,7 @@
             terrainSignatures.set(id, signature);
           }
         }
-        rooms[id] = { ...room, actors: room.actors.map((actor) => ({ ...actor })), engineVersion: "v1.1", terrain };
+        rooms[id] = { ...room, actors: room.actors.map(cloneSettledActor), engineVersion: "v1.1", terrain };
         delete rooms[id].v11WorldRooms;
         rooms[id].raisedOrangeWalls = rooms[id].terrain.flatMap((row, yy) => row.flatMap((cell, xx) => cell.layers?.some((l) => l.type === "orange_wall" && l.raised) ? [`${xx},${yy}`] : []));
       }
@@ -495,7 +502,7 @@
       });
       const point = playerPoint(frame), targetRoom = rooms[point.levelId];
       let targetIndex = targetRoom.actors.findIndex(isMain);
-      if (targetIndex < 0) { targetIndex = targetRoom.actors.length; targetRoom.actors.push(clone(ownership[mainIndex].actor)); }
+      if (targetIndex < 0) { targetIndex = targetRoom.actors.length; targetRoom.actors.push(cloneSettledActor(ownership[mainIndex].actor)); }
       Object.assign(targetRoom.actors[targetIndex], { x: point.x, y: point.y, elevation: point.elevation, removed: point.removed, v11GenericId: -1 });
       previousProjection = rooms; previousTerrain = frame.terrainState;
       return { rooms, currentLevelId: point.levelId, currentRoom: targetRoom, point };

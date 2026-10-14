@@ -135,6 +135,9 @@
       // history without inheriting the editor's different gameplay visuals.
       // This is immutable across room transitions for the lifetime of the app.
       ignoreSavedGemProgress: playData?.ignoreSavedGemProgress === true,
+      // Replay viewers keep full in-memory progress without reading or
+      // writing the viewer's own run, including across room transitions.
+      readOnlyReplay: playData?.readOnlyReplay === true,
       currentGameId,
       // Base URL for level-state fetches; keeps custom worlds (editor and
       // play) from falling back to the main game's /api/play endpoint.
@@ -629,7 +632,7 @@
     }
 
     function loadCollectedGemIds() {
-      if (app.isEditorRenderApp || app.ignoreSavedGemProgress) {
+      if (app.isEditorRenderApp || app.ignoreSavedGemProgress || app.readOnlyReplay) {
         return new Set();
       }
 
@@ -649,7 +652,7 @@
     }
 
     function saveCollectedGemIds() {
-      if (app.isEditorRenderApp || app.ignoreSavedGemProgress) {
+      if (app.isEditorRenderApp || app.ignoreSavedGemProgress || app.readOnlyReplay) {
         return;
       }
 
@@ -879,6 +882,10 @@
         : false;
       const removed = Boolean(actor?.removed) || collected;
       const elevation = actor?.elevation ?? 0;
+      // Native room snapshots are settled physics states. Older exact saves
+      // can contain the destination room's authored render pose alongside the
+      // correct logical position; rebuild that pose instead of reviving it.
+      const native = app.engineVersion === "v1.1";
       const runtimeActor = {
         ...actor,
         collectionId: collectionId || actor?.collectionId || null,
@@ -886,10 +893,10 @@
         showCollectedGhost:
           usesSavedGemProgress ? actor?.showCollectedGhost === true || collected : false,
         hoverSeed: actor?.hoverSeed ?? hoverSeedForActor(actor),
-        renderX: actor?.renderX ?? actor.x,
-        renderY: actor?.renderY ?? actor.y,
+        renderX: native ? actor.x : actor?.renderX ?? actor.x,
+        renderY: native ? actor.y : actor?.renderY ?? actor.y,
         elevation,
-        renderElevation: actor?.renderElevation ?? elevation,
+        renderElevation: native ? elevation : actor?.renderElevation ?? elevation,
         renderScale: actor?.renderScale ?? (removed ? 0 : 1),
         renderAlpha: actor?.renderAlpha ?? (removed ? 0 : 1),
         renderSink: actor?.renderSink ?? (removed ? app.HOLE_SINK_DISTANCE : 0),
@@ -1887,7 +1894,7 @@
         app.levelEntrySnapshot = cloneLevelSnapshot();
       }
 
-      if (updateUrl && app.currentLevelId) {
+      if (updateUrl && app.currentLevelId && !app.readOnlyReplay) {
         const routePrefix = app.playRoutePrefix || "play";
         const nextPath = `/${encodeURIComponent(routePrefix)}/${encodeURIComponent(app.currentGameId)}/${encodeURIComponent(app.currentLevelId)}`;
         // Hosts attach the active run identity in the query string (for

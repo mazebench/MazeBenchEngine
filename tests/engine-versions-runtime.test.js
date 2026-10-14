@@ -103,6 +103,27 @@ function drainUntil(done) {
   }
   assert.ok(done(),"animation must terminate"); frames.clear();
 }
+async function replayAnimated(app, action, options = {}) {
+  frames.clear();
+  let done = false, failure = null, frameCount = 0;
+  const replay = app.replaySavedAction(action, { animate: true, ...options }).then(
+    () => { done = true; }, error => { done = true; failure = error; }
+  );
+  const started = performance.now();
+  for (let step = 0; step < 1000 && !done; step++) {
+    await new Promise(resolve => setImmediate(resolve));
+    const pending = frames.entries().next().value;
+    if (pending) {
+      frames.delete(pending[0]); pending[1](started + ++frameCount * 16);
+      if (app.isAnimating || app.isTransitioningLevel) assert.equal(done, false, "animated replay cannot resolve before movement finishes");
+    } else await new Promise(resolve => setTimeout(resolve, 1));
+  }
+  assert.ok(done,"animated replay must finish its normal gameplay callbacks");
+  await replay;
+  if (failure) throw failure;
+  frames.clear();
+  return frameCount;
+}
 (async()=>{
   await window.MazeEngineVersions.load("v1.1",{bytes:fs.readFileSync(path.join(__dirname,"../public/physics/v1.1.wasm"))});
   const data=fixture(); data.terrain[1][2]={type:"player_lift",layers:[{type:"floor",elevation:0},{type:"player_lift",elevation:0}]};
@@ -216,6 +237,118 @@ function drainUntil(done) {
   assert.ok(handedOff.camera > 1.5 && handedOff.camera < 4.5,"the camera continues its full v1 room transition after the player arrives");
   const cameraFraction = handedOff.elapsed / border.LEVEL_TRANSITION_DURATION_MS;
   assert.ok(Math.abs(handedOff.camera - (1.5 + 3 * cameraFraction ** 3 * (cameraFraction * (cameraFraction * 6 - 15) + 10))) < 1e-8,"ordinary room camera uses canonical smootherStep easing");
+  const nativeEntryFixture = require("./fixtures/native-room-entry.json");
+  const entryRooms = nativeEntryFixture.levels;
+  const entry = runtime(entryRooms.level_HxI);
+  Object.values(entryRooms).forEach(room => entry.rememberHorizontalNeighborLevelState(room));
+  const assertSettledPose = (runtime, label) => {
+    for (const actor of runtime.state.actors) {
+      assert.equal(actor.renderX,actor.x,`${label}: ${actor.type} rendered X matches physics`);
+      assert.equal(actor.renderY,actor.y,`${label}: ${actor.type} rendered Y matches physics`);
+      assert.equal(actor.renderElevation,actor.elevation,`${label}: ${actor.type} rendered height matches physics`);
+    }
+  };
+  const entryDirections = {right:[1,0],up:[0,-1],left:[-1,0]};
+  let entryMove = 0;
+  for (const [direction, count] of nativeEntryFixture.route) {
+    for (let index=0;index<count;index++) {
+      entry.movePlayers(...entryDirections[direction]);
+      for(let i=0;i<100&&entry.isPlanningWorldAction;i++) await new Promise(resolve=>setImmediate(resolve));
+      drainUntil(()=>!entry.isAnimating);
+      assertSettledPose(entry,`native campaign input${++entryMove}`);
+    }
+  }
+  assert.equal(entryMove,35);
+  assert.equal(entry.currentLevelId,"level_HxH");
+  let entryPlayer = entry.state.actors.find(actor=>entry.isMainPlayerActor(actor));
+  assert.deepEqual([entryPlayer.x,entryPlayer.y,entryPlayer.elevation],[6,15,0]);
+  const authoredEntry = entryRooms.level_HxH.actors.find(actor=>actor.type==="player");
+  assert.deepEqual([authoredEntry.x,authoredEntry.y],[8,14],"the regression destination has a different authored spawn");
+  entry.undoMove({instantRestore:true});
+  assert.equal(entry.currentLevelId,"level_HxI");
+  assertSettledPose(entry,"undo across the campaign border");
+  await entry.replaySavedAction({command:"move",dx:0,dy:-1});
+  assert.equal(entry.currentLevelId,"level_HxH");
+  assertSettledPose(entry,"instant replay across the campaign border");
+  // Previously written exact saves may already contain the authored render
+  // pose beside the correct physics. Restoring them must repair presentation.
+  entryPlayer = entry.state.actors.find(actor=>entry.isMainPlayerActor(actor));
+  Object.assign(entryPlayer,{renderX:8,renderY:14,renderElevation:7});
+  const repairedEntry = runtime(entryRooms.level_HxI);
+  await repairedEntry.restoreResumeState(JSON.parse(JSON.stringify(entry.exportResumeState())));
+  assertSettledPose(repairedEntry,"previously saved stale native pose");
+  assert.equal(repairedEntry.currentLevelId,"level_HxH");
+  const hydratedBorder = runtime({...borderRooms.level_AxA, actors:[{type:"player",x:2,y:0,elevation:0}]});
+  const elevatedDestination = {...borderRooms.level_BxA,actors:[{type:"player",x:2,y:0,elevation:2},{type:"box",x:1,y:0,elevation:2}]};
+  hydratedBorder.rememberHorizontalNeighborLevelState(elevatedDestination);
+  hydratedBorder.movePlayers(1,0);
+  for(let i=0;i<100&&hydratedBorder.isPlanningWorldAction;i++) await new Promise(resolve=>setImmediate(resolve));
+  drainUntil(()=>!hydratedBorder.isAnimating);
+  assert.equal(hydratedBorder.currentLevelId,"level_BxA");
+  assert.equal(hydratedBorder.state.actors.find(actor=>actor.type==="box").elevation,0);
+  assertSettledPose(hydratedBorder,"cached destination player and falling box");
+  const preservedLegacyPose = runtime({...fixture(),engineVersion:"v1",actors:[{type:"player",x:1,y:1,elevation:0,renderX:2,renderY:2}]});
+  assert.equal(preservedLegacyPose.state.actors[0].renderX,2,"legacy authored rendering behavior remains unchanged");
+  assert.equal(preservedLegacyPose.state.actors[0].renderY,2);
+  const oldStorage = window.localStorage, oldReplaceState = window.history.replaceState;
+  let replayReads = 0, replayWrites = 0, replayUrlWrites = 0;
+  window.localStorage = {getItem:()=>{replayReads++; return '["unrelated-viewer-progress"]';},setItem:()=>{replayWrites++;}};
+  window.history.replaceState = () => { replayUrlWrites++; };
+  try {
+    for (const engineVersion of ["v1","v1.1"]) {
+      const replayData = {...fixture(),engineVersion,readOnlyReplay:true,
+        actors:[{type:"player",x:1,y:1,elevation:0},{type:"gem",x:2,y:1,elevation:0}]};
+      const watched = runtime(replayData), painted = [];
+      watched.renderOncePerFrame = () => painted.push(watched.worldActionAnimation?.currentPoint.x ?? watched.state.actors[0].renderX);
+      assert.equal(watched.collectedGemIds.size,0,"watching never inherits the viewer's saved gems");
+      const normalFrames = await replayAnimated(watched,{command:"move",dx:1,dy:0});
+      assert.ok(normalFrames > 1);
+      assert.ok(painted.some(x=>x>1&&x<2),`${engineVersion}: animated replay uses smooth production movement`);
+      assert.equal(watched.state.actors[0].x,2);
+      assert.equal(watched.collectedGemIds.size,1,"read-only replay still records in-memory gems");
+      assert.equal(watched.moveHistory.length,1);
+      const watchedSnapshot = JSON.parse(JSON.stringify(watched.exportResumeState()));
+      await replayAnimated(watched,{command:"undo"});
+      assert.equal(watched.state.actors[0].x,1);
+      assert.equal(watched.collectedGemIds.size,1,"watched undo preserves permanent gem progress");
+      assert.equal(watched.moveHistory.length,0);
+      await watched.restoreResumeState(watchedSnapshot);
+      assert.equal(watched.state.actors[0].x,2);
+      watched.resetCollectionProgress();
+      assert.equal(watched.collectedGemIds.size,0);
+      const accelerated = runtime(replayData);
+      const fastFrames = await replayAnimated(accelerated,{command:"move",dx:1,dy:0},{playbackSpeed:4});
+      assert.ok(fastFrames <= normalFrames * 0.5,`${engineVersion}: 4x replay accelerates actual movement (${normalFrames} normal frames, ${fastFrames} fast frames)`);
+      assert.equal(accelerated.state.actors[0].x,2);
+      assert.equal(accelerated.savedActionPlaybackSpeed,undefined,"replay speed never leaks into later normal gameplay");
+      let yaw = 0, cameraActive = false, cameraOptions;
+      accelerated.threeRenderer = {
+        getDebugCameraYaw:()=>yaw,isDebugCameraAnimating:()=>cameraActive,
+        setDebugCameraView: options => {
+          cameraOptions=options; cameraActive=true;
+          window.requestAnimationFrame(()=>{yaw=options.yaw;cameraActive=false;});
+        }
+      };
+      assert.equal(await replayAnimated(accelerated,{command:"rotate_camera",direction:"right"},{playbackSpeed:4}),1);
+      assert.equal(cameraOptions.animate,true);
+      assert.equal(cameraOptions.durationMs,65,"camera rotation scales with watch speed too");
+      assert.equal(yaw,Math.PI/2);
+      const pendingAction = accelerated.replaySavedAction({command:"move",dx:-1,dy:0});
+      await assert.rejects(()=>accelerated.replaySavedAction({command:"move",dx:-1,dy:0}),/previous action must finish/);
+      await pendingAction;
+    }
+    const watchedBorder = speed => {
+      const runtimeApp = runtime({...borderRooms.level_AxA,readOnlyReplay:true});
+      Object.values(borderRooms).forEach(room=>runtimeApp.rememberHorizontalNeighborLevelState(room));
+      return replayAnimated(runtimeApp,{command:"move",dx:1,dy:0},{playbackSpeed:speed}).then(frameCount=>({runtimeApp,frameCount}));
+    };
+    const normalBorder=await watchedBorder(1), fastBorder=await watchedBorder(4);
+    assert.equal(normalBorder.runtimeApp.currentLevelId,"level_BxA");
+    assert.equal(fastBorder.runtimeApp.currentLevelId,"level_BxA");
+    assert.ok(fastBorder.frameCount <= normalBorder.frameCount * 0.3,"4x playback scales the full native room camera transition");
+    assert.equal(replayReads,0); assert.equal(replayWrites,0,"watching, collecting, undoing, resetting and restoring never write viewer progress");
+    assert.equal(replayUrlWrites,0,"watched room crossings leave the /watch URL intact");
+  } finally { window.localStorage=oldStorage; window.history.replaceState=oldReplaceState; }
   const turnData = { ...fixture(), width:7, height:7,
     terrain:Array.from({length:7},()=>Array.from({length:7},()=>({type:"floor",layers:[{type:"floor",elevation:0}]}))),
     actors:[{type:"player",x:1,y:3,elevation:0},{type:"puncher",x:2,y:3,elevation:0,direction:"up"}] };
