@@ -76,7 +76,8 @@ function createPageRenderer({
           <script src="/play-render-three.js" defer></script>
           <script src="/play-render-compositor.js" defer></script>
           <script src="/play-render.js" defer></script>
-          <script src="/maze-engine.js" defer></script>`;
+          <script src="/maze-engine.js" defer></script>
+          <script src="/maze-engine-versions.js" defer></script>`;
 
   function renderSitePage({ title, description = "", main, bodyClass = "", extraHeadHtml = "" }) {
     return `<!DOCTYPE html>

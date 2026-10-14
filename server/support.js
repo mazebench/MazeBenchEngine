@@ -37,6 +37,8 @@ function getContentType(filePath) {
       return "image/svg+xml";
     case ".dae":
       return "model/vnd.collada+xml; charset=utf-8";
+    case ".wasm":
+      return "application/wasm";
     case ".glb":
       return "model/gltf-binary";
     default:

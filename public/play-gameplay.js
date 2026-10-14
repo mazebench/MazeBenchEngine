@@ -1653,6 +1653,7 @@
         actor.x = target.x;
         actor.y = target.y;
         actor.elevation = toElevation;
+        actor.v11GenericId = target.v11GenericId;
         actor.collectionId = target.collectionId || actor.collectionId || null;
         actor.collected = isCollectedGemTarget;
 
@@ -2158,6 +2159,10 @@
         updateUrl: true,
         immediateCamera: true
       });
+
+      if (app.engineVersion === "v1.1") {
+        for (const room of Object.values(app.v11WorldRooms || {})) app.rememberHorizontalNeighborLevelState?.(room);
+      }
 
       if (entrySnapshot && typeof app.restoreLevelEntryState === "function") {
         app.restoreLevelEntryState(entrySnapshot);
@@ -3298,6 +3303,7 @@
     }
 
     function maybeStartContinuousWorldAction(dx, dy, options = {}) {
+      if (app.engineVersion === "v1.1") return false;
       if (
         options.skipWorldAction === true ||
         options.allowDuringTransition === true ||
@@ -3346,7 +3352,142 @@
       return true;
     }
 
+    async function startModernWorldCommand(dx, dy) {
+      app.isPlanningWorldAction = true;
+      const startLevel = app.cloneLevelSnapshot();
+      const startEntry = app.levelEntrySnapshot;
+      const known = new Set(app.playData?.worldLevelIds || []);
+      try {
+        const rooms = JSON.parse(JSON.stringify(app.v11WorldRooms || {}));
+        for (const [id, room] of Object.entries(rooms)) {
+          (room.actors || []).forEach((actor, index) => {
+            const collectionId = actor.collectionId || app.gemCollectionId?.(actor, index, id);
+            if (actor.type === "gem" && collectionId && app.collectedGemIds.has(collectionId)) { actor.removed = true; actor.collected = true; }
+          });
+        }
+        const plan = await window.MazeEngineVersions.planWorldCommand({
+          currentLevelId: app.currentLevelId, currentRoom: startLevel, rooms, dx, dy,
+          adjacentLevelId: (id, x, y) => {
+            const next = app.adjacentWorldLevelId?.(id, x, y);
+            return known.size && !known.has(next) ? null : next;
+          },
+          loadRoom: async (id) => {
+            const room = app.cachedHorizontalNeighborLevelState?.(id) || await app.loadHorizontalNeighborLevelState?.(id);
+            if (!room) return null;
+            return app.prepareLevelRenderState?.(room) || room;
+          }
+        });
+        app.isPlanningWorldAction = false;
+        if (!plan.moved) { runQueuedAction(); return; }
+        // The command may have discovered rooms that were absent from the live
+        // cache at its start. Undo must restore their initial physics too.
+        startLevel.v11WorldRooms = plan.initial.rooms;
+        moveHistory.push({ levelSnapshot: startLevel, levelEntrySnapshot: startEntry, undoGroupId: null });
+        if (moveHistory.length > 500) moveHistory.splice(0, moveHistory.length - 500);
+        const collectedMoves = plan.collectedGems.map((gem) => ({ ...gem, actorType: "gem", toRemoved: true }));
+        app.recordCollectedGemsFromMoves?.([...plan.moves.filter((move) => move.actorType !== "gem"), ...collectedMoves]);
+        const sequence = [plan.initial, ...plan.ticks];
+        const player = startLevel.actors.find((actor) => app.isMainPlayerActor(actor));
+        const pathDuration = Math.max(1, plan.ticks.length) * MOVE_DURATION_MS;
+        const duration = pathDuration + (plan.playerFell ? app.HOLE_FALL_DURATION_MS || 300 : 0);
+        const startTime = performance.now();
+        app.isAnimating = true;
+        app.inputActionEndsAtMs = startTime + duration;
+        const initialPoint = plan.initial.point;
+        const startPlacement = plan.placements.find((p) => p.levelId === startLevel.levelId);
+        app.worldActionAnimation = {
+          player, currentPoint: { x: initialPoint.worldX, y: initialPoint.worldY, elevation: initialPoint.elevation },
+          cameraPoint: { x: startPlacement.offset.x + state.width / 2, y: startPlacement.offset.y + state.height / 2 },
+          rooms: [], stableWidth: state.width, stableHeight: state.height, progress: 0,
+          path: plan.playerPath.map((p) => ({ x: p.worldX, y: p.worldY, elevation: p.elevation })),
+          terminalPlayerRemoved: plan.playerFell, timeline: { durationMs: duration, pathEndMs: pathDuration }
+        };
+        let completed = false;
+        function finish(skipRender = false) {
+          if (completed) return;
+          completed = true;
+          app.worldActionAnimation = null; app.animationFrameId = null; app.inputActionEndsAtMs = 0;
+          let completionError = null;
+          const completeStep = (callback) => {
+            try { callback(); } catch (error) { completionError ||= error; }
+          };
+          app.v11WorldRooms = plan.rooms;
+          const crossed = plan.currentLevelId !== startLevel.levelId;
+          try {
+            completeStep(() => applyLevelState(plan.currentRoom, { immediateCamera: true, resetLevelEntry: crossed, updateUrl: crossed, preserveAnimation: true, deferRender: true }));
+            completeStep(() => { for (const room of Object.values(plan.rooms)) app.rememberHorizontalNeighborLevelState?.(room); });
+            completeStep(() => app.onModernWorldCommand?.(plan));
+          } finally {
+            app.isAnimating = false;
+            // Host notifications and renderer failures must never prevent the
+            // authoritative automatic undo of a completed pit fall.
+            if (plan.playerFell && app.autoUndoPlayerFalls) {
+              app.queuedAction = null;
+              completeStep(() => app.onPlayerPitAutoUndo?.());
+              completeStep(() => undoMove({ instantRestore: true }));
+            } else if (!skipRender) completeStep(() => app.render());
+          }
+          if (completionError) { app.queuedAction = null; throw completionError; }
+          runQueuedAction();
+        }
+        function stepFrame(now) {
+          const elapsed = Math.max(0, now - startTime), tick = Math.min(sequence.length - 2, Math.floor(elapsed / MOVE_DURATION_MS));
+          const a = sequence[Math.max(0, tick)], b = sequence[Math.max(1, tick + 1)] || a;
+          const raw = Math.min(1, (elapsed - Math.max(0, tick) * MOVE_DURATION_MS) / MOVE_DURATION_MS);
+          const t = app.easeInOutQuad ? app.easeInOutQuad(raw) : raw;
+          const lerp = (x, y) => x + (y - x) * t;
+          const action = app.worldActionAnimation;
+          action.elapsedMs = elapsed; action.progress = Math.min(1, elapsed / duration);
+          action.currentPoint = { x: lerp(a.point.worldX, b.point.worldX), y: lerp(a.point.worldY, b.point.worldY), elevation: lerp(a.point.elevation, b.point.elevation) };
+          const from = plan.placements.find((p) => p.levelId === a.currentLevelId).offset;
+          const to = plan.placements.find((p) => p.levelId === b.currentLevelId).offset;
+          action.cameraPoint = { x: lerp(from.x, to.x) + state.width / 2, y: lerp(from.y, to.y) + state.height / 2 };
+          action.rooms = plan.placements.filter((placement) => Math.abs(placement.offset.x + state.width / 2 - action.cameraPoint.x) <= state.width * 2 && Math.abs(placement.offset.y + state.height / 2 - action.cameraPoint.y) <= state.height * 2).map((placement) => {
+            const before = a.rooms[placement.levelId], after = b.rooms[placement.levelId];
+            return { ...placement, levelState: { ...after,
+              terrain: after.terrain.map((row, y) => row.map((cell, x) => ({ ...cell, layers: cell.layers.map((layer, i) => {
+                const old = before.terrain[y][x].layers[i];
+                return layer.type === "orange_wall" && old ? { ...layer, v11GenericId: lerp(old.v11GenericId || 0, layer.v11GenericId || 0) } : layer;
+              }) }))),
+              actors: after.actors.map((actor, i) => {
+                const old = before.actors[i] || actor;
+                return { ...actor, removed: old.removed && actor.removed, renderX: lerp(old.x, actor.x), renderY: lerp(old.y, actor.y), renderElevation: lerp(old.elevation || 0, actor.elevation || 0), renderAlpha: !old.removed && actor.removed ? 1 - t : 1 };
+              })
+            } };
+          });
+          action.visualSignature = `${Math.floor(elapsed / 16)}`;
+          (app.renderOncePerFrame || app.render)(now);
+          if (elapsed >= duration) finish(); else app.animationFrameId = window.requestAnimationFrame(step);
+        }
+        function step(now) {
+          try { stepFrame(now); }
+          catch (error) {
+            // Physics was already validated. Commit its final state even if a
+            // renderer or host callback fails, then release the input lock.
+            app.queuedAction = null;
+            try { finish(true); } catch (finishError) { console.error(finishError); }
+            app.isAnimating = false; app.worldActionAnimation = null; app.animationFrameId = null;
+            app.engineLoadError = error;
+            console.error(error);
+            if (app.onEngineError) app.onEngineError(error);
+            else window.alert?.(`Unable to animate v1.1 command: ${error.message}`);
+          }
+        }
+        app.animationFrameId = window.requestAnimationFrame(step);
+      } catch (error) {
+        app.isPlanningWorldAction = false; app.isAnimating = false; app.worldActionAnimation = null;
+        app.engineLoadError = error;
+        console.error(error);
+        if (app.onEngineError) app.onEngineError(error);
+        else window.alert?.(`Unable to execute v1.1 command: ${error.message}`);
+      }
+    }
+
     function movePlayers(dx, dy, options = {}) {
+      if (app.engineVersion !== "v1" && !window.MazeEngineVersions?.isReady(app.engineVersion)) {
+        if (app.engineLoadError) app.onEngineError?.(app.engineLoadError);
+        return;
+      }
       const allowDuringTransition = options.allowDuringTransition === true;
 
       if (
@@ -3355,6 +3496,11 @@
         (app.isTransitioningLevel && !allowDuringTransition)
       ) {
         queueLateAction({ type: "move", dx, dy, inputSource: options.inputSource || "" });
+        return;
+      }
+
+      if (app.engineVersion === "v1.1") {
+        void startModernWorldCommand(dx, dy);
         return;
       }
 

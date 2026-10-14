@@ -129,6 +129,7 @@
     const initialViewportTiles = normalizeViewportTiles(playData?.cameraView, 10, 10);
     const app = {
       playData,
+      engineVersion: playData?.engineVersion || playData?.engine_version || "v1",
       isEditorRenderApp: playData?.editorRender === true,
       // One-off render hosts can opt out of the player's persistent gem
       // history without inheriting the editor's different gameplay visuals.
@@ -787,7 +788,7 @@
         }
 
         const collectionId =
-          actor.collectionId || gemCollectionId(actor, move.actorIndex, app.currentLevelId);
+          actor.collectionId || gemCollectionId(actor, move.actorIndex, move.levelId || app.currentLevelId);
 
         if (!collectionId || app.collectedGemIds.has(collectionId)) {
           return;
@@ -848,9 +849,16 @@
     }
 
     function resetCollectionProgress() {
+      const previouslyCollected = new Set(app.collectedGemIds);
       app.collectedGemIds.clear();
       saveCollectedGemIds();
       app.state.actors.forEach((actor) => clearCollectedGemVisual(actor));
+      for (const [levelId, room] of Object.entries(app.v11WorldRooms || {})) {
+        (room.actors || []).forEach((actor, index) => {
+          if (actor.type === "gem" && previouslyCollected.has(actor.collectionId || gemCollectionId(actor, index, levelId))) actor.collected = true;
+          clearCollectedGemVisual(actor);
+        });
+      }
       clearCollectedGemSavedState();
       app.horizontalNeighborLevelStates.clear();
       syncHorizontalNeighborLevelStates();
@@ -1354,6 +1362,7 @@
         removed: actor.removed,
         elevation: actor.elevation ?? 0,
         raised: actor.raised === true,
+        v11GenericId: actor.v11GenericId,
         collectionId: actor.collectionId || null,
         collected: actor.collected === true,
         showCollectedGhost: actor.showCollectedGhost === true
@@ -1371,6 +1380,7 @@
         shape: actor.shape || null,
         styleKey: actor.styleKey || null,
         raised: actor.raised === true,
+        v11GenericId: actor.v11GenericId,
         facing: actor.facing || null,
         collectionId: actor.collectionId || null,
         collected: actor.collected === true,
@@ -1538,6 +1548,8 @@
 
     function cloneLevelSnapshot() {
       return {
+        engineVersion: app.engineVersion,
+        ...(app.engineVersion === "v1.1" ? { v11WorldRooms: JSON.parse(JSON.stringify(app.v11WorldRooms || {})) } : {}),
         gameId: app.currentGameId,
         levelId: app.currentLevelId,
         levelLabel: app.currentLevelLabel,
@@ -1596,6 +1608,8 @@
       app.levelTransition = null;
       app.gateRenderOverride = null;
       app.orangeWallRenderOverride = null;
+      app.engineVersion = levelState.engineVersion || levelState.engine_version || app.engineVersion || "v1";
+      if (levelState.v11WorldRooms) app.v11WorldRooms = JSON.parse(JSON.stringify(levelState.v11WorldRooms));
       app.currentLevelId = levelState.levelId || app.currentLevelId;
       app.currentLevelLabel = levelState.levelLabel || app.currentLevelLabel || app.currentLevelId;
       if (Object.prototype.hasOwnProperty.call(levelState, "editorRender")) {
@@ -1712,6 +1726,8 @@
         actor.y = target.y;
         actor.removed = Boolean(target.removed);
         actor.elevation = target.elevation ?? 0;
+        actor.v11GenericId = target.v11GenericId;
+        actor.raised = target.raised === true;
         actor.renderX = target.x;
         actor.renderY = target.y;
         actor.renderElevation = actor.elevation;
@@ -2189,6 +2205,13 @@
 
     function computeRaisedOrangeWallSet(actors = app.state.actors) {
       const raised = new Set();
+      if (app.engineVersion === "v1.1") {
+        eachOrangeWall((x, y, key) => {
+          if (terrainLayersAt(x, y).some((layer) => layer.type === "orange_wall" && (layer.v11GenericId === undefined || layer.raised))) raised.add(key);
+        });
+        return raised;
+      }
+
 
       if (!app.isEditorRenderApp && areOrangeButtonsPressed(actors)) {
         return raised;
@@ -2375,6 +2398,15 @@
     }
 
     function computeRaisedPlayerGateSet(actors = app.state.actors) {
+      if (app.engineVersion === "v1.1") {
+        const raised = new Set();
+        eachPlayerGate((x, y, key) => {
+          if (terrainLayersAt(x, y).some((layer) => layer.type === "player_gate" && layer.raised)) raised.add(key);
+        });
+        for (const actor of actors) if (!actor.removed && actor.type === "attached_gate" && actor.raised) raised.add(posKey(actor.x, actor.y));
+        return raised;
+      }
+
       const activeActors = actors.filter((actor) => !actor.removed);
       const players = activeActors.filter((actor) => isPlayerActor(actor));
       const raised = new Set();
@@ -3120,6 +3152,8 @@
     }
 
     function initializeActorElevations() {
+      // v1.1 settles unsupported bodies in its observable command ticks.
+      if (app.engineVersion === "v1.1") return;
       app.state.actors.forEach((actor, index) => {
         if (actor.type === "weightless_box" && !actor.__explicitElevation) {
           const elevation = initialWeightlessStackElevation(actor, index);

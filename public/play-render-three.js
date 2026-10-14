@@ -21,6 +21,7 @@
     let keyLight = null;
     let GLTFLoaderClass = null;
     let gltfLoaderClassPromise = null;
+    let gltfLoaderImportFailures = 0;
     let raycaster = null;
     let lastWidth = 0;
     let lastHeight = 0;
@@ -101,6 +102,9 @@
     const textureCache = new Map();
     const imageMaterialCache = new Map();
     const modelAssetCache = new Map();
+    const modelAssetRetryTimers = new Map();
+    const failedModelAssetUrls = new Set();
+    let rendererDisposed = false;
     // Bumped whenever a GLB finishes parsing. World-view room signatures fold
     // it in so groups meshed with fallback primitives re-sign (and rebuild
     // with the real model) once the asset arrives.
@@ -1603,13 +1607,22 @@
         return gltfLoaderClassPromise;
       }
 
-      gltfLoaderClassPromise = import(gltfLoaderModuleUrl)
+      // Browsers can cache a failed module fetch for the lifetime of the
+      // document. Use a fresh URL after failure, with only two retry variants.
+      const retry = Math.min(gltfLoaderImportFailures, 2);
+      const loaderUrl = retry
+        ? `${gltfLoaderModuleUrl}${gltfLoaderModuleUrl.includes("?") ? "&" : "?"}retry=${retry}`
+        : gltfLoaderModuleUrl;
+      gltfLoaderClassPromise = import(loaderUrl)
         .then((loaderModule) => {
           GLTFLoaderClass = loaderModule.GLTFLoader || null;
+          if (!GLTFLoaderClass) gltfLoaderClassPromise = null;
           return GLTFLoaderClass;
         })
         .catch(() => {
           GLTFLoaderClass = null;
+          gltfLoaderClassPromise = null;
+          gltfLoaderImportFailures += 1;
           return null;
         });
 
@@ -1645,9 +1658,10 @@
     }
 
     const MODEL_RETRY_DELAY_MS = 8000;
+    const MODEL_AUTO_RETRY_LIMIT = 2;
 
     function requestModelAsset(url) {
-      if (!url || !THREE) {
+      if (!url || !THREE || rendererDisposed) {
         return null;
       }
 
@@ -1667,23 +1681,37 @@
           return null;
         }
 
-        modelAssetCache.delete(url);
-
-        if (app.modelTextCache?.get(url) === null) {
-          app.modelTextCache.delete(url);
-        }
+        resetFailedModelAssets([url]);
       }
 
+      const attempts = (cached?.attempts || 0) + 1;
       const finalizeModel = (model) => {
+        if (rendererDisposed) {
+          model?.parts?.forEach((part) => part.geometry?.dispose?.());
+          return;
+        }
         modelAssetCache.set(
           url,
           model
             ? { status: "ready", model }
-            : { status: "failed", failedAtMs: performance.now() }
+            : { status: "failed", failedAtMs: performance.now(), attempts }
         );
+        if (!model) {
+          // A 200 response can still contain invalid or truncated GLB bytes.
+          // Retry the network, not the same cached parse failure forever.
+          app.modelTextCache?.delete?.(url);
+          failedModelAssetUrls.add(url);
+          if (attempts <= MODEL_AUTO_RETRY_LIMIT) {
+            modelAssetRetryTimers.set(url, window.setTimeout(() => {
+              modelAssetRetryTimers.delete(url);
+              requestModelAsset(url);
+            }, MODEL_RETRY_DELAY_MS));
+          }
+        }
         // A real model arriving must re-sign cached room groups so their
         // fallback primitives rebuild into the actual geometry.
         if (model) {
+          failedModelAssetUrls.delete(url);
           modelAssetsVersion += 1;
         }
         invalidateSceneCache();
@@ -1698,12 +1726,13 @@
       if (cachedData instanceof ArrayBuffer || ArrayBuffer.isView(cachedData)) {
         modelAssetCache.set(url, {
           status: "loading",
+          attempts,
           promise: parseModelAsset(url, cachedData).then(finalizeModel)
         });
         return null;
       }
 
-      const promise = fetch(url)
+      const promise = fetch(url, { cache: failedModelAssetUrls.has(url) ? "reload" : "default" })
         .then((response) => (response.ok ? response.arrayBuffer() : null))
         .then((data) => {
           if (data && app.modelTextCache) {
@@ -1718,7 +1747,7 @@
           finalizeModel(null);
         });
 
-      modelAssetCache.set(url, { status: "loading", promise });
+      modelAssetCache.set(url, { status: "loading", promise, attempts });
       return null;
     }
 
@@ -5663,7 +5692,21 @@
       scene.add(highlight);
     }
 
+    function modernOrangeWallDepth(layer, x, y, now) {
+      const depth = Math.max(0, layer.v11GenericId || 0);
+      const transition = renderState() === app.state ? app.v11TerrainTransition : null;
+      const from = transition?.changes?.get(`${x},${y},${layer.v11AnchorElevation}`);
+      if (typeof from !== "number") return depth;
+      const progress = Math.max(0, Math.min(1, (now - transition.startedAt) / Math.max(1, transition.durationMs)));
+      const eased = app.easeInOutQuad ? app.easeInOutQuad(progress) : progress;
+      return from + (depth - from) * eased;
+    }
+
     function renderTerrainLayerSurfaceHeight(layer, x, y, now = performance.now()) {
+      if (layer.type === "orange_wall" && Number.isInteger(layer.v11AnchorElevation)) {
+        const top = layer.v11AnchorElevation + 1 - modernOrangeWallDepth(layer, x, y, now);
+        return top < layer.v11SupportZ - 0.001 ? null : top;
+      }
       const elevation = layer.elevation ?? 0;
       const isLiveState = renderState() === app.state;
       const key = `${x},${y}`;
@@ -5712,6 +5755,9 @@
     }
 
     function renderOrangeWallLiftValue(x, y, layer, now = performance.now()) {
+      if (Number.isInteger(layer.v11AnchorElevation)) {
+        return layer.raised ? 1 : 0;
+      }
       const key = `${x},${y}`;
       const surfaceLiftValue =
         activeRenderContext?.surfaceLiftValues?.get(`${layer.type}:${key}`) ??
@@ -6209,6 +6255,20 @@
         return null;
       }
 
+      if (layer.type === "orange_wall" && Number.isInteger(layer.v11AnchorElevation)) {
+        const topY = terrainHeight * elevationUnit;
+        const support = Number(layer.v11SupportZ);
+        const flat = Math.abs(terrainHeight - support) <= 0.001;
+        const blockHeight = flat ? floorThickness : Math.max(1, Math.min(1, terrainHeight - support) * elevationUnit);
+        const descriptor = {
+          blockHeight, bottomY: topY - blockHeight, elevation: terrainHeight - (flat ? 0 : 1),
+          isLoweredOrangeSurface: flat, isLoweredPlayerLift: false, isSurfacePlayerGate: false,
+          isCollapsingOrangeBase: !flat && blockHeight < elevationUnit, isVoid: false,
+          layer, terrainHeight, isSunkenFloor: false, topY, type: "orange_wall"
+        };
+        descriptor.key = terrainPieceDescriptorKey(descriptor, x, y);
+        return descriptor;
+      }
       const elevation = layer.elevation ?? 0;
       const type = layer.type || "floor";
       const topHeight = Math.max(0, terrainHeight) * elevationUnit;
@@ -11471,14 +11531,14 @@
 
     function resetFailedModelAssets(urls) {
       (urls || []).forEach((url) => {
+        const timer = modelAssetRetryTimers.get(url);
+        if (timer !== undefined) window.clearTimeout(timer);
+        modelAssetRetryTimers.delete(url);
         modelAssetCache.delete(url);
         app.modelTextCache?.delete?.(url);
       });
 
-      // ensureGltfLoaderClass intentionally converts an import rejection into
-      // null for permissive gameplay. Strict one-off renders must be able to
-      // retry a transient loader-module failure instead of reusing that
-      // already-resolved null promise forever.
+      // Retain the permissive fallback while allowing a fresh loader attempt.
       if (!GLTFLoaderClass) {
         gltfLoaderClassPromise = null;
       }
@@ -13269,6 +13329,10 @@
     }
 
     function disposeRenderer() {
+      rendererDisposed = true;
+      modelAssetRetryTimers.forEach((timer) => window.clearTimeout(timer));
+      modelAssetRetryTimers.clear();
+      failedModelAssetUrls.clear();
       if (debugCameraAnimationFrameId) {
         window.cancelAnimationFrame(debugCameraAnimationFrameId);
         debugCameraAnimationFrameId = 0;

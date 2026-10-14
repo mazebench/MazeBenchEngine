@@ -69,6 +69,7 @@
         removed: Boolean(actor.removed),
         elevation: actor.elevation ?? 0,
         raised: actor.raised === true,
+        v11GenericId: actor.v11GenericId,
         collectionId: actor.collectionId || null,
         collected: actor.collected === true,
         showCollectedGhost: actor.showCollectedGhost === true
