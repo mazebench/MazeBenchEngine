@@ -94,7 +94,7 @@ const startRoomSection = sourceSection(
 assert.match(startRoomSection, /document\.getElementById\("world-start-grid"\)/);
 assert.match(startRoomSection, /className = "author-start-room-pixel"/);
 assert.match(startRoomSection, /pixel\.setAttribute\("aria-pressed", isStart \? "true" : "false"\)/);
-assert.match(startRoomSection, /body: JSON\.stringify\(\{ start_level_id: startLevelId \}\)/);
+assert.match(startRoomSection, /body: JSON\.stringify\(\{ start_level_id: startLevelId, base_editor_revision: meta\.editorRevision \}\)/);
 
 const socialCardSection = sourceSection(
   "async function renderWorldHeroCardDataUrl",
