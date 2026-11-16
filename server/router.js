@@ -21,6 +21,7 @@ function createRequestRouter({
   gamesDir,
   loadJson,
   publicFileRoutes,
+  loadPublicModuleSource = () => null,
   readJsonBody,
   remote,
   renderAgentPage,
@@ -65,6 +66,13 @@ function createRequestRouter({
 
     if (publicFilePath) {
       sendFile(request, response, publicFilePath, getContentType(publicFilePath));
+      return;
+    }
+
+    const publicModuleSource = loadPublicModuleSource(url.pathname);
+    if (publicModuleSource !== null) {
+      response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" });
+      response.end(request.method === "HEAD" ? undefined : publicModuleSource);
       return;
     }
 

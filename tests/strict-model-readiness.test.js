@@ -198,6 +198,44 @@ async function main() {
       2,
       "the existing permissive readiness API should keep accepting a cached fallback"
     );
+
+    for (const engineVersion of ["v1", "v1.1"]) {
+      await session.page.route("**/play/maze/**", async (route) => {
+        const response = await route.fetch();
+        const body = (await response.text()).replace(/(<script>window\.__PLAY_DATA__ = [\s\S]*?)(<\/script>)/,
+          `$1 window.__PLAY_DATA__.engineVersion = ${JSON.stringify(engineVersion)}; $2`);
+        await route.fulfill({ response, body });
+      });
+      for (const failedModule of ["/vendor/three.module.js", "/utils/BufferGeometryUtils.js"]) {
+        let failures = 0;
+        const pattern = `**${failedModule}*`;
+        await session.page.route(pattern, async (route) => {
+          if (failures++ === 0) return route.abort("connectionfailed");
+          return route.continue();
+        });
+        await session.page.reload({ waitUntil: "networkidle" });
+        await session.page.waitForFunction(() => window.__PIXEL_GAME_APP__?.threeRenderer?.isReady());
+        assert.equal(await session.page.evaluate(() => window.__PIXEL_GAME_APP__.engineVersion), engineVersion);
+        await session.page.evaluate(async () => {
+          await window.__PIXEL_GAME_APP__.threeRenderer.requireLevelStatesModelsReady([
+            { actors: [{ modelUrl: "/__strict-model-readiness__/after-bootstrap-retry.glb" }], terrain: [] }
+          ], { retries: 2, retryDelayMs: 0 });
+        });
+        assert.ok(failures > 0, `Injected ${failedModule} failure for ${engineVersion}`);
+        await session.page.unroute(pattern);
+      }
+      await session.page.unroute("**/play/maze/**");
+    }
+    const disposedReady = await session.page.evaluate(async () => {
+      const app = window.__PIXEL_GAME_APP__;
+      app.threeRenderer.dispose();
+      window.PlayModules.registerThreeRenderFunctions(app);
+      const replacement = app.threeRenderer;
+      replacement.dispose(); // before the cached import's promise resolves
+      await app.threeRendererReady;
+      return replacement.isReady();
+    });
+    assert.equal(disposedReady, false, "disposing during bootstrap must not resurrect a GPU renderer");
   } finally {
     await closeRenderSession(session);
   }

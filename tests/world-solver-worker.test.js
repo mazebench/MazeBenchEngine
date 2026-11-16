@@ -9,6 +9,9 @@ const context = {
   console,
   Date,
   Number,
+  WebAssembly,
+  Uint8Array,
+  Int32Array,
   setTimeout,
   clearTimeout,
   postMessage(message) {
@@ -136,6 +139,37 @@ function floorTerrain(width, height) {
   assert.equal(continued.result.gemResults[0].status, "solved");
   assert.equal(continued.result.gemResults[0].path, "RRR");
   assert.equal(continued.continuationId, "");
+
+  await context.MazeEngineVersions.load("v1.1", {
+    bytes: fs.readFileSync(path.join(root, "public", "physics", "v1.1.wasm"))
+  });
+  const nativeData = {
+    engineVersion: "v1.1", physicsTrace: false, width: 5, height: 1,
+    terrain: [[{type:"floor"}, {type:"floor"}, {type:"hole"}, {type:"floor"}, {type:"floor"}]],
+    actors: [{type:"player",x:0,y:0}, {type:"floating_floor",x:1,y:0}]
+  };
+  const nativeGem = { id:"native-goal", type:"gem", x:4, y:0, elevation:0 };
+  await context.onmessage({data:{
+    type:"analyze_room", id:11, playData:nativeData, gemTargets:[nativeGem],
+    positionTargets:[], maxExpandedStates:1
+  }});
+  const nativeCapped = messages.find(message => message.type === "done" && message.id === 11);
+  assert.ok(nativeCapped?.continuationId, "native searches remain bounded and resumable");
+  await context.onmessage({data:{
+    type:"continue_analysis", id:12, continuationId:nativeCapped.continuationId, additionalExpandedStates:100
+  }});
+  const nativeDone = messages.find(message => message.type === "done" && message.id === 12);
+  const nativeRoute = nativeDone?.result.gemResults[0];
+  assert.equal(nativeRoute?.status, "solved");
+  assert.equal(nativeRoute.path, "RRRR");
+  const nativeEngine = context.MazeEngineVersions.createEngine({...nativeData, actors:[...nativeData.actors,nativeGem]});
+  const nativeState = nativeEngine.cloneState(nativeEngine.initialState);
+  for (const step of nativeRoute.path) {
+    const direction = {U:[0,-1],R:[1,0],D:[0,1],L:[-1,0]}[step];
+    nativeEngine.move(nativeState,...direction);
+  }
+  assert.equal(nativeEngine.isSolved(nativeState),true, "solver output replays under the selected native physics");
+  assert.equal(nativeState.terrainState[0][2].type,"floor", "native filled-hole state survives search branches");
   console.log("world-solver-worker: OK — gem, location, and edge routes use the built-in solver.");
 })().catch((error) => {
   console.error(error);

@@ -12,6 +12,7 @@ const { createMazePreviewService } = require("./maze-preview");
 const { createMazeWorldMapService } = require("./maze-world-map");
 const { createPageRenderer } = require("./pages");
 const { createRequestRouter } = require("./router");
+const { createVendorRecoveryAssetLoader } = require("./vendor-assets");
 const { createSolverExportService } = require("./solver-exports");
 const {
   ensureDirectory,
@@ -45,6 +46,8 @@ const PUBLIC_FILE_ROUTES = new Map(
     "/play-gameplay.js",
     "/flyover.js",
     "/maze-engine.js",
+    "/maze-engine-versions.js",
+    "/physics/v1.1.wasm",
     "/maze-solver.js",
     "/world-solver.js",
     "/world-solver-worker.js",
@@ -732,6 +735,7 @@ const { handleRequest } = createRequestRouter({
   gamesDir: GAMES_DIR,
   loadJson,
   publicFileRoutes: PUBLIC_FILE_ROUTES,
+  loadPublicModuleSource: createVendorRecoveryAssetLoader(ROOT_DIR),
   readJsonBody,
   remote,
   renderAgentPage,

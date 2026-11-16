@@ -69,6 +69,7 @@
         removed: Boolean(actor.removed),
         elevation: actor.elevation ?? 0,
         raised: actor.raised === true,
+        v11GenericId: actor.v11GenericId,
         collectionId: actor.collectionId || null,
         collected: actor.collected === true,
         showCollectedGhost: actor.showCollectedGhost === true
@@ -184,7 +185,7 @@
         const transitionStartMs = transitionState?.startMs ?? performance.now();
         const handoffMs = Math.max(
           durationMs * 0.08,
-          Math.min(durationMs * 0.24, app.MOVE_DURATION_MS || 100)
+          Math.min(durationMs * 0.24, (app.MOVE_DURATION_MS || 100) / (Number(app.savedActionPlaybackSpeed) || 1))
         );
 
         function step(now = performance.now()) {
@@ -562,20 +563,21 @@
 
     function blinkRevivedPlayer(playerOrPlayers, options = {}) {
       const players = Array.isArray(playerOrPlayers) ? playerOrPlayers : [playerOrPlayers];
-      const durationMs = Number.isFinite(options.durationMs)
+      const playbackSpeed = Number(app.savedActionPlaybackSpeed) || 1;
+      const durationMs = (Number.isFinite(options.durationMs)
         ? Math.max(1, options.durationMs)
-        : (PLAYER_REVIVE_BLINK_DURATION_MS || 620) / 2.25;
+        : (PLAYER_REVIVE_BLINK_DURATION_MS || 620) / 2.25) / playbackSpeed;
       const blinkCount = Number.isInteger(options.blinkCount)
         ? Math.max(1, options.blinkCount)
         : 2;
-      const visibleDurationMs = Number.isFinite(options.visibleDurationMs)
+      const visibleDurationMs = (Number.isFinite(options.visibleDurationMs)
         ? Math.max(0, options.visibleDurationMs)
-        : 0;
+        : 0) / playbackSpeed;
       const startMs = performance.now();
 
       app.isAnimating = true;
 
-      function finishBlink() {
+      function clearBlinkState() {
         players.forEach((player) => {
           player.renderAlpha = 1;
           player.renderScale = 1;
@@ -584,6 +586,24 @@
         });
         app.isAnimating = false;
         app.animationFrameId = null;
+      }
+
+      function failBlink(error) {
+        if (app.animationFrameId !== null) window.cancelAnimationFrame(app.animationFrameId);
+        clearBlinkState();
+        app.queuedAction = null;
+        app.engineLoadError = error;
+        if (app.isReplayingSavedActions) app.lastReplayError = error;
+        // The native command's error handler has finished before this RAF.
+        // Recover the visible, playable state even if this render also fails.
+        try { syncFloatingFloorTicker(); } catch (_) { /* Recovery remains complete. */ }
+        try { app.render(); } catch (_) { /* A future render can recover the context. */ }
+        console.error(error);
+        try { app.onEngineError?.(error); } catch (notificationError) { console.error(notificationError); }
+      }
+
+      function finishBlink() {
+        clearBlinkState();
         syncFloatingFloorTicker();
         app.render();
 
@@ -592,7 +612,7 @@
         }
       }
 
-      function step(now) {
+      function stepFrame(now) {
         const progress = Math.min(1, (now - startMs) / durationMs);
 
         if (progress >= 1) {
@@ -608,10 +628,15 @@
         app.animationFrameId = window.requestAnimationFrame(step);
       }
 
+      function step(now) {
+        try { stepFrame(now); } catch (error) { failBlink(error); }
+      }
+
+      if (app.isReplayingSavedActions && !app.animateSavedActions) { finishBlink(); return; }
       if (blinkCount === 1) {
         let hiddenAtMs = null;
 
-        function stepSingleBlink(now) {
+        function stepSingleBlinkFrame(now) {
           if (hiddenAtMs === null) {
             if (now - startMs < visibleDurationMs) {
               app.animationFrameId = window.requestAnimationFrame(stepSingleBlink);
@@ -633,6 +658,10 @@
           }
 
           app.animationFrameId = window.requestAnimationFrame(stepSingleBlink);
+        }
+
+        function stepSingleBlink(now) {
+          try { stepSingleBlinkFrame(now); } catch (error) { failBlink(error); }
         }
 
         app.animationFrameId = window.requestAnimationFrame(stepSingleBlink);
@@ -1208,9 +1237,9 @@
           incomingRaisedOrangeWalls
         );
         const incomingPlayer = state.actors.find((actor) => isTransitionPlayerActor(actor) && !actor.removed) || null;
-        const durationMs = Number.isFinite(transition.durationMs)
+        const durationMs = (Number.isFinite(transition.durationMs)
           ? Math.max(1, transition.durationMs)
-          : app.LEVEL_TRANSITION_DURATION_MS || 1000;
+          : app.LEVEL_TRANSITION_DURATION_MS || 1000) / (Number(app.savedActionPlaybackSpeed) || 1);
         const transitionData = {
           kind: "adjacent-scene",
           dx: transition.dx,
@@ -1261,6 +1290,7 @@
 
         return true;
       } catch (error) {
+        if (app.isReplayingSavedActions) app.lastReplayError = error;
         console.error(error);
         app.isTransitioningLevel = false;
         return false;

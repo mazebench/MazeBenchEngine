@@ -129,11 +129,15 @@
     const initialViewportTiles = normalizeViewportTiles(playData?.cameraView, 10, 10);
     const app = {
       playData,
+      engineVersion: playData?.engineVersion || playData?.engine_version || "v1",
       isEditorRenderApp: playData?.editorRender === true,
       // One-off render hosts can opt out of the player's persistent gem
       // history without inheriting the editor's different gameplay visuals.
       // This is immutable across room transitions for the lifetime of the app.
       ignoreSavedGemProgress: playData?.ignoreSavedGemProgress === true,
+      // Replay viewers keep full in-memory progress without reading or
+      // writing the viewer's own run, including across room transitions.
+      readOnlyReplay: playData?.readOnlyReplay === true,
       currentGameId,
       // Base URL for level-state fetches; keeps custom worlds (editor and
       // play) from falling back to the main game's /api/play endpoint.
@@ -189,7 +193,7 @@
       GEM_DRAW_WIDTH: 64 * 0.56,
       GEM_SHADOW_WIDTH: 64 * 0.3,
       GEM_SHADOW_HEIGHT: 64 * 0.1,
-      COLLECTED_GEM_ALPHA: 0.22,
+      get COLLECTED_GEM_ALPHA() { return this.engineVersion === "v1.1" ? 0.5 : 0.22; },
       FLOATING_FLOOR_HOVER_BASE: 64 * 0.18,
       FLOATING_FLOOR_HOVER_BOB: 64 * 0.045,
       FLOATING_FLOOR_SHADOW_INSET: 64 * 0.16,
@@ -628,7 +632,7 @@
     }
 
     function loadCollectedGemIds() {
-      if (app.isEditorRenderApp || app.ignoreSavedGemProgress) {
+      if (app.isEditorRenderApp || app.ignoreSavedGemProgress || app.readOnlyReplay) {
         return new Set();
       }
 
@@ -648,7 +652,7 @@
     }
 
     function saveCollectedGemIds() {
-      if (app.isEditorRenderApp || app.ignoreSavedGemProgress) {
+      if (app.isEditorRenderApp || app.ignoreSavedGemProgress || app.readOnlyReplay) {
         return;
       }
 
@@ -787,7 +791,7 @@
         }
 
         const collectionId =
-          actor.collectionId || gemCollectionId(actor, move.actorIndex, app.currentLevelId);
+          actor.collectionId || gemCollectionId(actor, move.actorIndex, move.levelId || app.currentLevelId);
 
         if (!collectionId || app.collectedGemIds.has(collectionId)) {
           return;
@@ -848,9 +852,21 @@
     }
 
     function resetCollectionProgress() {
+      // Native history can share its room-entry snapshot with this reset.
+      // Discard encoded history before changing those collection flags.
+      resetResumeEncodingCache();
+      const previouslyCollected = new Set(app.collectedGemIds);
       app.collectedGemIds.clear();
       saveCollectedGemIds();
       app.state.actors.forEach((actor) => clearCollectedGemVisual(actor));
+      for (const [levelId, room] of Object.entries(app.v11WorldRooms || {})) {
+        const actors = (room.actors || []).map(actor => ({ ...actor }));
+        app.v11WorldRooms[levelId] = { ...room, actors };
+        actors.forEach((actor, index) => {
+          if (actor.type === "gem" && previouslyCollected.has(actor.collectionId || gemCollectionId(actor, index, levelId))) actor.collected = true;
+          clearCollectedGemVisual(actor);
+        });
+      }
       clearCollectedGemSavedState();
       app.horizontalNeighborLevelStates.clear();
       syncHorizontalNeighborLevelStates();
@@ -869,6 +885,10 @@
         : false;
       const removed = Boolean(actor?.removed) || collected;
       const elevation = actor?.elevation ?? 0;
+      // Native room snapshots are settled physics states. Older exact saves
+      // can contain the destination room's authored render pose alongside the
+      // correct logical position; rebuild that pose instead of reviving it.
+      const native = app.engineVersion === "v1.1";
       const runtimeActor = {
         ...actor,
         collectionId: collectionId || actor?.collectionId || null,
@@ -876,10 +896,10 @@
         showCollectedGhost:
           usesSavedGemProgress ? actor?.showCollectedGhost === true || collected : false,
         hoverSeed: actor?.hoverSeed ?? hoverSeedForActor(actor),
-        renderX: actor?.renderX ?? actor.x,
-        renderY: actor?.renderY ?? actor.y,
+        renderX: native ? actor.x : actor?.renderX ?? actor.x,
+        renderY: native ? actor.y : actor?.renderY ?? actor.y,
         elevation,
-        renderElevation: actor?.renderElevation ?? elevation,
+        renderElevation: native ? elevation : actor?.renderElevation ?? elevation,
         renderScale: actor?.renderScale ?? (removed ? 0 : 1),
         renderAlpha: actor?.renderAlpha ?? (removed ? 0 : 1),
         renderSink: actor?.renderSink ?? (removed ? app.HOLE_SINK_DISTANCE : 0),
@@ -1354,6 +1374,7 @@
         removed: actor.removed,
         elevation: actor.elevation ?? 0,
         raised: actor.raised === true,
+        v11GenericId: actor.v11GenericId,
         collectionId: actor.collectionId || null,
         collected: actor.collected === true,
         showCollectedGhost: actor.showCollectedGhost === true
@@ -1371,10 +1392,12 @@
         shape: actor.shape || null,
         styleKey: actor.styleKey || null,
         raised: actor.raised === true,
+        v11GenericId: actor.v11GenericId,
         facing: actor.facing || null,
         collectionId: actor.collectionId || null,
         collected: actor.collected === true,
         showCollectedGhost: actor.showCollectedGhost === true,
+        hoverSeed: actor.hoverSeed,
         x: actor.x,
         y: actor.y,
         removed: Boolean(actor.removed),
@@ -1398,6 +1421,10 @@
       return terrain.map((row) => row.map((cell) => cloneTerrainCell(cell)));
     }
 
+    const imageLoads = new Map();
+    const modelLoads = new Map();
+    const ASSET_LOAD_TIMEOUT_MS = 15000;
+
     function preloadImageUrl(url) {
       if (typeof url !== "string" || url.length === 0) {
         return Promise.resolve();
@@ -1405,22 +1432,41 @@
 
       registerImageUrl(url);
 
-      if (app.imageCache.has(url)) {
+      if (app.imageCache.get(url)) {
         return Promise.resolve();
       }
-
-      return new Promise((resolve) => {
-        const image = new Image();
-        image.onload = function () {
+      if (imageLoads.has(url)) return imageLoads.get(url);
+      const promise = (async () => {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const image = await new Promise((resolve) => {
+            const candidate = new Image();
+            const timer = window.setTimeout(() => finish(null), ASSET_LOAD_TIMEOUT_MS);
+            function finish(value) {
+              window.clearTimeout(timer);
+              candidate.onload = null;
+              candidate.onerror = null;
+              if (!value) candidate.src = "";
+              resolve(value);
+            }
+            candidate.onload = () => finish(candidate);
+            candidate.onerror = () => finish(null);
+            candidate.src = attempt
+              ? `${url}${url.includes("?") ? "&" : "?"}retry=${attempt}`
+              : url;
+          });
+          if (!image) continue;
           app.imageCache.set(url, image);
-          resolve();
-        };
-        image.onerror = function () {
-          app.imageCache.set(url, null);
-          resolve();
-        };
-        image.src = url;
-      });
+          // Cached world/camera-flight groups may already contain a fallback.
+          app.threeRenderer?.invalidateSceneCache?.({ assets: true });
+          if (typeof app.render === "function") {
+            window.requestAnimationFrame((now) => (app.renderOncePerFrame || app.render)(now));
+          }
+          return;
+        }
+        app.imageCache.delete(url);
+      })().finally(() => imageLoads.delete(url));
+      imageLoads.set(url, promise);
+      return promise;
     }
 
     function preloadModelUrl(url) {
@@ -1430,28 +1476,46 @@
 
       registerModelUrl(url);
 
-      if (app.modelTextCache.has(url)) {
+      // Let the renderer own GLB fetches, deadlines and parse retries. A second
+      // raw prefetch could otherwise overwrite recovered bytes with a failure.
+      if (/\.glb(?:[?#]|$)/i.test(url) && app.threeRenderer?.preloadModelAssets) {
+        return app.threeRenderer.preloadModelAssets([url]);
+      }
+
+      if (app.modelTextCache.get(url)) {
         return Promise.resolve();
       }
+      if (modelLoads.has(url)) return modelLoads.get(url);
 
       const isBinaryModel = /\.glb(?:[?#]|$)/i.test(url);
 
-      return fetch(url)
+      const controller = new AbortController();
+      let timer;
+      const deadline = new Promise((resolve) => {
+        timer = window.setTimeout(() => { controller.abort(); resolve(null); }, ASSET_LOAD_TIMEOUT_MS);
+      });
+      const request = fetch(url, { signal: controller.signal })
         .then((response) => {
           if (!response.ok) {
             return null;
           }
 
           return isBinaryModel ? response.arrayBuffer() : response.text();
-        })
+        });
+      const promise = Promise.race([request, deadline])
         .then((data) => {
-          app.modelTextCache.set(url, data);
+          if (data) app.modelTextCache.set(url, data);
           app.threeRenderer?.invalidateSceneCache?.();
         })
         .catch(() => {
-          app.modelTextCache.set(url, null);
           app.threeRenderer?.invalidateSceneCache?.();
+        })
+        .finally(() => {
+          window.clearTimeout(timer);
+          modelLoads.delete(url);
         });
+      modelLoads.set(url, promise);
+      return promise;
     }
 
     function collectTerrainAssetUrls(cell, urls, modelUrls) {
@@ -1536,8 +1600,10 @@
       }
     }
 
-    function cloneLevelSnapshot() {
+    function cloneLevelSnapshot(options = {}) {
       return {
+        engineVersion: app.engineVersion,
+        ...(app.engineVersion === "v1.1" && options.includeWorldRooms !== false ? { v11WorldRooms: JSON.parse(JSON.stringify(app.v11WorldRooms || {})) } : {}),
         gameId: app.currentGameId,
         levelId: app.currentLevelId,
         levelLabel: app.currentLevelLabel,
@@ -1547,6 +1613,236 @@
         actors: cloneActorStateList(),
         raisedOrangeWalls: Array.from(computeRaisedOrangeWallSet())
       };
+    }
+
+    let resumeHistoryEncoding = new WeakMap();
+    let resumeRoomEncoding = new WeakMap();
+    let resumeEncodingNodes = new Map();
+    let nextResumeEncodingId = 0;
+
+    function resetResumeEncodingCache() {
+      resumeHistoryEncoding = new WeakMap();
+      resumeRoomEncoding = new WeakMap();
+      resumeEncodingNodes = new Map();
+      nextResumeEncodingId = 0;
+    }
+
+    function exportResumeState() {
+      if (app.isAnimating || app.isTransitioningLevel || app.isPlanningWorldAction || app.isReplayingSavedActions) {
+        throw new Error("Wait for the current move to finish before saving its exact state.");
+      }
+      // A content-addressed object table retains full undo and room state while
+      // storing repeated terrain, actor metadata, and historical rooms once.
+      // Undo records are immutable after a move settles. Reuse their encoded
+      // DAGs instead of walking every cloned terrain cell on every autosave.
+      // Live actors/terrain are always encoded afresh. Native stored rooms are
+      // also immutable: commands and collection resets replace changed rooms.
+      const identities = new WeakMap();
+      function encode(value) {
+        if (value === null || typeof value !== "object") return value;
+        if (identities.has(value)) return identities.get(value);
+        const array = Array.isArray(value);
+        const entries = array ? value.map((item) => encode(item) ?? null) : Object.keys(value).sort()
+          .filter((key) => !key.startsWith("render") && typeof value[key] !== "function" && value[key] !== undefined)
+          .map((key) => [key, encode(value[key])]);
+        const reference = (item) => item && typeof item === "object" ? { r: item.id } : item;
+        const signature = JSON.stringify([array ? "a" : "o", array
+          ? entries.map(reference) : entries.map(([key, item]) => [key, reference(item)])]);
+        let node = resumeEncodingNodes.get(signature);
+        if (!node) {
+          node = { id: nextResumeEncodingId++, type: array ? "a" : "o", entries, signature };
+          resumeEncodingNodes.set(signature, node);
+        }
+        identities.set(value, node);
+        return node;
+      }
+      function encodeStoredRooms(rooms) {
+        for (const room of Object.values(rooms || {})) {
+          let encoded = resumeRoomEncoding.get(room);
+          if (!encoded) {
+            encoded = encode(room);
+            resumeRoomEncoding.set(room, encoded);
+          }
+          identities.set(room, encoded);
+        }
+      }
+      encodeStoredRooms(app.v11WorldRooms);
+      for (const entry of app.moveHistory) {
+        let encoded = resumeHistoryEncoding.get(entry);
+        if (!encoded) {
+          encodeStoredRooms(entry.levelSnapshot?.v11WorldRooms);
+          encoded = encode(entry);
+          resumeHistoryEncoding.set(entry, encoded);
+        }
+        identities.set(entry, encoded);
+      }
+      const current = {
+        engineVersion: app.engineVersion, gameId: app.currentGameId, levelId: app.currentLevelId,
+        levelLabel: app.currentLevelLabel, width: app.state.width, height: app.state.height,
+        terrain: app.state.terrain, actors: app.state.actors,
+        raisedOrangeWalls: Array.from(computeRaisedOrangeWallSet())
+      };
+      const encodedRoot = encode({ current, entry: app.levelEntrySnapshot, initialPositions: app.initialPositions,
+        initialTerrain: app.initialTerrain, worldRooms: app.v11WorldRooms || {}, history: app.moveHistory,
+        collectedGemIds: Array.from(app.collectedGemIds),
+        camera: { x: app.cameraX, y: app.cameraY, targetX: app.cameraTargetX, targetY: app.cameraTargetY,
+          mode: app.threeRenderer?.getDebugCameraMode?.(), yaw: app.threeRenderer?.getDebugCameraYaw?.(),
+          tilt: app.threeRenderer?.getDebugCameraTilt?.(), zoom: app.threeRenderer?.getDebugCameraZoom?.() } });
+      const nodes = [], references = new Map(), retained = new Map();
+      function serialize(value) {
+        if (value === null || typeof value !== "object") return value;
+        if (references.has(value)) return { r: references.get(value) };
+        const entries = value.type === "a" ? value.entries.map(serialize)
+          : value.entries.map(([key, item]) => [key, serialize(item)]);
+        const index = nodes.length;
+        nodes.push([value.type, entries]);
+        references.set(value, index);
+        retained.set(value.signature, value);
+        return { r: index };
+      }
+      const root = serialize(encodedRoot);
+      // Retain only nodes reachable from this save. Undo trimming, reset and
+      // new runs cannot accumulate old rooms in a permanent interning table.
+      resumeEncodingNodes = retained;
+      const snapshot = { format: "mazebench-runtime-state-v1", engine_version: app.engineVersion,
+        game_id: app.currentGameId, root, nodes };
+      if (JSON.stringify(snapshot).length > 16 * 1024 * 1024) {
+        resetResumeEncodingCache();
+        throw new Error("This exact save exceeds the 16 MiB state limit. Its current run has not been changed.");
+      }
+      return snapshot;
+    }
+
+    function captureResumePresentation() {
+      return {
+        levelId: app.currentLevelId,
+        actors: app.state.actors.map((actor) => ({
+          type: actor.type, x: actor.renderX ?? actor.x, y: actor.renderY ?? actor.y,
+          elevation: actor.renderElevation ?? actor.elevation ?? 0, removed: actor.removed
+        })),
+        camera: {
+          yaw: app.threeRenderer?.getDebugCameraYaw?.(),
+          tilt: app.threeRenderer?.getDebugCameraTilt?.(),
+          zoom: app.threeRenderer?.getDebugCameraZoom?.()
+        }
+      };
+    }
+
+    async function animateResumePresentation(from, durationMs = 400) {
+      const targetCamera = captureResumePresentation().camera;
+      const actors = app.state.actors.map((actor, index) => {
+        const previous = from.levelId === app.currentLevelId ? from.actors[index] : null;
+        return { actor, previous: previous?.type === actor.type && !previous.removed ? previous : null,
+          x: actor.renderX ?? actor.x, y: actor.renderY ?? actor.y,
+          elevation: actor.renderElevation ?? actor.elevation ?? 0 };
+      });
+      const duration = Math.max(1, Number(durationMs) || 400);
+      const yawDelta = Math.atan2(Math.sin(targetCamera.yaw - from.camera.yaw), Math.cos(targetCamera.yaw - from.camera.yaw));
+      function paint(progress, now) {
+        const t = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+        for (const target of actors) {
+          if (!target.previous || target.actor.removed) continue;
+          target.actor.renderX = target.previous.x + (target.x - target.previous.x) * t;
+          target.actor.renderY = target.previous.y + (target.y - target.previous.y) * t;
+          target.actor.renderElevation = target.previous.elevation + (target.elevation - target.previous.elevation) * t;
+        }
+        const view = { animate: false, skipRender: true, skipResize: true, preserveSceneCache: true };
+        for (const key of ["yaw", "tilt", "zoom"]) {
+          if (Number.isFinite(from.camera[key]) && Number.isFinite(targetCamera[key])) {
+            view[key] = from.camera[key] + (key === "yaw" ? yawDelta : targetCamera[key] - from.camera[key]) * t;
+          }
+        }
+        app.threeRenderer?.setDebugCameraView?.(view);
+        (app.renderOncePerFrame || app.render)?.(now);
+      }
+      app.isAnimating = true;
+      let elapsed = 0, lastFrame = null;
+      try {
+        // Show the exact arrival pose before moving toward the restored one.
+        paint(0, performance.now());
+        await new Promise((resolve, reject) => {
+          const step = (now) => {
+            try {
+              if (lastFrame !== null) elapsed += Math.max(0, Math.min(50, now - lastFrame));
+              lastFrame = now;
+              paint(Math.min(1, elapsed / duration), now);
+              if (elapsed >= duration) resolve();
+              else app.animationFrameId = window.requestAnimationFrame(step);
+            } catch (error) { reject(error); }
+          };
+          app.animationFrameId = window.requestAnimationFrame(step);
+        });
+      } finally {
+        for (const target of actors) {
+          target.actor.renderX = target.x;
+          target.actor.renderY = target.y;
+          target.actor.renderElevation = target.elevation;
+        }
+        app.animationFrameId = null;
+        app.isAnimating = false;
+        app.threeRenderer?.setDebugCameraView?.({ ...targetCamera, animate: false, skipRender: true, skipResize: true, preserveSceneCache: true });
+      }
+    }
+
+    async function restoreResumeState(snapshot, options = {}) {
+      if (app.isAnimating || app.isTransitioningLevel || app.isPlanningWorldAction) throw new Error("The current move must finish before restoring a save.");
+      if (snapshot?.format !== "mazebench-runtime-state-v1" || !Array.isArray(snapshot.nodes)) throw new Error("This save has an unsupported state format.");
+      if (snapshot.engine_version !== app.engineVersion) throw new Error("This save belongs to a different engine version.");
+      if (snapshot.game_id !== app.currentGameId) throw new Error("This save belongs to a different game.");
+      if (snapshot.nodes.length > 500000 || JSON.stringify(snapshot).length > 16 * 1024 * 1024) throw new Error("This saved state exceeds the supported size limit.");
+      const decoded = [];
+      function decode(value) {
+        if (value === null || typeof value !== "object") return value;
+        if (Array.isArray(value) || Object.keys(value).length !== 1 || !Number.isInteger(value.r) || value.r < 0 || value.r >= decoded.length) throw new Error("This saved state contains an invalid reference.");
+        return decoded[value.r];
+      }
+      for (const node of snapshot.nodes) {
+        if (!Array.isArray(node) || node.length !== 2 || !Array.isArray(node[1])) throw new Error("This saved state contains an invalid object.");
+        if (node[0] === "a") decoded.push(node[1].map(decode));
+        else if (node[0] === "o") {
+          const result = {};
+          for (const pair of node[1]) {
+            if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string" || ["__proto__", "prototype", "constructor"].includes(pair[0])) throw new Error("This saved state contains an invalid property.");
+            result[pair[0]] = decode(pair[1]);
+          }
+          decoded.push(result);
+        } else throw new Error("This saved state contains an invalid object type.");
+      }
+      const saved = decode(snapshot.root);
+      if (!saved?.current || !Array.isArray(saved.current.actors) || !Array.isArray(saved.current.terrain) || !Array.isArray(saved.history) || saved.history.length > 500 || !Array.isArray(saved.collectedGemIds)) throw new Error("This saved state is incomplete.");
+      if (saved.current.engineVersion !== app.engineVersion || saved.current.gameId !== app.currentGameId) throw new Error("This saved board has an inconsistent identity.");
+      if (app.engineVersion === "v1.1") window.MazeEngineVersions.validateLevel(saved.current);
+      await window.MazeEngineVersions?.load(app.engineVersion);
+      const copy = (value) => JSON.parse(JSON.stringify(value));
+      const presentation = options.animate === true ? captureResumePresentation() : null;
+      // All validation and asynchronous loading precede live state mutation.
+      resetResumeEncodingCache();
+      app.collectedGemIds = new Set(saved.collectedGemIds);
+      app.v11WorldRooms = copy(saved.worldRooms || {});
+      app.queuedAction = null;
+      applyLevelState(saved.current, { updateUrl: true, immediateCamera: true, resetHistory: true, deferRender: true, preserveCollectedGemVisuals: true });
+      if (saved.entry) app.restoreLevelEntryState?.(saved.entry);
+      app.initialPositions = copy(saved.initialPositions || []);
+      app.initialTerrain = copy(saved.initialTerrain || saved.current.terrain);
+      app.moveHistory.push(...saved.history);
+      for (const room of Object.values(app.v11WorldRooms)) rememberHorizontalNeighborLevelState(room);
+      for (const [target, key] of [["cameraX", "x"], ["cameraY", "y"], ["cameraTargetX", "targetX"], ["cameraTargetY", "targetY"]]) {
+        if (Number.isFinite(saved.camera?.[key])) app[target] = saved.camera[key];
+      }
+      if (saved.camera) app.threeRenderer?.setDebugCameraView?.({ ...saved.camera, animate: false, skipRender: true });
+      saveCollectedGemIds(); syncResetProgressButton();
+      if (typeof options.beforeReveal === "function") {
+        // Catch up an offline action tail while the arrival frame stays on
+        // screen, then reveal its final pose in the same restore tween.
+        const render = app.render, renderOnce = app.renderOncePerFrame;
+        app.render = () => {};
+        app.renderOncePerFrame = () => {};
+        try { await options.beforeReveal(); }
+        finally { app.render = render; app.renderOncePerFrame = renderOnce; }
+      }
+      if (presentation) await animateResumePresentation(presentation, options.durationMs);
+      app.render();
+      return { levelId: app.currentLevelId, engineVersion: app.engineVersion, historyLength: app.moveHistory.length };
     }
 
     function applyLevelState(levelState, options = {}) {
@@ -1596,6 +1892,8 @@
       app.levelTransition = null;
       app.gateRenderOverride = null;
       app.orangeWallRenderOverride = null;
+      app.engineVersion = levelState.engineVersion || levelState.engine_version || app.engineVersion || "v1";
+      if (levelState.v11WorldRooms) app.v11WorldRooms = JSON.parse(JSON.stringify(levelState.v11WorldRooms));
       app.currentLevelId = levelState.levelId || app.currentLevelId;
       app.currentLevelLabel = levelState.levelLabel || app.currentLevelLabel || app.currentLevelId;
       if (Object.prototype.hasOwnProperty.call(levelState, "editorRender")) {
@@ -1613,9 +1911,13 @@
       app.state.width = levelState.width;
       app.state.height = levelState.height;
       app.state.terrain = cloneTerrainState(levelState.terrain || []);
-      app.state.actors = (levelState.actors || []).map((actor, index) =>
-        createRuntimeActor(actor, index, levelState.levelId || app.currentLevelId)
-      );
+      app.state.actors = (levelState.actors || []).map((actor, index) => {
+        const runtimeActor = createRuntimeActor(actor, index, levelState.levelId || app.currentLevelId);
+        if (options.preserveCollectedGemVisuals === true && runtimeActor.collected && actor.showCollectedGhost !== true) {
+          hideCollectedGemVisual(runtimeActor);
+        }
+        return runtimeActor;
+      });
       app.orangeWallRaisedState = Array.isArray(levelState.raisedOrangeWalls)
         ? new Set(levelState.raisedOrangeWalls)
         : null;
@@ -1656,7 +1958,7 @@
         app.levelEntrySnapshot = cloneLevelSnapshot();
       }
 
-      if (updateUrl && app.currentLevelId) {
+      if (updateUrl && app.currentLevelId && !app.readOnlyReplay) {
         const routePrefix = app.playRoutePrefix || "play";
         const nextPath = `/${encodeURIComponent(routePrefix)}/${encodeURIComponent(app.currentGameId)}/${encodeURIComponent(app.currentLevelId)}`;
         // Hosts attach the active run identity in the query string (for
@@ -1712,6 +2014,8 @@
         actor.y = target.y;
         actor.removed = Boolean(target.removed);
         actor.elevation = target.elevation ?? 0;
+        actor.v11GenericId = target.v11GenericId;
+        actor.raised = target.raised === true;
         actor.renderX = target.x;
         actor.renderY = target.y;
         actor.renderElevation = actor.elevation;
@@ -2189,6 +2493,13 @@
 
     function computeRaisedOrangeWallSet(actors = app.state.actors) {
       const raised = new Set();
+      if (app.engineVersion === "v1.1") {
+        eachOrangeWall((x, y, key) => {
+          if (terrainLayersAt(x, y).some((layer) => layer.type === "orange_wall" && (layer.v11GenericId === undefined || layer.raised))) raised.add(key);
+        });
+        return raised;
+      }
+
 
       if (!app.isEditorRenderApp && areOrangeButtonsPressed(actors)) {
         return raised;
@@ -2375,6 +2686,15 @@
     }
 
     function computeRaisedPlayerGateSet(actors = app.state.actors) {
+      if (app.engineVersion === "v1.1") {
+        const raised = new Set();
+        eachPlayerGate((x, y, key) => {
+          if (terrainLayersAt(x, y).some((layer) => layer.type === "player_gate" && layer.raised)) raised.add(key);
+        });
+        for (const actor of actors) if (!actor.removed && actor.type === "attached_gate" && actor.raised) raised.add(posKey(actor.x, actor.y));
+        return raised;
+      }
+
       const activeActors = actors.filter((actor) => !actor.removed);
       const players = activeActors.filter((actor) => isPlayerActor(actor));
       const raised = new Set();
@@ -3120,6 +3440,8 @@
     }
 
     function initializeActorElevations() {
+      // v1.1 settles unsupported bodies in its observable command ticks.
+      if (app.engineVersion === "v1.1") return;
       app.state.actors.forEach((actor, index) => {
         if (actor.type === "weightless_box" && !actor.__explicitElevation) {
           const elevation = initialWeightlessStackElevation(actor, index);
@@ -3484,6 +3806,8 @@
       restoreTerrainState,
       syncDocumentLevelState,
       cloneLevelSnapshot,
+      exportResumeState,
+      restoreResumeState,
       applyLevelState,
       loadLevelState,
       restoreActorPositions,

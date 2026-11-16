@@ -31,7 +31,7 @@ assert.equal(controller.rooms.size, 2);
 assert.equal(controller.rooms.get("level_AxA").totalGems, 1);
 assert.equal(controller.rooms.get("level_BxA").totalGems, 1);
 
-assert.match(workerSource, /importScripts\("maze-engine\.js", "maze-solver\.js"\)/);
+assert.match(workerSource, /importScripts\("maze-engine\.js", "maze-engine-versions\.js", "maze-solver\.js"\)/);
 assert.match(workerSource, /solveWithAStar/);
 assert.match(workerSource, /findReachablePositions/);
 assert.match(source, /class="solver-dock__head"/);

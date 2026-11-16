@@ -2,7 +2,7 @@
 // traversal; this worker uses MazeBench's built-in solver so even very large
 // room state spaces never freeze the renderer.
 self.window = self;
-importScripts("maze-engine.js", "maze-solver.js");
+importScripts("maze-engine.js", "maze-engine-versions.js", "maze-solver.js");
 
 let activeJobId = 0;
 const continuations = new Map();
@@ -79,7 +79,7 @@ async function runAnalysisSession(session, jobId, additionalExpandedStates = nul
     const target = session.gemTargets[session.gemIndex];
     if (session.phase !== "gems" || !session.searchContinuation) {
       session.phase = "gems";
-      session.engine = self.MazeEngine.createEngine(gemPlayData(session.playData, target));
+      session.engine = self.MazeEngineVersions.createEngine(gemPlayData(session.playData, target));
     }
     const continuing = Boolean(session.searchContinuation);
     const result = await self.MazeSolver.solveWithAStar(session.engine, {
@@ -87,7 +87,7 @@ async function runAnalysisSession(session, jobId, additionalExpandedStates = nul
       algorithm: "astar",
       continuation: session.searchContinuation,
       maxExpandedStates: continuing ? undefined : session.maxExpandedStates,
-      progressYieldStateInterval: 2048,
+      progressYieldStateInterval: session.playData.engineVersion === "v1.1" ? 32 : 2048,
       onProgress(progress, force) {
         postProgress(
           jobId,
@@ -113,7 +113,7 @@ async function runAnalysisSession(session, jobId, additionalExpandedStates = nul
   if (session.positionTargets.length > 0 && !session.positionResult) {
     if (session.phase !== "space" || !session.searchContinuation) {
       session.phase = "space";
-      session.engine = self.MazeEngine.createEngine(session.playData);
+      session.engine = self.MazeEngineVersions.createEngine(session.playData);
     }
     const continuing = Boolean(session.searchContinuation);
     const result = await self.MazeSolver.findReachablePositions(
@@ -123,7 +123,7 @@ async function runAnalysisSession(session, jobId, additionalExpandedStates = nul
         additionalExpandedStates: continuing ? additionalExpandedStates : undefined,
         continuation: session.searchContinuation,
         maxExpandedStates: continuing ? undefined : session.maxExpandedStates,
-        progressYieldStateInterval: 2048,
+        progressYieldStateInterval: session.playData.engineVersion === "v1.1" ? 32 : 2048,
         onProgress(progress, force) {
           postProgress(jobId, "space", `${session.positionTargets.length} targets`, progress, force);
         }
@@ -184,6 +184,7 @@ self.onmessage = async function (event) {
         positionTargets: Array.isArray(message.positionTargets) ? message.positionTargets : [],
         searchContinuation: null
       };
+      await self.MazeEngineVersions.load(self.MazeEngineVersions.versionFor(session.playData), { url: message.physicsUrl });
     }
 
     const result = await runAnalysisSession(session, jobId, additionalExpandedStates);

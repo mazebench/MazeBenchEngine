@@ -1289,13 +1289,13 @@
   }
 
   function createSolverEngine(playData) {
-    const mazeEngine = window.MazeEngine;
+    const mazeEngine = window.MazeEngineVersions || window.MazeEngine;
 
     if (!mazeEngine || typeof mazeEngine.createEngine !== "function") {
       throw new Error("Solver engine is not available.");
     }
 
-    return mazeEngine.createEngine(playData);
+    return mazeEngine.createEngine({ ...playData, physicsTrace: false });
   }
 
   function getMazeSolver() {
@@ -2215,6 +2215,12 @@
   // lag and makes Cancel instant); falls back to the cooperative main-thread
   // path when workers are unavailable or the worker script fails to load.
   async function runSolverSearch(op, payload, runOptions = {}) {
+    if ((payload.playData?.engineVersion || authorData.engineVersion || "v1") === "v1.1") {
+      await window.MazeEngineVersions.load("v1.1");
+      // The legacy worker only contains v1. Run the same bounded, cooperative
+      // search against the explicitly selected engine instead.
+      return runSolverSearchOnMainThread(op, payload, runOptions);
+    }
     if (runOptions.signal?.aborted) {
       throw solverCancelError();
     }
@@ -2618,6 +2624,8 @@
     const gemsByLevel = { ...meta.gemsByLevel, [state.levelId]: currentLevelGemCount() };
     const totalGems = Object.values(gemsByLevel).reduce((sum, value) => sum + (value || 0), 0);
     sizeEl.textContent = meta.width + " × " + meta.height + " rooms";
+    const engineEl = document.getElementById("world-stat-engine");
+    if (engineEl) engineEl.textContent = authorData.engineVersion || "v1";
     const gemsEl = document.getElementById("world-stat-gems");
     if (gemsEl) {
       gemsEl.textContent = String(totalGems);
@@ -6535,6 +6543,7 @@
     stageCurrentHostedWorldLevel();
     const meta = authorData.worldMeta || {};
     return {
+      engine_version: authorData.engineVersion || "v1",
       hotbar_tokens: hotbarTokens(),
       levels: hostedWorldLevelEntries()
         .filter((level) => level.exists || hostedDirtyLevelIds.has(level.id))
@@ -6629,6 +6638,7 @@
         ])
       );
       authorData.worldMeta.savedThisSession = true;
+      authorData.worldMeta.editorRevision = payload.world?.editor_revision ?? authorData.worldMeta.editorRevision;
       authorData.worldMeta.updatedAt = payload.world?.updated_at || authorData.worldMeta.updatedAt;
       authorData.worldMeta.walkthroughVerified = false;
     }
@@ -6652,6 +6662,7 @@
     try {
       const response = await fetch(authorData.worldMeta.apiUrl, {
         body: JSON.stringify({
+          base_editor_revision: authorData.worldMeta.editorRevision,
           editor_state: editorState,
           title: editorState.title,
           world_height: editorState.world.height,
@@ -9077,7 +9088,7 @@
         titleSave.disabled = true;
         try {
           const response = await fetch(meta.apiUrl, {
-            body: JSON.stringify({ title }),
+            body: JSON.stringify({ title, base_editor_revision: meta.editorRevision }),
             headers: { "Content-Type": "application/json", Accept: "application/json" },
             method: "PATCH"
           });
@@ -9086,6 +9097,7 @@
             throw new Error(payload.error || "Could not rename the world.");
           }
           meta.title = payload.world?.title || title;
+          meta.editorRevision = payload.world?.editor_revision ?? meta.editorRevision;
           titleInput.value = meta.title;
           const heading = document.querySelector(".author-topbar h1");
           if (heading) {
@@ -9153,7 +9165,7 @@
         renderStartRoomGrid();
         try {
           const response = await fetch(meta.apiUrl, {
-            body: JSON.stringify({ start_level_id: startLevelId }),
+            body: JSON.stringify({ start_level_id: startLevelId, base_editor_revision: meta.editorRevision }),
             headers: { "Content-Type": "application/json", Accept: "application/json" },
             method: "PATCH"
           });
@@ -9162,6 +9174,7 @@
             throw new Error(payload.error || "Could not set the starting room.");
           }
           meta.startLevelId = payload.world?.editor_state?.start_level_id || startLevelId;
+          meta.editorRevision = payload.world?.editor_revision ?? meta.editorRevision;
           meta.walkthroughVerified = payload.world?.walkthrough_verified === true;
           setStatus("Starting room set to " + meta.startLevelId.replace("level_", "") + ".", "success");
         } catch (error) {
@@ -9219,7 +9232,8 @@
         roomsMissingPlayer,
         startWorldSolver: async () => {
           if (state.isDirty) {
-            await saveLevel({ refreshPreview: false });
+            const saved = await saveLevel({ refreshPreview: false });
+            if (!saved || state.isDirty) return false;
           }
           const worldId = String(meta?.apiUrl || "").split("/").pop() || "";
           const startId = meta?.startLevelId || authorData.existingLevels?.[0]?.id || "level_AxA";

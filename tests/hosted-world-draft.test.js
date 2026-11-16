@@ -269,12 +269,83 @@ async function run() {
     }
   );
   const snapshot = hostedWorldEditorStateSnapshot();
+  assert.equal(snapshot.engine_version, "v1", "legacy author pages retain the legacy engine");
 
   assert.deepEqual(
     plain(snapshot.levels.map((level) => level.id).sort()),
     ["level_AxA", "level_CxB"],
     "whole-world Save must keep saved and edited rooms while filtering untouched synthesized rooms"
   );
+
+  const versionedSnapshot = vm.runInNewContext(
+    `(${sourceSection("function hostedWorldEditorStateSnapshot", "function applyHostedWorldSavePayload")})`,
+    {
+      authorData: { engineVersion: "v1.1", worldMeta: {} },
+      stageCurrentHostedWorldLevel() {}, hotbarTokens: () => [],
+      hostedWorldLevelEntries: () => [], hostedDirtyLevelIds: new Set(),
+      cloneCells: (cells) => cells, worldColumns: ["A"], worldRows: ["A"]
+    }
+  );
+  assert.equal(versionedSnapshot().engine_version, "v1.1");
+
+  const saveRequests = [];
+  const saveState = {};
+  const statuses = [];
+  let applied = false;
+  const saveHostedWorldDraft = vm.runInNewContext(
+    `(${sourceSection("async function saveHostedWorldDraft", "async function saveLevel")})`,
+    {
+      authorData: { worldMeta: { apiUrl: "/api/world", editorRevision: 7 } },
+      hostedWorldEditorStateSnapshot: () => snapshot,
+      hotbarTokens: () => [], state: saveState,
+      setStatus: (...args) => statuses.push(args), renderStatus() {}, renderAll() {}, syncLevelSelectors() {},
+      applyHostedWorldSavePayload: () => { applied = true; },
+      fetch: async (_url, options) => {
+        saveRequests.push(JSON.parse(options.body));
+        return { ok: false, json: async () => ({ error: "This world changed in another tab." }) };
+      }
+    }
+  );
+  assert.equal(await saveHostedWorldDraft(), null);
+  assert.equal(saveRequests[0].base_editor_revision, 7);
+  assert.equal(applied, false, "a conflict must retain the unsaved draft");
+  assert.equal(saveState.isLevelLoading, false);
+  assert.equal(statuses.at(-1)[1], "error");
+
+  const revisionMeta = { editorRevision: 7 };
+  const applyHostedWorldSavePayload = vm.runInNewContext(
+    `(${sourceSection("function applyHostedWorldSavePayload", "async function saveHostedWorldDraft")})`,
+    {
+      authorData: { worldMeta: revisionMeta, existingLevels: [] },
+      hostedWorldDraftLevels: new Map(), hostedSavedLevelSignatures: new Map(), hostedDirtyLevelIds: new Set(),
+      worldColumns: [], worldRows: [], state: {}, applyPersistedHotbarTokens() {},
+      syncEditorDirtyState() {}, primeEditorWorldNeighbors() {}, scheduleCurrentLevelThumbRefresh() {}
+    }
+  );
+  applyHostedWorldSavePayload({ world: { editor_revision: 8, editor_state: { levels: [] } } }, []);
+  assert.equal(revisionMeta.editorRevision, 8, "the next save must use the acknowledged revision");
+
+  const publishState = { isDirty: false, levelId: "level_AxA", cells: [["p", "G"]] };
+  const navigations = [];
+  const publishWindow = { location: { assign: (url) => navigations.push(url) } };
+  const publishContext = {
+    window: publishWindow, state: publishState,
+    meta: { apiUrl: "/api/build/worlds/test", startLevelId: "level_AxA" },
+    authorData: { existingLevels: [{ id: "level_AxA", cells: [["p", "G"]] }] },
+    saveLevel: async () => null
+  };
+  vm.runInNewContext(sourceSection("const playerTokenPattern =", "installUnsavedNavigationGuards();"), publishContext);
+  const checks = await publishWindow.__MAZEBENCH_AUTHOR_PUBLISH_CHECKS__();
+  publishState.isDirty = true;
+  await checks.startWorldSolver();
+  assert.deepEqual(navigations, [], "a failed save must keep new edits open instead of leaving for the publish playthrough");
+
+  publishContext.saveLevel = async () => {
+    publishState.isDirty = false;
+    return { world: {} };
+  };
+  await checks.startWorldSolver();
+  assert.deepEqual(navigations, ["/play/maze/level_AxA?world=test&draft=1&world_solver=1"]);
 
   const switchSection = sourceSection(
     "async function switchToNeighborLevel",

@@ -47,6 +47,7 @@
                 </div>
               </div>
               <dl class="author-stats">
+                <div class="author-stats__wide"><dt>Game engine</dt><dd id="world-stat-engine">--</dd></div>
                 <div><dt>Size</dt><dd id="world-stat-size">--</dd></div>
                 <div><dt>Gems</dt><dd id="world-stat-gems">--</dd></div>
                 <div class="author-stats__wide"><dt>Last saved</dt><dd id="world-stat-updated">--</dd></div>

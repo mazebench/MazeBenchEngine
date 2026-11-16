@@ -21,6 +21,8 @@
     let keyLight = null;
     let GLTFLoaderClass = null;
     let gltfLoaderClassPromise = null;
+    let gltfLoaderImportFailures = 0;
+    let threeModuleRetry = 0;
     let raycaster = null;
     let lastWidth = 0;
     let lastHeight = 0;
@@ -101,6 +103,9 @@
     const textureCache = new Map();
     const imageMaterialCache = new Map();
     const modelAssetCache = new Map();
+    const modelAssetRetryTimers = new Map();
+    const failedModelAssetUrls = new Set();
+    let rendererDisposed = false;
     // Bumped whenever a GLB finishes parsing. World-view room signatures fold
     // it in so groups meshed with fallback primitives re-sign (and rebuild
     // with the real model) once the asset arrives.
@@ -171,7 +176,8 @@
       ].join(":");
     }
 
-    function invalidateSceneCache() {
+    function invalidateSceneCache(options = {}) {
+      if (options.assets) modelAssetsVersion += 1;
       lastSceneSignature = "";
       lastSceneContentSignature = "";
       lastShadowSceneSignature = "";
@@ -293,10 +299,9 @@
     }
 
     function playSurroundingRadius() {
-      // World actions rebuild the scene every frame; render them at the
-      // classic radius so they stay cheap, and restore the wide view with a
-      // single rebuild when they finish.
-      if (app.worldActionAnimation) {
+      // Legacy world actions use immediate geometry at the classic radius.
+      // Native actions retain the cached world groups used by settled play.
+      if (app.worldActionAnimation && app.engineVersion !== "v1.1") {
         return 1;
       }
 
@@ -1603,13 +1608,22 @@
         return gltfLoaderClassPromise;
       }
 
-      gltfLoaderClassPromise = import(gltfLoaderModuleUrl)
+      // Browsers can cache a failed module fetch for the lifetime of the
+      // document. Use a fresh URL after failure, with only two retry variants.
+      const retry = Math.min(Math.max(gltfLoaderImportFailures, threeModuleRetry), 2);
+      const loaderUrl = retry
+        ? assetUrl(`/vendor/retry-${retry}/GLTFLoader.js`)
+        : gltfLoaderModuleUrl;
+      gltfLoaderClassPromise = import(loaderUrl)
         .then((loaderModule) => {
           GLTFLoaderClass = loaderModule.GLTFLoader || null;
+          if (!GLTFLoaderClass) throw new Error("GLTF loader module has no loader export");
           return GLTFLoaderClass;
         })
         .catch(() => {
           GLTFLoaderClass = null;
+          gltfLoaderClassPromise = null;
+          gltfLoaderImportFailures = retry + 1;
           return null;
         });
 
@@ -1645,9 +1659,11 @@
     }
 
     const MODEL_RETRY_DELAY_MS = 8000;
+    const MODEL_AUTO_RETRY_LIMIT = 2;
+    const MODEL_LOAD_TIMEOUT_MS = 15000;
 
     function requestModelAsset(url) {
-      if (!url || !THREE) {
+      if (!url || !THREE || rendererDisposed) {
         return null;
       }
 
@@ -1667,23 +1683,52 @@
           return null;
         }
 
-        modelAssetCache.delete(url);
-
-        if (app.modelTextCache?.get(url) === null) {
-          app.modelTextCache.delete(url);
-        }
+        resetFailedModelAssets([url]);
       }
 
+      const attempts = (cached?.attempts || 0) + 1;
+      const controller = new AbortController();
+      let settled = false;
+      let finish;
+      const promise = new Promise((resolve) => { finish = resolve; });
+      const timer = window.setTimeout(() => {
+        controller.abort();
+        finalizeModel(null);
+      }, MODEL_LOAD_TIMEOUT_MS);
       const finalizeModel = (model) => {
+        if (settled || rendererDisposed) {
+          model?.parts?.forEach((part) => part.geometry?.dispose?.());
+          if (!settled) {
+            settled = true;
+            window.clearTimeout(timer);
+            finish();
+          }
+          return;
+        }
+        settled = true;
+        window.clearTimeout(timer);
         modelAssetCache.set(
           url,
           model
             ? { status: "ready", model }
-            : { status: "failed", failedAtMs: performance.now() }
+            : { status: "failed", failedAtMs: performance.now(), attempts }
         );
+        if (!model) {
+          // A 200 response can still contain invalid or truncated GLB bytes.
+          // Retry the network, not the same cached parse failure forever.
+          app.modelTextCache?.delete?.(url);
+          failedModelAssetUrls.add(url);
+          if (attempts <= MODEL_AUTO_RETRY_LIMIT) {
+            modelAssetRetryTimers.set(url, window.setTimeout(() => {
+              modelAssetRetryTimers.delete(url);
+              requestModelAsset(url);
+            }, MODEL_RETRY_DELAY_MS));
+          }
+        }
         // A real model arriving must re-sign cached room groups so their
         // fallback primitives rebuild into the actual geometry.
         if (model) {
+          failedModelAssetUrls.delete(url);
           modelAssetsVersion += 1;
         }
         invalidateSceneCache();
@@ -1691,21 +1736,20 @@
         if (typeof app.render === "function") {
           window.requestAnimationFrame((now) => (app.renderOncePerFrame || app.render)(now));
         }
+        finish();
       };
 
       const cachedData = app.modelTextCache?.get(url);
-
-      if (cachedData instanceof ArrayBuffer || ArrayBuffer.isView(cachedData)) {
-        modelAssetCache.set(url, {
-          status: "loading",
-          promise: parseModelAsset(url, cachedData).then(finalizeModel)
-        });
-        return null;
-      }
-
-      const promise = fetch(url)
-        .then((response) => (response.ok ? response.arrayBuffer() : null))
+      const cachedBytes = cachedData instanceof ArrayBuffer || ArrayBuffer.isView(cachedData);
+      const dataPromise = cachedBytes
+        ? Promise.resolve(cachedData)
+        : Promise.resolve().then(() => fetch(url, {
+            signal: controller.signal,
+            cache: failedModelAssetUrls.has(url) ? "reload" : "default"
+          })).then((response) => (response.ok ? response.arrayBuffer() : null));
+      dataPromise
         .then((data) => {
+          if (settled || rendererDisposed) return null;
           if (data && app.modelTextCache) {
             app.modelTextCache.set(url, data);
           }
@@ -1718,7 +1762,10 @@
           finalizeModel(null);
         });
 
-      modelAssetCache.set(url, { status: "loading", promise });
+      modelAssetCache.set(url, { status: "loading", promise, attempts, cancel() {
+        controller.abort();
+        finalizeModel(null);
+      } });
       return null;
     }
 
@@ -4851,7 +4898,7 @@
         !app.isFlyoverMode &&
         app.worldViewVistaMode !== true &&
         app.homeVectorTheme !== true &&
-        role !== "neighbor" &&
+        (role !== "neighbor" || activeRenderContext.showFloorGrid === true) &&
         role !== "camera-flight"
       );
     }
@@ -4903,7 +4950,7 @@
     // wall. Ids are differentiated by the editor's number labels, never by
     // shade (same convention as the boxes and clones themselves).
     function slopeStyleColor(styleKey, fallback) {
-      if (!styleKey) {
+      if (typeof styleKey !== "string" || !styleKey) {
         return fallback;
       }
 
@@ -5663,7 +5710,21 @@
       scene.add(highlight);
     }
 
+    function modernOrangeWallDepth(layer, x, y, now) {
+      const depth = Math.max(0, layer.v11GenericId || 0);
+      const transition = renderState() === app.state ? app.v11TerrainTransition : null;
+      const from = transition?.changes?.get(`${x},${y},${layer.v11AnchorElevation}`);
+      if (typeof from !== "number") return depth;
+      const progress = Math.max(0, Math.min(1, (now - transition.startedAt) / Math.max(1, transition.durationMs)));
+      const eased = app.easeInOutQuad ? app.easeInOutQuad(progress) : progress;
+      return from + (depth - from) * eased;
+    }
+
     function renderTerrainLayerSurfaceHeight(layer, x, y, now = performance.now()) {
+      if (layer.type === "orange_wall" && Number.isInteger(layer.v11AnchorElevation)) {
+        const top = layer.v11AnchorElevation + 1 - modernOrangeWallDepth(layer, x, y, now);
+        return top < layer.v11SupportZ - 0.001 ? null : top;
+      }
       const elevation = layer.elevation ?? 0;
       const isLiveState = renderState() === app.state;
       const key = `${x},${y}`;
@@ -5712,6 +5773,9 @@
     }
 
     function renderOrangeWallLiftValue(x, y, layer, now = performance.now()) {
+      if (Number.isInteger(layer.v11AnchorElevation)) {
+        return layer.raised ? 1 : 0;
+      }
       const key = `${x},${y}`;
       const surfaceLiftValue =
         activeRenderContext?.surfaceLiftValues?.get(`${layer.type}:${key}`) ??
@@ -6209,6 +6273,20 @@
         return null;
       }
 
+      if (layer.type === "orange_wall" && Number.isInteger(layer.v11AnchorElevation)) {
+        const topY = terrainHeight * elevationUnit;
+        const support = Number(layer.v11SupportZ);
+        const flat = Math.abs(terrainHeight - support) <= 0.001;
+        const blockHeight = flat ? floorThickness : Math.max(1, Math.min(1, terrainHeight - support) * elevationUnit);
+        const descriptor = {
+          blockHeight, bottomY: topY - blockHeight, elevation: terrainHeight - (flat ? 0 : 1),
+          isLoweredOrangeSurface: flat, isLoweredPlayerLift: false, isSurfacePlayerGate: false,
+          isCollapsingOrangeBase: !flat && blockHeight < elevationUnit, isVoid: false,
+          layer, terrainHeight, isSunkenFloor: false, topY, type: "orange_wall"
+        };
+        descriptor.key = terrainPieceDescriptorKey(descriptor, x, y);
+        return descriptor;
+      }
       const elevation = layer.elevation ?? 0;
       const type = layer.type || "floor";
       const topHeight = Math.max(0, terrainHeight) * elevationUnit;
@@ -8005,7 +8083,7 @@
         bottomY: elevation * elevationUnit - sink + actorVisualLift + hover + unit * 0.14,
         center,
         scale: modelScale,
-        spin: ((now % gemSpinPeriodMs) / gemSpinPeriodMs) * Math.PI * 2 + (actor.hoverSeed || 0)
+        spin: actorSpinAngle(actor, now)
       };
     }
 
@@ -8429,6 +8507,76 @@
       );
     }
 
+    function attachedGateRenderLift(actor, now) {
+      if (Number.isInteger(actor.v11GenericId)) return actor.v11GenericId & 1;
+      return app.attachedGateLiftAt?.(actor, now) ??
+        (app.liveRaisedPlayerGates?.has?.(`${actor.x},${actor.y}`) ? 1 : 0);
+    }
+
+    function sideFixtureLayout(actor, center, elevation, scale, sink) {
+      const orientation = actor.direction || actor.orientation;
+      const normal = {
+        north: { x: 0, z: -1 }, east: { x: 1, z: 0 },
+        south: { x: 0, z: 1 }, west: { x: -1, z: 0 }
+      }[orientation];
+      if (!normal) return null;
+      const isButton = actor.type === "orange_button";
+      const thickness = isButton ? orangeButtonHeight()
+        : actor.raised ? unit * scale : playerLiftPlateThickness();
+      const backOffset = (unit * scale - thickness) / 2;
+      return {
+        orientation, normal, thickness,
+        x: center.x - normal.x * backOffset,
+        y: elevation * elevationUnit - sink + actorVisualLift + unit * scale / 2,
+        z: center.z - normal.z * backOffset,
+        width: normal.x ? thickness : unit * scale,
+        height: unit * scale,
+        depth: normal.z ? thickness : unit * scale
+      };
+    }
+
+    function addSideFixture(actor, center, elevation, scale, sink, opacity, edgeOpacity) {
+      const layout = sideFixtureLayout(actor, center, elevation, scale, sink);
+      if (!layout) return false;
+      const isButton = actor.type === "orange_button";
+      let geometry;
+      if (isButton) {
+        // Rotate the geometry itself so outlines and picking share its pose.
+        geometry = new THREE.CylinderGeometry(orangeButtonRadius(), orangeButtonRadius(), layout.thickness, 24);
+        if (layout.normal.z) geometry.rotateX(layout.normal.z * Math.PI / 2);
+        else geometry.rotateZ(-layout.normal.x * Math.PI / 2);
+      } else {
+        geometry = new THREE.BoxGeometry(layout.width, layout.height, layout.depth);
+      }
+      addOutlinedMesh(geometry, terrainColor(isButton ? "orange_button" : "player_lift"), layout, {
+        opacity, edgeOpacity, castShadow: renderContextCastsShadows(), receiveShadow: false,
+        editorPick: {
+          kind: "actor", cells: [{ gridX: actor.x, gridY: actor.y,
+            left: center.x - unit / 2, right: center.x + unit / 2,
+            top: center.z - unit / 2, bottom: center.z + unit / 2 }],
+          logicalBottomLayer: Math.max(0, Math.floor(Number(actor.elevation) || 0)),
+          logicalLayerCount: 1, logicalSourceFollowsPaint: true,
+          sourceLayer: Math.max(0, Math.floor(Number(actor.elevation) || 0)),
+          bottomY: layout.y - layout.height / 2, topY: layout.y + layout.height / 2
+        }
+      });
+      if (!isButton) {
+        const pointY = (actor.raised ? 0.22 : -0.22) * unit;
+        const baseY = (actor.raised ? -0.16 : 0.16) * unit;
+        const markerGeometry = new THREE.BufferGeometry();
+        markerGeometry.setAttribute("position", new THREE.Float32BufferAttribute([
+          0, pointY, 0, unit * 0.17, baseY, 0, -unit * 0.17, baseY, 0
+        ], 3));
+        markerGeometry.computeVertexNormals();
+        const marker = new THREE.Mesh(markerGeometry, material("#050608", opacity, { doubleSide: true }));
+        marker.rotation.y = Math.atan2(layout.normal.x, layout.normal.z);
+        const offset = layout.thickness / 2 + playerLiftPlateOffset();
+        marker.position.set(layout.x + layout.normal.x * offset, layout.y, layout.z + layout.normal.z * offset);
+        scene.add(marker);
+      }
+      return true;
+    }
+
     function addActor(actor, now = performance.now()) {
       if (!actorIsVisible(actor)) {
         return;
@@ -8448,6 +8596,11 @@
       const sink = actor.renderSink ?? 0;
       const fade = actorFadeVisibility(actor);
       const opacity = actorOpacity(actor) * visibility;
+
+      if ((actor.type === "attached_lift" || actor.type === "orange_button") &&
+          addSideFixture(actor, center, elevation, scale, sink, opacity, fade * visibility)) {
+        return;
+      }
 
       if (actor.type === "gem") {
         addGem(actor, center.x, center.z, elevation, now);
@@ -8504,8 +8657,7 @@
         const isRaisedLift = isLift && actor.raised === true;
         const gateLift = isLift
           ? 0
-          : app.attachedGateLiftAt?.(actor, now) ??
-            (app.liveRaisedPlayerGates?.has?.(`${actor.x},${actor.y}`) ? 1 : 0);
+          : attachedGateRenderLift(actor, now);
         const deviceLift = isLift ? (isRaisedLift ? 1 : 0) : gateLift;
         const surfaceY = elevation * elevationUnit - sink + actorVisualLift;
         const plateThickness = playerLiftPlateThickness();
@@ -9020,6 +9172,8 @@
     function actorSignature(actor) {
       return [
         actor.type,
+        actor.raised ? 1 : 0,
+        actor.v11GenericId ?? "",
         actor.groupId || "",
         actor.shape || "",
         actor.styleKey || "",
@@ -9741,7 +9895,12 @@
     }
 
     function actorSpinAngle(actor, now) {
-      return ((now % gemSpinPeriodMs) / gemSpinPeriodMs) * Math.PI * 2 + (actor.hoverSeed || 0);
+      // Cached neighbors and immediate native neighbors use the same fixed
+      // pose. The active room keeps its clock/seed through movement frames.
+      // Preserve the existing v1 adjacent-room transition choreography.
+      const animate = !activeRenderContext || activeRenderContext.animateGems === true ||
+        activeRenderContext.role === "outgoing" || activeRenderContext.role === "incoming";
+      return (animate ? ((now % gemSpinPeriodMs) / gemSpinPeriodMs) * Math.PI * 2 : 0) + (actor.hoverSeed || 0);
     }
 
     function actorHoverOffset(actor, now) {
@@ -9755,6 +9914,8 @@
       // applies as position deltas.
       return [
         actor.type,
+        actor.raised ? 1 : 0,
+        actor.v11GenericId ?? "",
         actor.groupId || "",
         actor.modelUrl || "",
         actor.direction || actor.facing || "",
@@ -11441,7 +11602,8 @@
     // Kick fetch+parse of every GLB and resolve once they are all ready (or
     // permanently failed). Hosts and the bake harness await this so the first
     // build already has real models instead of fallback primitives.
-    function preloadModelAssets(urls) {
+    async function preloadModelAssets(urls) {
+      await app.threeRendererReady;
       const pending = [];
 
       (urls instanceof Set ? Array.from(urls) : urls || []).forEach((url) => {
@@ -11471,14 +11633,14 @@
 
     function resetFailedModelAssets(urls) {
       (urls || []).forEach((url) => {
+        const timer = modelAssetRetryTimers.get(url);
+        if (timer !== undefined) window.clearTimeout(timer);
+        modelAssetRetryTimers.delete(url);
         modelAssetCache.delete(url);
         app.modelTextCache?.delete?.(url);
       });
 
-      // ensureGltfLoaderClass intentionally converts an import rejection into
-      // null for permissive gameplay. Strict one-off renders must be able to
-      // retry a transient loader-module failure instead of reusing that
-      // already-resolved null promise forever.
+      // Retain the permissive fallback while allowing a fresh loader attempt.
       if (!GLTFLoaderClass) {
         gltfLoaderClassPromise = null;
       }
@@ -11760,10 +11922,11 @@
       const cameraFlightActive =
         Boolean(app.cameraFlightFitOptions) ||
         (Array.isArray(app.cameraFlightLevelViews) && app.cameraFlightLevelViews.length > 0);
+      const nativeWorldActionActive = app.engineVersion === "v1.1" && Boolean(app.worldActionAnimation);
       const buildBudgetMs =
         app.isFlyoverMode || app.worldViewSynchronousBuild === true
           ? Infinity
-          : isWideLevelTransition || cameraFlightActive
+          : isWideLevelTransition || cameraFlightActive || nativeWorldActionActive
             ? 3
             : 32;
       const pendingBuilds = [];
@@ -12411,6 +12574,15 @@
       return worldActionRoomVisibilityFactor(room, frame);
     }
 
+    function worldActionRoomContainsPlayer(room, point) {
+      const x = Number(point?.x) + 0.5;
+      const y = Number(point?.y) + 0.5;
+      const left = Number(room.offset?.x || 0);
+      const top = Number(room.offset?.y || 0);
+      return x >= left && x < left + room.levelState.width &&
+        y >= top && y < top + room.levelState.height;
+    }
+
     function worldActionPathRoomView(room, frame) {
       const levelState = room?.levelState;
 
@@ -12581,6 +12753,51 @@
         .filter(Boolean);
     }
 
+    function nativeWorldActionRoomViews(action) {
+      const rooms = action.rooms;
+      const activeRoom = rooms.find((room) => worldActionRoomContainsPlayer(room, action.currentPoint)) ||
+        rooms.find((room) => room.levelId === app.currentLevelId) || rooms[0];
+      const byId = new Map(rooms.map((room) => [room.levelId || room.levelState?.levelId, room]));
+      const anchorId = activeRoom.levelId || activeRoom.levelState.levelId;
+      const coords = [{ levelId: anchorId, dx: 0, dy: 0, distance: 0 },
+        ...worldNeighborCoords(anchorId, surroundingLevelRadius())];
+      return coords.map((coord) => {
+        const room = byId.get(coord.levelId);
+        const levelState = room?.levelState || app.cachedHorizontalNeighborLevelState?.(coord.levelId);
+        if (!levelState?.width || !levelState?.height) return null;
+        const neighborOffset = surroundingLevelOffset(coord.dx, coord.dy, levelState, activeRoom.levelState);
+        const offset = room?.offset
+          ? { x: Number(room.offset.x || 0) * unit, z: Number(room.offset.y || 0) * unit }
+          : { x: Number(activeRoom.offset?.x || 0) * unit + neighborOffset.x,
+              z: Number(activeRoom.offset?.y || 0) * unit + neighborOffset.z };
+        const current = coord.levelId === anchorId;
+        return { ...coord, levelState, current,
+          dynamic: current || room?.renderDynamic === true,
+          offset,
+          brightness: current ? 1 : surroundingLevelBrightness(coord.dx, coord.dy)
+        };
+      }).filter(Boolean);
+    }
+
+    function renderNativeWorldActionRooms(action, now) {
+      const views = nativeWorldActionRoomViews(action);
+      const dynamic = views.filter((view) => view.dynamic);
+      const surrounding = views.filter((view) => !view.dynamic);
+      if (usesRoomGroupWorld()) {
+        // Preserve the same world coverage and cached meshes as settled play.
+        // Only rooms whose actors/terrain are changing need immediate geometry.
+        renderWorldViewRoomGroups(now, surrounding, new Set(dynamic.map((view) => view.levelId)));
+      } else {
+        surrounding.forEach((view) => renderLevelStateAt(view.levelState, view.offset, {
+          role: "neighbor", brightness: view.brightness, hidePlayers: true
+        }, now));
+      }
+      dynamic.forEach((view) => renderLevelStateAt(view.levelState, view.offset, {
+        role: "neighbor", brightness: view.brightness, hidePlayers: true,
+        showFloorGrid: view.current, animateGems: view.current
+      }, now));
+    }
+
     function renderWorldActionAnimation(now) {
       const action = app.worldActionAnimation;
       const rooms = Array.isArray(action?.rooms) ? action.rooms : [];
@@ -12594,11 +12811,12 @@
       }
 
       const cameraFrame = worldActionCameraFrame(action, rooms);
-      const pathRoomViews = rooms
+      const native = app.engineVersion === "v1.1";
+      const pathRoomViews = native ? [] : rooms
         .map((room) => worldActionPathRoomView(room, cameraFrame))
         .filter(Boolean);
-      const surroundingViews = worldActionSurroundingLevelViews(action, cameraFrame);
-      const activePuncherVisuals = worldActionActivePuncherVisuals(action);
+      const surroundingViews = native ? [] : worldActionSurroundingLevelViews(action, cameraFrame);
+      const activePuncherVisuals = native ? [] : worldActionActivePuncherVisuals(action);
       const hiddenPuncherKeysByRoom = new Map();
 
       activePuncherVisuals.forEach((visual) => {
@@ -12612,10 +12830,31 @@
         hiddenPuncherKeysByRoom.set(visual.roomKey, hiddenKeys);
       });
 
-      surroundingViews
-        .slice()
-        .sort((a, b) => b.distance - a.distance)
-        .forEach((view) => {
+      if (native) {
+        renderNativeWorldActionRooms(action, now);
+      } else {
+        surroundingViews
+          .slice()
+          .sort((a, b) => b.distance - a.distance)
+          .forEach((view) => {
+            renderLevelStateAt(
+              view.levelState,
+              {
+                x: Number(view.offset?.x || 0) * unit,
+                z: Number(view.offset?.y || 0) * unit
+              },
+              {
+                role: "neighbor",
+                brightness: view.brightness,
+                hidePlayers: true
+              },
+              now
+            );
+          });
+
+        pathRoomViews.forEach((view) => {
+          const roomKey = worldActionRoomKey({ offset: view.offset });
+
           renderLevelStateAt(
             view.levelState,
             {
@@ -12624,32 +12863,19 @@
             },
             {
               role: "neighbor",
+              // Animated rooms retain neighbor lighting, but the room under
+              // the player keeps the same faint grid as the settled play view.
+              showFloorGrid: worldActionRoomContainsPlayer(view, point),
+              animateGems: worldActionRoomContainsPlayer(view, point),
+              alpha: view.alpha,
               brightness: view.brightness,
-              hidePlayers: true
+              hidePlayers: true,
+              hiddenActorKeys: hiddenPuncherKeysByRoom.get(roomKey)
             },
             now
           );
         });
-
-      pathRoomViews.forEach((view) => {
-        const roomKey = worldActionRoomKey({ offset: view.offset });
-
-        renderLevelStateAt(
-          view.levelState,
-          {
-            x: Number(view.offset?.x || 0) * unit,
-            z: Number(view.offset?.y || 0) * unit
-          },
-          {
-            role: "neighbor",
-            alpha: view.alpha,
-            brightness: view.brightness,
-            hidePlayers: true,
-            hiddenActorKeys: hiddenPuncherKeysByRoom.get(roomKey)
-          },
-          now
-        );
-      });
+      }
 
       const terminalFallProgress =
         action.terminalPlayerRemoved === true &&
@@ -12761,7 +12987,8 @@
       }
 
       const transitionDuration = Math.max(1, app.levelTransition?.durationMs || app.LEVEL_TRANSITION_DURATION_MS || 500);
-      const moveWindow = Math.max(0.08, Math.min(0.24, (app.MOVE_DURATION_MS || 100) / transitionDuration));
+      const handoffDuration = (app.MOVE_DURATION_MS || 100) / (Number(app.savedActionPlaybackSpeed) || 1);
+      const moveWindow = Math.max(0.08, Math.min(0.24, handoffDuration / transitionDuration));
       const continuationStartedAtMs = Number(transition.continuationStartedAtMs);
       const hasContinuationHandoff =
         transition.followIncomingPlayerDuringContinuation === true &&
@@ -12770,7 +12997,7 @@
         ? Math.max(0, now - continuationStartedAtMs)
         : progress * transitionDuration;
       const handoffProgress = hasContinuationHandoff
-        ? clamp01(handoffElapsedMs / Math.max(app.MOVE_DURATION_MS || 100, 1))
+        ? clamp01(handoffElapsedMs / Math.max(handoffDuration, 1))
         : localProgress(progress, 0, moveWindow);
       const moveProgress = handoffProgress;
       const followLiveTarget =
@@ -13269,6 +13496,15 @@
     }
 
     function disposeRenderer() {
+      rendererDisposed = true;
+      modelAssetCache.forEach((entry) => {
+        entry.cancel?.();
+        entry.model?.parts?.forEach((part) => part.geometry?.dispose?.());
+      });
+      modelAssetCache.clear();
+      modelAssetRetryTimers.forEach((timer) => window.clearTimeout(timer));
+      modelAssetRetryTimers.clear();
+      failedModelAssetUrls.clear();
       if (debugCameraAnimationFrameId) {
         window.cancelAnimationFrame(debugCameraAnimationFrameId);
         debugCameraAnimationFrameId = 0;
@@ -13320,11 +13556,27 @@
       }
     }
 
-    app.threeRendererReady = import(threeModuleUrl)
+    async function importThreeModule() {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (rendererDisposed) return null;
+        const url = attempt
+          ? assetUrl(`/vendor/retry-${attempt}/three.module.js`)
+          : threeModuleUrl;
+        try {
+          const module = await import(url);
+          threeModuleRetry = attempt;
+          return module;
+        } catch (error) {
+          if (attempt === 2) throw error;
+        }
+      }
+      return null;
+    }
+
+    app.threeRendererReady = importThreeModule()
       .then((module) => {
+        if (rendererDisposed || !module) return;
         THREE = module;
-      })
-      .then(() => {
         renderer = new THREE.WebGLRenderer({
           // alpha is load-bearing: the edge-outline overlay pass clears the
           // drawing buffer to transparent before compositing onto the 2D canvas.
@@ -13360,9 +13612,10 @@
           window.requestAnimationFrame((now) => (app.renderOncePerFrame || app.render)(now));
         }
       })
-      .catch(() => {
+      .catch((error) => {
+        console.warn("3D renderer initialization failed", error);
+        disposeRenderer();
         THREE = null;
-        renderer = null;
       });
 
     app.threeRenderer = {
@@ -13386,6 +13639,7 @@
         else if (typeof app.render === "function") app.render();
       },
       setDebugCameraView,
+      getDebugCameraMode: () => cameraMode,
       getDebugCameraYaw: () => debugCameraTargetYaw,
       getDebugCameraTilt: () => debugCameraTargetTilt,
       getDebugCameraZoom: () => debugCameraTargetZoom,

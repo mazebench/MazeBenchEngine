@@ -1,0 +1,9 @@
+{
+  "engine_version": "v1.1",
+  "source_repository": "https://github.com/mazebench-temp/MazeBenchEngineV2",
+  "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+  "source_file": "apps/web/public/physics/voxel_physics.wasm",
+  "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+  "physics_abi": 4,
+  "voxel_stride": 5
+}

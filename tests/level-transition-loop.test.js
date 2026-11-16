@@ -106,3 +106,16 @@ assert.notEqual(
 assert.notEqual(app.levelTransitionFrameId, transitionFrameId);
 
 console.log("level-transition-loop: transition RAF survives a same-frame scene render.");
+
+const beforeReplayFrames=callbacks.size;
+let replayCompleted=0;
+app.isReplayingSavedActions=true;
+app.renderCompositor.startLevelTransition(null,null,1,0,null,null,null,{onComplete:()=>{replayCompleted++;}});
+assert.equal(replayCompleted,1);
+assert.equal(app.isTransitioningLevel,false);
+assert.equal(callbacks.size,beforeReplayFrames,"instant replay invokes transition continuation without a new RAF");
+app.animateSavedActions=true;
+app.renderCompositor.startLevelTransition(null,null,1,0,null,null,null,{durationMs:250,onComplete:()=>{replayCompleted++;}});
+assert.equal(replayCompleted,1,"animated replay waits for the ordinary room transition to complete");
+assert.equal(app.isTransitioningLevel,true);
+assert.equal(app.levelTransition.durationMs,250);
