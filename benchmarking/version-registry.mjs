@@ -1050,6 +1050,42 @@ export const versions = [
     "generation": "1.1",
     "engine": "748637bd1dee365a84b0b3af69e60d5981607dc67fed849fa9bb2094a70db1bb",
     "world": "b1eef27b4347ca2a77f7a82ee21fb6f436b92d8e0d8d92eee558c2847e6e4844"
+  },
+  {
+    "version": "1.1.87",
+    "generation": "1.1",
+    "engine": "8885f4e9e3c45843b1886858a5a2162128063d6ac75aab8bceeeffe88aabc3d4",
+    "world": "b1eef27b4347ca2a77f7a82ee21fb6f436b92d8e0d8d92eee558c2847e6e4844"
+  },
+  {
+    "version": "1.1.88",
+    "generation": "1.1",
+    "engine": "748637bd1dee365a84b0b3af69e60d5981607dc67fed849fa9bb2094a70db1bb",
+    "world": "ffeaee17fd8710ff4a30e78f0b1918af50c286d8c7481ecebf9c0668714986bd"
+  },
+  {
+    "version": "1.1.89",
+    "generation": "1.1",
+    "engine": "8ff91060b177f2a59dd4ebba454c3863ec640079f318049545c9a3cdddde3280",
+    "world": "ffeaee17fd8710ff4a30e78f0b1918af50c286d8c7481ecebf9c0668714986bd"
+  },
+  {
+    "version": "1.1.90",
+    "generation": "1.1",
+    "engine": "8885f4e9e3c45843b1886858a5a2162128063d6ac75aab8bceeeffe88aabc3d4",
+    "world": "ffeaee17fd8710ff4a30e78f0b1918af50c286d8c7481ecebf9c0668714986bd"
+  },
+  {
+    "version": "1.1.91",
+    "generation": "1.1",
+    "engine": "0d9c8c2c9cec97762d817fdfc88d23108c48120095f81b13d6cd00241575306d",
+    "world": "ffeaee17fd8710ff4a30e78f0b1918af50c286d8c7481ecebf9c0668714986bd"
+  },
+  {
+    "version": "1.1.92",
+    "generation": "1.1",
+    "engine": "6bf63b65d9ff12a943675c5c0b9bba13fa25f33efe6a7cf6e3bb321c640bafca",
+    "world": "ffeaee17fd8710ff4a30e78f0b1918af50c286d8c7481ecebf9c0668714986bd"
   }
 ];
 export const manifestVersions = {

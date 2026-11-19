@@ -28,6 +28,10 @@ export function consumeActivityEvent(clock, event, { provider, harness } = {}) {
   // Prime direct emits turn.completed for *each request*, not process exit.
   // Its downtime comes from the owning server's recovery journal instead.
   if (!directPrime && (['turn.failed', 'turn.completed', 'result', 'session.resume_hint'].includes(type))) stop(clock, at);
+  if (provider === 'deepseek-harness') {
+    if (type === 'status' && event.phase === 'turn_start' && !clock.active) begin(clock, at);
+    if (type === 'final' || type === 'error' || type === 'status' && event.phase === 'turn_end') stop(clock, at);
+  }
   if (provider === 'muse-code') {
     const detail = event.payload?.event || event.payload || {};
     const recorded = Number.isFinite(event.recorded_at) ? event.recorded_at / 1000 : at;

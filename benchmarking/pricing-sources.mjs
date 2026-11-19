@@ -1,4 +1,5 @@
 import { normalizePricingModel, primeCatalogPrice } from './token-pricing.mjs';
+import { deepseekScheduleNote } from './pricing-schedule.mjs';
 
 const dollars = cell => { const match = String(cell).match(/\$([\d.]+)/); return match ? Number(match[1]) : null; };
 const clean = text => text.replace(/<[^>]*>/g, ' ').replace(/&(?:nbsp|amp);/g, ' ').replace(/\s+/g, ' ').trim();
@@ -9,7 +10,8 @@ const valid = value => Number.isFinite(value) && value >= 0;
 export function validPrice(price) {
   return Array.isArray(price?.rates) && valid(price.rates[0]) && valid(price.rates[3]) &&
     price.rates.every(value => value == null || valid(value)) &&
-    (price.context_tiers || []).every(tier => valid(tier.threshold) && validPrice({ rates: tier.rates }));
+    (price.context_tiers || []).every(tier => valid(tier.threshold) && validPrice({ rates: tier.rates })) &&
+    (!price.time_schedule || price.time_schedule.kind === 'deepseek-utc-v1' && validPrice({ rates: price.time_schedule.peak_rates }));
 }
 function entry(model, rates, extra = {}, tier = 'standard', route = 'direct') {
   return { key: `${route}:${route === 'direct' ? normalizePricingModel(model) : model}:${tier}`, price: { rates, ...extra } };
@@ -119,12 +121,17 @@ export function parseGoogle(text) {
   const entries = [];
   // Read only the first (Standard, paid) table in each model section. Never
   // mistake Free, Batch, Flex, Priority or storage prices for token prices.
-  for (const block of text.split(/<h2\b/).slice(1)) {
-    const id = block.match(/<code[^>]*>(gemini-[\w.-]+)<\/code>/)?.[1];
+  // AI Studio now serves Markdoc at the former Gemini pricing URL.
+  const markdoc = text.includes('{% tab title="Standard" %}');
+  for (const block of text.split(markdoc ? /^##\s+/m : /<h2\b/).slice(1)) {
+    const id = markdoc ? block.match(/\[`(gemini-[\w.-]+)`\]/)?.[1]
+      : block.match(/<code[^>]*>(gemini-[\w.-]+)<\/code>/)?.[1];
     if (!id || /(?:image|audio|tts|live|embedding)/.test(id)) continue;
-    const table = block.match(/<table\b[^>]*>([\s\S]*?)<\/table>/)?.[1];
+    const standard = markdoc ? block.match(/\{% tab title="Standard" %\}([\s\S]*?)\{% \/tab %\}/)?.[1] || '' : block;
+    const table = markdoc ? standard.match(/\{% table %\}([\s\S]*?)\{% \/table %\}/)?.[1]
+      : standard.match(/<table\b[^>]*>([\s\S]*?)<\/table>/)?.[1];
     if (!table) continue;
-    const rows = htmlRows(table);
+    const rows = markdoc ? table.split(/^\s*---\s*$/m).map(row => row.split(/^\s*\*\s+/m).slice(1).map(clean)) : htmlRows(table);
     if (!rows[0]?.[2]?.includes('Paid Tier, per 1M tokens in USD')) continue;
     const values = [/^Input price/, /^Context caching price/, /^Output price/].map(re => rows.find(row => re.test(row[0]))?.[2]);
     if (values.some(cell => !cell) || values.some(cell => /(?:200[ ,]?000|200k|per image|per second)/i.test(cell))) continue;
@@ -137,7 +144,40 @@ export function parseGoogle(text) {
       const [i, c, o] = dates.map(d => Number(d[0][1]));
       value.price.changes = [{ at: Date.parse(dates[0][0][2] + ' UTC'), rates: [i, c, i, o] }];
     } else if (values.some(cell => (cell.match(/\$/g) || []).length > 1)) continue;
+    if (values[1].includes('Implicit caching only')) value.price.note = 'Implicit caching only; explicit caching is not supported. Cache creation is counted at the ordinary input rate. Output includes thinking tokens.';
     entries.push(value);
+  }
+  return entries;
+}
+
+export function parseDeepSeek(text) {
+  const content = clean(text);
+  if (!content.includes('per 1M tokens') || !content.includes('Peak hours are 01:00 - 04:00 and 06:00 - 10:00 UTC, Monday through Friday, excluding Chinese public holidays.')) {
+    throw new Error('DeepSeek units or peak schedule changed; retaining last verified rates.');
+  }
+  const table = [...text.matchAll(/<table\b[^>]*>([\s\S]*?)<\/table>/g)]
+    .map(match => htmlRows(match[1])).find(rows => rows[0]?.[0] === 'MODEL');
+  if (!table) throw new Error('DeepSeek model table missing');
+  const models = table[0].slice(1).map(cell => cell.match(/^(deepseek-[\w.-]+)(?:\s*\(\d+\))?$/)?.[1]);
+  if (!models.length || models.some(id => !id)) throw new Error('DeepSeek model columns changed');
+  const priceRows = table.filter(row => row.includes('OFF-PEAK') || row.includes('PEAK'));
+  const labels = ['CACHE HIT', null, 'CACHE MISS', null, 'OUTPUT TOKENS', null];
+  if (priceRows.length !== 6 || priceRows.some((row, i) =>
+    row.at(-models.length - 1) !== (i % 2 ? 'PEAK' : 'OFF-PEAK') ||
+    labels[i] && !row.join(' ').includes(labels[i]) ||
+    row.slice(-models.length).some(cell => !/^\$\d+(?:\.\d+)?$/.test(cell)))) {
+    throw new Error('DeepSeek price rows changed; retaining last verified rates.');
+  }
+  const entries = models.map((model, col) => {
+    const rates = offset => [2, 0, 2, 4].map(i => dollars(priceRows[i + offset].at(-models.length + col)));
+    return entry(model, rates(0), { time_schedule: { kind: 'deepseek-utc-v1', peak_rates: rates(1) }, note: deepseekScheduleNote });
+  });
+  // Only map aliases the provider explicitly says are served at Flash prices.
+  if (content.includes('legacy names') && content.includes('billed at the Flash price')) {
+    const flash = entries.find(value => value.key === 'direct:deepseek-flash:standard');
+    if (flash) for (const alias of ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+      if (content.includes(alias)) entries.push(entry(alias, flash.price.rates, { ...flash.price }));
+    }
   }
   return entries;
 }
@@ -169,6 +209,7 @@ export function parsePrime(text) {
 }
 
 export const pricingSources = [
+  { id: 'deepseek', url: 'https://api-docs.deepseek.com/quick_start/pricing', parse: parseDeepSeek },
   { id: 'openai', url: 'https://developers.openai.com/api/docs/pricing.md', parse: parseOpenAI },
   { id: 'claude', url: 'https://platform.claude.com/docs/en/about-claude/pricing.md', parse: parseClaude },
   { id: 'grok', url: 'https://docs.x.ai/developers/pricing.md', parse: parseGrok },

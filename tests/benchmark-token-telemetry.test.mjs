@@ -4,8 +4,69 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { modelTokenLimits, createTokenTimeline, consumeTokenEvent, TokenTelemetry, requestApiCost, tokenBilling } from "../benchmarking/token-telemetry.mjs";
+import { comparisonSeries } from "../benchmarking/comparison-report.mjs";
 
 const sample = (tokens, timestamp = "2026-09-04T19:30:00Z") => ({ timestamp, type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { total_tokens: tokens }, total_token_usage: { total_tokens: 9_000_000 }, model_context_window: 258400 } } });
+
+test("Claude resume reports price each request once across live updates and cold reads", async t => {
+  const run = await mkdtemp(path.join(os.tmpdir(), "mazebench-resume-cost-"));
+  t.after(() => rm(run, {recursive:true, force:true}));
+  const model = "claude-sonnet-5";
+  const metadata = {model, provider:"claude-code"};
+  await writeFile(path.join(run, "run.json"), JSON.stringify(metadata));
+  const file = path.join(run, "claude-events.jsonl");
+  const append = (turn, event) => appendFile(file, JSON.stringify({...event, session_id:"same-session",
+    _turn_id:turn, _received_at:"2026-11-09T12:00:00Z"}) + "\n");
+  const message = (id, usage) => ({type:"assistant", message:{id, model, usage}});
+  const result = (usage, cost) => ({type:"result", usage, total_cost_usd:cost});
+  const usage = {input_tokens:1000, cache_read_input_tokens:300, cache_creation_input_tokens:100,
+    cache_creation:{ephemeral_1h_input_tokens:100}, output_tokens:50};
+  const zero = {input_tokens:0, output_tokens:0};
+  const requestCost = requestApiCost(model, {input_tokens:1400, cached_input_tokens:300,
+    cache_write_input_tokens:100, cache_write_long_input_tokens:100, output_tokens:50});
+  await append("first", message("a", usage));
+  await append("first", result(usage, 414.55));
+  const reader = new TokenTelemetry();
+  assert.equal((await reader.read(run)).api_estimate.usd, 414.55);
+
+  await append("resume", message("b", usage));
+  await append("resume", result({...usage, output_tokens:60}, 415));
+  const check = async (reader, responses, expectedCost, tokens) => {
+    const {records, telemetry} = await reader.comparisonUsage(run);
+    const end = comparisonSeries({actions:[]}, records, metadata).performance.at(-1);
+    assert.ok(Math.abs(telemetry.api_estimate.usd - expectedCost) < 1e-12);
+    assert.equal(end.cost_usd, telemetry.api_estimate.usd);
+    assert.equal(end.total_tokens, tokens);
+    assert.equal(telemetry.total_tokens, tokens);
+    assert.equal(end.responses, responses);
+    assert.equal(telemetry.api_estimate.request_count, responses);
+  };
+  const cost = 2 * requestCost + requestApiCost(model, {input_tokens:0, output_tokens:10});
+  await check(reader, 2, cost, 2910);
+  await append("retry", message("c", zero));
+  await append("retry", result(zero, 415));
+  await append("retry", result(zero, 415));
+  await append("active", message("d", usage));
+  await check(reader, 4, cost + requestCost, 4360);
+  await append("active", {type:"result", is_error:true, total_cost_usd:415});
+  await check(new TokenTelemetry(), 4, cost + requestCost, 4360);
+});
+
+test("a retry with zero tokens costs zero even before its model has published rates", async t => {
+  const run = await mkdtemp(path.join(os.tmpdir(), "mazebench-zero-retry-"));
+  t.after(() => rm(run, {recursive:true, force:true}));
+  const metadata = {model:"unpriced-claude-fixture", provider:"claude-code"};
+  await writeFile(path.join(run, "run.json"), JSON.stringify(metadata));
+  const result = {type:"result", _turn_id:"retry", _received_at:"2026-11-09T12:00:00Z",
+    total_cost_usd:414.55, usage:{input_tokens:0, output_tokens:0}};
+  await writeFile(path.join(run, "claude-events.jsonl"), JSON.stringify(result) + "\n");
+  const {records, telemetry} = await new TokenTelemetry().comparisonUsage(run);
+  const end = comparisonSeries({actions:[]}, records, metadata).performance.at(-1);
+  assert.equal(telemetry.api_estimate.usd, 0);
+  assert.equal(telemetry.api_estimate.unpriced_requests, 0);
+  assert.equal(end.cost_usd, 0);
+  assert.equal(end.responses, 0);
+});
 
 test("rollout discovery skips absent date folders and still rejects directory links", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "mazebench-rollout-test-"));

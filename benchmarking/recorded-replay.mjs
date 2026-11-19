@@ -114,7 +114,12 @@ export class RecordedReplayBuilder {
       room: from.fileName, from: from.fileName, to: to.fileName, label: action.action, type: 'recorded', move, agentCamera,
       asciiFrames: timeline.ticks.map((tick, i) => ({at: timeline.times[i], room: frames[tick].room, camera: frames[tick].camera})).concat({at: timeline.duration, room: frames.at(-1).room, camera: frames.at(-1).camera}),
       gemsBefore: previousGems, gemsAfter: action.totalGems || 0 });
-    if (!visited.has(to.fileName)) { visited.add(to.fileName); visits.push({ room: to.fileName, at: duration + (move ? settledAt : 0) }); }
+    // Follow the signed count so historical runs keep their original rule.
+    const earnedVisit = Number.isInteger(action.roomsVisited) ? action.roomsVisited > visited.size : !action.died;
+    if (earnedVisit && !visited.has(to.fileName)) {
+      visited.add(to.fileName);
+      visits.push({ room: to.fileName, at: duration + (move ? settledAt : 0) });
+    }
     // Background gem identities use authored indices; foreground tracks always
     // come from recorded geometry, including gems removed by undo/reset rules.
     if ((action.totalGems || 0) > previousGems) {

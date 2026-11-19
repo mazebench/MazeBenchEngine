@@ -8,23 +8,34 @@ import { recoverGeminiImageRead, missingObservationRead } from './recover-gemini
 // Retry the unmodified maze continuation through the provider's normal owner.
 // Rejected image reads have a separate audited recovery; conversations, prompts
 // and provider filter settings stay unchanged.
-export function geminiVisionRetryable(error) {
+function geminiFilterError(error) {
   const message = String(error || '').trim();
-  return Boolean(missingObservationRead(message)) || /^This request was blocked by Gemini's filters\. They can occasionally trigger by mistake on safe coding, security, or biology-related queries\. Please try rephrasing your prompt\.(?: You can \[send feedback\].*)?$/.test(message);
+  return /^This request was blocked by Gemini's filters\. They can occasionally trigger by mistake on safe coding, security, or biology-related queries\. Please try rephrasing your prompt\.(?: You can \[send feedback\].*)?$/.test(message);
 }
+export const geminiVisionRetryable = error => geminiFilterError(error) || Boolean(missingObservationRead(String(error || '').trim()));
 const identity = run => Object.fromEntries(['id', 'provider', 'observation_mode', 'model', 'effort', 'tools_enabled', 'coding_mode', 'antigravity_session_id', 'effective_prompt_sha256'].map(key => [key, run[key]]));
 export function geminiVisionEligible(run) {
   return run?.provider === 'antigravity' && run.observation_mode === 'vision' && run.world === 'main-world' &&
     run.tools_enabled === false && run.coding_mode === 'off' && Boolean(run.antigravity_session_id) &&
     run.capability_policy?.name === 'subscription-vision-coding-off-v1';
 }
-export class GeminiVisionAutoRecovery extends CodexVisionAutoRecovery {
-  constructor(root, options = {}) {
+function geminiAsciiEligible(run) {
+  if (run?.provider !== 'antigravity' || run.observation_mode !== 'ascii' || run.world !== 'main-world' || !run.antigravity_session_id) return false;
+  const mode = run.coding_mode ?? (run.tools_enabled ? 'python' : 'off');
+  const policy = run.capability_policy?.name;
+  if (['antigravity-mcp-only-v1', 'antigravity-catalog-mcp-v2'].includes(policy)) {
+    return mode === 'off' && run.tools_enabled === false || mode === 'python' && run.tools_enabled === true;
+  }
+  return ['antigravity-any-language-v2', 'antigravity-catalog-any-language-v3'].includes(policy) && mode === 'any' && run.tools_enabled === true;
+}
+
+class GeminiAutoRecovery extends CodexVisionAutoRecovery {
+  constructor(root, options, mode, eligible, retryable) {
     super(root, { ...options,
       visionPort: options.providerVisionPort || 8086,
-      stateRoot: options.stateRoot || path.join(os.homedir(), '.mazebench/gemini-vision-recovery'),
+      stateRoot: options.stateRoot || path.join(os.homedir(), `.mazebench/gemini-${mode}-recovery`),
       delays: options.delays || [15000, 60000, 180000],
-      policy: { name: 'gemini-vision-normal-resume-v1', eligible: geminiVisionEligible, identity, retryable: geminiVisionRetryable,
+      policy: { name: `gemini-${mode}-normal-resume-v1`, eligible, identity, retryable,
         waitingReason: 'Recovering the interrupted Gemini turn from its last valid checkpoint; valid moves are preserved.',
         limitReason: 'Gemini repeatedly blocked the same maze continuation without progress. Needs attention.', hourlyLimit: 8 },
     });
@@ -34,14 +45,14 @@ export class GeminiVisionAutoRecovery extends CodexVisionAutoRecovery {
     if (this.closed || !value.enabled) return;
     const current = await this.request(value.id);
     // Reports trim display errors; the saved provider response can end in a newline.
-    if (current.runner_active || current.status !== 'failed' || String(current.error || '').trim() !== String(run.error || '').trim() ||
+    if (!this.policy.eligible(current) || current.runner_active || current.status !== 'failed' || String(current.error || '').trim() !== String(run.error || '').trim() ||
         JSON.stringify(identity(current)) !== JSON.stringify(value.identity)) throw new Error('Run changed or is active; retry cancelled.');
     const directory = this.directory(value.id);
     const invalidated = await access(path.join(directory, 'integrity-violation.json')).then(() => true, error => {
       if (error.code === 'ENOENT') return false; throw error;
     });
     if (invalidated) {
-      if (!missingObservationRead(run.error)) throw new Error('This integrity violation is not a rejected observation read.');
+      if (current.observation_mode !== 'vision' || !missingObservationRead(run.error)) throw new Error('This integrity violation is not a rejected observation read.');
       const assertInactive = async metadata => {
         if (this.closed || !value.enabled) throw new Error('Recovery cancelled by pause/stop.');
         const latest = await this.request(value.id);
@@ -66,5 +77,18 @@ export class GeminiVisionAutoRecovery extends CodexVisionAutoRecovery {
     await record({ status: 'resumed' });
     if (value.enabled) { Object.assign(value, { state: 'watching', reason: null, next_retry_at: null }); await this.save(value); }
     return this.decorate(resumed);
+  }
+}
+
+export class GeminiVisionAutoRecovery extends GeminiAutoRecovery {
+  constructor(root, options = {}) {
+    super(root, options, 'vision', geminiVisionEligible, geminiVisionRetryable);
+  }
+}
+
+export class GeminiAsciiAutoRecovery extends GeminiAutoRecovery {
+  constructor(root, options = {}) {
+    const recordsRoot = options.recordsRoot || process.env.MAZEBENCH_RECORDS_ROOT || path.join(os.homedir(), 'records/mazebench-benchmark');
+    super(root, { ...options, recordsRoot }, 'ascii', geminiAsciiEligible, geminiFilterError);
   }
 }

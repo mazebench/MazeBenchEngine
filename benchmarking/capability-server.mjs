@@ -85,6 +85,7 @@ export function createCapabilityServer(root, options = {}) {
       if (req.method === 'GET' && url.pathname === prefix + '/providers') {
         const upstream = await forward(); if (!upstream.ok) return reply(res, upstream.status, await upstream.text());
         const values = await upstream.json(), code = await getSandbox();
+        if (supervisor.runtimes?.deepseek) values['deepseek-harness'] = await supervisor.runtimes.deepseek.inspectDeepSeek({ force: url.searchParams.get('force') === '1' });
         if (options.codexStatus) values.codex = { ...values.codex, ...await options.codexStatus() };
         if (options.catalog) {
           const catalog = await options.catalog.all({ force: url.searchParams.get('force') === '1' });
@@ -204,7 +205,7 @@ export function createCapabilityServer(root, options = {}) {
             }
             const tokens = await reports.read(directory, 'tokens').catch(() => null); if (tokens?.totals) run.usage = tokens.totals;
             await decorateVersion(run, directory);
-            return reply(res, 200, recovery ? recovery.decorate(run) : run);
+            return reply(res, 200, options.decorateRun ? await options.decorateRun(run) : recovery ? recovery.decorate(run) : run);
           }
           if (req.method === 'DELETE' && !suffix) return reply(res, 200, await (recovery ? recovery.command(id, 'delete') : supervisor.delete(id)));
           if (req.method === 'POST' && ['pause', 'stop', 'resume'].includes(suffix)) return reply(res, 200, await (recovery ? recovery.command(id, suffix) : suffix === 'resume' ? resumeExclusively(supervisor, id) : supervisor[suffix](id)));

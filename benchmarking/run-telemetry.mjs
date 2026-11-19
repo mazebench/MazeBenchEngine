@@ -56,6 +56,24 @@ function toolEnd(timeline, id, at) {
 export function consumeThinkingEvent(timeline, event, provider = "codex") {
   const at = provider === "muse-code" ? museTimestamp(event) : time(event);
   if (!Number.isFinite(at)) return;
+  if (provider === 'deepseek-harness') {
+    if (event.type === 'session') { interrupt(timeline); timeline.open = false; timeline.tools.clear(); }
+    if (event.type === 'status' && event.phase === 'turn_start') begin(timeline, at);
+    if (event.type === 'tool_call') toolStart(timeline, event.callId, event.tool, at);
+    if (event.type === 'tool_result') toolEnd(timeline, event.callId, at);
+    if (event.type === 'text') timeline.lastMessage = at;
+    if (event.type === 'status' && event.phase === 'turn_end') {
+      if (event.reason?.kind === 'completed') finish(timeline, timeline.lastMessage ?? at, 'response finished');
+      else interrupt(timeline);
+      timeline.open = false;
+    }
+    if (event.type === 'error') { interrupt(timeline); timeline.open = false; }
+    // final repeats the completed turn's text; it must not add an episode.
+    if (event.type === 'final' && timeline.open) {
+      finish(timeline, timeline.lastMessage ?? at, 'response finished'); timeline.open = false;
+    }
+    return;
+  }
   if (provider === "muse-code") {
     const detail = museDetail(event), id = museRecordId(event);
     timeline.museSeen ||= new Set();
@@ -183,14 +201,13 @@ export function thinkingReport(timeline, { metadata, runnerActive, summary, acti
   const contexts = [...activity, ...(metadata.runtime_repairs || []).map(repair => ({
     at: Date.parse(repair.at), action_count: repair.action_count
   })).filter(repair => Number.isFinite(repair.at) && Number.isSafeInteger(repair.action_count))].sort((a, b) => a.at - b.at);
-  const compactTimes = compactions.map(event => event.timestamp);
   const decorate = episode => {
     const action = lastBefore(actions, episode.started_at, "at");
     const tool = lastBefore(contexts, episode.started_at, "at");
     const count = tool?.action_count ?? action?.index ?? 0;
     return { ...episode, ...weightedThinkingDuration(episode.started_at, episode.ended_at, metadata),
       action_count: count, room: action?.index === count ? action.room : null,
-      compaction: compactTimes.some(at => at >= episode.started_at && at <= episode.ended_at) };
+      compaction: compactions.some(event => event.timestamp <= episode.ended_at && (event.ended_at ?? event.timestamp) >= episode.started_at) };
   };
   const episodes = timeline.episodes.map(decorate);
   const durations = episodes.filter(episode => !episode.compaction).map(episode => episode.duration_ms).sort((a, b) => a - b);
@@ -256,7 +273,7 @@ export class RunTelemetry {
       entry = {}; this.cache.set(directory, entry);
       if (this.cache.size > 12) this.cache.delete(this.cache.keys().next().value);
     }
-    const file = metadata.provider === "antigravity" ? "antigravity-events.jsonl" : metadata.provider === "claude-code" ? "claude-events.jsonl" : metadata.provider === "grok-build" ? "grok-events.jsonl" : "agent-events.jsonl";
+    const file = metadata.provider === 'deepseek-harness' ? 'deepseek-events.jsonl' : metadata.provider === "antigravity" ? "antigravity-events.jsonl" : metadata.provider === "claude-code" ? "claude-events.jsonl" : metadata.provider === "grok-build" ? "grok-events.jsonl" : "agent-events.jsonl";
     const museFile = metadata.provider === "muse-code" ? await findMuseSession(metadata, this.museHomes) : null;
     const timeline = metadata.provider === "muse-code" && !museFile ? createThinkingTimeline() : await this.consumeFile(museFile ? path.dirname(museFile) : directory, museFile ? path.basename(museFile) : file, entry, createThinkingTimeline,
       (value, event) => consumeThinkingEvent(value, event, metadata.provider));

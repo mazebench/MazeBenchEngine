@@ -10,7 +10,7 @@ import { readCheckpointJson } from './v1/checkpoint-json.mjs';
 import { verifyJournal, isIncremental } from './storage/journal.mjs';
 import { V2_WORLD_FORMAT } from '../render/v1/voxel-world-v2.mjs';
 import { RecordedReplayBuilder } from './recorded-replay.mjs';
-import { openAsciiReplay } from './ascii-replay-source.mjs';
+import { openAsciiReplay, readAsciiReplayHistory } from './ascii-replay-source.mjs';
 
 export class PlaybackReplay {
   constructor(root) { this.root = root; this.cache = new Map(); this.loading = new Map(); }
@@ -43,10 +43,11 @@ export class PlaybackReplay {
       const rooms = assets.rooms.map(room => assets.liveWorld?.room(room.fileName,0) || room);
       const world = {storageFormat:V2_WORLD_FORMAT,columns:[...new Set(rooms.map(room=>room.position[0]))].sort(),rows:[...new Set(rooms.map(room=>room.position[1]))].sort(),
         roomWidth:assets.roomWidth,roomHeight:assets.roomHeight,rooms,blocks:assets.blocks,
-        asciiRenderer: manifest.files?.['engine/v1/ascii-v2.json'] ? 2 : 1};
+        asciiRenderer: manifest.files?.['engine/v1/ascii-v2.json'] ? 2 : 1,
+        ...(manifest.configuration?.character_seed ? {characterSeed:manifest.configuration.character_seed} : {})};
       entry = {source,runtime,world,builder:new RecordedReplayBuilder(world),value:{epoch,action_count:-1}};
     } else if (vision && entry.runtime.internal.actionCount !== count) entry.runtime = await VisionRuntime.open(this.root,directory);
-    else if (!vision && entry.source.saved.actionCount !== count) entry.source.saved = await readCheckpointJson(directory);
+    else if (!vision && entry.source.saved.actionCount !== count) entry.source.saved = await readAsciiReplayHistory(directory);
     const {runtime,world,builder,source} = entry;
     const available = vision ? runtime.internal.actionCount : source.saved.actionCount;
     const end = Math.min(available,entry.value.action_count+limit);

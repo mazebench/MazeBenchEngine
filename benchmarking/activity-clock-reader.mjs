@@ -38,7 +38,7 @@ export class ActivityClockReader {
     let cache = this.cache.get(directory);
     if (!cache) { cache = new Map(); this.cache.set(directory, cache); if (this.cache.size > 12) this.cache.delete(this.cache.keys().next().value); }
     const file = ({ 'claude-code': 'claude-events.jsonl', 'grok-build': 'grok-events.jsonl', antigravity: 'antigravity-events.jsonl',
-      'kimi-code': 'kimi-events.jsonl', 'muse-code': 'muse-events.jsonl' })[metadata.provider] || 'agent-events.jsonl';
+      'kimi-code': 'kimi-events.jsonl', 'muse-code': 'muse-events.jsonl', 'deepseek-harness': 'deepseek-events.jsonl' })[metadata.provider] || 'agent-events.jsonl';
     const clocks = [await this.consume(directory, file, cache, (clock, event) => consumeActivityEvent(clock, event, metadata))];
     if (metadata.provider === 'prime-agent' && /^run-[\w-]+$/.test(metadata.id || '')) {
       clocks.push(await this.consume(path.join(this.primeHome, metadata.id), 'auto-recovery-events.jsonl', cache, consumeRecoveryEvent));

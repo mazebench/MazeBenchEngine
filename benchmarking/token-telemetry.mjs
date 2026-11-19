@@ -8,7 +8,7 @@ import { createZstdDecompress } from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import { StringDecoder } from "node:string_decoder";
 import { safeReadFile, safeDirectory } from "./v1/safe-files.mjs";
-import { createClaudeTimeline, consumeClaudeEvent, claudeTelemetry } from "./claude-telemetry.mjs";
+import { createClaudeTimeline, consumeClaudeEvent, claudeTelemetry, claudeRateRecords } from "./claude-telemetry.mjs";
 import { createAntigravityTimeline, consumeAntigravityEvent, antigravityTelemetry } from "./antigravity-telemetry.mjs";
 import { findMuseSession, museRunHomes, createMuseTimeline, consumeMuseEvent, museTelemetry } from "./muse-telemetry.mjs";
 
@@ -17,6 +17,7 @@ export { requestApiCost } from "./token-pricing.mjs";
 import { estimateRequests, livePrice } from "./token-pricing.mjs";
 import { kimiRunHomes, findKimiSession, createKimiTimeline, consumeKimiEvent, kimiTelemetry } from "./kimi-telemetry.mjs";
 import { ActivityClockReader } from './activity-clock-reader.mjs';
+import { deepseekRunHomes, findDeepSeekSession, createDeepSeekTimeline, consumeDeepSeekEvent, consumeDeepSeekHeadlessEvent, deepseekTelemetry } from './deepseek-telemetry.mjs';
 
 export function modelTokenLimits(model = {}) {
   const window = model.context_window ?? model.max_context_window;
@@ -59,6 +60,18 @@ export function tokenBilling(timeline, model, metadata = {}) {
 }
 
 export function consumeTokenEvent(timeline, event) {
+  if (event.type === 'status' && event.phase === 'step_end' && event.usage) {
+    const usage = event.usage;
+    // Harness follows Anthropic: inputTokens excludes cached reads/writes.
+    // MazeBench's common input total includes them.
+    const cached = finite(usage.cacheReadTokens) ? usage.cacheReadTokens : 0;
+    const writes = finite(usage.cacheWriteTokens) ? usage.cacheWriteTokens : 0;
+    recordUsage(timeline, { response_id: `${event._turn_id}:${event.turn}:${event.step}`, usage: {
+      input_tokens: usage.inputTokens + cached + writes, output_tokens: usage.outputTokens,
+      cached_input_tokens: cached, cache_write_input_tokens: writes,
+    } }, Date.parse(event._received_at));
+    return;
+  }
   const timestamp = Date.parse(event.timestamp);
   if (!Number.isFinite(timestamp)) return;
   const payload = event.payload || {};
@@ -92,10 +105,11 @@ export function consumeTokenEvent(timeline, event) {
 }
 
 export class TokenTelemetry {
-  constructor({ codexHome = path.join(os.homedir(), ".codex"), museHomes = museRunHomes(), kimiHomes = kimiRunHomes() } = {}) {
+  constructor({ codexHome = path.join(os.homedir(), ".codex"), museHomes = museRunHomes(), kimiHomes = kimiRunHomes(), deepseekHomes = deepseekRunHomes() } = {}) {
     this.codexHome = codexHome;
     this.museHomes = museHomes;
     this.kimiHomes = kimiHomes;
+    this.deepseekHomes = deepseekHomes;
     this.cache = new Map();
     this.pending = new Map();
     this.activity = new ActivityClockReader();
@@ -135,7 +149,9 @@ export class TokenTelemetry {
     const telemetry = await this.read(runDirectory);
     const metadata = JSON.parse(safeReadFile(runDirectory, "run.json"));
     const timeline = this.cache.get(runDirectory)?.timeline;
-    const records = [...(timeline?.usage_records || timeline?.requests || new Map()).values()];
+    const records = timeline?.turns && telemetry.api_estimate?.billing_source === 'provider-token-rates'
+      ? claudeRateRecords(timeline, metadata.model)
+      : [...(timeline?.usage_records || timeline?.requests || new Map()).values()];
     const price = metadata.provider === 'prime-agent' ? await primePrice(metadata.model) : undefined;
     return { records, metadata, telemetry, priceOptions: price === undefined ? {} : {
       priceFor: (model, timestamp) => livePrice(model, timestamp, 'standard', 'prime') || price
@@ -146,6 +162,7 @@ export class TokenTelemetry {
     const metadata = JSON.parse(safeReadFile(runDirectory, "run.json"));
     const isPrime = metadata.provider === "prime-agent";
     const isKimi = metadata.provider === "kimi-code";
+    const isDeepSeek = metadata.provider === 'deepseek-harness';
     const isAntigravity = metadata.provider === "antigravity";
     const isMuse = metadata.provider === "muse-code";
     const isMessagesProvider = ["claude-code", "grok-build", "antigravity"].includes(metadata.provider);
@@ -157,7 +174,8 @@ export class TokenTelemetry {
     const limits = modelTokenLimits(model);
     let cached = this.cache.get(runDirectory);
     const messagesFile = isAntigravity ? "antigravity-events.jsonl" : metadata.provider === "grok-build" ? "grok-events.jsonl" : "claude-events.jsonl";
-    const file = (isPrime ? path.join(runDirectory, "agent-events.jsonl") : isKimi ? findKimiSession(metadata, runDirectory, this.kimiHomes) : isMuse ? await findMuseSession(metadata, this.museHomes) : isMessagesProvider ? path.join(runDirectory, messagesFile) : await this.findRollout(metadata));
+    const deepseekFile = isDeepSeek ? await findDeepSeekSession(metadata, runDirectory, this.deepseekHomes) : null;
+    const file = (isDeepSeek ? deepseekFile || path.join(runDirectory, 'deepseek-events.jsonl') : isPrime ? path.join(runDirectory, "agent-events.jsonl") : isKimi ? findKimiSession(metadata, runDirectory, this.kimiHomes) : isMuse ? await findMuseSession(metadata, this.museHomes) : isMessagesProvider ? path.join(runDirectory, messagesFile) : await this.findRollout(metadata));
     if (isKimi && !file) return kimiTelemetry(createKimiTimeline(), metadata);
     if (isMuse && !file) return museTelemetry(createMuseTimeline());
     if (!file) return { available: false, ...limits, samples: [], compactions: [], reason: `Waiting for ${metadata.provider === "grok-build" ? "Grok Build" : "Codex"} token telemetry.` };
@@ -170,11 +188,11 @@ export class TokenTelemetry {
       const compressed = file.endsWith('.zst');
       if (!cached || cached.file !== file || cached.inode !== stat.ino || stat.size < cached.offset
         || compressed && (cached.offset !== stat.size || cached.mtimeMs !== stat.mtimeMs)) {
-        cached = { file, inode: stat.ino, mtimeMs: stat.mtimeMs, offset: 0, partial: "", decoder: new StringDecoder("utf8"), timeline: isPrime ? createPrimeTimeline() : isKimi ? createKimiTimeline() : isMuse ? createMuseTimeline() : isAntigravity ? createAntigravityTimeline() : isMessagesProvider ? createClaudeTimeline() : createTokenTimeline() };
+        cached = { file, inode: stat.ino, mtimeMs: stat.mtimeMs, offset: 0, partial: "", decoder: new StringDecoder("utf8"), timeline: isDeepSeek ? createDeepSeekTimeline() : isPrime ? createPrimeTimeline() : isKimi ? createKimiTimeline() : isMuse ? createMuseTimeline() : isAntigravity ? createAntigravityTimeline() : isMessagesProvider ? createClaudeTimeline() : createTokenTimeline() };
         this.cache.set(runDirectory, cached);
         if (this.cache.size > 12) this.cache.delete(this.cache.keys().next().value);
       }
-      const consume = event => (isPrime ? consumePrimeEvent : isKimi ? consumeKimiEvent : isMuse ? consumeMuseEvent : isAntigravity ? consumeAntigravityEvent : isMessagesProvider ? consumeClaudeEvent : consumeTokenEvent)(cached.timeline, event);
+      const consume = event => (isDeepSeek ? deepseekFile ? consumeDeepSeekEvent : consumeDeepSeekHeadlessEvent : isPrime ? consumePrimeEvent : isKimi ? consumeKimiEvent : isMuse ? consumeMuseEvent : isAntigravity ? consumeAntigravityEvent : isMessagesProvider ? consumeClaudeEvent : consumeTokenEvent)(cached.timeline, event);
       const consumeLine = line => { try { consume(JSON.parse(line)); } catch { /* Malformed events are not token evidence. */ } };
       const consumeChunk = chunk => {
         const lines = (cached.partial + cached.decoder.write(chunk)).split('\n');
@@ -211,12 +229,17 @@ export class TokenTelemetry {
       }
     } finally { await handle.close(); }
     const timeline = cached.timeline;
+    if (isDeepSeek) {
+      const billing = tokenBilling(timeline, metadata.model, metadata);
+      return deepseekTelemetry(timeline, billing, Boolean(deepseekFile));
+    }
     if (isPrime) return primeTelemetry(timeline, metadata);
     if (isKimi) return kimiTelemetry(timeline, metadata);
     if (isMuse) return museTelemetry(timeline, metadata.model);
     if (isAntigravity) return antigravityTelemetry(timeline, metadata.model);
     if (isMessagesProvider) {
-      const telemetry = claudeTelemetry(timeline, metadata.model);
+      const connectedGrok = metadata.provider === 'grok-build' && metadata.connection_id && metadata.connection_id !== 'grok-subscription';
+      const telemetry = claudeTelemetry(timeline, metadata.model, { trustReportedCost: !connectedGrok });
       return telemetry;
     }
     const latest = timeline.samples.at(-1);

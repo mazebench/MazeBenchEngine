@@ -14,6 +14,7 @@ const companyLogos = new Map([
 ]);
 
 export function providerName(provider) {
+  if (provider === 'deepseek-harness') return 'DeepSeek Harness';
   return ({ codex: "Codex", "claude-code": "Claude Code", "grok-build": "Grok Build", antigravity: "Google Antigravity", "muse-code": "Meta Muse Code", "kimi-code": "Kimi Code", "prime-agent": "Prime Agent" })[provider] || provider;
 }
 
@@ -21,6 +22,7 @@ export const harnessName = run => isPrimeDirect(run) ? "Prime Inference · direc
 
 export function runCompany(run) {
   const model = String(run.model || "").toLowerCase();
+  if (run.provider === 'deepseek-harness' && (!model || model.startsWith('deepseek-'))) return 'DeepSeek';
   // Historical imports record the same hosted models under provider "prime".
   if (["prime-agent", "prime"].includes(run.provider) && model.includes("/")) {
     const vendor = model.split("/")[0];

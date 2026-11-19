@@ -12,7 +12,10 @@ import { inspectInstallation as museInstallation } from '../muse/policy.mjs';
 import { credentials as primeCredentials } from '../prime/policy.mjs';
 import { catalogModels as primeModels } from '../prime/status.mjs';
 import { directModel } from '../prime-direct-v2/catalog.mjs';
+import { detailedCatalog as deepseekCatalog } from '../deepseek/status.mjs';
+import { connectedCatalog, grokConnectedModel } from '../connections/catalog.mjs';
 import { kimiModels, codexModels, claudeModels, grokModels, antigravityModels } from './normalize.mjs';
+import { currentCodexCommand } from '../codex-latest.mjs';
 const execute = promisify(execFile);
 export async function paginatedModels(endpoint, headers, fetcher = fetch) {
   const data = [], seen = new Set(); let cursor;
@@ -56,7 +59,7 @@ export function queryCli(command, args, options, exchange, timeout = 25000) {
     try { exchange(null, send, result => finish(null, result)); } catch (error) { finish(error); }
   });
 }
-export function fetchCodexModels(command = process.env.MAZEBENCH_CODEX_BIN || 'codex') {
+export function fetchCodexModels(command = currentCodexCommand()) {
   let request = 1, data = []; const cursors = new Set();
   return queryCli(command, ['app-server'], { cwd: os.tmpdir() }, (message, send, done) => {
     if (!message) return send({ id: request, method: 'initialize', params: { clientInfo: { name: 'mazebench_catalog', version: '1' }, capabilities: { experimentalApi: true } } });
@@ -95,9 +98,10 @@ async function claudeAuth() {
   if (!token) throw new Error('Claude Code subscription login is unavailable.');
   return { Authorization: 'Bearer ' + token, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'oauth-2025-04-20' };
 }
-export function catalogSources() {
+export function catalogSources({ antigravityBin = process.env.MAZEBENCH_ANTIGRAVITY_BIN || 'agy' } = {}) {
   return {
-    codex: fetchCodexModels,
+    'deepseek-harness': options => deepseekCatalog(options),
+    codex: () => fetchCodexModels(),
     'claude-code': async () => {
       // Initialization refreshes the CLI's account information before reading its
       // OAuth token; the API catalog supplies earlier versions the picker omits.
@@ -109,13 +113,23 @@ export function catalogSources() {
       return kimiModels(await paginatedModels(auth.base_url + '/models', { Authorization: 'Bearer ' + auth.api_key, 'User-Agent': 'MazeBench/1.0' }));
     },
     antigravity: async () => {
-      const { executable } = agyInstallation();
+      // Use the launch CLI's catalog. Another version can advertise model IDs
+      // that the benchmark runner does not recognize.
+      const { executable } = agyInstallation(antigravityBin);
       const result = await execute(executable, ['models'], { env: agyEnvironment(agyHome()), cwd: agyHome(), timeout: 25000, maxBuffer: 2 * 1024 * 1024 });
       return antigravityModels(result.stdout);
     },
-    'grok-build': async () => {
-      await execute(process.env.MAZEBENCH_GROK_BIN || 'grok', ['models'], { cwd: os.tmpdir(), env: grokEnvironment(path.join(os.homedir(), '.grok')), timeout: 25000, maxBuffer: 2 * 1024 * 1024 });
-      return grokModels(JSON.parse(await readFile(path.join(os.homedir(), '.grok/models_cache.json'), 'utf8')));
+    'grok-build': async options => {
+      const connected = await connectedCatalog(options);
+      let native = [], nativeError;
+      try {
+        await execute(process.env.MAZEBENCH_GROK_BIN || 'grok', ['models'], { cwd: os.tmpdir(), env: grokEnvironment(path.join(os.homedir(), '.grok')), timeout: 25000, maxBuffer: 2 * 1024 * 1024 });
+        native = grokModels(JSON.parse(await readFile(path.join(os.homedir(), '.grok/models_cache.json'), 'utf8')))
+          .map(m => ({ ...m, connection_id: 'grok-subscription', connection_name: 'Grok subscription' }));
+      } catch { nativeError = 'Grok subscription model discovery failed.'; }
+      return { models: [...native, ...connected.models.filter(m => m.api !== 'google-generative-ai').map(grokConnectedModel)],
+        connections: [{ id: 'grok-subscription', name: 'Grok subscription', model_count: native.length, error: nativeError },
+          ...connected.connections.filter(c => c.api !== 'google-generative-ai')] };
     },
     'muse-code': async () => museModels(await museCatalog(museInstallation().executable)),
     'prime-agent': async () => {

@@ -3,10 +3,11 @@ import { groupModels, sortedEfforts, variantEfforts, resolveSelection } from "..
 import { supportsAnyLanguage } from "../capabilities.mjs";
 import { benchmarkFetch, visionAvailable, visionUrl } from "./benchmark-api.mjs";
 import { RunListView, providerName, runCompany, selectRuns, isActiveRun } from "./run-library.mjs";
-import { modelLabel, modelSlug, modelGroupId } from "./model-label.mjs";
+import { modelLabel, modelOptionLabel, modelGroupId } from "./model-label.mjs";
 import { setupLauncherLayout } from "./launcher-layout.mjs";
 import { setupPromptPreview } from "./prompt-preview.mjs";
 import { cachedRuns, cacheRuns, setupRunLoading, loadRunsWithProgress } from "./run-loading.mjs";
+import { CHARACTER_SEED_MAX_LENGTH } from "../character-seed.mjs";
 import './pricing-link.mjs';
 setupCurrentVersionBadge(document.querySelector('.topbar nav'), { benchmark: true });
 
@@ -15,6 +16,7 @@ const elements = Object.fromEntries([
   "coding-mode", "launch-note", "sequence-option", "sequence-enabled", "observation-option", "observation-mode", "vision-preview", "vision-preview-image", "vision-preview-status", "vision-room", "vision-left", "vision-right", "vision-tilt", "launch-single",
   "launch-status", "refresh", "run-list", "record-count", "codex-version", "codex-update-status", "check-codex", "runtime-details", "agent-readiness", "run-pagination", "run-page", "previous-runs", "next-runs", "run-company", "run-model", "run-sort"
 ].map((id) => [id, document.getElementById(id)]));
+elements.provider.append(new Option('DeepSeek Harness', 'deepseek-harness'));
 
 // Extend the live UI without modifying the signed historical HTML snapshot.
 elements["run-sort"].append(new Option("Active first", "active"), new Option("Active only", "active-only"));
@@ -32,16 +34,37 @@ const catalogControls = document.createElement("div");
 catalogControls.className = "model-catalog-controls";
 const refreshModels = document.createElement("button"); refreshModels.type = "button"; refreshModels.textContent = "Refresh models";
 const catalogStatus = document.createElement("span"); catalogStatus.setAttribute("role", "status");
-catalogControls.append(refreshModels, catalogStatus); elements["launch-form"].after(catalogControls);
+const chatgptUsage = document.createElement('a'); chatgptUsage.href = 'https://chatgpt.com/settings/usage';
+chatgptUsage.textContent = 'Using ChatGPT plan · Manage usage'; chatgptUsage.target = '_blank'; chatgptUsage.rel = 'noopener noreferrer'; chatgptUsage.hidden = true;
+catalogControls.append(refreshModels, catalogStatus, chatgptUsage); elements["launch-form"].after(catalogControls);
 const launcherLayout = setupLauncherLayout(elements, catalogControls);
+const seedField = document.createElement('label');
+seedField.className = 'launch-field launch-field-character-seed';
+seedField.innerHTML = `<span>Character seed</span><input id="character-seed" type="text" maxlength="${CHARACTER_SEED_MAX_LENGTH}" placeholder="Default glyphs" spellcheck="false" title="Use a seed to scramble the ASCII characters for this run">`;
+const characterSeed = seedField.querySelector('input');
+elements['launch-form'].querySelector('.options-fields').append(seedField);
+const supportsCharacterSeed = () => elements.provider.value === 'antigravity' && elements.world.value === 'main-world' &&
+  elements['observation-mode'].value === 'ascii' && elements['coding-mode'].value !== 'any';
+const connectionLabel = document.createElement('label'); connectionLabel.className = 'launch-field launch-field-connection';
+const connectionHeading = document.createElement('span'); connectionHeading.textContent = 'Connection';
+const connectionSelect = document.createElement('select'); connectionSelect.setAttribute('aria-label', 'Model connection');
+connectionLabel.append(connectionHeading, connectionSelect); elements.provider.closest('label').after(connectionLabel);
+connectionLabel.hidden = true;
 let models = [], catalogs = {}, catalogLoading, catalogCheckedAt = 0;
-const selectedGroup = () => models.find(m => m.id === elements.model.value && m.provider === elements.provider.value);
+const selectedGroup = () => models.find(m => m.id === elements.model.value && m.provider === elements.provider.value && (!m.connection_id || m.connection_id === connectionSelect.value));
 const selectedVariant = () => resolveSelection(selectedGroup(), { speed: elements.speed.value, effort: elements.effort.value, coding_mode: elements["coding-mode"].value });
 function renderCatalogStatus() {
+  chatgptUsage.hidden = !selectedGroup()?.variants.some(model => model.billing_source === 'chatgpt-plan');
   const state = catalogs[elements.provider.value];
   catalogStatus.textContent = !state ? "Model catalog unavailable. Refresh models." : state.error
     ? `Model refresh failed: ${state.error}${state.updated_at ? " Showing the last successful list." : ""}`
     : `${models.filter(m => m.provider === elements.provider.value).length} models · Updated ${new Date(state.updated_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · Refreshes every 5 minutes`;
+  const connection = state?.connections?.find(c => c.id === connectionSelect.value);
+  if (connection?.error) catalogStatus.textContent = `${connection.name}: ${connection.error}`;
+  else {
+    const failed = state?.connections?.filter(c => c.error) || [];
+    if (failed.length) catalogStatus.textContent += ` · Unavailable: ${failed.map(c => c.name).join(', ')}`;
+  }
 }
 
 let polling = false;
@@ -50,27 +73,31 @@ let codexReady = false;
 let installationStatus = {};
 
 function providerCompatible(provider) {
+  if (selectedGroup()?.variants.some(v => v.connection)) return elements.world.value === 'main-world' && elements['observation-mode'].value === 'ascii';
   if(elements["observation-mode"].value==='vision'&&installationStatus[provider]?.vision_available)
     return elements.world.value==='main-world'&&elements['coding-mode'].value==='off';
-  return !["grok-build", "antigravity", "muse-code", "kimi-code", "prime-agent"].includes(provider) || (elements.world.value === "main-world" && elements["observation-mode"].value === "ascii");
+  return !["grok-build", "antigravity", "muse-code", "kimi-code", "prime-agent", "deepseek-harness"].includes(provider) || (elements.world.value === "main-world" && elements["observation-mode"].value === "ascii");
 }
 
 function updateReadiness() {
+  seedField.hidden = characterSeed.disabled = !supportsCharacterSeed();
+  updateRunOptionsSummary();
   renderCatalogStatus();
   const provider = elements.provider.value;
   const direct = provider === "prime-agent" && elements["coding-mode"].value === "off";
   const status = direct ? installationStatus[provider]?.direct : installationStatus[provider];
   const any = elements["coding-mode"].value === "any";
-  const codeReady = !any || (supportsAnyLanguage(launchPayload()) && status?.code_sandbox?.available);
-  const needsAuth = ["claude-code", "grok-build", "antigravity", "muse-code", "kimi-code", "prime-agent"].includes(provider);
-  codexReady = Boolean(codeReady && status?.available && status?.tested && (!needsAuth || status.authenticated) && providerCompatible(provider) && selectedVariant() && !catalogs[provider]?.stale);
+  const connected = selectedGroup()?.variants.some(v => v.connection);
+  const codeReady = !any || (!connected && supportsAnyLanguage(launchPayload()) && status?.code_sandbox?.available);
+  const needsAuth = ["claude-code", "grok-build", "antigravity", "muse-code", "kimi-code", "prime-agent", "deepseek-harness"].includes(provider);
+  codexReady = Boolean(codeReady && status?.available && status?.tested && (!needsAuth || connected || status.authenticated) && providerCompatible(provider) && selectedVariant() && !selectedVariant()?.connection_stale && !catalogs[provider]?.stale);
   elements["codex-version"].textContent = status?.version ? `${providerName(provider)} ${status.version.replace(/^codex-cli /, "")}` : "Checking agent…";
   const labels = { "up-to-date": "Up to date", "update-available": `Update available: ${status?.latest_version}. Run codex update, then restart the server.`, "newer-than-release": "Newer than the current stable release", unknown: "Latest release check unavailable" };
   elements["codex-update-status"].textContent = any && !codeReady
     ? (supportsAnyLanguage(launchPayload()) ? status?.code_sandbox?.error || "Checking coding workspace…" : elements["coding-mode"].querySelector('option[value="any"]').title)
     : !providerCompatible(provider)
     ? installationStatus[provider]?.vision_available ? `${providerName(provider)} supports Main World vision with Coding off.` : `${providerName(provider)} currently supports Main World with ASCII observations.`
-    : !status ? "Checking installation and sign-in…" : status.error || (needsAuth
+    : !status ? "Checking installation and sign-in…" : connected && codexReady ? `${connectionSelect.selectedOptions[0]?.textContent} · Benchmark tool boundary verified` : status.error || (needsAuth
     ? `${status?.authenticated ? "Signed in" : "Not signed in"} · ${status?.tested ? "Benchmark tool boundary verified" : "Version needs validation"}`
     : `${labels[status?.update_status] || "Checking installation"} · ${status?.tested ? "Benchmark checks supported" : "Version needs validation"}`);
   elements["check-codex"].textContent = provider === "codex" ? "Check for updates" : "Check installation";
@@ -88,7 +115,7 @@ async function checkCodex(force = false) {
   elements["check-codex"].disabled = true;
   try {
     installationStatus = await api(`/api/benchmark/v1/providers${force ? "?force=1" : ""}`);
-  } catch (error) { installationStatus = Object.fromEntries(["codex", "claude-code", "grok-build", "antigravity", "muse-code", "kimi-code", "prime-agent"].map(provider => [provider, { error: error.message }])); }
+  } catch (error) { installationStatus = Object.fromEntries(["codex", "claude-code", "grok-build", "antigravity", "muse-code", "kimi-code", "prime-agent", "deepseek-harness"].map(provider => [provider, { error: error.message }])); }
   finally { elements["check-codex"].disabled = false; updateReadiness(); }
 }
 
@@ -161,16 +188,21 @@ function updateModels(preserve = false) {
   const previous = preserve ? elements.model.value : "";
   elements["coding-mode"].disabled = false;
   elements["coding-mode"].querySelector('option[value="off"]').disabled = false;
-  updateCodingOptions();
-  const providerModels = models.filter(model => model.provider === elements.provider.value);
-  elements.model.replaceChildren(...providerModels.map(model => new Option(modelSlug(model.id), model.id)));
+  const all = models.filter(model => model.provider === elements.provider.value);
+  const previousConnection = connectionSelect.value;
+  const connections = [...new Map(all.filter(m => m.connection_id).map(m => [m.connection_id, m.connection_name || m.connection_id])).entries()];
+  connectionLabel.hidden = !connections.length;
+  connectionSelect.replaceChildren(...connections.map(([id, name]) => new Option(name, id)));
+  if (connections.some(([id]) => id === previousConnection)) connectionSelect.value = previousConnection;
+  const providerModels = all.filter(model => !model.connection_id || model.connection_id === connectionSelect.value);
+  elements.model.replaceChildren(...providerModels.map(model => new Option(modelOptionLabel(model), model.id)));
   // Never silently change a user's chosen model during a background refresh.
   if (previous && !providerModels.some(m => m.id === previous)) {
     const missing = new Option(previous + " (unavailable)", previous); missing.disabled = true; elements.model.append(missing);
     elements.model.value = previous;
   } else elements.model.value = previous || providerModels.find(m => m.variants.some(v => v.is_default))?.id ||
     providerModels.find(m => m.id === ({ "kimi-code": "k3.1-pro", "claude-code": "claude-sonnet-5-5", "muse-code": "muse-wonder-1.0", "grok-build": "grok-4.7" })[elements.provider.value])?.id || providerModels[0]?.id || "";
-  updateSpeeds(preserve); updateReadiness(); updatePrompt();
+  updateCodingOptions(); updateSpeeds(preserve); updateReadiness(); updatePrompt();
 }
 async function loadModels(force = false) {
   if (catalogLoading) return catalogLoading;
@@ -191,15 +223,18 @@ async function loadModels(force = false) {
 
 function launchPayload() {
   const mode = elements["coding-mode"].value;
+  const seed = supportsCharacterSeed() ? characterSeed.value.trim() : '';
   return {
     world: elements.world.value,
     ...(elements.world.value === "main-world" ? { observation_mode: elements["observation-mode"].value } : {}),
     provider: elements.provider.value,
+    ...(connectionSelect.value ? { connection_id: connectionSelect.value } : {}),
     model: selectedVariant()?.id || "",
     service_tier: selectedVariant()?.service_tier || "standard",
     effort: elements.effort.value,
     coding_mode: mode,
     tools_enabled: mode !== "off",
+    ...(seed ? { character_seed: seed } : {}),
     ...(elements.world.value === "slotski" ? { sequence_enabled: elements["sequence-enabled"].value === "true" } : {}),
     action_limit: elements["action-limit"].value === "unlimited"
       ? null
@@ -345,7 +380,8 @@ function updateRunOptionsSummary() {
   const sequences = elements.world.value === "slotski"
     ? ` · ${elements["sequence-enabled"].value === "true" ? "Batch moves" : "Single moves"}`
     : "";
-  elements["run-options-summary"].textContent = `${elements.world.selectedOptions[0]?.textContent || "Main World"} · ${actions}${sequences}`;
+  const seed = supportsCharacterSeed() && characterSeed.value.trim();
+  elements["run-options-summary"].textContent = `${elements.world.selectedOptions[0]?.textContent || "Main World"} · ${actions}${sequences}${seed ? ` · Character seed ${seed}` : ''}`;
 }
 
 function updateWorld() {
@@ -396,13 +432,16 @@ document.getElementById("prompt-details").addEventListener("toggle", event => {
   if (event.currentTarget.open) updatePrompt();
 });
 elements["action-limit"].addEventListener("change", updateRunOptionsSummary);
+characterSeed.addEventListener('input', updateRunOptionsSummary);
 elements["sequence-enabled"].addEventListener("change", updateRunOptionsSummary);
 elements.model.addEventListener("change", () => { updateSpeeds(false); updateReadiness(); updatePrompt(); });
 elements.speed.addEventListener("change", () => { updateEfforts(); updateReadiness(); updatePrompt(); });
 elements.effort.addEventListener("change", updateReadiness);
 elements.provider.addEventListener("change", () => { updateModels(); if (Date.now() - catalogCheckedAt > 5 * 60_000) loadModels(); });
+connectionSelect.addEventListener('change', () => updateModels(false));
 function updateCodingOptions() {
-  const supported = supportsAnyLanguage(launchPayload());
+  const connected = selectedGroup()?.variants.some(v => v.connection);
+  const supported = !connected && supportsAnyLanguage(launchPayload());
   const anyOption = elements["coding-mode"].querySelector('option[value="any"]');
   anyOption.disabled = !supported;
   anyOption.title = supported ? "Use the full coding workspace with any supported language"
@@ -412,7 +451,8 @@ function updateCodingOptions() {
   // Preserve a selected unsupported condition and explain it; never silently
   // launch a different tier when the provider or observation mode changes.
   const prime = elements.provider.value === "prime-agent";
-  elements["launch-note"].textContent = prime
+  elements["launch-note"].textContent = elements.provider.value === 'deepseek-harness' || connected
+    ? `${providerName(elements.provider.value)} uses the selected connection for inference. Main World ASCII supports coding Off or Python Only.` : prime
     ? "Off uses direct maze tools through Prime Inference, a separate harness from stock Prime Agent. On and Python Only use the native Prime Agent workspace. Your Prime account pays inference; native modes also use a billed remote VM."
     : elements["coding-mode"].value === "any"
       ? "On supports Python, JavaScript, C/C++, Rust, Go, Java, Ruby, Perl and Lua."

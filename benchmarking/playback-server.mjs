@@ -26,6 +26,18 @@ export function createPlaybackServer(root, options = {}) {
   const archive = options.archive || new LegacyArchive(root);
   const versions = options.versions || new CurrentVersions(root);
   const autoVersions = options.watchVersions ?? (!options.replays && !options.reports && !options.library && !options.archive);
+  const runnerActive = options.runnerActive || (async id => {
+    // Only the owner knows whether a saved "running" record still has a process.
+    // An overview read cannot resume a run, and avoids a recursive charts read.
+    for (const ownerPort of [8092, 8090, mainPort]) {
+      if (ownerPort === server.address()?.port) continue;
+      try {
+        const response = await fetch(`http://127.0.0.1:${ownerPort}/api/benchmark/v1/runs/${id}?view=overview`, { signal: AbortSignal.timeout(1500) });
+        if (response.ok) { const run = await response.json(); if (run.id === id) return run.runner_active === true; }
+      } catch { /* Try the older owner; never infer liveness from saved status. */ }
+    }
+    return false;
+  });
   const server = createServer(async (req, res) => {
     const reply = (status, value, type = 'application/json') => {
       if (res.destroyed) return;
@@ -87,7 +99,7 @@ export function createPlaybackServer(root, options = {}) {
     }
     // Read-only reports can be updated independently of processes owning agents.
     const match = /^\/api\/benchmark\/playback\/runs\/(run-[\dTZ-]+-[a-f0-9]{6})\/(movie|chunk)$/.exec(url.pathname)
-      || /^\/api\/benchmark\/v1\/runs\/(run-[\dTZ-]+-[a-f0-9]{6})\/(tokens|comparison)$/.exec(url.pathname);
+      || /^\/api\/benchmark\/v1\/runs\/(run-[\dTZ-]+-[a-f0-9]{6})\/(tokens|comparison|charts)$/.exec(url.pathname);
     if (!match) return reply(404, { error: 'Unknown playback path.' });
     try {
       let directory = path.join(recordsRoot, match[1]);
@@ -99,7 +111,8 @@ export function createPlaybackServer(root, options = {}) {
       const owner = releaseOwner(match[1]);
       if (owner && !releasedReplays.has(owner.root)) releasedReplays.set(owner.root, new PlaybackReplay(owner.root));
       const player = owner ? releasedReplays.get(owner.root) : replays;
-      return reply(200, ['tokens', 'comparison'].includes(match[2]) ? await reports.read(directory, match[2])
+      return reply(200, match[2] === 'charts' ? await reports.read(directory, 'charts', await runnerActive(match[1]))
+        : ['tokens', 'comparison'].includes(match[2]) ? await reports.read(directory, match[2])
         : match[2]==='chunk' ? await player.chunk(directory,Object.fromEntries(url.searchParams)) : await player.movie(directory));
     } catch (error) { reply(400, { error: error.message }); }
   });

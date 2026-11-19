@@ -1,4 +1,15 @@
 const nativeFetch=window.fetch.bind(window);
+const autoResumeOrigin=`http://${location.hostname}:8092`;
+let autoResumeAt=0,autoResumeReady=false,autoResumePending;
+async function autoResumeAvailable(){
+  if(Date.now()-autoResumeAt<15000)return autoResumeReady;
+  autoResumePending ||= (async()=>{
+    try{const response=await nativeFetch(autoResumeOrigin+'/api/benchmark/auto-resume/status',{signal:AbortSignal.timeout(700)});autoResumeReady=response.ok&&(await response.json()).provider_scope==='all';}
+    catch{autoResumeReady=false;}
+    autoResumeAt=Date.now();autoResumePending=null;return autoResumeReady;
+  })();
+  return autoResumePending;
+}
 const releaseOrigin=`http://${location.hostname}:8090`;
 let releaseAt=0,releaseReady=false,releasePending;
 async function releaseAvailable(){
@@ -66,12 +77,25 @@ export async function capabilitiesAvailable(){
   return capabilitiesPending;
 }
 export async function benchmarkFetch(url,options={}){
-  if ((!options.method || options.method.toUpperCase() === 'GET') && /^\/api\/benchmark\/v1\/(runs\/[^/]+\/(?:tokens|comparison)|pricing(?:\?.*)?)$/.test(url)) {
-    try {
-      const report = await nativeFetch(`http://${location.hostname}:8085${url}`, { ...options, signal: options.signal || AbortSignal.timeout(60000) });
-      if (report.ok) return report;
-    } catch { /* Older installations retain the existing owner route. */ }
+  const replayChunk = /^\/api\/benchmark\/playback\/runs\/[^/]+\/chunk(?:\?.*)?$/.test(url);
+  const reportPath = /^\/api\/benchmark\/v1\/(runs\/[^/]+\/(?:tokens|comparison|charts)|pricing(?:\?.*)?)$/.test(url);
+  if ((!options.method || options.method.toUpperCase() === 'GET') && (reportPath || replayChunk)) {
+    // The two read-only services can answer both routes without the run owner.
+    let failedResponse;
+    for (const port of replayChunk ? [8085, 8091] : [8091, 8085]) {
+      try {
+        const timeout = replayChunk && port === 8085 ? 10000 : 60000;
+        const report = await nativeFetch(`http://${location.hostname}:${port}${url}`, { ...options, signal: options.signal || AbortSignal.timeout(timeout) });
+        if (report.ok) return report;
+        failedResponse ??= report;
+      } catch { /* Older installations retain the existing report route. */ }
+    }
+    if (replayChunk) {
+      if (failedResponse) return failedResponse;
+      throw new Error('Replay service is temporarily unavailable.');
+    }
   }
+  if(await autoResumeAvailable())return nativeFetch(autoResumeOrigin+url,options);
   if(await releaseAvailable())return nativeFetch(releaseOrigin+url,options);
   if(options.method?.toUpperCase()==='POST'&&/\/api\/benchmark\/v1\/runs$/.test(url))throw new Error('Versioned benchmark runner is unavailable. Start npm run start:releases; no run was launched.');
   if(await currentCodexAvailable())return nativeFetch(currentCodexOrigin+url,options);

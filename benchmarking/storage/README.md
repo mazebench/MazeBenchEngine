@@ -42,9 +42,58 @@ force a full response. Event-feed reads scan backwards with an 8 MB bound.
 MCP observations list the most recent 100 moves and `move_history/index.json`,
 which links pages of older records.
 
+## Recovering a rejected Claude usage report
+
+The normal Resume path uses `benchmarking/recover-claude-usage-report.mjs`
+when only the final aggregate model-usage report failed validation. It rechecks
+every recorded response and tool boundary and authenticates the pinned runtime
+and checkpoint. Actual wrong-model responses, forbidden tools, unfinished tool
+execution, or earlier unacknowledged violations are refused by this recovery.
+An unvisited-room rejection may be retained when the matching provider request,
+error result, and complete MCP activity pair prove that no action occurred.
+Other failed or unfinished tool executions remain blocked. The entire committed
+incremental journal is authenticated before applying the recovery.
+
+Aggregate billing counters do not identify an offending gameplay action. Never
+roll back game progress solely because an older cost-state lists another model.
+The previous accounting-based rollback adapter is not used by Resume.
+
+Usage-only recovery preserves the signed checkpoint and every action, frame,
+gem, room, undo snapshot, and provider log byte. It archives the original
+conversation and removes only a matching final synthetic API-error message,
+when present. The usage discrepancy stays in the provider log and audit record;
+its origin is not inferred or relabelled. The original model, conversation ID,
+prompt, engine, and world remain unchanged. The admission flag is archived only
+after verification. Explicit Resume and automatic recovery use the same path.
+
 Verification lives in `tests/benchmark-journal*.test.mjs`, the normal benchmark
 security/animation suites, and the real Codex/Claude offline transport tests.
 No API inference is required to run those tests.
+
+## Recovering Antigravity startup failures
+
+Antigravity zero-work startup failures are recovered by
+`benchmarking/recover-antigravity-startup.mjs`. A network/eligibility or timed-out
+authentication check may emit a single error result before initialization;
+older immutable runners incorrectly flag that as model activity. Recovery
+requires exactly one event in that attempt, no conversation, response, turns,
+duration or token usage, and no subsequent MCP activity. It verifies the pinned
+runtime and checkpoint, archives the flag and lifecycle metadata, and resumes
+the original conversation without changing any game history. Actual pre-init
+model/tool activity remains blocked. Explicit and automatic Resume share this
+audited path; repeated ambiguous authentication failures have bounded retries.
+
+## Recovering rejected Antigravity tool calls
+
+`benchmarking/recover-antigravity-rejected-call.mjs` handles narrowly recognized
+provider schema rejections before MCP execution, including a missing `ToolName`
+on a fixed MazeBench action. It audits the initialized final attempt, the exact
+request/error pair, absence of subsequent MCP activity, and the original signed
+provider policy, runtime and checkpoint. Both historical Antigravity policies
+are supported without upgrading a run. The malformed call remains in the audit
+history; recovery archives only the false admission flag and resumes the same
+conversation with every recorded action preserved. Ambiguous errors, executed
+calls and earlier boundary violations remain blocked.
 
 ## Live editor updates
 

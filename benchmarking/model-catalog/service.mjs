@@ -6,7 +6,7 @@ import { catalogSources } from './sources.mjs';
 import { groupModels, validId } from './normalize.mjs';
 export const CATALOG_TTL = 5 * 60_000;
 export class ModelCatalog {
-  constructor({ sources = catalogSources(), cacheFile = path.join(os.homedir(), '.mazebench/model-catalog.json'), now = Date.now, ttl = CATALOG_TTL } = {}) {
+  constructor({ antigravityBin, sources = catalogSources({ antigravityBin }), cacheFile = path.join(os.homedir(), '.mazebench/model-catalog.json'), now = Date.now, ttl = CATALOG_TTL } = {}) {
     Object.assign(this, { sources, cacheFile, now, ttl }); this.entries = {}; this.pending = new Map(); this.saving = Promise.resolve();
     this.ready = this.load();
   }
@@ -23,10 +23,11 @@ export class ModelCatalog {
     const promise = (async () => {
       const checked_at = this.now();
       try {
-        const models = await this.sources[provider]();
+        const result = await this.sources[provider]({ force });
+        const models = Array.isArray(result) ? result : result.models;
         if (!Array.isArray(models) || !models.length || models.some(m => !validId(m.id) || m.provider !== provider || !m.efforts?.length || !m.efforts.includes(m.default_effort))) throw new Error('Provider returned an incomplete model catalog.');
-        const ids = new Set(); if (models.some(m => ids.has(m.id) || !ids.add(m.id))) throw new Error('Provider returned duplicate model IDs.');
-        this.entries[provider] = { models, checked_at, updated_at: this.now(), error: null };
+        const ids = new Set(); if (models.some(m => { const id = `${m.connection_id || ''}:${m.id}`; return ids.has(id) || !ids.add(id); })) throw new Error('Provider returned duplicate model IDs.');
+        this.entries[provider] = { models, connections: result.connections, checked_at, updated_at: this.now(), error: null };
       } catch (error) {
         this.entries[provider] = { models: previous?.models || [], updated_at: previous?.updated_at || null, checked_at, error: error.message };
       }
@@ -58,8 +59,11 @@ export class ModelCatalog {
   async selection(spec, { force = false } = {}) {
     const state = await this.provider(spec.provider || 'codex', { force });
     if (state.stale) throw new Error('Refresh the model catalog before launching: ' + (state.error || 'catalog is stale'));
-    const model = state.models.find(m => m.id === spec.model);
+    const matches = state.models.filter(m => m.id === spec.model && (!spec.connection_id || m.connection_id === spec.connection_id));
+    if (matches.length > 1) throw new Error('Choose the billing connection for this model.');
+    const model = matches[0];
     if (!model) throw new Error('The selected model is no longer available through this harness. Refresh models.');
+    if (model.connection_stale) throw new Error(model.connection_error || 'Refresh this provider connection before launching.');
     const direct = spec.provider === 'prime-agent' && spec.coding_mode === 'off';
     const efforts = direct ? model.direct_efforts : model.efforts;
     if (!efforts?.includes(spec.effort || (direct ? model.default_direct_effort : model.default_effort))) throw new Error('This model does not support the selected reasoning effort.');

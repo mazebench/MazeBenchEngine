@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { currentRuntimeHashes } from './v1/integrity.mjs';
 import { inventoryHash } from './version-catalogue.mjs';
-import { updateVersionRegistry } from './version-store.mjs';
+import { registryFile, updateVersionRegistry } from './version-store.mjs';
 
 export const releaseHome = path.join(os.homedir(), '.mazebench/runtime-releases');
 export const releaseOwners = path.join(os.homedir(), '.mazebench/runtime-owners');
@@ -19,6 +19,20 @@ export function canonicalAsciiAssets(root) {
 }
 export function asciiReleaseMarker(root) {
   return JSON.stringify({ ascii_renderer: 2, files: Object.fromEntries(Object.entries(canonicalAsciiAssets(root)).map(([file, bytes]) => [file, digest(bytes)])) }) + '\n';
+}
+export const gameplaySource = 'benchmarking/v2/runtime.mjs';
+export const gameplayMarkerPath = 'engine/v1/benchmark-gameplay.json';
+export function gameplayMarker(runtimeHash) {
+  return JSON.stringify({ benchmark_runtime_sha256: runtimeHash }) + '\n';
+}
+export function mainWorldReleaseAssets(root) {
+  const runtime = readFileSync(path.join(root, gameplaySource));
+  return {
+    ...canonicalAsciiAssets(root),
+    'engine/v1/ascii-v2.json': asciiReleaseMarker(root),
+    'benchmarking/v1/runtime.mjs': runtime,
+    [gameplayMarkerPath]: gameplayMarker(digest(runtime))
+  };
 }
 export function releaseOwner(id) {
   if (!idPattern.test(id)) return null;
@@ -41,12 +55,12 @@ export async function saveReleaseOwner(id, owner) {
 let preparing;
 export async function prepareRuntimeRelease(root) {
   if (preparing) return preparing;
-  preparing = build(root);
+  preparing = buildRuntimeRelease(root);
   try { return await preparing; } finally { preparing = null; }
 }
-async function build(root) {
-  const original = await currentRuntimeHashes(root), assets = canonicalAsciiAssets(root), marker = asciiReleaseMarker(root);
-  const hashes = { ...original, ...Object.fromEntries(Object.entries(assets).map(([name, bytes]) => [name, digest(bytes)])), 'engine/v1/ascii-v2.json': digest(marker) };
+export async function buildRuntimeRelease(root, { installRoot = releaseHome, registryPath = registryFile } = {}) {
+  const original = await currentRuntimeHashes(root), assets = mainWorldReleaseAssets(root);
+  const hashes = { ...original, ...Object.fromEntries(Object.entries(assets).map(([name, bytes]) => [name, digest(bytes)])) };
   // Harness changes get a new immutable installation, even when engine/world
   // version labels stay the same.
   const extra = {};
@@ -59,7 +73,7 @@ async function build(root) {
   }
   await scan('benchmarking');
   const key = inventoryHash({ ...hashes, ...Object.fromEntries(Object.entries(extra).map(([file, hash]) => [`source:${file}`, hash])) });
-  const releaseRoot = path.join(releaseHome, key);
+  const releaseRoot = path.join(installRoot, key);
   if (!existsSync(path.join(releaseRoot, 'release.json'))) {
     const stage = `${releaseRoot}.${process.pid}.tmp`;
     await mkdir(stage, { recursive: true, mode: 0o700 });
@@ -70,7 +84,6 @@ async function build(root) {
       await writeFile(path.join(stage, 'package.json'), '{"type":"module"}\n');
       await symlink(path.join(root, 'node_modules'), path.join(stage, 'node_modules'));
       for (const [name, bytes] of Object.entries(assets)) await writeFile(path.join(stage, name), bytes);
-      await writeFile(path.join(stage, 'engine/v1/ascii-v2.json'), marker);
       if (JSON.stringify(await currentRuntimeHashes(root)) !== JSON.stringify(original)) throw new Error('World/runtime changed while preparing release; retry.');
       const actual = await currentRuntimeHashes(stage);
       if (inventoryHash(actual) !== inventoryHash(hashes)) throw new Error('Release inventory does not match source.');
@@ -80,7 +93,7 @@ async function build(root) {
   }
   const engine = inventoryHash(Object.fromEntries(Object.entries(hashes).filter(([name]) => /^(engine|play)\//.test(name))));
   const world = inventoryHash(Object.fromEntries(Object.entries(hashes).filter(([name]) => name.startsWith('level-data/v2/main-world/'))));
-  const registry = updateVersionRegistry([{ generation: '1.1', engine, world }]);
+  const registry = updateVersionRegistry([{ generation: '1.1', engine, world }], { file: registryPath });
   const version = registry.versions.find(row => row.engine === engine && row.world === world && row.generation === '1.1').version;
   return { key, root: releaseRoot, version, engine, world };
 }

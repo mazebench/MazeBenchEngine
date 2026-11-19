@@ -19,5 +19,6 @@ export async function replayAscii(movie, world, clip, local) {
       ...(['gate','lift','puncher'].includes(track.block.visual?.kind) ? {stateId:Math.round(pose.phase)} : {})}];
   });
   const render = world.asciiRenderer === 2 ? renderAsciiFrameV2 : renderAsciiFrameV1;
-  return render({...room,objects},world.blocks,frame.camera || {yaw:0,pitch:1});
+  const seedOptions = world.characterSeed ? {hideNames:true, hideNamesSeed:world.characterSeed} : {};
+  return render({...room,objects},world.blocks,{...seedOptions, ...(frame.camera || {yaw:0,pitch:1})});
 }

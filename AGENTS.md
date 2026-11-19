@@ -201,7 +201,9 @@ restores its exact pre-command state; ordinary forward re-entry still starts
 from immutable authored room data.
 
 Visitation and authored-start unlocks count only the room where a directional
-command finishes. Intermediate rooms traversed during an Ice slide or punch
+command finishes with a living player. A fatal first entry leaves the destination
+locked, including for an immediate room command. A later fatal entry preserves
+any previously earned access. Intermediate rooms traversed during an Ice slide or punch
 remain unvisited unless an earlier command settled there. Keep their animation
 frames and path telemetry, but do not create entrances, room proofs, or room
 command access for them. Solutions replay/import and new-room searches must
@@ -520,8 +522,9 @@ New Main World launches use the versioned owner on port 8090, started with
 `npm run start:releases` or by the main server. It creates content-addressed
 private runtime/world installations; never edit an installation after a run
 has used it. The canonical ASCII source is `render-ascii/v2`, installed under
-the old import paths only inside a new private release. Its hash marker enters
-the release engine inventory. The historical source trees remain unchanged.
+the old import paths only inside a new private release. Main World benchmark
+gameplay comes from `benchmarking/v2/runtime.mjs`, installed in the same way.
+Both hash markers enter the release engine inventory. The historical source trees remain unchanged.
 Old requests still go to their original owners. Release records live outside
 Git, and report/replay readers resolve each run's recorded installation.
 
@@ -545,6 +548,11 @@ The physics build registers its completed binary and compiled C++ source hashes.
 Unbuilt C++ edits are reported as pending, never claimed as active physics.
 Identical rebuilds and reverting to known content reuse the existing number.
 UI, harness, model, effort, and speed edits do not create engine/world versions.
+
+DeepSeek model selectors and run labels must show the exact provider model slug,
+not just Flash or Pro. The selector may also show the catalog's display name.
+Preserve the selected slug in signed run records; never infer a versioned ID
+from an alias or display name.
 
 The main and Benchmark header badges use `/api/versions/current` and refresh
 without reloading. Both display the AI benchmark engine/world version, not the

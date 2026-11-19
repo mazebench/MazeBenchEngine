@@ -15,7 +15,8 @@ export async function previewBenchmarkPrompt(root, spec = {}) {
   const provider = spec.provider || "codex";
   if (!["main-world", "ice-maze", "slotski"].includes(world)) throw new Error("Unknown benchmark world.");
   if (!["ascii", "vision"].includes(mode)) throw new Error("Unknown observation mode.");
-  if (!["codex", "claude-code", "grok-build", "antigravity", "muse-code", "kimi-code", "prime-agent"].includes(provider)) throw new Error("Unknown agent provider.");
+  if (!["codex", "claude-code", "grok-build", "antigravity", "muse-code", "kimi-code", "prime-agent", "deepseek-harness"].includes(provider)) throw new Error("Unknown agent provider.");
+  if (provider === 'deepseek-harness' && codingMode(spec) === 'any') throw new Error('DeepSeek Harness supports Coding off or Python only.');
   if (mode === "vision" && world !== "main-world") throw new Error("Vision observations are available for Main World only.");
   if (!["codex", "claude-code"].includes(provider) && (world !== "main-world" || mode !== "ascii")) {
     throw new Error("This agent supports Main World with ASCII observations only.");

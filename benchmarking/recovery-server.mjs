@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { CodexVisionAutoRecovery } from './codex-vision-auto-recovery.mjs';
-import { GeminiVisionAutoRecovery } from './gemini-vision-auto-recovery.mjs';
+import { GeminiAsciiAutoRecovery, GeminiVisionAutoRecovery } from './gemini-vision-auto-recovery.mjs';
 import { GrokVisionAutoRecovery } from './grok-vision-auto-recovery.mjs';
 import { trustedVisionRequest } from './vision/server.mjs';
 export function createVisionRecovery(root, options = {}) {
@@ -11,16 +11,22 @@ export function createVisionRecovery(root, options = {}) {
   const gemini = new GeminiVisionAutoRecovery(root, { recordsRoot: options.recordsRoot, providerVisionPort: options.providerVisionPort });
   const grok = new GrokVisionAutoRecovery(root, { recordsRoot: options.recordsRoot, providerVisionPort: options.providerVisionPort });
   const byProvider = { codex, antigravity: gemini, 'grok-build': grok };
-  const controllers = Object.values(byProvider);
+  const ascii = new GeminiAsciiAutoRecovery(root, { recordsRoot: options.asciiRecordsRoot, providerVisionPort: options.providerVisionPort });
+  const controllers = [...Object.values(byProvider), ascii];
+  const metadataAt = (controller, id) => readFile(path.join(controller.directory(id), 'run.json'), 'utf8').then(JSON.parse).catch(error => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
   return {
     ready: Promise.all(controllers.map(controller => controller.ready)),
-    directory: id => codex.directory(id),
     decorate: run => controllers.reduce((value, controller) => controller.decorate(value), run),
     start: () => controllers.forEach(controller => controller.start()),
     close: () => Promise.all(controllers.map(controller => controller.close())),
-    async command(id, action) {
-      const metadata = JSON.parse(await readFile(path.join(codex.directory(id), 'run.json'), 'utf8'));
-      return byProvider[metadata.provider].command(id, action);
+    async controllerFor(id) {
+      const vision = await metadataAt(codex, id);
+      if (vision?.observation_mode === 'vision') return byProvider[vision.provider];
+      const run = await metadataAt(ascii, id);
+      return ascii.policy.eligible(run) ? ascii : null;
     },
   };
 }
@@ -45,13 +51,13 @@ export function createRecoveryServer(root, options = {}) {
     if (!url.pathname.startsWith('/api/benchmark/')) return reply(res, 404, { error: 'Unknown route.' });
     try {
       await recovery.ready;
-      if (url.pathname === '/api/benchmark/recovery/status') return reply(res, 200, { available: true, version: 1, policy: 'blocked-codex-resource-probe-v1', policies: ['blocked-codex-resource-probe-v1', 'gemini-vision-normal-resume-v1', 'grok-vision-normal-resume-v1'] });
+      if (url.pathname === '/api/benchmark/recovery/status') return reply(res, 200, { available: true, version: 1, policy: 'blocked-codex-resource-probe-v1', policies: ['blocked-codex-resource-probe-v1', 'gemini-vision-normal-resume-v1', 'gemini-ascii-normal-resume-v1', 'grok-vision-normal-resume-v1'] });
       let body;
       if (['POST', 'DELETE'].includes(req.method)) { let length = 0; const chunks = []; for await (const chunk of req) { length += chunk.length; if (length > 32768) throw new Error('Request too large.'); chunks.push(chunk); } body = Buffer.concat(chunks); }
       const match = new RegExp('^' + prefix + '/runs/(run-[\\dTZ-]+-[a-f0-9]{6})(?:/(pause|stop|resume))?$').exec(url.pathname);
       if (match && (req.method === 'POST' && match[2] || req.method === 'DELETE' && !match[2])) {
-        const metadata = await readFile(path.join(recovery.directory(match[1]), 'run.json'), 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
-        if (['codex', 'antigravity', 'grok-build'].includes(metadata?.provider) && metadata.observation_mode === 'vision') return reply(res, 200, await recovery.command(match[1], req.method === 'DELETE' ? 'delete' : match[2]));
+        const controller = await recovery.controllerFor(match[1]);
+        if (controller) return reply(res, 200, await controller.command(match[1], req.method === 'DELETE' ? 'delete' : match[2]));
       }
       const response = await fetch(`http://127.0.0.1:${await upstreamPort()}${url.pathname}${url.search}`, { method: req.method, headers: body?.length ? { 'Content-Type': 'application/json' } : {}, ...(body?.length ? { body } : {}) });
       if (response.ok && ((req.method === 'GET' && (url.pathname === prefix + '/runs' || match)) || req.method === 'POST' && [prefix + '/runs', prefix + '/pairs'].includes(url.pathname))) {

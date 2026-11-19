@@ -1,6 +1,8 @@
 // Dashboard-only API-equivalent estimates. Input is inclusive of cache reads/writes.
 // Each entry records when its rates were checked; never used to bill or configure an agent.
+import { scheduledPrice, deepseekScheduleNote } from './pricing-schedule.mjs';
 const sources = {
+  deepseek: 'https://api-docs.deepseek.com/quick_start/pricing',
   openai: 'https://developers.openai.com/api/docs/pricing',
   kimi: 'https://platform.kimi.ai/docs/pricing/chat',
   claude: 'https://platform.claude.com/docs/en/about-claude/pricing',
@@ -41,6 +43,15 @@ for (const id of ['claude-opus-5.5', 'claude-opus-5', 'claude-opus-4.8']) {
   price.fast_checked_at = '2026-10-26';
 }
 add('gemini-4-argon', 'gemini', [2, .1, 2, 10], { changes: [{ at: Date.parse('2026-12-01'), rates: [4, .2, 4, 20] }] });
+add('gemini-4-neon', 'gemini', [3, .15, 3, 15], {
+  source: 'https://aistudio.google.com/docs/pricing#gemini-4-neon', checked_at: '2026-11-18',
+  note: 'Implicit caching only. Input that creates a cache is charged at the ordinary input rate. Output includes thinking tokens.'
+});
+add('gemini-4-carbon', 'gemini', [2, .1, 2, 10], {
+  source: 'https://aistudio.google.com/docs/pricing#gemini-4-carbon', checked_at: '2026-11-10',
+  changes: [{ at: Date.parse('2026-12-01T00:00:00Z'), rates: [4, .2, 4, 20] }],
+  note: 'Introductory rates through November 30, 2026; input, cached input and output rates double December 1. Implicit caching only; cache creation uses the ordinary input rate. Output includes thinking tokens.'
+});
 add('gemini-3.8-flash', 'gemini', [.75, .075, .75, 3.75], { changes: [{ at: Date.parse('2027-01-01'), rates: [1.5, .15, 1.5, 7.5] }] });
 add('grok-4.7,grok-4.6', 'grok', [2, .5, 2, 6], { long: { threshold: 199999, input_multiplier: 2, output_multiplier: 2 } });
 add('grok-4.5', 'grok', [2, .3, 2, 6], { long: { threshold: 199999, input_multiplier: 2, output_multiplier: 2 }, checked_at: '2026-10-26' });
@@ -48,6 +59,12 @@ add('grok-4.7-build-fast', 'grok', [4, 1, 4, 12], { long: { threshold: 200000, i
 add('muse-spark-1.1,muse-spark-1.2,muse-spark-1.3', 'muse', [1.25, .15, 1.25, 4.25]);
 add('muse-spark-1.2-contributor,muse-spark-1.3-contributor', 'muse', [.1, .002, .1, .2]);
 add('muse-wonder-1.0', 'muse', [4, .2, 4, 20]);
+add('deepseek-flash,deepseek-v4-flash,deepseek-v4-flash-vision-exp', 'deepseek', [.15, .003, .15, .6], {
+  checked_at: '2026-11-05', time_schedule: { kind: 'deepseek-utc-v1', peak_rates: [.3, .006, .3, 1.2] }, note: deepseekScheduleNote
+});
+add('deepseek-v4-pro', 'deepseek', [.66, .022, .66, 1.98], {
+  checked_at: '2026-11-05', time_schedule: { kind: 'deepseek-utc-v1', peak_rates: [1.32, .044, 1.32, 3.96] }, note: deepseekScheduleNote
+});
 
 // Official OpenAI Standard/Fast tables checked 2026-10-26. Never assume
 // that another provider's Fast mode uses the same multiplier.
@@ -75,7 +92,7 @@ export function livePrice(model, timestamp = Date.now(), tier = 'standard', rout
   if (!price) return null;
   let rates = price.rates;
   for (const change of price.changes || []) if (timestamp >= change.at) rates = change.rates;
-  return { ...price, rates };
+  return scheduledPrice({ ...price, rates }, timestamp);
 }
 export function pricingGap(model) {
   if (/^muse-wonder-.*(?:full|contributor)|^muse-wonder-full/.test(model)) return { source: 'https://dev.meta.ai/models/muse-wonder', checked_at: '2026-10-26', reason: 'Meta lists Muse Wonder Full as subscription-only, with no API input, cached input or output rate. Standard Muse Wonder is a different model.' };
@@ -105,11 +122,12 @@ export function pricingFor(model, timestamp = Date.now(), serviceTier = 'standar
     if (!value.fast_rates) return null;
     rates = value.fast_rates;
   } else if (!['standard', 'default'].includes(tier)) return null;
-  return { ...value, rates, model: id, service_tier: tier === 'default' ? 'standard' : tier,
-    checked_at: tier === 'fast' ? value.fast_checked_at : value.checked_at };
+  return scheduledPrice({ ...value, rates, model: id, service_tier: tier === 'default' ? 'standard' : tier,
+    checked_at: tier === 'fast' ? value.fast_checked_at : value.checked_at }, timestamp);
 }
 const count = value => Number.isFinite(value) && value >= 0 ? value : 0;
 export function requestApiCost(model, usage, options = {}) {
+  if (usage?.input_tokens === 0 && usage.output_tokens === 0) return 0;
   const price = options.priceFor ? options.priceFor(model, options.timestamp, options.service_tier)
     : options.price !== undefined ? options.price : pricingFor(model, options.timestamp, options.service_tier);
   if (!price || !Number.isFinite(usage?.input_tokens) || !Number.isFinite(usage?.output_tokens)) return null;
@@ -129,20 +147,29 @@ export function requestApiCost(model, usage, options = {}) {
 export function estimateRequests(records, model, options = {}) {
   const rows = [...records], price = options.price !== undefined ? options.price : pricingFor(model, options.timestamp, options.service_tier);
   let usd = rows.length ? 0 : null, unpriced = 0;
-  const tiers = new Set();
+  const tiers = new Set(), periods = new Set(), warnings = new Set();
   for (const record of rows) {
     const tier = record.service_tier || options.service_tier || 'standard';
     tiers.add(tier);
-    const cost = requestApiCost(record.model || model, record.usage || record, { ...options, service_tier: tier, timestamp: record.timestamp ?? options.timestamp });
+    const id = record.model || model, timestamp = record.timestamp ?? options.timestamp;
+    const selected = options.priceFor ? options.priceFor(id, timestamp, tier)
+      : options.price !== undefined ? options.price : pricingFor(id, timestamp, tier);
+    if (selected?.price_period) periods.add(selected.price_period);
+    if (selected?.estimated) warnings.add(selected.estimated);
+    const cost = requestApiCost(id, record.usage || record, { price: selected });
     if (cost === null) unpriced++; else usd += cost;
   }
   const rates = price?.rates;
   return { usd: unpriced ? null : usd, currency: 'USD', model, pricing_date: price?.checked_at || null,
     service_tiers: [...tiers],
+    price_periods: [...periods],
+    estimated: [...warnings],
     source: price?.source || null, request_count: rows.length, unpriced_requests: unpriced,
     rates_per_million: rates ? { input: rates[0], cached_input: rates[1], cache_writes: rates[2], output: rates[3], long_cache_writes: rates.length > 4 ? rates[4] : rates[2] } : null,
     long_context: price?.long || null,
     context_tiers: price?.context_tiers || [],
     basis: `${tiers.size > 1 ? 'Mixed-speed' : tiers.has('fast') || tiers.has('priority') ? 'Fast' : 'Standard'} API-equivalent token estimate, including reported cache reads and writes. Subscription charges, sandbox fees and unreported usage are excluded.` +
+      (periods.size ? ' Peak/off-peak rates are selected per recorded request timestamp.' : '') +
+      (warnings.size ? ' ' + [...warnings].join(' ') : '') +
       (unpriced ? ' A verified price is missing for some usage; no complete dollar estimate is available.' : '') };
 }

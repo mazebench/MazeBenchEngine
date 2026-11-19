@@ -1181,7 +1181,8 @@ elements["retry-new-run"].addEventListener("click", async () => {
         provider: currentRun.provider || "codex", model: currentRun.model, effort: currentRun.effort, tools_enabled: currentRun.tools_enabled,
         observation_mode: currentRun.observation_mode || "ascii", service_tier: currentRun.service_tier,
         ...(currentRun.world === "slotski" ? { sequence_enabled: currentRun.sequence_enabled !== false } : {}),
-        world: currentRun.world || "main-world", action_limit: currentRun.action_limit, start_room: currentRun.start_room
+        world: currentRun.world || "main-world", action_limit: currentRun.action_limit, start_room: currentRun.start_room,
+        ...(currentRun.character_seed ? { character_seed: currentRun.character_seed } : {})
       })
     });
     location.href = `./run.html?id=${encodeURIComponent(run.id)}`;

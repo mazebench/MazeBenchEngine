@@ -193,11 +193,71 @@ and [`benchmarking/vision/EVAL-PROMPT.md`](benchmarking/vision/EVAL-PROMPT.md).
 | ------------------ | -------------------------------------- | -------------------------------------------------------- |
 | **Codex**          | OpenAI Codex CLI                       | Signed-in `codex`. A Fast speed tier is optional.        |
 | **Claude Code**    | Anthropic Claude Code                  | `claude auth login`                                      |
-| **Grok Build**     | xAI Grok Build                         | grok.com sign-in                                         |
+| **Grok Build**     | Grok subscription or connected model APIs | grok.com sign-in or `npm run setup:connection`          |
 | **Antigravity**    | Google Antigravity (Gemini)            | [Antigravity notes](benchmarking/antigravity/README.md)  |
 | **Meta Muse Code** | Muse Code                              | [Muse notes](benchmarking/muse/README.md)                |
 | **Kimi Code**      | Kimi Code                              | `npm run setup:kimi` · [Kimi notes](benchmarking/kimi/README.md) |
 | **Prime Agent**    | Prime Intellect inference (open models) | [Prime notes](benchmarking/prime/README.md)             |
+| **DeepSeek Harness** | Official DeepSeek Harness CLI | `npm run setup:deepseek` · Sign in or add an API key in DeepSeek Harness Settings → Models |
+
+DeepSeek Harness and connected Grok Build models support Main World ASCII with coding Off or Python Only.
+`npm run check:deepseek` validates its tool configuration and conversation resume
+against local mock APIs. Both harnesses discover language models from connected
+accounts, without a chosen-model allowlist. New account models appear on **Refresh models**.
+Choose **Agent → Connection → Model** to select the harness independently from the
+provider and billing account. A model available through multiple accounts keeps
+separate connection choices. `DEEPSEEK_API_KEY` is also supported when starting the server.
+`npm run setup:deepseek-anthropic` connects a Claude API key using a hidden Terminal
+prompt and a separate private credential file. All compatible Claude models listed
+by that key are available through both harnesses' stock Anthropic adapters.
+`npm run setup:deepseek-chatgpt` provides a local **Continue with ChatGPT** page for
+eligible ChatGPT plan usage and credits. It registers MazeBench under its own
+stable host identity, verifies the returned identity and granted scope, and uses
+the public Responses API with the stock harness adapter. It never copies Codex
+credentials. All visible models returned by that account, including GPT-6.1 Terra,
+are offered. Grok uses its native Responses adapter through a private loopback
+transport that translates system messages to developer messages, removes unsupported
+API options, and shares the stock refresh-token lock with DeepSeek. Its prompt,
+agent loop, tools, and conversation remain in Grok. The transport omits the new
+account-metadata SSE event and reconstructs empty terminal output arrays from the
+exact completed stream items for Grok's older Responses schema. Quota failures and interrupted
+streams fail the turn; only `response.completed` counts as completed inference.
+Manage plan usage at https://chatgpt.com/settings/usage. API-equivalent prices in
+run reports are estimates, not a conversion of ChatGPT credits into API dollars.
+The selector shows the exact API model slug alongside its display name; run
+records retain that slug. Provider aliases are never replaced with inferred
+versioned IDs.
+
+To add or rotate an API connection, run `npm run setup:connection -- openai`
+(also `anthropic`, `deepseek`, `xai`, or `openrouter`). Enter the key at the hidden
+prompt. For Google AI Studio, run `npm run setup:connection -- google` with a
+Gemini API key from a paid project for Gemini 4 Neon. Select **DeepSeek Harness →
+Google AI Studio** after refreshing models. This connection uses the native
+Gemini protocol and its own API billing. Run `npm run check:deepseek` if the
+installation needs to verify the Gemini transport.
+
+Other compatible providers use:
+
+```sh
+npm run setup:connection -- --id my-provider --name "My provider" --api openai-completions --base-url https://provider.example/v1
+```
+
+Supported protocols are `anthropic-messages`, `openai-responses`, and
+`openai-completions`. Setup verifies `/models`, keeps credentials in private files
+outside Git, and registers the connection in `~/.mazebench/connections.json`.
+`npm run setup:connection -- --list` lists connections without credentials.
+Connection entries can supply a `catalog_provider` for installed transport metadata
+and `models` overrides (`id`, `contextWindow`, `maxTokens`, `reasoningEfforts`,
+`compat`) for gateway-specific capabilities. Embedding, media-only, and retired
+models are excluded. Unknown language models use provider defaults; they must
+support tool calling. Unsupported reasoning levels are not offered. Grok supports
+adaptive Claude thinking; older Claude models that require thinking budgets use
+provider defaults there. DeepSeek retains its stock budget support.
+Catalog failures retain stale entries but block launching through that connection;
+other working connections remain available. Run records freeze the exact model,
+connection, protocol, and billing source. Existing runs retain their original runtime.
+`node --test tests/benchmark-grok-connected-wire.test.mjs` validates all three Grok
+transports, ChatGPT authentication, session continuation, and tool restrictions locally.
 
 **Coding tools.** *Any language* needs Docker. Build its pinned toolchain once with
 `npm run setup:code-sandbox`. *Python only* is the older, restricted Python condition.
@@ -223,14 +283,33 @@ already running, without interrupting active runs.
 | 8083 | Capability service (Any language, newer modes)   | `npm run start:capabilities`     |
 | 8084 | Model catalogs                                   | `npm run start:catalogs`         |
 | 8085 | Read-only playback and reports                   | `npm run start:playback`         |
+| 8091 | Current pricing and token reports (independent of live agents) | `npm run start:reports` |
 | 8086 | Vision runner (Gemini, Grok, Kimi, Muse)         | `npm run start:vision-providers` |
 | 8087 | Recovery companion                               | `npm run start:recovery`         |
 | 8090 | Versioned runtime releases (new Main World runs) | `npm run start:releases`         |
+| 8092 | Shared automatic resume for every agent type    | `npm run start:auto-resume`      |
 | 3001 | Physics test lab (optional)                      | `npm run dev:lab`                |
 
 Vision launches need the vision runner and fail if it is offline; they never fall
 back to ASCII. Image rendering uses Playwright with your local Chrome. Do not stop the
 capability service while it owns an active Any-language run.
+
+The shared auto-resume service starts with the site and can be added to an
+already-running site independently. It discovers active runs across all agents,
+models, coding modes, and observation modes. Network failures, rate limits,
+capacity errors, and interrupted owners retry the same saved run with persistent
+backoff. Transient outages continue retrying at intervals up to 30 minutes;
+provider reset times and an hourly retry budget can extend the wait. Explicit
+Pause/Stop/Delete cancels recovery. Historical paused/failed runs stay inactive
+until explicitly resumed. Invalid credentials, exhausted paid credits, integrity
+failures, and repeated unknown errors surface as **Needs attention**.
+
+The browser sends controls through port 8092 when available. Recovery delegates
+to each run's original owner and preserves its runtime, model, conversation,
+prompt, and game history. Existing provider-specific audited repairs remain in
+place. Durable intent and retry audits live in `~/.mazebench/auto-resume/`;
+`/api/benchmark/auto-resume/status` reports enrollment and retry times. See
+`benchmarking/auto-resume.mjs` and its policy/owner/server modules.
 
 </details>
 
@@ -245,9 +324,12 @@ audited, retries are capped, and **Pause** or **Stop** always cancels a pending 
 - **Codex:** transient 429/5xx failures resume the same conversation after
   15 s, 30 s, 1 min, 2 min, then 5 min. Vision runs also recover from unfinished
   `list_mcp_resources` calls.
-- **Gemini vision:** "blocked by Gemini's filters" responses resume after 15 s,
+- **Gemini ASCII (coding off, Python, or Any language) and vision (coding off):** "blocked by Gemini's filters" responses resume after 15 s,
   1 min, then 3 min. Retries stop after three attempts without new moves, or eight in
-  an hour. Attempts are logged to `~/.mazebench/gemini-vision-recovery/retry-audit.jsonl`.
+  an hour. The recovery companion logs attempts in
+  `~/.mazebench/gemini-ascii-recovery/retry-audit.jsonl` or
+  `~/.mazebench/gemini-vision-recovery/retry-audit.jsonl`. Versioned runs keep the
+  same audit file in their release’s recovery directory.
 - **Grok vision:** matching-session HTTP errors resume with the same limits. Attempts
   are logged to `~/.mazebench/grok-vision-recovery/retry-audit.jsonl`.
 

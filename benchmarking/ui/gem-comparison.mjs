@@ -1,5 +1,5 @@
 import { renderProgressChart } from './comparison-chart.mjs';
-import { X_AXES, progressSeries } from './comparison-chart-data.mjs';
+import { X_AXES, RUN_CAP_LABEL, capRunHistory, runCapIndex, LOG_COST_MINIMUM, progressSeries, logarithmicScale } from './comparison-chart-data.mjs';
 import { codingLabel, codingMode } from "../capabilities.mjs";
 import { benchmarkFetch } from "./benchmark-api.mjs";
 import { runCompany, runCardValues, selectRuns } from "./run-library.mjs";
@@ -25,7 +25,9 @@ export function createGemComparison({ onChange, onSelectionChange, onFocus }) {
   root.className = "gem-comparison";
   root.hidden = true;
   root.innerHTML = `
-    <div class="gem-controls"><button type="button" class="comparison-filter-open">☷ Filters & runs <span class="gem-selection-count"></span></button><span class="comparison-filter-summary"></span></div>
+    <div class="gem-controls"><button type="button" class="comparison-filter-open">☷ Filters & runs <span class="gem-selection-count"></span></button><span class="comparison-filter-summary"></span>
+      <label class="scale-control">X-axis scale <select class="comparison-x-scale"><option value="linear">Linear</option><option value="log">Logarithmic</option></select></label>
+      <label class="scale-control comparison-run-cap"><input type="checkbox">Cap runs at ${RUN_CAP_LABEL}</label></div>
     <dialog class="chart-filters" aria-labelledby="chart-filter-title"><header><h2 id="chart-filter-title">Comparison</h2><button class="chart-filter-done" type="button">Done</button></header>
       <div class="chart-filter-fields">
         <fieldset><legend>Score</legend><div class="map-segments" data-setting="metric"><button data-value="gems">Gems</button><button data-value="rooms">Rooms</button></div></fieldset>
@@ -53,6 +55,11 @@ export function createGemComparison({ onChange, onSelectionChange, onFocus }) {
   let runs = [], active = false, generation = 0, plot = null, loading = false, focusedId = null;
   const params = new URLSearchParams(location.search);
   const settings = { metric: params.get('metric') === 'rooms' ? 'rooms' : 'gems', axis: Object.hasOwn(X_AXES,params.get('axis')) ? params.get('axis') : 'moves', mode:'all', coding:'all', sort:'score', range:'auto' };
+  const xScaleControl = $('.comparison-x-scale');
+  xScaleControl.value = params.get('xScale') === 'log' ? 'log' : 'linear';
+  const logX = () => xScaleControl.value === 'log';
+  const runCapControl = $('.comparison-run-cap input');
+  runCapControl.checked = params.get('runCap') === '1' || params.get('xCap') === '1';
   const companies = new Set(), histories = new Map();
   const markerIds = new Map();
   function markerIndex(id) { if (!markerIds.has(id)) markerIds.set(id,markerIds.size); return markerIds.get(id); }
@@ -104,6 +111,9 @@ export function createGemComparison({ onChange, onSelectionChange, onFocus }) {
   function syncURL() {
     const url = new URL(location.href);
     url.searchParams.set('axis',settings.axis); url.searchParams.set('metric',settings.metric);
+    if (logX()) url.searchParams.set('xScale', 'log'); else url.searchParams.delete('xScale');
+    url.searchParams.delete('xCap');
+    if (runCapControl.checked) url.searchParams.set('runCap', '1'); else url.searchParams.delete('runCap');
     if (maxMoves === null) url.searchParams.delete("maxMoves"); else url.searchParams.set("maxMoves", maxMoves);
     history.replaceState(null, "", url);
   }
@@ -132,6 +142,8 @@ export function createGemComparison({ onChange, onSelectionChange, onFocus }) {
 
   $(".gem-select-visible").addEventListener("click", () => { for (const run of filtered()) selected.add(run.id); changed(); });
   $(".gem-clear").addEventListener("click", () => { selected.clear(); changed(); });
+  xScaleControl.addEventListener('change', () => { finishDrag(true); syncURL(); draw(); });
+  runCapControl.addEventListener('change', () => { finishDrag(true); syncURL(); draw(); });
   $(".gem-range").addEventListener("change", draw);
   $(".gem-max-moves").addEventListener("input", event => {
     const input = event.target, value = input.value === "" ? null : input.valueAsNumber;
@@ -204,7 +216,7 @@ export function createGemComparison({ onChange, onSelectionChange, onFocus }) {
     const entries=chosen.map(run=>{
       const series={...histories.get(run.id)};
       const exclusion=fullSeries(run)?.exclusion;
-      if(exclusion) for(const key of ['progress','performance']) series[key]=series[key]?.map(p=>({...p,gems:p.gems===null?null:Math.max(0,p.gems-(p.moves>=exclusion.move?1:0))}));
+      if(exclusion) for(const key of ['progress','performance','thinking']) series[key]=series[key]?.map(p=>({...p,gems:p.gems===null?null:Math.max(0,p.gems-(p.moves>=exclusion.move?1:0))}));
       if(settings.axis==='moves' && settings.metric==='gems') {
         const value=limitGemSeries(fullSeries(run),maxMoves);
         series.progress=value?.points.map(p=>({moves:p.move,gems:p.gems})) || [];
@@ -213,22 +225,31 @@ export function createGemComparison({ onChange, onSelectionChange, onFocus }) {
         if(points.length && points.at(-1).moves<maxMoves && maxMoves<(series.progress.at(-1)?.moves||0)) points.push({...points.at(-1),moves:maxMoves});
         series.progress=points;
       }
-      return {...run,series};
+      return {...run,series:runCapControl.checked ? capRunHistory(series) : series};
     });
-    renderProgressChart({host:$('.progress-chart'),legend:$('.progress-legend'),notice:$('.progress-notice'),entries,axis:settings.axis,metric:settings.metric,
+    renderProgressChart({host:$('.progress-chart'),legend:$('.progress-legend'),notice:$('.progress-notice'),entries,axis:settings.axis,metric:settings.metric,logX:logX(),
       selectedIds:new Set(focusedId?[focusedId]:[]), name:displayModelName, detail, markerIndex, fullRange:settings.range==='full', color:modelColor,onSelect:id=>{focusedId=id;onFocus?.(id);draw();}});
     $('.gem-chart-heading h2').textContent=settings.metric==='gems'?'Gems collected':'Rooms visited';
     $('.gem-chart-count').textContent=loading?`Loading ${chosen.filter(run=>histories.has(run.id)).length} / ${chosen.length}`:'';
     const status=document.getElementById('comparison-status');status.classList.toggle('error',chosen.some(run=>errors.has(run.id)));
     status.textContent=loading?'Loading run history…':chosen.some(run=>errors.has(run.id))?'Some histories couldn’t load · Refresh to retry':'';
     if(loading) { $('.progress-notice').hidden=false; $('.progress-notice').textContent='Loading recorded history…'; }
-    $('.gem-chart-note').textContent='Lines connect recorded milestones. Token and cost comparisons use recorded responses, including retries; unreported usage is excluded.';
+    $('.gem-chart-note').textContent=settings.axis==='thinking_ms'
+      ? 'Thinking time sums completed episodes, including model and network waiting. Fast mode counts at 2× elapsed time. Tool execution and interrupted intervals are excluded.'
+      : 'Lines connect recorded milestones. Token and cost comparisons use recorded responses, including retries; unreported usage is excluded.';
     const edited=chosen.some(run=>fullSeries(run)?.edited);
     $('.gem-adjustment-note').textContent=[settings.axis==='moves'&&settings.metric==='gems'&&edited?'Edited curves shown. Reset curve edits to return to recorded history.':'',...chosen.filter(run=>fullSeries(run)?.exclusion).map(run=>`${displayModelName(run.model)}: ${fullSeries(run).exclusion.room} gem excluded.`)].filter(Boolean).join(' ');
     $('.gem-adjustment-note').hidden=!$('.gem-adjustment-note').textContent;
     $('.gem-edit-reset').disabled=!edited;
     $('.gem-edit-toggle').textContent='Edit curve'; $('.gem-edit-toggle').setAttribute('aria-pressed','false');
     onChange();
+  }
+  function editingSeries(run) {
+    const history = histories.get(run.id);
+    const index = runCapControl.checked ? runCapIndex(history) : -1;
+    if (index === 0) return null;
+    const cutoff = index > 0 ? history.performance[index - 1].moves : Infinity;
+    return limitGemSeries(fullSeries(run), Math.min(maxMoves ?? Infinity, cutoff));
   }
   function draw() {
     if (!active) return;
@@ -237,7 +258,7 @@ export function createGemComparison({ onChange, onSelectionChange, onFocus }) {
     $('.gem-edit-controls').hidden=settings.axis!=='moves'||settings.metric!=='gems';
     if(!editing) { plot=null; drawProgress(); return; }
     const chosen = selectedRuns();
-    const series = chosen.map(run => ({ run, data: limitGemSeries(fullSeries(run), maxMoves), color: modelColor(run), marker: markerIndex(run.id) })).filter(item => item.data);
+    const series = chosen.map(run => ({ run, data: editingSeries(run), color: modelColor(run), marker: markerIndex(run.id) })).filter(item => item.data);
     const screenshot = document.documentElement.classList.contains("screenshot-mode");
     const handles = editing && !screenshot;
     const svg = $(".gem-chart"), width = Math.max(360, svg.clientWidth || 1000);
@@ -258,18 +279,24 @@ export function createGemComparison({ onChange, onSelectionChange, onFocus }) {
     const labelSpace = Math.min(width * .45, Math.max(0, ...labels.map(label => label.measuredWidth))) + 24;
     const height = Math.max(Math.min(620, Math.max(330, width * .43)), labels.length * 40 + 110);
     const left = width < 550 ? 48 : 66, right = width - labelSpace - 12, top = 30, bottom = height - 58;
-    const xAxis = drag?.xAxis || axisExtent(Math.max(1, ...series.map(item => item.data.moves)), width < 550 ? 3 : 6);
-    if (!drag && maxMoves !== null) Object.assign(xAxis, { max: maxMoves, step: axisExtent(maxMoves, width < 550 ? 3 : 6).step });
+    const xDivisions = width < 550 ? 3 : 6;
+    const xAxis = drag?.xAxis || axisExtent(maxMoves ?? Math.max(1, ...series.map(item => item.data.moves)), xDivisions);
+    if (!drag && maxMoves !== null) xAxis.max = maxMoves;
+    const logAxis = logX() ? logarithmicScale(xAxis.max, xDivisions) : null;
     const peak = Math.max(1, ...series.flatMap(item => item.data.points.map(point => point.gems)));
     const yAxis = drag?.yAxis || ($(".gem-range").value === "100" ? { max: Math.max(100, peak), step: 20 } : axisExtent(peak));
-    const x = move => left + move / xAxis.max * (right - left), y = gems => bottom - gems / yAxis.max * (bottom - top);
+    const x = move => left + (logAxis ? logAxis.position(move) : move / xAxis.max) * (right - left);
+    const moveAt = fraction => logAxis ? logAxis.valueAt(fraction) : fraction * xAxis.max;
+    const y = gems => bottom - gems / yAxis.max * (bottom - top);
     let markup = `<title>Gems collected by move</title><desc>${escape(series.map(item => `${displayModelName(item.run.model)}: ${item.data.collected} gems at ${item.data.moves} moves`).join(". "))}</desc>`;
     for (let value = 0; value <= yAxis.max; value += yAxis.step) markup += `<line class="gem-grid" x1="${left}" x2="${right}" y1="${y(value)}" y2="${y(value)}"/><text class="gem-axis" x="${left - 12}" y="${y(value) + 4}" text-anchor="end">${number(value)}</text>`;
-    const xTicks = [];
-    for (let value = 0; value < xAxis.max - xAxis.step * .35; value += xAxis.step) xTicks.push(value);
-    xTicks.push(xAxis.max);
+    const xTicks = logAxis?.ticks ?? [];
+    if (!logAxis) {
+      for (let value = 0; value < xAxis.max - xAxis.step * .35; value += xAxis.step) xTicks.push(value);
+      xTicks.push(xAxis.max);
+    }
     for (const value of xTicks) markup += `<line class="gem-grid gem-grid-vertical" x1="${x(value)}" x2="${x(value)}" y1="${top}" y2="${bottom}"/><text class="gem-axis" x="${x(value)}" y="${bottom + 25}" text-anchor="middle">${number(value)}</text>`;
-    markup += `<text class="gem-axis-label" x="${left}" y="16">Gems collected</text><text class="gem-axis-label" x="${(left + right) / 2}" y="${height - 8}" text-anchor="middle">Moves</text>`;
+    markup += `<text class="gem-axis-label" x="${left}" y="16">Gems collected</text><text class="gem-axis-label" x="${(left + right) / 2}" y="${height - 8}" text-anchor="middle">${logAxis ? 'Moves (log scale)' : 'Moves'}</text>`;
     for (const item of series) {
       const points = item.data.points;
       markup += `<g style="--series:${item.color}"><path class="gem-comparison-line" d="${gemLinePath(points, x, y)}"/>`;
@@ -299,7 +326,7 @@ export function createGemComparison({ onChange, onSelectionChange, onFocus }) {
     $(".gem-tooltip").hidden = true;
     $(".gem-chart-count").textContent = `${series.length} ${series.length === 1 ? "run" : "runs"}${maxMoves === null ? "" : ` · through move ${number(maxMoves)}`}`;
     $(".gem-chart-legend").innerHTML = chosen.map(run => {
-      const full = fullSeries(run), value = limitGemSeries(full, maxMoves), duplicate = chosen.filter(item => item.model === run.model).length > 1;
+      const full = fullSeries(run), value = editingSeries(run), duplicate = chosen.filter(item => item.model === run.model).length > 1;
       const marker = gemMarker(markerIndex(run.id), 5);
       return `<div class="gem-legend-item" style="--series:${modelColor(run)}"><svg class="gem-legend-marker" viewBox="0 0 28 20" role="img" aria-label="${marker.name} markers"><path class="gem-marker-line" d="M0,10H28"/><g class="gem-comparison-point" transform="translate(14,10)">${marker.body}</g></svg><div><strong>${escape(displayModelName(run.model))}</strong><small>${escape(detail(run))}${duplicate ? ` · ${escape(run.id.slice(-6))}` : ""}${full?.edited ? " · Edited curve" : ""}</small><span>${value ? `${score(value)} · ${number(value.moves)}${value.moves < full.moves ? ` / ${number(full.moves)}` : ""} moves` : escape(errors.get(run.id) || (full ? "No history in this range" : "Loading…"))}</span></div><button type="button" data-remove="${escape(run.id)}" aria-label="Remove ${escape(displayModelName(run.model))} ${escape(run.id.slice(-6))}">×</button></div>`;
     }).join("");
@@ -307,7 +334,7 @@ export function createGemComparison({ onChange, onSelectionChange, onFocus }) {
     if (series.some(item => item.data.edited)) notes.push("Edited curves shown.");
     $(".gem-adjustment-note").textContent = notes.join(" ");
     $(".gem-adjustment-note").hidden = !notes.length;
-    plot = { x, y, xAxis, yAxis, left, right, top, bottom, width, height, series, move: 0 };
+    plot = { x, y, moveAt, xAxis, yAxis, left, right, top, bottom, width, height, series, move: 0 };
     const status = document.getElementById("comparison-status");
     const failed = chosen.some(run => errors.has(run.id));
     status.classList.toggle("error", failed);
@@ -361,14 +388,15 @@ export function createGemComparison({ onChange, onSelectionChange, onFocus }) {
   $(".gem-chart").addEventListener("pointermove", event => {
     if (!plot) return;
     const rect = event.currentTarget.getBoundingClientRect();
+    const fraction = ((event.clientX - rect.left) * plot.width / rect.width - plot.left) / (plot.right - plot.left);
+    const move = plot.moveAt(Math.max(0, Math.min(1, fraction)));
     if (drag && drag.pointerId === event.pointerId) {
-      const move = Math.max(0, Math.min(plot.xAxis.max, ((event.clientX - rect.left) * plot.width / rect.width - plot.left) / (plot.right - plot.left) * plot.xAxis.max));
       const gems = (plot.bottom - (event.clientY - rect.top) * plot.height / rect.height) / (plot.bottom - plot.top) * plot.yAxis.max;
       updatePoint(drag.runId, drag.key, { move, gems: Math.max(0, Math.min(plot.yAxis.max, gems)) });
       return;
     }
     if (editing) return;
-    inspect(((event.clientX - rect.left) * plot.width / rect.width - plot.left) / (plot.right - plot.left) * plot.xAxis.max);
+    inspect(move);
   });
   $(".gem-chart").addEventListener("pointerup", event => { if (event.pointerId === drag?.pointerId) finishDrag(); });
   $(".gem-chart").addEventListener("pointercancel", event => { if (event.pointerId === drag?.pointerId) finishDrag(true); });
@@ -395,7 +423,12 @@ export function createGemComparison({ onChange, onSelectionChange, onFocus }) {
   new ResizeObserver(draw).observe($(".gem-plot"));
   return {
     draw, load,
-    canScreenshot: () => !loading && selectedRuns().some(run => progressSeries({series:histories.get(run.id)},settings.axis,settings.metric).points.length),
+    canScreenshot: () => !loading && selectedRuns().some(run => {
+      const history = histories.get(run.id);
+      const series = runCapControl.checked ? capRunHistory(history) : history;
+      return progressSeries({series}, settings.axis, settings.metric,
+        logX() && settings.axis === 'cost_usd' ? LOG_COST_MINIMUM : 0).linePoints.length;
+    }),
     setActive(value) { if (!value) finishDrag(true); active = value; root.hidden = !value; if (!value) { generation++; loading = false; } },
     setFocus(id) { focusedId=id; draw(); },
     setSelection(ids) { selected.clear(); for(const id of ids) if(runs.some(run=>run.id===id)) selected.add(id); renderPicker(); },

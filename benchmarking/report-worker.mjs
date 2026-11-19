@@ -49,7 +49,8 @@ parentPort.on("message", message => {
       else if (kind === "comparison") {
         const usage = await tokens.comparisonUsage(directory).catch(() => ({ records: [], metadata: {}, priceOptions: {}, telemetry: {} }));
         const summary = await readCheckpointJson(directory, 'summary.json');
-        value = { series: comparisonSeries(summary, usage.records, usage.metadata, usage.priceOptions),
+        const timing = await charts.read(directory).catch(() => null);
+        value = { series: comparisonSeries(summary, usage.records, usage.metadata, usage.priceOptions, timing?.thinking.episodes),
           totals: usage.telemetry.totals };
       } else if (kind === "charts") {
         const telemetry = await tokens.read(directory).catch(() => null);

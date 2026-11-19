@@ -225,6 +225,7 @@ details[open] > summary::after { transform: rotate(90deg); }
 .compact-launch .goal-chip { padding: 6px 9px; border-radius: 8px; }
 .compact-launch .goal-chip strong { font-size: 11px; }
 .compact-launch .launch-controls { grid-template-columns: minmax(140px, .8fr) minmax(220px, 1.25fr) minmax(240px, 1.35fr); gap: 14px 16px; margin-top: 20px; }
+.compact-launch .launch-controls:has(.launch-field-connection:not([hidden])) .launch-field-effort { grid-column: 1 / -1; }
 .compact-launch .launch-field { display: grid; min-width: 0; align-content: start; gap: 6px; }
 .compact-launch .launch-field > span { color: var(--muted); font-size: 11px; font-weight: 500; }
 .compact-launch .launch-controls select { min-height: 40px; border-radius: 10px; font-size: 13px; }
@@ -244,6 +245,7 @@ details[open] > summary::after { transform: rotate(90deg); }
 .compact-launch .run-options > summary { min-height: 38px; font-size: 12px; }
 .compact-launch #run-options-summary { font-size: 11px; }
 .compact-launch .options-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 12px 0; }
+.launch-field-character-seed input { width: 100%; min-width: 0; min-height: 40px; padding: 0 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-raised); color: var(--text); font-size: 13px; }
 .compact-launch .launch-actions { justify-content: flex-end; gap: 8px; }
 .compact-launch .launch-actions button { min-height: 40px; padding: 0 16px; border-radius: 10px; font-size: 13px; }
 .compact-launch #launch-single { order: 1; }

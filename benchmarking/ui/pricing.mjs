@@ -29,6 +29,10 @@ function renderRow(row) {
     const p = element('p'), source = element('a', 'Pricing source ↗'); source.href = row.price.source; source.target = '_blank'; source.rel = 'noopener noreferrer'; p.append(source);
     p.append(document.createElement('br'), document.createTextNode(row.price.checked_at ? `Checked ${row.price.checked_at}` : 'Check date unavailable'));
     details.append(p, element('p', `Cache write: ${money(row.price.rates[2])}${row.price.rates[4] != null ? ` · Extended cache write: ${money(row.price.rates[4])}` : ''} per 1M.`));
+    if (row.price.time_schedule) {
+      const peak = row.price.time_schedule.peak_rates;
+      details.append(element('p', `Showing ${row.price.price_period} rates now. Peak: ${money(peak[0])} input · ${money(peak[1])} cached · ${money(peak[3])} output per 1M.`));
+    }
     if (row.price.long) {
       const premium = row.price.long;
       details.append(element('p', `Above ${premium.threshold.toLocaleString()} input tokens per request: ${premium.input_multiplier}× input/cache and ${premium.output_multiplier}× output.`));

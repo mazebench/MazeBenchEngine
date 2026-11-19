@@ -150,3 +150,17 @@ test('text reconstruction verifies saved state hashes and never writes to the so
   await assert.rejects(()=>invalid.readMove(1),/differs from the saved state/);
   assert.deepEqual(await Promise.all(files.map(file=>readFile(path.join(directory,file),'utf8'))),before);
 });
+
+test('recorded fatal crossings follow the visit count from the original run', async () => {
+  const start = frame([cell('player', 7)]), pit = frame([], 'IxI');
+  const world = makeWorld([room(start.objects), room([cell('player', 4)], 1)]);
+  for (const roomsVisited of [1, 2]) {
+    const records = [
+      {action:{action:'initial'}, frames:[start]},
+      {action:{action:'right', died:true, roomsVisited}, frames:[start, pit]}
+    ];
+    const movie = await compileRecordedReplay(world, 1, async i => records[i]);
+    assert.equal(movie.clips[1].to, '1.json');
+    assert.equal(movie.visits.length, roomsVisited);
+  }
+});

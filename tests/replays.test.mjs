@@ -216,3 +216,11 @@ test("dense timeline markers retain every event in chronological, accessible gro
   assert.equal(groupMarkers(events, 1000, 100).length, 2, "narrow view groups crowded hit targets");
   assert.deepEqual(groupMarkers([], 1000, 100), []);
 });
+
+test("a fatal crossing has a replay clip but no first-visit marker", async () => {
+  const source = world([room([...floor(), cell("player", 7)]),
+    room([...floor().filter(o => o.x !== 0 || o.y !== 1), cell("player", 4)], 1)]);
+  const movie = await compileReplay(engine, source, parseReplay("R"));
+  assert.equal(movie.clips[0].to, "1.json");
+  assert.deepEqual(movie.visits, [{room:"0.json", at:0}]);
+});

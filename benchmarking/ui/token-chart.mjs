@@ -46,7 +46,7 @@ function render(value) {
     current.textContent = value.totals ? "Context not reported" : "Waiting for token data";
     chart.innerHTML = '<text x="550" y="110" text-anchor="middle" class="token-empty"></text>';
     chart.firstElementChild.textContent = value.totals ? "Token totals are shown below." : "Token usage appears after the first model response.";
-    detail.textContent = value.reason || "Updates after each model response.";
+    detail.textContent = `${value.context_window ? `Context window ${number.format(value.context_window)} tokens · ` : ''}${value.reason || "Updates after each model response."}`;
     return;
   }
   const samples = value.samples;
@@ -69,7 +69,7 @@ function render(value) {
     const time = start + index / 5 * (end - start);
     return `<text x="${x(time)}" y="205" text-anchor="middle" class="token-axis">${elapsed(time - start)}</text>`;
   }).join("");
-  const threshold = value.compaction_threshold;
+  const threshold = Number.isFinite(value.compaction_threshold) ? value.compaction_threshold : null;
   const trigger = threshold === null ? "" : `<rect x="${left}" y="${top}" width="${right - left}" height="${Math.max(0, y(threshold) - top)}" class="token-warning-band"/><line x1="${left}" x2="${right}" y1="${y(threshold)}" y2="${y(threshold)}" class="token-trigger-line"/><text x="${right}" y="${y(threshold) - 7}" text-anchor="end" class="token-trigger-text">Compact at ${number.format(threshold)}</text>`;
   const markers = value.compactions.map((event, index) => {
     if (event.timestamp < samples[0].timestamp || event.timestamp > samples.at(-1).timestamp) return '';
@@ -84,8 +84,8 @@ function render(value) {
     : `${number.format(value.current_tokens)} / ${number.format(threshold)} · ${Math.round(value.current_tokens / threshold * 100)}% of trigger`;
   current.classList.toggle("near-compaction", threshold !== null && value.current_tokens >= threshold * 0.85);
   const count = value.compactions.length;
-  detail.textContent = `${count} compaction${count === 1 ? "" : "s"}${value.time_axis?.excluded_ms >= 1000 ? ` · ${elapsed(value.time_axis.excluded_ms)} downtime excluded` : ''} · Last reported ${clock(value.updated_at)}`;
-  detail.title = value.time_axis?.basis || '';
+  detail.textContent = `${value.context_window ? `Context window ${number.format(value.context_window)} tokens · ` : ''}${value.compactions_available === false ? 'Compaction history unreported' : `${count} compaction${count === 1 ? "" : "s"}`}${value.telemetry_source?.startsWith('deepseek-') && threshold === null ? ' · Auto-compaction trigger unreported' : ''}${value.time_axis?.excluded_ms >= 1000 ? ` · ${elapsed(value.time_axis.excluded_ms)} downtime excluded` : ''} · Last reported ${clock(value.updated_at)}`;
+  detail.title = [value.context_basis, value.reason, value.time_axis?.basis].filter(Boolean).join(' ');
   chart.setAttribute("aria-label", `${current.textContent}. ${detail.textContent}. Context tokens over ${axisLabel.toLowerCase()}.`);
 }
 

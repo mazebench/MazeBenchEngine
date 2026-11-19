@@ -1,5 +1,6 @@
 import { sampleAgentCamera, applyAgentCamera } from './replay-camera.mjs';
 import { appendReplayChunk, replayBufferTime } from '../replay-chunks.mjs';
+import { benchmarkFetch } from './benchmark-api.mjs';
 const icon = path => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/></svg>`;
 const playIcon = 'm8 5 11 7-11 7z', pauseIcon = 'M6 5h4v14H6zM14 5h4v14h-4z';
 const clock = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
@@ -7,7 +8,7 @@ const clock = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 
 export class RunReplayPlayer {
   constructor(board, id, onPosition) {
     Object.assign(this,{board,id,onPosition,time:0,speed:1,generation:0,playing:false,mode:'3d',following:true,asciiCache:new Map()});
-    this.origin = `http://${location.hostname}:8085/api/benchmark/playback/runs/${encodeURIComponent(id)}/chunk`;
+    this.chunkPath = `/api/benchmark/playback/runs/${encodeURIComponent(id)}/chunk`;
     this.container = document.createElement('div');this.container.className='run-replay-player';this.container.tabIndex=-1;
     this.container.innerHTML=`
       <div class="run-replay-toolbar"><div class="run-replay-views" role="group" aria-label="Replay view"><button data-view="3d" aria-pressed="true">3D</button><button data-view="ascii" aria-pressed="false">ASCII</button></div><span class="run-replay-source"></span><button data-command="live" aria-pressed="true" title="Follow new moves automatically">Live</button>
@@ -80,8 +81,8 @@ export class RunReplayPlayer {
     const [{locateReplay},{replayAscii,asciiFrameAt}]=await Promise.all([import('../../replays/v1/movie.mjs'),import('./replay-ascii.mjs')]);
     this.locate=locateReplay;this.replayAscii=replayAscii;this.asciiFrameAt=asciiFrameAt;
     do {
-      const url=new URL(this.origin);url.search=new URLSearchParams({after:this.actionCount??-1,epoch:this.epoch||'',templates:this.movie?.templates.length||0,layouts:this.movie?.layouts.length||0,limit:this.movie?256:32});
-      const response=await fetch(url),data=await response.json();if(!response.ok)throw new Error(data.error||'Could not load replay.');if(generation!==this.generation)return;
+      const query=new URLSearchParams({after:this.actionCount??-1,epoch:this.epoch||'',templates:this.movie?.templates.length||0,layouts:this.movie?.layouts.length||0,limit:this.movie?256:32});
+      const response=await benchmarkFetch(`${this.chunkPath}?${query}`),data=await response.json();if(!response.ok)throw new Error(data.error||'Could not load replay.');if(generation!==this.generation)return;
       await this.acceptChunk(data);if(generation!==this.generation)return;
       // Yield to playback and input before requesting the next verified batch.
       if(!data.complete)await new Promise(resolve=>setTimeout(resolve,0));

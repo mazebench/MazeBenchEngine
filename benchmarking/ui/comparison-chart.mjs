@@ -1,13 +1,20 @@
 // Adapted from MazeJam’s published leaderboard-progress.mjs.
-import {X_AXES, progressSeries, linearPath} from './comparison-chart-data.mjs';
+import {X_AXES, RUN_CAP_LABEL, LOG_COST_MINIMUM, progressSeries, linearPath, logarithmicScale} from './comparison-chart-data.mjs';
 import {gemMarker} from './gem-comparison-markers.mjs';
 import {layoutEndLabels} from './gem-comparison-data.mjs';
+import {formatLevelDuration} from './ice-level-timings.mjs';
 
 const NS = 'http://www.w3.org/2000/svg';
 const compact = new Intl.NumberFormat(undefined, {notation:'compact', maximumFractionDigits:2});
 const number = value => Math.round(value).toLocaleString();
 const dollars = new Intl.NumberFormat('en-US', {style:'currency', currency:'USD', maximumFractionDigits:6});
 const compactDollars = new Intl.NumberFormat('en-US', {style:'currency', currency:'USD', notation:'compact', maximumSignificantDigits:3});
+const timeTick = milliseconds => {
+  if (milliseconds >= 3_600_000) return `${compact.format(milliseconds / 3_600_000)}h`;
+  if (milliseconds >= 60_000) return `${compact.format(milliseconds / 60_000)}m`;
+  if (milliseconds > 0 && milliseconds < 1000) return `${number(milliseconds)}ms`;
+  return `${compact.format(milliseconds / 1000)}s`;
+};
 const node = (tag, attrs={}) => {
   const element = document.createElementNS(NS, tag);
   for (const [key, value] of Object.entries(attrs)) element.setAttribute(key, String(value));
@@ -35,25 +42,36 @@ export function scale(maximum, divisions, integer=false) {
   return {maximum:step * intervals, ticks:Array.from({length:intervals + 1}, (_, index) => index * step)};
 }
 
-export function renderProgressChart({host, legend, notice, entries, axis, metric, selectedIds, name, color, onSelect, detail=()=>'', markerIndex, fullRange=false}) {
+export function renderProgressChart({host, legend, notice, entries, axis, metric, selectedIds, name, color, onSelect, detail=()=>'', markerIndex, fullRange=false, logX=false}) {
   host.replaceChildren();
   legend.replaceChildren();
   const costAxis = axis === 'cost_usd';
-  const axisNumber = value => costAxis ? dollars.format(value) : number(value);
-  const axisTick = value => costAxis ? compactDollars.format(value) : compact.format(value);
+  const thinkingAxis = axis === 'thinking_ms';
+  const minimum = logX && costAxis ? LOG_COST_MINIMUM : 0;
+  const axisNumber = costAxis ? value => dollars.format(value) : thinkingAxis ? formatLevelDuration : number;
+  const axisTick = costAxis ? value => (minimum && value < 1 ? dollars.format(value) : compactDollars.format(value))
+    : thinkingAxis ? timeTick : value => compact.format(value);
   const metricLabel = metric === 'gems' ? 'Gems' : 'Rooms';
-  const series = entries.map(entry => ({entry, ...progressSeries(entry, axis, metric)}));
-  const available = series.filter(s => s.points.length), missing = series.filter(s => !s.points.length);
+  const series = entries.map(entry => ({entry, ...progressSeries(entry, axis, metric, minimum)}));
+  const available = series.filter(s => s.linePoints.length), missing = series.filter(s => !s.linePoints.length);
+  const belowMinimum = missing.filter(s => s.belowMinimum).length;
+  const capped = entries.filter(entry => entry.series?.capped).length;
+  const noHistory = missing.length - belowMinimum;
   const estimated = available.some(s => s.estimated);
-  const missingReason = s => s.entry.series?.unavailable?.[axis] || 'History unavailable';
+  const missingReason = s => s.belowMinimum ? `Cost below ${axisNumber(minimum)}`
+    : s.entry.series?.unavailable?.[axis] || 'History unavailable';
   notice.textContent = [
-    missing.length ? `${missing.length} ${missing.length === 1 ? 'run has' : 'runs have'} no usable ${costAxis ? 'cost' : X_AXES[axis].toLowerCase()} history.` : '',
+    noHistory ? `${noHistory} ${noHistory === 1 ? 'run has' : 'runs have'} no usable ${costAxis ? 'cost' : X_AXES[axis].toLowerCase()} history.` : '',
+    belowMinimum ? `${belowMinimum} ${belowMinimum === 1 ? 'run is' : 'runs are'} below ${axisNumber(minimum)}.` : '',
+    capped ? `${capped} ${capped === 1 ? 'run' : 'runs'} capped at ${RUN_CAP_LABEL}.` : '',
     estimated ? 'Est. = estimated history.' : ''
   ].filter(Boolean).join(' ');
   notice.hidden = !notice.textContent;
   notice.title = missing.length ? 'Unavailable: ' + missing.map(s => name(s.entry.model)).join(', ') : '';
   if (!available.length) {
-    host.append(html('p', 'progress-empty', entries.length ? 'No history for this comparison yet. Try Moves or adjust the filters.' : 'Choose runs to compare.'));
+    const emptyMessage = belowMinimum ? `No runs reached ${axisNumber(minimum)} in estimated API cost.`
+      : entries.length ? 'No history for this comparison yet. Try Moves or adjust the filters.' : 'Choose runs to compare.';
+    host.append(html('p', 'progress-empty', emptyMessage));
     for (const s of missing) { const button=html('button','progress-legend-item progress-missing',name(s.entry.model)+' · '+detail(s.entry)+' · '+missingReason(s)); button.type='button'; button.dataset.chartRunId=s.entry.id; button.setAttribute('aria-pressed',String(selectedIds.has(s.entry.id))); button.addEventListener('click',()=>onSelect(s.entry.id)); legend.append(button); }
     return;
   }
@@ -71,24 +89,31 @@ export function renderProgressChart({host, legend, notice, entries, axis, metric
   });
   const height = Math.max(mobile ? 330 : 450, available.length * 22 + 118);
   const pad = {left:mobile ? 40 : 52, right:Math.max(...labels.map(label => label.width)) + 28, top:38, bottom:64};
-  const xScale = scale(Math.max(...available.map(s => s.points.at(-1).x)), mobile ? 3 : 5, !costAxis);
-  const yScale = scale(Math.max(fullRange ? (metric === 'gems' ? 100 : 256) : 0, ...available.flatMap(s => s.points.map(p => p.y))), 4, true);
-  const x = value => pad.left + value / xScale.maximum * (width - pad.left - pad.right);
+  const xMax = Math.max(...available.map(s => s.linePoints.at(-1).x));
+  const xDivisions = mobile ? 3 : 5;
+  const xUnit = !thinkingAxis ? 1 : logX || xMax < 60_000 ? 1000 : xMax < 3_600_000 ? 60_000 : 3_600_000;
+  const xScale = logX ? logarithmicScale(xMax / xUnit, xDivisions, minimum) : scale(xMax / xUnit, xDivisions, !costAxis && !thinkingAxis);
+  const axisCaption = logX ? `${X_AXES[axis]} (log scale)` : X_AXES[axis];
+  const yScale = scale(Math.max(fullRange ? (metric === 'gems' ? 100 : 256) : 0,
+    ...available.flatMap(s => s.linePoints.map(p => p.y))), 4, true);
+  const x = value => pad.left + (logX ? xScale.position(value / xUnit) : value / xUnit / xScale.maximum) * (width - pad.left - pad.right);
   const y = value => height - pad.bottom - value / yScale.maximum * (height - pad.top - pad.bottom);
   const endLabels = new Map(layoutEndLabels(labels.map(label => {
-    const last = label.s.points.at(-1);
+    const last = label.s.linePoints.at(-1);
     return {...label, x:x(last.x) + 12, y:y(last.y)};
   }), pad.top, height - pad.bottom, 22).map(label => [label.s.entry.id, label]));
-  const chart = node('svg', {viewBox:`0 0 ${width} ${height}`, role:'img', 'aria-label':`${metricLabel} by ${X_AXES[axis]} for ${available.length} runs`, class:'progress-svg'});
+  const chart = node('svg', {viewBox:`0 0 ${width} ${height}`, role:'img', 'aria-label':`${metricLabel} by ${axisCaption} for ${available.length} runs`, class:'progress-svg'});
   for (const value of yScale.ticks) {
     chart.append(node('line', {x1:pad.left, x2:width-pad.right, y1:y(value), y2:y(value), class:value === 0 ? 'progress-grid progress-baseline' : 'progress-grid'}));
     chart.append(text(pad.left-12, y(value)+4, number(value), 'end'));
   }
-  xScale.ticks.forEach((value, index) => {
-    const anchor = index === 0 ? 'start' : index === xScale.ticks.length-1 ? 'end' : 'middle';
-    chart.append(text(x(value), height-pad.bottom+24, axisTick(value), anchor));
+  const xTicks = xScale.ticks;
+  xTicks.forEach((value, index) => {
+    const start = index === 0 || (logX && !minimum && index === 1 && xTicks.length > 2);
+    const anchor = start ? 'start' : index === xTicks.length-1 ? 'end' : 'middle';
+    chart.append(text(x(value * xUnit), height-pad.bottom+24, axisTick(value * xUnit), anchor));
   });
-  const axisLabel = text((pad.left+width-pad.right)/2, height-14, X_AXES[axis]);
+  const axisLabel = text((pad.left+width-pad.right)/2, height-14, axisCaption);
   const scoreLabel = text(pad.left, 20, metricLabel, 'start');
   axisLabel.classList.add('progress-axis-label');
   scoreLabel.classList.add('progress-axis-label');
@@ -127,7 +152,7 @@ export function renderProgressChart({host, legend, notice, entries, axis, metric
     const selected = selectedIds.has(s.entry.id), accent = color(s.entry);
     const shape = gemMarker(markerIndex ? markerIndex(s.entry.id) : markerIds.get(s.entry.id), 4);
     const group = node('g', {class:'progress-series', 'data-run-id':s.entry.id, 'data-marker-shape':shape.name, 'data-selected':selected});
-    const path = linearPath(s.points, x, y);
+    const path = linearPath(s.linePoints, x, y);
     const hit = node('path', {d:path, fill:'none', stroke:'transparent', 'stroke-width':14, class:'progress-hit', 'aria-hidden':true});
     const line = node('path', {d:path, fill:'none', stroke:accent, 'vector-effect':'non-scaling-stroke', class:'progress-line', 'data-run-id':s.entry.id});
     const title = node('title');

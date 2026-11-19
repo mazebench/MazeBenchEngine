@@ -2,10 +2,29 @@ import { BenchmarkGameRuntime, loadBenchmarkAssets } from './v1/runtime.mjs';
 import { verifyRunIntegrity, verifyCheckpoint } from './v1/integrity.mjs';
 import { readCheckpointJson } from './v1/checkpoint-json.mjs';
 import { readWorldRevision } from './storage/live-world.mjs';
+import { isIncremental } from './storage/journal.mjs';
+import { readJournalReplayHistory } from './journal-replay-history.mjs';
+import { serialize, deserialize } from 'node:v8';
+import { deflateRawSync, inflateRawSync } from 'node:zlib';
 
 // Execute the signed command history in a private, memory-only runtime. Each
 // result must match the authenticated state hash before its frames are exposed.
 class ReadOnlyReplayRuntime extends BenchmarkGameRuntime {
+  entrySnapshots = new WeakMap();
+
+  snapshotForUndo() {
+    const {state, roomEntryState, roomFile, roomRevision} = this.internal;
+    const board = deflateRawSync(serialize(state), {level:1});
+    let entrance = this.entrySnapshots.get(roomEntryState);
+    if (!entrance) {
+      entrance = deflateRawSync(serialize(roomEntryState), {level:1});
+      this.entrySnapshots.set(roomEntryState, entrance);
+    }
+    return { roomFile, roomRevision,
+      get state() { return deserialize(inflateRawSync(board)); },
+      get roomEntryState() { return deserialize(inflateRawSync(entrance)); } };
+  }
+
   async renderObservation() { return {}; }
   async persist({animationFrames, animationCycle} = {}) {
     this.captured = {cycle: animationCycle, frames: animationFrames.map(frame => ({
@@ -15,9 +34,17 @@ class ReadOnlyReplayRuntime extends BenchmarkGameRuntime {
   }
 }
 
+// Reconstruction needs the authenticated commands, not another complete set
+// of saved undo snapshots alongside the replay runtime's own undo history.
+export async function readAsciiReplayHistory(directory) {
+  const { actions, actionCount, createdAt } = isIncremental(directory)
+    ? await readJournalReplayHistory(directory) : await readCheckpointJson(directory);
+  return { actions, actionCount, createdAt };
+}
+
 export async function openAsciiReplay(root, directory, metadata) {
   await verifyRunIntegrity(root, directory, metadata.integrity); verifyCheckpoint(directory);
-  const saved = await readCheckpointJson(directory), assets = await loadBenchmarkAssets(root, directory);
+  const saved = await readAsciiReplayHistory(directory), assets = await loadBenchmarkAssets(root, directory);
   const live = assets.liveWorld;
   if (live) { live.head = live.base; live.refresh = () => live.head; assets.rooms = live.rooms();
     assets.roomsByFile = new Map(assets.rooms.map(room=>[room.fileName,room]));

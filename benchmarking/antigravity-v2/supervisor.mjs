@@ -13,6 +13,7 @@ import { atomicJson, readJson } from "../providers/claude-runner.mjs";
 import { ANTIGRAVITY_PROVIDER, antigravityInstallationStatus } from "./status.mjs";
 import { POLICY, TRANSPORT_TOOLS, agentDefinition, authHome, tokenPath, settings, digest, immutable, inspectInstallation, runtimeHashes, verifyIntegrity } from "./policy.mjs";
 import { runAntigravityTurn } from "./runner.mjs";
+import { normalizeCharacterSeed } from "../character-seed.mjs";
 
 const now = () => new Date().toISOString();
 const terminal = summary => ["won", "action-limit"].includes(summary.game_status);
@@ -47,12 +48,13 @@ export class BenchmarkSupervisor extends GrokSupervisor {
     if (spec.world && spec.world !== "main-world") throw new Error("Antigravity currently supports Main World only.");
     if (spec.observation_mode && spec.observation_mode !== "ascii") throw new Error("Antigravity currently supports ASCII observations only.");
     if (spec.service_tier != null && spec.service_tier !== "standard") throw new Error("Antigravity uses subscription standard speed.");
+    const characterSeed = normalizeCharacterSeed(spec.character_seed);
     const status = await this.inspectAntigravity();
     const selected = status.models.find(entry => entry.id === (spec.model || status.models[0]?.id));
     if (!selected) throw new Error("This model is not available through Antigravity.");
     if (spec.effort && !selected.efforts.includes(spec.effort)) throw new Error("Select a supported model and reasoning effort.");
     return { provider: ANTIGRAVITY_PROVIDER, world: "main-world", observationMode: "ascii", model: selected.id, effort: selected.default_effort,
-      serviceTier: null, toolsEnabled: Boolean(spec.tools_enabled), startRoom: String(spec.start_room || "HxI"),
+      serviceTier: null, toolsEnabled: Boolean(spec.tools_enabled), startRoom: String(spec.start_room || "HxI"), characterSeed,
       actionLimit: spec.action_limit === null || String(spec.action_limit).toLowerCase() === "unlimited" ? null : Math.max(1, Math.min(1_000_000, Math.floor(Number(spec.action_limit) || 100))),
       pairId: spec.pair_id ? String(spec.pair_id).slice(0, 100) : null };
   }
@@ -88,20 +90,21 @@ export class BenchmarkSupervisor extends GrokSupervisor {
     const isolated = await this.createAntigravityHome(id, directory, options.toolsEnabled);
     const base = await readFile(path.join(this.projectRoot, "benchmarking/v1/EVAL-PROMPT.md"), "utf8");
     const prompt = buildBenchmarkPrompt(base, options), createdAt = now();
+    const seedSetting = options.characterSeed ? { character_seed: options.characterSeed } : {};
     const configuration = {
       storage_format: "incremental-v1", world_updates: LIVE_WORLD_POLICY, world: "main-world", observation_mode: "ascii",
       provider: ANTIGRAVITY_PROVIDER, antigravity_policy: POLICY, antigravity_executable: installation.executable,
       antigravity_version: installation.version, antigravity_sha256: digest(await readFile(installation.executable)),
       antigravity_home: isolated.home, antigravity_config: isolated.config, antigravity_runtime: await runtimeHashes(this.projectRoot),
       model: options.model, effort: options.effort, tools_enabled: options.toolsEnabled, service_tier: null,
-      action_limit: options.actionLimit, start_room: options.startRoom, effective_prompt_sha256: digest(prompt)
+      action_limit: options.actionLimit, start_room: options.startRoom, effective_prompt_sha256: digest(prompt), ...seedSetting
     };
     const metadata = {
       storage_format: "incremental-v1", world_updates: LIVE_WORLD_POLICY, schema_version: 1, id, world: "main-world", observation_mode: "ascii",
       provider: ANTIGRAVITY_PROVIDER, pair_id: options.pairId, created_at: createdAt, updated_at: createdAt, status: "preparing",
       model: options.model, effort: options.effort, tools_enabled: options.toolsEnabled, action_limit: options.actionLimit,
       start_room: options.startRoom, service_tier: null, service_tier_history: [{ at: createdAt, service_tier: "standard", source: "Initial run configuration" }],
-      prompt_sha256: digest(base), effective_prompt_sha256: digest(prompt), antigravity_session_id: null, continuation_count: 0,
+      prompt_sha256: digest(base), effective_prompt_sha256: digest(prompt), antigravity_session_id: null, continuation_count: 0, ...seedSetting,
       error: null, stopped_at: null, completed_at: null, isolation: { mode: "no-python" },
       capability_policy: { version: CAPABILITY_POLICY_VERSION, name: POLICY, antigravity_version: installation.version, transport_tools: TRANSPORT_TOOLS,
         tools: options.toolsEnabled ? "maze-and-isolated-python" : "maze-only" }

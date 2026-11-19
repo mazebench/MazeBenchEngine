@@ -30,7 +30,7 @@ export function createRunHeader(elements){
     version.textContent=values.version.label;version.title=values.version.detail;
     setup.textContent=[run.world==='ice-maze'?'Ice Maze':run.world==='slotski'?'Slotski':null,
       `${harnessName(run)} ${run.effort||''}`.trim(),run.observation_mode==='vision'?'Vision':'ASCII',codingLabel(run),
-      modelSpeed(run)==='fast'?'Fast':null,
+      modelSpeed(run)==='fast'?'Fast':null,run.character_seed?`Character seed ${run.character_seed}`:null,
       run.world==='slotski'?(run.sequence_enabled===false?'Single moves':'Batched moves'):null].filter(Boolean).join(' · ');
   }};
 }

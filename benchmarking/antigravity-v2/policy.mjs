@@ -80,6 +80,7 @@ export async function verifyIntegrity(root, directory, metadata) {
   const manifest = await verifyRunIntegrity(root, directory, metadata.integrity);
   assertRunConfiguration(metadata, manifest);
   const frozen = manifest.configuration;
+  if ((metadata.character_seed ?? null) !== (frozen.character_seed ?? null)) throw new Error("Run configuration changed (character_seed).");
   if (metadata.provider !== "antigravity" || frozen.provider !== "antigravity" || frozen.antigravity_policy !== POLICY) throw new Error("Antigravity provider policy changed.");
   if (frozen.world !== "main-world" || frozen.observation_mode !== "ascii") throw new Error("Unsupported Antigravity run mode.");
   if (!VERIFIED_VERSIONS.has(frozen.antigravity_version)) throw new Error("Unverified Antigravity version.");

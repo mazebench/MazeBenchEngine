@@ -6,11 +6,17 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "setup:deepseek": "node scripts/setup-deepseek.mjs",
+    "setup:deepseek-anthropic": "python3 scripts/setup-deepseek-anthropic.py",
+    "setup:deepseek-chatgpt": "node scripts/setup-deepseek-chatgpt.mjs",
+    "check:deepseek": "node scripts/check-deepseek.mjs",
     "start:releases": "node benchmarking/runtime-release-server.mjs",
     "start:codex-current": "node benchmarking/codex-current-server.mjs",
     "start:recovery": "node benchmarking/recovery-server.mjs",
+    "start:auto-resume": "node benchmarking/auto-resume-server.mjs",
     "start:vision-providers": "node benchmarking/vision-providers/server.mjs",
     "start:playback": "node benchmarking/playback-server.mjs",
+    "start:reports": "node benchmarking/report-server.mjs",
     "start:vision": "node --import ./benchmarking/codex-releases.mjs benchmarking/vision/server.mjs",
     "start:capabilities": "node benchmarking/capability-server.mjs",
     "setup:kimi": "python3 scripts/setup-kimi.py",
@@ -50,7 +56,8 @@
     "check:engine-snapshot": "node scripts/sync-engine-v1.mjs --check",
     "test:quick": "node scripts/test-quick.mjs",
     "test:integration": "node --test tests/vision-mode.test.mjs tests/vision-wire.test.mjs tests/ice-maze.test.mjs",
-    "start:catalogs": "node benchmarking/catalog-server.mjs"
+    "start:catalogs": "node benchmarking/catalog-server.mjs",
+    "setup:connection": "node scripts/setup-model-connection.mjs"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",

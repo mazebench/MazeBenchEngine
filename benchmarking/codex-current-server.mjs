@@ -9,18 +9,17 @@ import { createCapabilityServer } from './capability-server.mjs';
 import { CatalogSupervisor } from './model-catalog/supervisor.mjs';
 import { VisionSupervisor } from './vision/supervisor.mjs';
 import { createVisionServer } from './vision/server.mjs';
-import { inspectCodex } from './v1/codex-installation.mjs';
 import { CodexTransientRecovery } from './codex-transient-recovery.mjs';
+import { currentCodexCommand, admitCodexInstallation } from './codex-latest.mjs';
 
 export function createCurrentCodexServers(root, options = {}) {
   const port = options.port ?? 8088, visionPort = options.visionPort ?? 8089;
   const upstreamPort = options.upstreamPort ?? 8087;
-  const codexBin = options.codexBin || process.env.MAZEBENCH_CODEX_BIN ||
-    path.join(os.homedir(), '.codex/packages/standalone/releases/0.164.0-aarch64-apple-darwin/bin/codex');
-  if (!inspectCodex(codexBin).tested) throw new Error('Codex release must pass capability validation before launch.');
+  const codexBin = options.codexBin || currentCodexCommand();
+  admitCodexInstallation(codexBin);
   const ownerRoot = options.ownerRoot || path.join(os.homedir(), '.mazebench/current-codex-owner');
   const ascii = options.ascii || new CatalogSupervisor(root, { ...options, codexBin, ownerRoot });
-  const vision = options.vision || new VisionSupervisor(root, { ...options, recordsRoot: options.visionRecordsRoot, codexBin });
+  const vision = options.vision || new VisionSupervisor(root, { ...options, recordsRoot: options.visionRecordsRoot, codexBin, catalog: ascii.catalog });
   vision.active = ascii.active;
   vision.models = () => ascii.catalog.all();
   const marker = id => path.join(ownerRoot, id + '.json');

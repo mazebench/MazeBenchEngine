@@ -14,11 +14,12 @@ import { VisionRenderer } from './renderer.mjs';
 import { visionRuntimeHashes, verifyVisionIntegrity } from './policy.mjs';
 import { runVisionCodexTurn } from './codex-runner.mjs';
 import { runClaudeTurn } from './claude-runner.mjs';
+import { latestCodexForLaunch, admitCodexInstallation } from '../codex-latest.mjs';
 const now=()=>new Date().toISOString();
 const terminal=s=>['won','action-limit'].includes(s);
 const continuation=count=>`Continue the same MazeBench vision run at action ${count}. Call maze_observe to see the current room, then keep playing until won or action-limit. Images and animation frame records are available through maze_observe. Do not stop because you believe the puzzle is impossible.`;
 export class VisionSupervisor extends ProviderSupervisor {
-  constructor(root,options={}){super(root,{...options,recordsRoot:options.recordsRoot||process.env.MAZEBENCH_VISION_RECORDS_ROOT||path.join(os.homedir(),'records','mazebench-vision')});}
+  constructor(root,options={}){super(root,{...options,recordsRoot:options.recordsRoot||process.env.MAZEBENCH_VISION_RECORDS_ROOT||path.join(os.homedir(),'records','mazebench-vision')});this.launchOptions=options;}
   async validateSpec(spec={}){
     if((spec.world&&spec.world!=='main-world')||(spec.observation_mode&&spec.observation_mode!=='vision'))throw new Error('Vision mode currently supports the MazeBench main world.');
     const options=await super.validateSpec(spec);
@@ -26,6 +27,12 @@ export class VisionSupervisor extends ProviderSupervisor {
     return options;
   }
   async launch(spec={}){
+    if((spec.provider||'codex')==='codex'&&this.launchOptions.catalog&&!this.launchOptions.codexSelected){
+      const installed=await latestCodexForLaunch(this.projectRoot);
+      const owner=new VisionSupervisor(this.projectRoot,{...this.launchOptions,codexBin:installed.executable,codexSelected:true});
+      owner.active=this.active;owner.runDirectory=id=>this.runDirectory(id);owner.models=()=>this.models();
+      return owner.launch(spec);
+    }
     const options=await this.validateSpec(spec);await this.initialize();
     let capability,installation;
     if(options.provider==='codex')capability=this.codexCapabilityPolicy();
@@ -59,7 +66,11 @@ export class VisionSupervisor extends ProviderSupervisor {
   }
   async verifyRunCapabilityBoundary(meta,directory){
     const manifest=await verifyVisionIntegrity(this.projectRoot,directory,meta);
-    if(meta.provider==='codex')return CodexSupervisor.prototype.verifyRunCapabilityBoundary.call(this,meta,directory);
+    if(meta.provider==='codex'){
+      const owner=Object.create(this);owner.codexBin=meta.capability_policy.codex_executable;
+      admitCodexInstallation(owner.codexBin);
+      return CodexSupervisor.prototype.verifyRunCapabilityBoundary.call(owner,meta,directory);
+    }
     if(meta.tools_enabled)this.pythonPreflight(directory);return manifest.configuration;
   }
   startVision(id,directory,prompt){

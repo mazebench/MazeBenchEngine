@@ -15,12 +15,16 @@ import { PrimeAutoRecovery } from './prime-auto-recovery.mjs';
 import { installPrimeHttpTransport } from './prime-http-transport.mjs';
 import { readRunVersion } from './run-version.mjs';
 import { CodexVisionAutoRecovery } from './codex-vision-auto-recovery.mjs';
-import { GeminiVisionAutoRecovery } from './gemini-vision-auto-recovery.mjs';
+import { GeminiAsciiAutoRecovery, GeminiVisionAutoRecovery } from './gemini-vision-auto-recovery.mjs';
 import { GrokVisionAutoRecovery } from './grok-vision-auto-recovery.mjs';
 import { resumeExclusively } from './storage/resume-lock.mjs';
+import { installClaudeOutputLimit } from './claude-output-limit.mjs';
+import { RunLibrary } from './run-library.mjs';
+import { currentCodexCommand } from './codex-latest.mjs';
 
 export function createRuntimeReleaseServer(root, { port = 8090, upstreamPort } = {}) {
   const bundles = new Map(), active = new Map(), catalog = new ModelCatalog(), launching = new AsyncLocalStorage();
+  const library = new RunLibrary({ markInterrupted: true });
   let checkedAt = 0, upstream = 8087;
   const upstreamFor = async () => {
     if (upstreamPort) return upstreamPort;
@@ -41,7 +45,7 @@ export function createRuntimeReleaseServer(root, { port = 8090, upstreamPort } =
         'benchmarking/prime-direct-v2/supervisor.mjs', 'benchmarking/vision/renderer.mjs'
       ].map(name => importAt(releaseRoot, name)));
       const records = path.join(os.homedir(), 'records/mazebench-releases', path.basename(releaseRoot));
-      const options = { codexBin: process.env.MAZEBENCH_CODEX_BIN || path.join(os.homedir(), '.codex/packages/standalone/releases/0.164.0-aarch64-apple-darwin/bin/codex'),
+      const options = { codexBin: currentCodexCommand(),
         ownerRoot: path.join(records, 'owners'), recordsRoot: path.join(records, 'ascii'), catalog };
       const transientOwners = path.join(records, 'transient-owners');
       const ascii = new CatalogSupervisor(releaseRoot, options);
@@ -51,6 +55,7 @@ export function createRuntimeReleaseServer(root, { port = 8090, upstreamPort } =
       installPrimeHttpTransport(prime);
       const children = [...Object.values(ascii.runtimes), ascii, vision, providers, prime];
       for (const owner of children) {
+        installClaudeOutputLimit(owner);
         owner.active = active;
         owner.models = () => catalog.all();
         const directory = owner.runDirectory.bind(owner);
@@ -68,10 +73,15 @@ export function createRuntimeReleaseServer(root, { port = 8090, upstreamPort } =
       const choose = spec => spec.observation_mode === 'vision' ? ['codex', 'claude-code'].includes(spec.provider || 'codex') ? vision : providers
         : spec.provider === 'prime-agent' ? prime : ascii;
       const recovery = new PrimeAutoRecovery(prime); recovery.start();
-      const visionRecovery = [CodexVisionAutoRecovery, GeminiVisionAutoRecovery, GrokVisionAutoRecovery].map((Recovery, index) => {
-        const controller = new Recovery(releaseRoot, { ...visionOptions, stateRoot: path.join(records, `vision-recovery-${index}`),
+      const controllers = [
+        [CodexVisionAutoRecovery, visionOptions, 'vision-recovery-0'],
+        [GeminiVisionAutoRecovery, visionOptions, 'vision-recovery-1'],
+        [GrokVisionAutoRecovery, visionOptions, 'vision-recovery-2'],
+        [GeminiAsciiAutoRecovery, options, 'gemini-ascii-recovery'],
+      ].map(([Recovery, ownerOptions, folder]) => {
+        const controller = new Recovery(releaseRoot, { ...ownerOptions, stateRoot: path.join(records, folder),
           request: async (id, action) => {
-            const spec = JSON.parse(readFileSync(path.join(visionOptions.recordsRoot, id, 'run.json'), 'utf8'));
+            const spec = JSON.parse(readFileSync(path.join(ownerOptions.recordsRoot, id, 'run.json'), 'utf8'));
             const owner = choose(spec);
             return action === 'resume' ? resumeExclusively(owner, id) : action ? owner[action](id) : owner.get(id);
           } });
@@ -84,7 +94,7 @@ export function createRuntimeReleaseServer(root, { port = 8090, upstreamPort } =
       } });
       transient.start();
       const renderer = new VisionRenderer(releaseRoot);
-      return { choose, ascii, vision, providers, prime, recovery, transient, visionRecovery, renderer };
+      return { choose, ascii, vision, providers, prime, recovery, transient, controllers, renderer };
     })();
     bundles.set(releaseRoot, pending);
     try { return await pending; } catch (error) { bundles.delete(releaseRoot); throw error; }
@@ -100,11 +110,16 @@ export function createRuntimeReleaseServer(root, { port = 8090, upstreamPort } =
     supervisor[method] = async (id, ...args) => {
       const record = releaseOwner(id), owners = await bundle(record.root);
       const spec = JSON.parse(readFileSync(path.join(record.directory, 'run.json'), 'utf8'));
-      const controller = owners.visionRecovery.find(value => value.policy.eligible(spec));
+      const controller = owners.controllers.find(value => value.policy.eligible(spec));
       if (controller && ['pause', 'stop', 'resume', 'delete'].includes(method)) return controller.command(id, method);
       if (spec.provider === 'prime-agent' && ['pause', 'stop', 'resume', 'delete'].includes(method)) return owners.recovery.command(id, method);
       return (await ownerFor(id))[method](id, ...args);
     };
+  }
+  async function decorateRun(run) {
+    const { controllers } = await bundle(releaseOwner(run.id).root);
+    const controller = controllers.find(value => value.records.has(run.id));
+    return controller ? controller.decorate(run) : run;
   }
   const get = supervisor.get;
   supervisor.get = async (id, ...args) => {
@@ -112,7 +127,7 @@ export function createRuntimeReleaseServer(root, { port = 8090, upstreamPort } =
     run.benchmark_version = readRunVersion(directory, JSON.parse(readFileSync(path.join(directory, 'run.json'), 'utf8')), run);
     return run;
   };
-  const api = createCapabilityServer(root, { port, upstreamPort: upstreamFor, supervisor, catalog, autoRecovery: false, ownsRun: directory => Boolean(releaseOwner(path.basename(directory))) });
+  const api = createCapabilityServer(root, { port, upstreamPort: upstreamFor, supervisor, catalog, autoRecovery: false, decorateRun, ownsRun: directory => Boolean(releaseOwner(path.basename(directory))) });
   const handle = api.server.listeners('request')[0]; api.server.removeListener('request', handle);
   const reply = (res, status, value, type = 'application/json') => { res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' }); res.end(Buffer.isBuffer(value) || typeof value === 'string' ? value : JSON.stringify(value)); };
   api.server.on('request', async (req, res) => {
@@ -141,7 +156,15 @@ export function createRuntimeReleaseServer(root, { port = 8090, upstreamPort } =
         for (const file of existsSync(releaseOwners) ? readdirSync(releaseOwners) : []) {
           const id = file.replace(/\.json$/, '');
           if (!/^run-[\dTZ-]+-[a-f0-9]{6}$/.test(id)) continue;
-          try { runs.set(id, await supervisor.get(id, { details: false })); } catch { /* An incomplete launch may lack a checkpoint. */ }
+          try {
+            // Frequent library/recovery polls only need signed scalar counters.
+            // Immutable owners reconstruct and cache complete histories even
+            // with details:false; doing that for every release exhausts heap.
+            const run = url.searchParams.get('view') === 'library'
+              ? await library.card(releaseOwner(id).directory, active.has(id))
+              : await supervisor.get(id, { details: false });
+            runs.set(id, await decorateRun(run));
+          } catch { /* An incomplete launch may lack a checkpoint. */ }
         }
         return reply(res, 200, { ...value, runs: [...runs.values()].sort((a, b) => b.created_at.localeCompare(a.created_at)) });
       }
@@ -164,7 +187,7 @@ export function createRuntimeReleaseServer(root, { port = 8090, upstreamPort } =
   const shutdown = async () => {
     for (const pending of bundles.values()) {
       const value = await pending; value.transient.close(); await value.recovery.close();
-      await Promise.allSettled(value.visionRecovery.map(controller => controller.close()));
+      await Promise.allSettled(value.controllers.map(controller => controller.close()));
     }
     await Promise.allSettled([...active.keys()].map(id => supervisor.pause(id)));
     api.server.close(); api.server.closeAllConnections();

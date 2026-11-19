@@ -3,7 +3,7 @@ import path from 'node:path';
 import { inventoryHash, sha256 } from './version-catalogue.mjs';
 import { repositoryRunVersion } from './run-version-label.mjs';
 import { updateVersionRegistry, registryFile } from './version-store.mjs';
-import { asciiReleaseMarker } from './runtime-release-store.mjs';
+import { asciiReleaseMarker, gameplayMarker, gameplayMarkerPath, gameplaySource } from './runtime-release-store.mjs';
 
 export class CurrentVersions {
   constructor(root, { file = registryFile } = {}) { this.root = root; this.file = file; this.cache = new Map(); }
@@ -52,6 +52,7 @@ export class CurrentVersions {
     const pending = sourceNames.length !== compiled.files.length || compiled.files.some(source => !sourceNames.includes(source.path) || this.hash(source.path) !== source.sha256);
     const benchmark = this.inventory(['engine/v1', 'play/v1']);
     if (existsSync(path.join(this.root, 'benchmarking/active-ascii-release.json'))) benchmark['engine/v1/ascii-v2.json'] = sha256(asciiReleaseMarker(this.root));
+    if (existsSync(path.join(this.root, gameplaySource))) benchmark[gameplayMarkerPath] = sha256(gameplayMarker(this.hash(gameplaySource)));
     const snapshots = [
       { generation: '1.1', engine: inventoryHash(current), world },
       { generation: '1.1', engine: inventoryHash(benchmark), world }

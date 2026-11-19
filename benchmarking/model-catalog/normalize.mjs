@@ -1,6 +1,6 @@
 // Provider identifiers remain exact. Group only documented preset suffixes;
 // names such as Flash, Pro, Max and Lightning are actual model families.
-export const effortOrder = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'enabled', 'default'];
+export const effortOrder = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'enabled', 'default'];
 export const sortedEfforts = values => [...new Set(values)].sort((a, b) => {
   const ai = effortOrder.indexOf(a), bi = effortOrder.indexOf(b);
   return (ai < 0 ? 100 : ai) - (bi < 0 ? 100 : bi) || a.localeCompare(b);
@@ -66,7 +66,7 @@ export function modelIdentity(model) {
     // highspeed alias resolves to K2.7: these must never be merged.
     id = id === 'kimi-for-coding-highspeed' ? 'kimi-k2.7-code' : id.replace(/-highspeed$/, '');
   }
-  if (model.provider === 'grok-build' && /-build-fast$/.test(id)) {
+  if (model.provider === 'grok-build' && !model.connection && /-build-fast$/.test(id)) {
     speed = 'fast'; id = id.replace(/-build-fast$/, ''); name = name.replace(/\s+(?:Build\s+)?Fast$/i, '');
   }
   if (model.provider === 'muse-code') name = id; // Preserve Full/Contributor; some provider labels omit Full.
@@ -75,9 +75,9 @@ export function modelIdentity(model) {
 export function groupModels(models) {
   const groups = new Map();
   for (const m of models) {
-    const identity = modelIdentity(m), key = `${m.provider}:${identity.id}`;
+    const identity = modelIdentity(m), key = `${m.provider}:${m.connection_id || ''}:${identity.id}`;
     let group = groups.get(key);
-    if (!group) { group = { id: identity.id, name: identity.name, provider: m.provider, variants: [], hidden: m.hidden === true }; groups.set(key, group); }
+    if (!group) { group = { id: identity.id, name: identity.name, provider: m.provider, connection_id: m.connection_id, connection_name: m.connection_name, variants: [], hidden: m.hidden === true }; groups.set(key, group); }
     for (const speed of m.speed_options || [identity.speed]) group.variants.push({ ...m, speed,
       service_tier: m.speed_options ? speed : 'standard' });
     if (identity.speed === 'standard') group.name = identity.name;

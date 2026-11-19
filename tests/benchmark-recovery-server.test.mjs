@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { createRecoveryServer } from '../benchmarking/recovery-server.mjs';
+import { createRecoveryServer, createVisionRecovery } from '../benchmarking/recovery-server.mjs';
 const id = 'run-2026-10-26T00-00-00-000Z-aaaaaa';
 test('recovery companion decorates reports, owns recovery commands, and leaves other owners untouched', async t => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'maze-recovery-api-')); t.after(() => rm(temp, { recursive: true, force: true }));
@@ -12,8 +12,21 @@ test('recovery companion decorates reports, owns recovery commands, and leaves o
   const forwarded = [], commands = [];
   const upstream = createServer(async (req, res) => { let body = ''; for await (const chunk of req) body += chunk; forwarded.push([req.method, req.url, body]); res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(req.url.includes('?view=library') ? { runs: [{ id }] } : { id })); });
   await new Promise(r => upstream.listen(0, '127.0.0.1', r)); t.after(() => { upstream.closeAllConnections(); upstream.close(); });
-  const recovery = { ready: Promise.resolve(), directory: value => path.join(temp, value), start() {}, close() {},
-    decorate: run => ({ ...run, auto_recovery: { enabled: true, state: 'waiting' } }), command: async (runId, action) => { commands.push([runId, action]); return { id: runId, status: action === 'resume' ? 'continuing' : 'paused' }; } };
+  t.mock.method(os, 'homedir', () => temp);
+  const asciiRecordsRoot = path.join(temp, 'ascii');
+  const recovery = createVisionRecovery(process.cwd(), { recordsRoot: temp, asciiRecordsRoot });
+  await recovery.ready;
+  recovery.start = () => {};
+  recovery.decorate = run => ({ ...run, auto_recovery: { enabled: true, state: 'waiting' } });
+  const controllerFor = recovery.controllerFor;
+  recovery.controllerFor = async id => {
+    const controller = await controllerFor(id);
+    if (controller) controller.command = async (runId, action) => {
+      commands.push([runId, action]);
+      return { id: runId, status: action === 'resume' ? 'continuing' : 'paused', policy: controller.policy.name };
+    };
+    return controller;
+  };
   const { server } = createRecoveryServer(process.cwd(), { port: 0, recovery, upstreamPort: upstream.address().port });
   await new Promise(r => server.listen(0, '127.0.0.1', r)); t.after(() => { server.closeAllConnections(); server.close(); });
   const origin = 'http://127.0.0.1:' + server.address().port;
@@ -28,6 +41,19 @@ test('recovery companion decorates reports, owns recovery commands, and leaves o
   await writeFile(path.join(temp, id, 'run.json'), JSON.stringify({ provider: 'muse-code', observation_mode: 'vision' }));
   await fetch(origin + '/api/benchmark/v1/runs/' + id + '/pause', { method: 'POST' });
   assert.deepEqual(forwarded.at(-1), ['POST', '/api/benchmark/v1/runs/' + id + '/pause', '']);
+  await rm(path.join(temp, id), { recursive: true });
+  await mkdir(path.join(asciiRecordsRoot, id), { recursive: true });
+  const ascii = { provider: 'antigravity', observation_mode: 'ascii', world: 'main-world', tools_enabled: false,
+    antigravity_session_id: 'legacy-session', capability_policy: { name: 'antigravity-mcp-only-v1' } };
+  await writeFile(path.join(asciiRecordsRoot, id, 'run.json'), JSON.stringify(ascii));
+  const resume = await fetch(origin + '/api/benchmark/v1/runs/' + id + '/resume', { method: 'POST' });
+  assert.equal((await resume.json()).policy, 'gemini-ascii-normal-resume-v1');
+  await writeFile(path.join(asciiRecordsRoot, id, 'run.json'), JSON.stringify({ ...ascii, tools_enabled: true }));
+  const codingOn = await fetch(origin + '/api/benchmark/v1/runs/' + id + '/resume', { method: 'POST' });
+  assert.equal((await codingOn.json()).policy, 'gemini-ascii-normal-resume-v1');
+  await writeFile(path.join(asciiRecordsRoot, id, 'run.json'), JSON.stringify({ ...ascii, tools_enabled: true, coding_mode: 'off' }));
+  await fetch(origin + '/api/benchmark/v1/runs/' + id + '/resume', { method: 'POST' });
+  assert.deepEqual(forwarded.at(-1), ['POST', '/api/benchmark/v1/runs/' + id + '/resume', '']);
   const body = JSON.stringify({ provider: 'muse-code', observation_mode: 'vision' }); await fetch(origin + '/api/benchmark/v1/runs', { method: 'POST', body });
   assert.deepEqual(forwarded.at(-1), ['POST', '/api/benchmark/v1/runs', body]);
   assert.equal((await fetch(origin + '/api/benchmark/recovery/status', { headers: { Origin: 'https://evil.example' } })).status, 403);

@@ -61,9 +61,9 @@ test('pricing inventory includes unpriced and historical models, preserves route
 
 test('read-only report endpoint serves new pricing without owning or mutating runs', async () => {
   const calls = [];
-  const reports = { read: async (directory, kind) => { calls.push([directory, kind]); return { api_estimate: { usd: .155 } }; }, close: async () => {} };
+  const reports = { read: async (...args) => { calls.push(args); return { api_estimate: { usd: .155 } }; }, close: async () => {} };
   const pricing = { refresh: async force => ({ version: 1, entries: {}, sources: {}, force }), close() {} };
-  const { server } = createPlaybackServer(process.cwd(), { port: 0, recordsRoot: '/fixtures', reports, replays: {}, pricing });
+  const { server } = createPlaybackServer(process.cwd(), { port: 0, recordsRoot: '/fixtures', reports, replays: {}, pricing, runnerActive: async () => true });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`, id = 'run-2026-10-26T00-00-00-000Z-abcdef';
   try {
@@ -72,6 +72,9 @@ test('read-only report endpoint serves new pricing without owning or mutating ru
     assert.deepEqual(calls, [[`/fixtures/${id}`, 'tokens']]);
     assert.equal((await fetch(`${origin}/api/benchmark/v1/runs/${id}/comparison`)).status, 200);
     assert.deepEqual(calls.at(-1), [`/fixtures/${id}`, 'comparison']);
+    assert.equal((await fetch(`${origin}/api/benchmark/v1/runs/${id}/charts`)).status, 200);
+    assert.deepEqual(calls.at(-1), [`/fixtures/${id}`, 'charts', true]);
+    assert.equal((await fetch(`${origin}/api/benchmark/v1/runs/${id}/charts`, { method: 'POST' })).status, 405);
     assert.equal((await fetch(`${origin}/api/benchmark/v1/runs/${id}/comparison`, { method: 'POST' })).status, 405);
     assert.equal((await fetch(`${origin}/api/benchmark/v1/runs/${id}/tokens`, { method: 'POST' })).status, 405);
     assert.equal((await fetch(`${origin}/api/benchmark/v1/runs/bad-id/tokens`)).status, 404);

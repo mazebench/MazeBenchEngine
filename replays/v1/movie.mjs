@@ -106,9 +106,8 @@ export async function compileReplay(engine, sourceWorld, imported, { onProgress 
       label, type: command.type, gemsBefore, gemsAfter: physics.collected.size };
     clips.push(clip);
     duration += timeline.duration;
-    // Match Solutions visitation: only a settled destination counts, never a
-    // room briefly crossed by a slide or punch. Return visits add no new tick.
-    if (!visited.has(finalRoom.fileName)) {
+    // Award the visit on the first move that settles here with a living player.
+    if (!visited.has(finalRoom.fileName) && physics.activePlayer(state)) {
       visited.add(finalRoom.fileName);
       visits.push({ room: finalRoom.fileName, at: clip.start + settledAt });
     }

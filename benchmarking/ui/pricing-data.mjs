@@ -4,7 +4,7 @@ import { modelSlug, modelSpeed } from './model-label.mjs';
 
 const primaryProvider = model => model.startsWith('gpt-') ? 'codex' : model.startsWith('claude-') ? 'claude-code'
   : model.startsWith('gemini-') ? 'antigravity' : model.startsWith('grok-') ? 'grok-build'
-    : model.startsWith('muse-') ? 'muse-code' : 'kimi-code';
+    : model.startsWith('muse-') ? 'muse-code' : model.startsWith('deepseek-') ? 'deepseek-harness' : 'kimi-code';
 export const configuredModels = () => pricingModels().map(id => ({ id, provider: primaryProvider(id) }));
 const validRate = rate => Number.isFinite(rate) && rate >= 0;
 

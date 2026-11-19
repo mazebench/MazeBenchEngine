@@ -1,13 +1,15 @@
 import { CurrentVersions } from "./benchmarking/current-version.mjs";
+import { ensureServerHeap, startReaderService } from "./benchmarking/server-resources.mjs";
 import { createCatalogServer } from "./benchmarking/catalog-server.mjs";
 import { createLocalProjectHandler } from "./scripts/lib/local-project-http.mjs";
 import { createCapabilityServer } from "./benchmarking/capability-server.mjs";
 import { createVisionServer } from "./benchmarking/vision/server.mjs";
-import { createPlaybackServer } from "./benchmarking/playback-server.mjs";
 import { createProviderVisionServer } from "./benchmarking/vision-providers/server.mjs";
 import { createRecoveryServer } from "./benchmarking/recovery-server.mjs";
+import { createAutoResumeServer } from "./benchmarking/auto-resume-server.mjs";
 import "./benchmarking/codex-releases.mjs";
 import { createRuntimeReleaseServer } from "./benchmarking/runtime-release-server.mjs";
+import { installClaudeOutputLimit } from "./benchmarking/claude-output-limit.mjs";
 import { publishEditorRoom } from "./benchmarking/storage/live-world.mjs";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
@@ -27,6 +29,7 @@ import { TokenTelemetry } from "./benchmarking/token-telemetry.mjs";
 import { isTrustedLocalRequest } from "./benchmarking/v1/http-security.mjs";
 import { decodeVoxelRoom, encodeVoxelRoom } from "./render/v1/voxel-world-v2.mjs";
 
+await ensureServerHeap();
 const root = path.dirname(fileURLToPath(import.meta.url));
 const v1LevelRoot = path.join(root, "level-data", "v1", "main-world");
 const v2LevelRoot = path.join(root, "level-data", "v2", "main-world");
@@ -37,6 +40,7 @@ const allowedV2Levels = new Set(Object.keys(v2Manifest.rooms || {}));
 const host = process.env.MAZEBENCH_BENCHMARK_HOST || "127.0.0.1";
 const port = Number(process.env.MAZEBENCH_BENCHMARK_PORT || 8080);
 const benchmarkSupervisor = new (withRunnerLiveness(BenchmarkSupervisor))(root);
+installClaudeOutputLimit(benchmarkSupervisor);
 const runLibrary = new RunLibrary({ markInterrupted: true });
 const runDashboard = new RunDashboard(runLibrary);
 const reportReader = new ReportReader();
@@ -358,25 +362,41 @@ server.listen(port, host, () => {
   console.log(`MazeBenchBenchmarking running at http://localhost:${port}`);
 });
 
+// These ports serve APIs, not the app homepage. LocalhostRegistrar probes
+// every listener owned by this process and must only select the main server.
+function listenCompanion(companion, companionPort) {
+  const handlers = companion.listeners("request");
+  companion.removeAllListeners("request");
+  companion.on("request", (request, response) => {
+    if ((request.url || "/").split("?")[0] === "/") {
+      response.writeHead(503, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
+      response.end("Open MazeBench at http://localhost:" + port + "/");
+      return;
+    }
+    for (const handle of handlers) handle.call(companion, request, response);
+  });
+  companion.listen(companionPort, "127.0.0.1");
+}
+
 // Start the image runner with the site, preserving a standalone owner that
 // already has live vision runs. ASCII and image observations stay separate.
 if (process.env.MAZEBENCH_DISABLE_VISION !== "1" && (Number(port) === 8080 || process.env.MAZEBENCH_VISION_PORT)) {
   const visionPort = Number(process.env.MAZEBENCH_VISION_PORT || 8082);
   const { server: visionServer } = createVisionServer(root, { port: visionPort, mainPort: Number(port) });
   visionServer.on("error", error => { if (error.code !== "EADDRINUSE") console.error("Vision server:", error.message); });
-  visionServer.listen(visionPort, "127.0.0.1");
+  listenCompanion(visionServer, visionPort);
   const playbackPort = Number(process.env.MAZEBENCH_PLAYBACK_PORT || 8085);
-  const { server: playbackServer } = createPlaybackServer(root, { port: playbackPort, mainPort: Number(port) });
-  playbackServer.on("error", error => { if (error.code !== "EADDRINUSE") console.error("Run replay:", error.message); });
-  playbackServer.listen(playbackPort, "127.0.0.1");
+  void startReaderService(root, 'playback', playbackPort).catch(error => console.error('Run replay:', error.message));
+  const reportPort = Number(process.env.MAZEBENCH_REPORT_PORT || 8091);
+  void startReaderService(root, 'report', reportPort).catch(error => console.error('Run reports:', error.message));
   const providerVisionPort = Number(process.env.MAZEBENCH_PROVIDER_VISION_PORT || 8086);
   const { server: providerVisionServer } = createProviderVisionServer(root, { port: providerVisionPort, mainPort: Number(port), upstreamPort: Number(process.env.MAZEBENCH_CATALOG_PORT || 8084) });
   providerVisionServer.on("error", error => { if (error.code !== "EADDRINUSE") console.error("Subscription vision:", error.message); });
-  providerVisionServer.listen(providerVisionPort, "127.0.0.1");
+  listenCompanion(providerVisionServer, providerVisionPort);
   const recoveryPort = Number(process.env.MAZEBENCH_RECOVERY_PORT || 8087);
   const { server: recoveryServer } = createRecoveryServer(root, { port: recoveryPort, mainPort: Number(port), visionPort });
   recoveryServer.on("error", error => { if (error.code !== "EADDRINUSE") console.error("Vision recovery:", error.message); });
-  recoveryServer.listen(recoveryPort, "127.0.0.1");
+  listenCompanion(recoveryServer, recoveryPort);
 }
 
 // A previously started companion may own active Any-language runs. Never replace
@@ -387,18 +407,21 @@ if (process.env.MAZEBENCH_DISABLE_CAPABILITIES !== "1" && (Number(port) === 8080
   capabilityServer.on("error", error => {
     if (error.code !== "EADDRINUSE") console.error("Capability server:", error.message);
   });
-  capabilityServer.listen(capabilityPort, "127.0.0.1");
+  listenCompanion(capabilityServer, capabilityPort);
 }
 
 // Keep catalog upgrades independent of the processes owning existing runs.
 if (process.env.MAZEBENCH_DISABLE_CAPABILITIES !== "1" && (Number(port) === 8080 || process.env.MAZEBENCH_CAPABILITY_PORT)) {
   const { server: catalogServer } = createCatalogServer(root, { port: Number(process.env.MAZEBENCH_CATALOG_PORT || 8084), mainPort: Number(port), upstreamPort: Number(process.env.MAZEBENCH_CAPABILITY_PORT || 8083) });
   catalogServer.on("error", error => { if (error.code !== "EADDRINUSE") console.error("Model catalog server:", error.message); });
-  catalogServer.listen(Number(process.env.MAZEBENCH_CATALOG_PORT || 8084), "127.0.0.1");
+  listenCompanion(catalogServer, Number(process.env.MAZEBENCH_CATALOG_PORT || 8084));
 }
 
 if (process.env.MAZEBENCH_DISABLE_CAPABILITIES !== "1" && Number(port) === 8080) {
   const releases = createRuntimeReleaseServer(root);
   releases.server.on('error', error => { if (error.code !== 'EADDRINUSE') console.error('Versioned benchmark runner:', error.message); });
-  releases.ready.then(() => releases.server.listen(8090, '127.0.0.1'));
+  releases.ready.then(() => listenCompanion(releases.server, 8090));
+  const autoResume = createAutoResumeServer();
+  autoResume.server.on('error', error => { if (error.code !== 'EADDRINUSE') console.error('All-agent auto-resume:', error.message); });
+  listenCompanion(autoResume.server, 8092);
 }

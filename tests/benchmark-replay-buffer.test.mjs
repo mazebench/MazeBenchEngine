@@ -7,6 +7,8 @@ import {sliceReplayChunk,appendReplayChunk,replayBufferTime} from '../benchmarki
 import {PlaybackReplay} from '../benchmarking/playback-replay.mjs';
 import {BenchmarkGameRuntime} from '../benchmarking/v1/runtime.mjs';
 import {createRunIntegrity} from '../benchmarking/v1/integrity.mjs';
+import {verifyJournal} from '../benchmarking/storage/journal.mjs';
+import {readAsciiReplayHistory} from '../benchmarking/ascii-replay-source.mjs';
 import {createPlaybackServer} from '../benchmarking/playback-server.mjs';
 
 test('buffer chunks assemble without duplicate clips, preserve geometry IDs, and reset on a new history',()=>{
@@ -23,25 +25,31 @@ test('buffer chunks assemble without duplicate clips, preserve geometry IDs, and
   assert.equal(sliceReplayChunk({...value,epoch:'replacement'},{epoch:'first',after:1,limit:2}).from,0);
 });
 
-test('actual signed text replay yields a playable partial movie and continues without writing run files',async t=>{
+test('signed incremental replay handles undo and new moves without writing run files',async t=>{
   const directory=await mkdtemp(path.join(tmpdir(),'mazebench-buffer-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   const root=path.resolve(import.meta.dirname,'..'),runtime=await BenchmarkGameRuntime.create(root,directory,{startRoom:'HxI',actionLimit:20});
   const metadata={start_room:'HxI',observation_mode:'ascii',integrity:await createRunIntegrity(root,directory,{})};
-  await writeFile(path.join(directory,'run.json'),JSON.stringify(metadata));await runtime.persist();
+  await writeFile(path.join(directory,'run.json'),JSON.stringify(metadata));await runtime.persist();await runtime.enableIncremental();
   for(const action of ['right','camera right','left','undo','reset','camera up','right'])await runtime.apply(action);
-  const files=['game-state.json','summary.json','checkpoint.json','records/history.jsonl'];
+  const previous = await readAsciiReplayHistory(directory);
+  await runtime.apply('left');
+  const current = await readAsciiReplayHistory(directory);
+  assert.equal(previous.actions.length,7);
+  assert.deepEqual(current.actions,runtime.internal.actions);
+  const journal = verifyJournal(directory);
+  const files=['game-state.json','summary.json','checkpoint.json',`journal/${journal.generation}/entries.jsonl`];
   const before=await Promise.all(files.map(file=>readFile(path.join(directory,file),'utf8')));
   const replays=new PlaybackReplay(root);t.after(()=>replays.close());
   let assembled=null,epoch,after=-1,rounds=0;
   do{
     const part=await replays.chunk(directory,{epoch,after,templates:assembled?.templates.length||0,layouts:assembled?.layouts.length||0,limit:2});
-    assert(part.action_count-after<=2);assert.equal(part.total_action_count,7);
+    assert(part.action_count-after<=2);assert.equal(part.total_action_count,8);
     if(!assembled){assert.equal(part.complete,false);assert(part.movie.clips.length>0);assert(part.movie.duration>0);}
     assembled=appendReplayChunk(assembled,epoch,part);epoch=part.epoch;after=part.action_count;rounds++;
     if(part.complete)break;
-    assert(rounds<5);
+    assert(rounds<6);
   }while(true);
-  assert.equal(rounds,4);assert.equal(assembled.clips.length,8);
+  assert.equal(rounds,5);assert.equal(assembled.clips.length,9);
   assert.deepEqual(assembled,(await replays.movie(directory)).movie);
   assert.deepEqual(await Promise.all(files.map(file=>readFile(path.join(directory,file),'utf8'))),before);
 });

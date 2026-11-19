@@ -3,10 +3,13 @@ import path from 'node:path';
 import { pricingSources, validPrice } from './pricing-sources.mjs';
 import { installPricingSnapshot } from './token-pricing.mjs';
 
-export const pricingCacheFile = path.resolve(import.meta.dirname, '../.mazebench/pricing/catalog.json');
+// Older report processes cannot interpret recurring peak schedules. Keep their
+// cache separate during a rolling update, preserving prior price observations.
+const legacyCacheFile = path.resolve(import.meta.dirname, '../.mazebench/pricing/catalog.json');
+export const pricingCacheFile = path.resolve(import.meta.dirname, '../.mazebench/pricing/catalog-v2.json');
 const sixHours = 6 * 60 * 60 * 1000, retryDelay = 5 * 60 * 1000;
 const empty = () => ({ version: 1, entries: {}, sources: {} });
-const signature = price => JSON.stringify([price.rates, price.context_tiers, price.changes, price.effective_at]);
+const signature = price => JSON.stringify([price.rates, price.context_tiers, price.changes, price.effective_at, price.time_schedule]);
 function validateSnapshot(value) {
   if (value?.version !== 1 || !value.entries || !value.sources) throw new Error('Invalid pricing cache');
   for (const item of Object.values(value.entries)) {
@@ -21,7 +24,12 @@ export class PricingService {
   }
   async load() {
     try { this.snapshot = validateSnapshot(JSON.parse(await readFile(this.file, 'utf8'))); }
-    catch (error) { if (error.code !== 'ENOENT') this.snapshot.storage_error = `Could not read cached pricing: ${error.message}`; }
+    catch (error) {
+      if (error.code === 'ENOENT' && this.file === pricingCacheFile) {
+        try { this.snapshot = validateSnapshot(JSON.parse(await readFile(legacyCacheFile, 'utf8'))); }
+        catch (legacyError) { if (legacyError.code !== 'ENOENT') this.snapshot.storage_error = `Could not read cached pricing: ${legacyError.message}`; }
+      } else if (error.code !== 'ENOENT') this.snapshot.storage_error = `Could not read cached pricing: ${error.message}`;
+    }
   }
   async refresh(force = false) {
     await this.ready;
