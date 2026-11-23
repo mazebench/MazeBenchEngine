@@ -1,0 +1,28 @@
+.maze-render-canvas {
+  filter: blur(.22px) contrast(1.035) saturate(.94);
+}
+
+.maze-fuzzy-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: .16;
+  pointer-events: none;
+  mix-blend-mode: soft-light;
+  box-shadow: inset 0 0 12vmin rgb(0 0 0 / 32%);
+}
+
+.play-stage .camera-help,
+.editor-stage .camera-help,
+.play-stage .loading,
+.editor-stage .loading {
+  z-index: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .maze-fuzzy-overlay { display: none; }
+  .maze-render-canvas { filter: contrast(1.025) saturate(.96); }
+}

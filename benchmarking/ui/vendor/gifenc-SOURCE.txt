@@ -1,0 +1,5 @@
+gifenc 1.0.3 — MIT
+Source: https://github.com/mattdesl/gifenc/tree/15e2c3e65ed03c977b42fec48de59b05ee9b9f54
+Package: https://registry.npmjs.org/gifenc/-/gifenc-1.0.3.tgz
+Package SHA-512 (base64): xdr6AdrfGBcfzncONUOlXMBuc5wJDtOueE3c5rdG0oNgtINLD+f2iFZltrBRZYzACRbKr+mSVU/x98zv2u3jmw==
+The ESM bundle is unmodified; its optional source map is not included.

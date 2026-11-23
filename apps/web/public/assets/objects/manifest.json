@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "objects": {
+    "mazebench-gem": {
+      "kind": "glb",
+      "url": "/assets/objects/gem.glb",
+      "anchor": "cell-center-bottom",
+      "pickProxy": "cell",
+      "source": {
+        "repository": "MazeBenchEngine",
+        "path": "games/maze/assets_3d/gem.glb"
+      },
+      "loader": {
+        "module": "/vendor/GLTFLoader.js",
+        "three": "/vendor/three.module.js",
+        "threeCore": "/vendor/three.core.js",
+        "utilities": [
+          "/utils/BufferGeometryUtils.js",
+          "/utils/SkeletonUtils.js"
+        ]
+      }
+    },
+    "mazebench-orange-button": {
+      "kind": "primitive",
+      "shape": "cylinder",
+      "anchor": "selected-cell-face",
+      "orientations": ["top", "north", "east", "south", "west", "bottom"],
+      "states": ["single visual state; pressure is derived from occupancy"],
+      "pickProxy": "cell",
+      "source": {
+        "repository": "MazeBenchEngine",
+        "path": "public/play-render-three.js:addOrangeButtonMesh"
+      }
+    },
+    "mazebench-orange-wall": {
+      "kind": "primitive",
+      "shape": "lowering-cube-or-surface",
+      "anchor": "cell-center-bottom",
+      "pickProxy": "cell",
+      "source": {
+        "repository": "MazeBenchEngine",
+        "path": "public/play-render-three.js:terrainPieceDescriptorForLayer"
+      }
+    },
+    "mazebench-player-gate": {
+      "kind": "primitive",
+      "shape": "lowered-slab-or-raised-cube",
+      "anchor": "cell-center-bottom",
+      "states": ["lowered", "raised"],
+      "pickProxy": "cell",
+      "source": {
+        "repository": "MazeBenchEngine",
+        "path": "public/play-render-three.js:terrainPieceDescriptorForLayer"
+      }
+    },
+    "mazebench-puncher": {
+      "kind": "primitive",
+      "shape": "outlined-three-part-cylinder",
+      "anchor": "selected-cell-side-face",
+      "orientations": ["up", "right", "down", "left"],
+      "states": ["unsprung", "sprung"],
+      "pickProxy": "cell",
+      "source": {
+        "repository": "MazeBenchBenchmarking",
+        "path": "render/v1/special-piece-renderers.mjs:addPuncher"
+      }
+    },
+    "mazebench-floating-floor": {
+      "kind": "primitive",
+      "shape": "hovering-top-rounded-platform",
+      "anchor": "cell-center-bottom",
+      "pickProxy": "cell",
+      "source": {
+        "repository": "MazeBenchEngine",
+        "path": "public/play-render-three.js:addFloatingFloor"
+      }
+    }
+  }
+}

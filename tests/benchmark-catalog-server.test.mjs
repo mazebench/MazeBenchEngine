@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { createCatalogServer } from '../benchmarking/catalog-server.mjs';
+import { ModelCatalog } from '../benchmarking/model-catalog/service.mjs';
+
+test('rolling catalog owner serves refreshed models and forwards existing controls and Prime recovery unchanged', async t => {
+  const dir=await mkdtemp(path.join(os.tmpdir(),'catalog-server-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const calls=[],launches=[];let refreshes=0;
+  const catalog=new ModelCatalog({cacheFile:null,sources:{'kimi-code':async()=>{refreshes++;return[{id:'k3',provider:'kimi-code',name:'Kimi K3',efforts:['high','max'],default_effort:'high'}]},'prime-agent':async()=>[{id:'qwen/qwen3.8-27b',provider:'prime-agent',name:'Qwen 3.8 27B',efforts:['default'],default_effort:'default',direct_efforts:['xhigh'],default_direct_effort:'xhigh'}]}});
+  const upstream=createServer(async(req,res)=>{let body='';for await(const c of req)body+=c;calls.push({url:req.url,method:req.method,body});res.setHeader('content-type','application/json');res.end(JSON.stringify({owner:'existing',runner_active:true,status:'running',auto_recovery:{enabled:true,state:'watching'}}));});
+  await new Promise(r=>upstream.listen(0,'127.0.0.1',r));t.after(()=>{upstream.closeAllConnections();upstream.close();});
+  const supervisor={catalog,active:new Map(),runDirectory:id=>path.join(dir,id),owns:()=>false,launch:async spec=>{launches.push(spec);return{id:'new',...spec}},validateSpec:async()=>{},stop:async()=>{}};
+  const {server,reports}=createCatalogServer(process.cwd(),{port:0,supervisor,upstreamPort:upstream.address().port});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(async()=>{server.closeAllConnections();server.close();await reports.close();});
+  const origin='http://127.0.0.1:'+server.address().port,prefix='/api/benchmark/v1';
+  const get=async p=>(await fetch(origin+p)).json();
+  assert.equal((await get('/api/benchmark/capabilities/status')).model_catalog,true);
+  assert.equal((await get(prefix+'/models')).groups[0].name,'Kimi K3');
+  await get(prefix+'/models?force=1');assert.equal(refreshes,2);
+  const post=async(p,spec)=>{const r=await fetch(origin+p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(spec)});return{status:r.status,body:await r.json()}};
+  const spec={provider:'kimi-code',model:'k3',effort:'max',coding_mode:'off',service_tier:'standard'};
+  const fresh=await post(prefix+'/runs',spec);assert.equal(fresh.status,202);assert.deepEqual(launches,[spec]);
+  assert.equal((await post(prefix+'/runs',{...spec,effort:'xhigh'})).status,400);assert.equal(launches.length,1);
+  const old=await post(prefix+'/runs/run-2026-10-23T21-38-28-532Z-e2a66a/resume',{});assert.equal(old.body.owner,'existing');assert(old.body.auto_recovery.enabled);
+  const prime=await post(prefix+'/runs',{provider:'prime-agent',model:'qwen/qwen3.8-27b',effort:'xhigh',coding_mode:'off'});assert.equal(prime.body.owner,'existing');assert.equal(launches.length,1);
+  assert.equal(calls.length,2);assert(calls[0].url.endsWith('/resume'));
+});

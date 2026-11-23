@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Replays · MazeBench</title>
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../../render/v1/visual-effects.css">
+  <link rel="stylesheet" href="../../ui/ascii-font.css">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="../../render/v1/cutaway-controls.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="identity"><a class="back" href="../../" aria-label="Back to home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>Back</a><strong>Replays</strong><span id="movie-name"></span></div>
+    <div class="topbar-actions">
+      <div id="replay-views" class="view-switch" role="group" aria-label="Replay view" hidden>
+        <button id="view-3d" aria-pressed="true">3D</button><button id="view-ascii" aria-pressed="false">ASCII</button>
+      </div>
+      <button id="open-import" hidden>Import replay</button>
+    </div>
+  </header>
+  <main id="player" class="player" aria-label="Replay player">
+    <div id="stage" class="stage" hidden><canvas id="replay-canvas" aria-label="Replay world. Drag to orbit. W and S tilt, A and D rotate, Q and E zoom."></canvas><div id="ascii-stage" hidden><pre id="ascii-board" class="ascii-board" aria-label="ASCII replay. W and S tilt, A and D rotate, Q and E zoom."></pre></div></div>
+    <div id="scene-info" class="scene-info" hidden><strong id="room-name"></strong><span id="action-label"></span></div>
+    <details id="cutaway-panel" class="cutaway-panel"><summary>Truncate</summary><div id="cutaway-controls" class="cutaway-controls" role="group" aria-label="Truncate room" hidden></div></details>
+    <div id="camera-tools" class="camera-tools" hidden>
+      <details id="view-menu"><summary>View</summary><div class="view-panel">
+        <button id="center-camera">Center camera <kbd>/</kbd></button>
+        <p id="camera-help">Drag to orbit · WASD to turn<br>Q / E to zoom</p>
+      </div></details>
+      <button id="zoom-out" class="icon-button" aria-label="Zoom out" title="Zoom out (E)">−</button>
+      <button id="zoom-in" class="icon-button" aria-label="Zoom in" title="Zoom in (Q)">+</button>
+    </div>
+    <div id="drop-overlay" class="drop-overlay" hidden>Drop a replay to open it</div>
+  </main>
+  <footer id="transport" class="transport" hidden>
+    <div class="marker-toolbar">
+      <div class="marker-modes" role="group" aria-label="Timeline markers">
+        <button id="show-none" aria-pressed="true">None</button>
+        <button id="show-gems" aria-pressed="false">Gems <span id="gem-count"></span></button>
+        <button id="show-rooms" aria-pressed="false">New rooms <span id="room-count"></span></button>
+      </div>
+      <span id="marker-status"></span>
+    </div>
+    <div class="seek-wrap">
+      <output id="seek-preview" class="timeline-tooltip" hidden></output>
+      <output id="marker-preview" class="timeline-tooltip" hidden></output>
+      <div id="timeline-markers" role="group" aria-label="Timeline timestamps" data-mode="none" hidden></div>
+      <div id="marker-picker" role="group" aria-label="Nearby timestamps" hidden></div>
+      <input id="seek" type="range" min="0" max="1" step="1" value="0" aria-label="Replay position">
+    </div>
+    <div class="transport-row">
+      <div class="playback-controls">
+        <button id="toggle-play" class="play-button" aria-label="Play" title="Play / pause (Space)"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="play-icon" d="m8 5 11 7-11 7z"/></svg></button>
+        <button id="previous" class="icon-button step-button" aria-label="Previous action" title="Previous action (,)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14M18 6l-9 6 9 6z"/></svg></button>
+        <button id="next" class="icon-button step-button" aria-label="Next action" title="Next action (.)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14M6 6l9 6-9 6z"/></svg></button>
+        <output id="timecode">0:00 / 0:00</output>
+      </div>
+      <div id="speed" class="playback-rates" role="group" aria-label="Playback speed">
+        <button data-rate="0.25" aria-pressed="false">0.25×</button>
+        <button data-rate="0.5" aria-pressed="false">0.5×</button>
+        <button data-rate="1" aria-pressed="true">1×</button>
+        <button data-rate="2" aria-pressed="false">2×</button>
+        <button data-rate="4" aria-pressed="false">4×</button>
+        <button data-rate="10" aria-pressed="false">10×</button>
+      </div>
+      <div class="playback-meta"><output id="progress-summary"></output><button id="fullscreen" class="icon-button" aria-label="Fullscreen" title="Fullscreen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4"/></svg></button></div>
+    </div>
+  </footer>
+  <dialog id="import-dialog" aria-labelledby="import-title">
+    <div class="dialog-heading"><span class="eyebrow">MAZEBENCH</span><button id="close-import" class="icon-button" aria-label="Close import" hidden>×</button></div>
+    <h1 id="import-title">Import a replay</h1>
+    <p class="intro">Open a Solutions export or paste a move sequence.</p>
+    <button id="choose-file" class="file-drop"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3m-4 4 4-4 4 4M4 14v6h16v-6"/></svg><strong>Choose a file</strong><span>Drop a .txt or .json file here</span></button>
+    <input id="import-file" type="file" accept=".txt,.json,text/plain,application/json" hidden aria-label="Replay file">
+    <div class="divider"><span>or paste moves</span></div>
+    <textarea id="source" placeholder="RRRDDDLLLL…&#10;room LxO&#10;LLLD" aria-label="Move sequence or solution JSON" spellcheck="false"></textarea>
+    <div class="import-bottom"><label class="start-label" for="start-room">Start room <input id="start-room" type="text" value="HxI" maxlength="80" spellcheck="false"></label><button id="build-replay" class="primary">Create replay</button></div>
+    <p class="file-hint">UDLR, room commands, or verbose Solutions JSON. Uses the file’s starting room when provided.</p>
+    <div id="import-progress" hidden><div><output id="import-phase" role="status"></output><button id="cancel-import">Cancel</button></div><progress id="load-progress" max="1" value="0" aria-label="Preparing replay"></progress><span id="import-eta"></span></div>
+    <p id="import-error" class="error" role="alert" hidden></p>
+  </dialog>
+  <output id="notice" class="notice" role="status" hidden></output>
+  <script type="module" src="./main.mjs"></script>
+</body>
+</html>

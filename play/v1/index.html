@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Play MazeBench. Explore rooms, collect gems, and find your way through the world.">
+    <title>MazeBench — Play</title>
+    <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+    <link rel="stylesheet" href="../../render/v1/visual-effects.css">
+    <link rel="stylesheet" href="../../render-ascii/v1/styles.css">
+    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="../../ui/play-gamepad.css">
+    <link rel="stylesheet" href="../../ui/play-room-moves.css">
+    <link rel="stylesheet" href="../../render/v1/cutaway-controls.css">
+  </head>
+  <body>
+    <header class="play-topbar">
+      <a class="back-link" href="../../" title="Back to the world map"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"></path></svg><span>Back</span></a>
+      <nav class="play-actions" aria-label="Play actions">
+        <a id="editor-link" href="../../editor/v1/">Edit</a>
+        <button id="view-toggle" type="button" aria-keyshortcuts="M" title="Switch between ASCII and 3D (M)" disabled><span id="view-label">ASCII</span><kbd aria-hidden="true">M</kbd></button>
+        <button id="undo" type="button" aria-keyshortcuts="Z" title="Undo last move (Z)" disabled>Undo<kbd aria-hidden="true">Z</kbd></button>
+        <button id="reset" type="button" aria-keyshortcuts="R" title="Reset room (R)" disabled>Reset<kbd aria-hidden="true">R</kbd></button>
+      </nav>
+    </header>
+
+    <main class="play-layout">
+      <section id="stage" class="play-stage" aria-label="MazeBench play mode with 3D and ASCII views">
+        <div class="play-viewport">
+          <canvas id="play-canvas" aria-label="MazeBench room"></canvas>
+          <details class="cutaway-panel"><summary>Truncate</summary><div id="cutaway-controls" class="cutaway-controls" role="group" aria-label="Truncate room" hidden></div></details>
+          <div id="ascii-view" class="ascii-view" hidden>
+            <div class="ascii-toolbar">
+              <strong>ASCII</strong>
+              <span id="ascii-camera" class="ascii-camera" aria-live="polite">top-diagonal · 0°</span>
+              <label><input id="seeded-glyphs" type="checkbox"> Seed glyphs</label>
+              <label>Seed <input id="ascii-seed" type="text" value="1" spellcheck="false" disabled></label>
+            </div>
+            <div class="ascii-scroll">
+              <div class="ascii-frame">
+                <pre id="ascii-board" class="ascii-board" aria-label="MazeBench ASCII room"></pre>
+              </div>
+            </div>
+          </div>
+          <div id="loading" class="loading"><progress id="load-progress" max="257" value="0" aria-label="Loading room"></progress></div>
+        </div>
+
+        <div class="play-controls">
+          <div class="camera-pad" role="group" aria-label="Camera controls">
+            <button id="tilt-up" class="pad-button" type="button" aria-label="Tilt camera up" aria-keyshortcuts="W" title="Tilt up (W)"><span class="pad-arrow up" aria-hidden="true"></span><kbd aria-hidden="true">W</kbd></button>
+            <button id="rotate-left" class="pad-button" type="button" aria-label="Rotate camera left" aria-keyshortcuts="A" title="Rotate left (A)"><span class="pad-arrow left" aria-hidden="true"></span><kbd aria-hidden="true">A</kbd></button>
+            <span class="pad-label" aria-hidden="true">CAM</span>
+            <button id="rotate-right" class="pad-button" type="button" aria-label="Rotate camera right" aria-keyshortcuts="D" title="Rotate right (D)"><span class="pad-arrow right" aria-hidden="true"></span><kbd aria-hidden="true">D</kbd></button>
+            <button id="tilt-down" class="pad-button" type="button" aria-label="Tilt camera down" aria-keyshortcuts="S" title="Tilt down (S)"><span class="pad-arrow down" aria-hidden="true"></span><kbd aria-hidden="true">S</kbd></button>
+          </div>
+          <div id="zoom-controls" class="zoom-controls" role="group" aria-label="Map zoom">
+            <button id="zoom-in" type="button" aria-label="Zoom in" aria-keyshortcuts="Q" title="Zoom in (Q); hold for continuous zoom"><span aria-hidden="true">+</span><kbd aria-hidden="true">Q</kbd></button>
+            <button id="zoom-out" type="button" aria-label="Zoom out" aria-keyshortcuts="E" title="Zoom out (E); hold for continuous zoom"><span aria-hidden="true">−</span><kbd aria-hidden="true">E</kbd></button>
+          </div>
+          <div class="movement-pad" role="group" aria-label="Movement controls">
+            <button class="pad-button" data-direction="up" type="button" aria-label="Move up" aria-keyshortcuts="ArrowUp" title="Move up (↑)" disabled><span class="pad-arrow up" aria-hidden="true"></span></button>
+            <button class="pad-button" data-direction="left" type="button" aria-label="Move left" aria-keyshortcuts="ArrowLeft" title="Move left (←)" disabled><span class="pad-arrow left" aria-hidden="true"></span></button>
+            <span class="pad-label" aria-hidden="true">MOVE</span>
+            <button class="pad-button" data-direction="right" type="button" aria-label="Move right" aria-keyshortcuts="ArrowRight" title="Move right (→)" disabled><span class="pad-arrow right" aria-hidden="true"></span></button>
+            <button class="pad-button" data-direction="down" type="button" aria-label="Move down" aria-keyshortcuts="ArrowDown" title="Move down (↓)" disabled><span class="pad-arrow down" aria-hidden="true"></span></button>
+          </div>
+        </div>
+      </section>
+
+      <aside class="play-sidebar" aria-label="Room and progress">
+        <section class="panel room-panel">
+          <div class="room-heading">
+            <div><span class="eyebrow">Current room</span><strong id="room-name">—</strong></div>
+          </div>
+          <dl class="stats">
+            <div><dt>Gems in room</dt><dd id="gem-count">0</dd></div>
+          </dl>
+          <p id="play-state" class="play-state" role="status" aria-live="polite" hidden></p>
+        </section>
+
+        <section class="panel room-picker" aria-labelledby="world-map-heading">
+          <h2 id="world-map-heading">World map</h2>
+          <div id="room-grid" class="room-grid" aria-label="World room grid"></div>
+        </section>
+
+        <section class="panel sequence-panel" aria-labelledby="sequence-title">
+          <h2 id="sequence-title">Move sequence</h2>
+          <label class="visually-hidden" for="move-sequence">UDLR sequence</label>
+          <textarea id="move-sequence" rows="3" placeholder="Paste UDLR, e.g. DRRDLU" spellcheck="false" autocapitalize="characters" aria-describedby="sequence-status"></textarea>
+          <div class="sequence-actions">
+            <button id="run-sequence" type="button" disabled>Run sequence</button>
+            <button id="stop-sequence" type="button" disabled>Stop</button>
+          </div>
+          <output id="sequence-status" role="status" aria-live="polite"></output>
+        </section>
+
+        <details class="panel room-moves-panel">
+          <summary>Room moves</summary>
+          <div class="room-moves-content">
+            <label class="visually-hidden" for="room-moves">Current room UDLR history</label>
+            <textarea id="room-moves" rows="3" readonly placeholder="Your moves in this room" spellcheck="false"></textarea>
+            <div class="sequence-actions">
+              <button id="copy-room-moves" type="button" disabled>Copy UDLR</button>
+            </div>
+            <output id="room-moves-status" role="status" aria-live="polite"></output>
+          </div>
+        </details>
+
+        <details class="panel playback-panel">
+          <summary>Playback settings</summary>
+          <div class="playback-controls">
+            <label class="timing-control" for="motion-tweens"><span>Tweens</span><input id="motion-tweens" type="checkbox" checked></label>
+            <small id="animation-rate">Steps 100 ms · Slides 40 ms/tile · Rooms 250 ms</small>
+          </div>
+        </details>
+
+        <details class="panel controller-panel">
+          <summary>Controller</summary>
+          <div class="controller-help">
+            <p id="controller-status" role="status">Press a controller button to connect.</p>
+            <dl>
+              <div><dt>Move</dt><dd>Left stick / D-pad</dd></div>
+              <div><dt>Camera</dt><dd>Right stick</dd></div>
+              <div><dt>Zoom in / out</dt><dd>ZL / ZR · L2 / R2 · LT / RT</dd></div>
+              <div><dt>Undo</dt><dd>Any right-side face button</dd></div>
+            </dl>
+          </div>
+        </details>
+      </aside>
+    </main>
+
+    <script type="module" src="../../ui/play-main.mjs"></script>
+    <script type="module" src="../../ui/control-pad-feedback.mjs"></script>
+  </body>
+</html>

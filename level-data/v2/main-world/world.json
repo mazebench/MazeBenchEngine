@@ -1,0 +1,1443 @@
+{
+  "storageFormat": "mazebench-voxel-world-v2",
+  "schemaVersion": 2,
+  "coordinateSystem": {
+    "horizontalAxes": [
+      "x",
+      "y"
+    ],
+    "verticalAxis": "z",
+    "floorLayer": 0,
+    "floorIsSurface": true
+  },
+  "blocks": [
+    {
+      "id": "floor",
+      "name": "Floor",
+      "color": "#d6bd94",
+      "roleId": "floor",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "floor"
+      }
+    },
+    {
+      "id": "ice-floor",
+      "name": "Ice",
+      "color": "#a9d6f4",
+      "roleId": "ice",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "floor"
+      }
+    },
+    {
+      "id": "exit",
+      "name": "Exit",
+      "color": "#d6bd94",
+      "roleId": "exit",
+      "occupancy": "sensor",
+      "category": "terrain",
+      "visual": {
+        "kind": "exit"
+      }
+    },
+    {
+      "id": "wall",
+      "name": "Wall",
+      "color": "#23262c",
+      "roleId": "solid",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "cube"
+      }
+    },
+    {
+      "id": "ice-block",
+      "name": "Ice Block",
+      "color": "#a9d6f4",
+      "roleId": "ice",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "cube"
+      }
+    },
+    {
+      "id": "ice-slope",
+      "name": "Ice Slope",
+      "color": "#a9d6f4",
+      "roleId": "ice",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "slope"
+      }
+    },
+    {
+      "id": "wall-slope",
+      "name": "Black Ice Slope",
+      "color": "#23262c",
+      "roleId": "ice",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "slope"
+      }
+    },
+    {
+      "id": "orange-slope",
+      "name": "Orange Ice Slope",
+      "color": "#b85f16",
+      "roleId": "orange-wall",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "slope"
+      }
+    },
+    {
+      "id": "player",
+      "name": "Player",
+      "color": "#5aa95c",
+      "roleId": "player",
+      "occupancy": "solid",
+      "category": "actor",
+      "visual": {
+        "kind": "cube"
+      }
+    },
+    {
+      "id": "clone",
+      "name": "Clone",
+      "color": "#b59a2a",
+      "roleId": "clone",
+      "occupancy": "solid",
+      "category": "actor",
+      "visual": {
+        "kind": "cube"
+      }
+    },
+    {
+      "id": "gem",
+      "name": "Gem",
+      "color": "#6cd7ff",
+      "roleId": "goal",
+      "occupancy": "sensor",
+      "category": "actor",
+      "visual": {
+        "kind": "model",
+        "height": 1,
+        "modelType": "gem",
+        "modelUrl": "../../../render/v1/assets_3d/gem.glb"
+      }
+    },
+    {
+      "id": "gate",
+      "name": "Player Gate",
+      "color": "#c75652",
+      "roleId": "player-gate",
+      "occupancy": "sensor",
+      "category": "terrain",
+      "visual": {
+        "kind": "gate"
+      }
+    },
+    {
+      "id": "lift",
+      "name": "Player Lift",
+      "color": "#8a63d2",
+      "roleId": "player-lift",
+      "occupancy": "sensor",
+      "category": "terrain",
+      "visual": {
+        "kind": "lift"
+      }
+    },
+    {
+      "id": "orange-wall",
+      "name": "Orange Wall",
+      "color": "#b85f16",
+      "roleId": "orange-wall",
+      "occupancy": "sensor",
+      "category": "terrain",
+      "visual": {
+        "kind": "cube"
+      }
+    },
+    {
+      "id": "orange-button",
+      "name": "Orange Button",
+      "color": "#f59e0b",
+      "roleId": "orange-button",
+      "occupancy": "sensor",
+      "category": "actor",
+      "visual": {
+        "kind": "button"
+      }
+    },
+    {
+      "id": "puncher",
+      "name": "Puncher",
+      "color": "#ef4444",
+      "roleId": "puncher",
+      "occupancy": "sensor",
+      "category": "actor",
+      "visual": {
+        "kind": "puncher"
+      }
+    },
+    {
+      "id": "crate",
+      "name": "Box",
+      "color": "#2a2d33",
+      "roleId": "pushable",
+      "occupancy": "solid",
+      "category": "actor",
+      "visual": {
+        "kind": "cube"
+      }
+    },
+    {
+      "id": "floating-floor",
+      "name": "Floating Floor",
+      "color": "#d6bd94",
+      "roleId": "floating-floor",
+      "occupancy": "solid",
+      "category": "actor",
+      "visual": {
+        "kind": "platform"
+      }
+    },
+    {
+      "id": "weightless-box",
+      "name": "Weightless Box",
+      "color": "#315991",
+      "roleId": "weightless-pushable",
+      "occupancy": "solid",
+      "category": "actor",
+      "visual": {
+        "kind": "cube"
+      }
+    },
+    {
+      "id": "weightless-slope",
+      "name": "Box Ice Slope",
+      "color": "#315991",
+      "roleId": "weightless-pushable",
+      "occupancy": "solid",
+      "category": "actor",
+      "visual": {
+        "kind": "slope"
+      }
+    },
+    {
+      "id": "clone-slope",
+      "name": "Clone Ice Slope",
+      "color": "#b59a2a",
+      "roleId": "clone",
+      "occupancy": "solid",
+      "category": "actor",
+      "visual": {
+        "kind": "slope"
+      }
+    },
+    {
+      "id": "t1",
+      "name": "Tree 1",
+      "color": "#2f7d3f",
+      "roleId": "solid",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "model",
+        "height": 3,
+        "modelType": "tree",
+        "modelUrl": "../../../render/v1/assets_3d/t1.glb"
+      }
+    },
+    {
+      "id": "t2",
+      "name": "Tree 2",
+      "color": "#2f7d3f",
+      "roleId": "solid",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "model",
+        "height": 3,
+        "modelType": "tree",
+        "modelUrl": "../../../render/v1/assets_3d/t2.glb"
+      }
+    },
+    {
+      "id": "t3",
+      "name": "Tree 3",
+      "color": "#2f7d3f",
+      "roleId": "solid",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "model",
+        "height": 3,
+        "modelType": "tree",
+        "modelUrl": "../../../render/v1/assets_3d/t3.glb"
+      }
+    },
+    {
+      "id": "t4",
+      "name": "Tree 4",
+      "color": "#2f7d3f",
+      "roleId": "solid",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "model",
+        "height": 3,
+        "modelType": "tree",
+        "modelUrl": "../../../render/v1/assets_3d/t4.glb"
+      }
+    },
+    {
+      "id": "st1",
+      "name": "Small Tree 1",
+      "color": "#2f7d3f",
+      "roleId": "solid",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "model",
+        "height": 3,
+        "modelType": "tree",
+        "modelUrl": "../../../render/v1/assets_3d/st1.glb"
+      }
+    },
+    {
+      "id": "st3",
+      "name": "Small Tree 3",
+      "color": "#2f7d3f",
+      "roleId": "solid",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "model",
+        "height": 3,
+        "modelType": "tree",
+        "modelUrl": "../../../render/v1/assets_3d/st3.glb"
+      }
+    },
+    {
+      "id": "st4",
+      "name": "Small Tree 4",
+      "color": "#2f7d3f",
+      "roleId": "solid",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "model",
+        "height": 3,
+        "modelType": "tree",
+        "modelUrl": "../../../render/v1/assets_3d/st4.glb"
+      }
+    },
+    {
+      "id": "sh",
+      "name": "Shrub",
+      "color": "#476b35",
+      "roleId": "solid",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "model",
+        "height": 1,
+        "modelType": "shrub",
+        "modelUrl": "../../../render/v1/assets_3d/sh.glb"
+      }
+    },
+    {
+      "id": "b1",
+      "name": "Bridge 1",
+      "color": "#5b2f14",
+      "roleId": "solid",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "model",
+        "height": 1,
+        "modelType": "block_asset",
+        "modelUrl": "../../../render/v1/assets_3d/b1.glb"
+      }
+    },
+    {
+      "id": "b2",
+      "name": "Bridge 2",
+      "color": "#5b2f14",
+      "roleId": "solid",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "model",
+        "height": 1,
+        "modelType": "block_asset",
+        "modelUrl": "../../../render/v1/assets_3d/b2.glb"
+      }
+    },
+    {
+      "id": "b3",
+      "name": "Bridge 3",
+      "color": "#5b2f14",
+      "roleId": "solid",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "model",
+        "height": 1,
+        "modelType": "block_asset",
+        "modelUrl": "../../../render/v1/assets_3d/b3.glb"
+      }
+    },
+    {
+      "id": "b4",
+      "name": "Bridge 4",
+      "color": "#5b2f14",
+      "roleId": "solid",
+      "occupancy": "solid",
+      "category": "terrain",
+      "visual": {
+        "kind": "model",
+        "height": 1,
+        "modelType": "block_asset",
+        "modelUrl": "../../../render/v1/assets_3d/b4.glb"
+      }
+    }
+  ],
+  "rooms": {
+    "20oruubtee.json": [
+      "A",
+      "A"
+    ],
+    "04r5a6rnen.json": [
+      "B",
+      "A"
+    ],
+    "aleh4bcrs1.json": [
+      "C",
+      "A"
+    ],
+    "vcryfr7rx5.json": [
+      "D",
+      "A"
+    ],
+    "t3qyrveo5s.json": [
+      "E",
+      "A"
+    ],
+    "hrnoezs23q.json": [
+      "F",
+      "A"
+    ],
+    "cnwspnqtb4.json": [
+      "G",
+      "A"
+    ],
+    "vndvq4loik.json": [
+      "H",
+      "A"
+    ],
+    "dsgc0sn2ov.json": [
+      "I",
+      "A"
+    ],
+    "ovqo3gb3vn.json": [
+      "J",
+      "A"
+    ],
+    "col2f40f59.json": [
+      "K",
+      "A"
+    ],
+    "zzg05us8i5.json": [
+      "L",
+      "A"
+    ],
+    "b9enwgzf7b.json": [
+      "M",
+      "A"
+    ],
+    "ancz5c3uty.json": [
+      "N",
+      "A"
+    ],
+    "d8mvq40fpc.json": [
+      "O",
+      "A"
+    ],
+    "kpympejsed.json": [
+      "P",
+      "A"
+    ],
+    "sjejnsyuln.json": [
+      "A",
+      "B"
+    ],
+    "w3yrkloyft.json": [
+      "B",
+      "B"
+    ],
+    "pxuf6ufuyl.json": [
+      "C",
+      "B"
+    ],
+    "gtiuoosv7v.json": [
+      "D",
+      "B"
+    ],
+    "z1ukmhp7er.json": [
+      "E",
+      "B"
+    ],
+    "uwd6sg43oe.json": [
+      "F",
+      "B"
+    ],
+    "xvxwoozfpn.json": [
+      "G",
+      "B"
+    ],
+    "c2mgxnlz3i.json": [
+      "H",
+      "B"
+    ],
+    "1oyju7l4aq.json": [
+      "I",
+      "B"
+    ],
+    "1ze6nmccvs.json": [
+      "J",
+      "B"
+    ],
+    "z81qwahfce.json": [
+      "K",
+      "B"
+    ],
+    "rbg3xgdden.json": [
+      "L",
+      "B"
+    ],
+    "1gak5p09lo.json": [
+      "M",
+      "B"
+    ],
+    "kue0z21zup.json": [
+      "N",
+      "B"
+    ],
+    "hx0xcigtmn.json": [
+      "O",
+      "B"
+    ],
+    "rsecv88qvf.json": [
+      "P",
+      "B"
+    ],
+    "xz3cl89yyl.json": [
+      "A",
+      "C"
+    ],
+    "l03iufzqh7.json": [
+      "B",
+      "C"
+    ],
+    "g6cwrixq6c.json": [
+      "C",
+      "C"
+    ],
+    "mv4afknmbh.json": [
+      "D",
+      "C"
+    ],
+    "acfbtpxob3.json": [
+      "E",
+      "C"
+    ],
+    "52xewsicto.json": [
+      "F",
+      "C"
+    ],
+    "sqft27dseq.json": [
+      "G",
+      "C"
+    ],
+    "ikymdc2qxj.json": [
+      "H",
+      "C"
+    ],
+    "bnjkhxujih.json": [
+      "I",
+      "C"
+    ],
+    "6txuyunqsp.json": [
+      "J",
+      "C"
+    ],
+    "bfe6rxlswm.json": [
+      "K",
+      "C"
+    ],
+    "fojsdlaknt.json": [
+      "L",
+      "C"
+    ],
+    "xrg4n6ochj.json": [
+      "M",
+      "C"
+    ],
+    "jhliaoplxr.json": [
+      "N",
+      "C"
+    ],
+    "neyecnf3gf.json": [
+      "O",
+      "C"
+    ],
+    "isoa65tgje.json": [
+      "P",
+      "C"
+    ],
+    "s9j9mhtrdt.json": [
+      "A",
+      "D"
+    ],
+    "r6tzluprjw.json": [
+      "B",
+      "D"
+    ],
+    "neapcptnui.json": [
+      "C",
+      "D"
+    ],
+    "8id4xxsexd.json": [
+      "D",
+      "D"
+    ],
+    "dyp4dzebjq.json": [
+      "E",
+      "D"
+    ],
+    "xvuyjiiyds.json": [
+      "F",
+      "D"
+    ],
+    "hq9bpiozgy.json": [
+      "G",
+      "D"
+    ],
+    "9ghmepkrxl.json": [
+      "H",
+      "D"
+    ],
+    "advqsfpppw.json": [
+      "I",
+      "D"
+    ],
+    "fkjem9w3sm.json": [
+      "J",
+      "D"
+    ],
+    "vf6kp3ufeu.json": [
+      "K",
+      "D"
+    ],
+    "axv9fwtkoq.json": [
+      "L",
+      "D"
+    ],
+    "wo3gyezdoe.json": [
+      "M",
+      "D"
+    ],
+    "jtbthporan.json": [
+      "N",
+      "D"
+    ],
+    "m85yd3qc0f.json": [
+      "O",
+      "D"
+    ],
+    "03h2y6docf.json": [
+      "P",
+      "D"
+    ],
+    "yahqqkn1o1.json": [
+      "A",
+      "E"
+    ],
+    "qha68yvol5.json": [
+      "B",
+      "E"
+    ],
+    "ceb2sm9wq1.json": [
+      "C",
+      "E"
+    ],
+    "xvxdj9tsjh.json": [
+      "D",
+      "E"
+    ],
+    "vpckvfplw8.json": [
+      "E",
+      "E"
+    ],
+    "5ufa4nkpse.json": [
+      "F",
+      "E"
+    ],
+    "9hgghfgcsu.json": [
+      "G",
+      "E"
+    ],
+    "dtte3qdung.json": [
+      "H",
+      "E"
+    ],
+    "bin0sfvkoo.json": [
+      "I",
+      "E"
+    ],
+    "5ndxv0v8lt.json": [
+      "J",
+      "E"
+    ],
+    "zo0w1pzd9a.json": [
+      "K",
+      "E"
+    ],
+    "tayerzv6kl.json": [
+      "L",
+      "E"
+    ],
+    "uf77o3ciuh.json": [
+      "M",
+      "E"
+    ],
+    "2imvr48nnz.json": [
+      "N",
+      "E"
+    ],
+    "cmiy3acjrh.json": [
+      "O",
+      "E"
+    ],
+    "ywu1mq8z0a.json": [
+      "P",
+      "E"
+    ],
+    "oya2si9ksy.json": [
+      "A",
+      "F"
+    ],
+    "tos8wdcpkg.json": [
+      "B",
+      "F"
+    ],
+    "d1ziy6u45c.json": [
+      "C",
+      "F"
+    ],
+    "hdvjkrwgt1.json": [
+      "D",
+      "F"
+    ],
+    "2usw76lu77.json": [
+      "E",
+      "F"
+    ],
+    "88y57khr1v.json": [
+      "F",
+      "F"
+    ],
+    "0lzre7ixaq.json": [
+      "G",
+      "F"
+    ],
+    "lxlxdxjrdd.json": [
+      "H",
+      "F"
+    ],
+    "pypzosy4xn.json": [
+      "I",
+      "F"
+    ],
+    "lvzzas00zz.json": [
+      "J",
+      "F"
+    ],
+    "3suvlaqzxi.json": [
+      "K",
+      "F"
+    ],
+    "fra7j9akqq.json": [
+      "L",
+      "F"
+    ],
+    "xgbmzp7pwx.json": [
+      "M",
+      "F"
+    ],
+    "abbvyxgryp.json": [
+      "N",
+      "F"
+    ],
+    "ehzb36vyvq.json": [
+      "O",
+      "F"
+    ],
+    "mals0r6l75.json": [
+      "P",
+      "F"
+    ],
+    "lwyjbf97lx.json": [
+      "A",
+      "G"
+    ],
+    "qevrh3xrj9.json": [
+      "B",
+      "G"
+    ],
+    "iwbwmbcdyx.json": [
+      "C",
+      "G"
+    ],
+    "xzscym7lms.json": [
+      "D",
+      "G"
+    ],
+    "js6dwv7eu5.json": [
+      "E",
+      "G"
+    ],
+    "ahxsncllqs.json": [
+      "F",
+      "G"
+    ],
+    "fa74bg7jkj.json": [
+      "G",
+      "G"
+    ],
+    "cx0cblpdop.json": [
+      "H",
+      "G"
+    ],
+    "pzy0ntks1k.json": [
+      "I",
+      "G"
+    ],
+    "eaxixyrjgf.json": [
+      "J",
+      "G"
+    ],
+    "hx3ydyz9id.json": [
+      "K",
+      "G"
+    ],
+    "kaoihogyvy.json": [
+      "L",
+      "G"
+    ],
+    "c0egsstqou.json": [
+      "M",
+      "G"
+    ],
+    "grevsifcud.json": [
+      "N",
+      "G"
+    ],
+    "3ccre0xgj5.json": [
+      "O",
+      "G"
+    ],
+    "hn9a9qdhoc.json": [
+      "P",
+      "G"
+    ],
+    "ytuqqzjaxn.json": [
+      "A",
+      "H"
+    ],
+    "haz0y1uwt4.json": [
+      "B",
+      "H"
+    ],
+    "u5fyk6prxd.json": [
+      "C",
+      "H"
+    ],
+    "eeykj34fht.json": [
+      "D",
+      "H"
+    ],
+    "3mjv8fybux.json": [
+      "E",
+      "H"
+    ],
+    "uraaxy9acb.json": [
+      "F",
+      "H"
+    ],
+    "dfizxjsozb.json": [
+      "G",
+      "H"
+    ],
+    "mygl8anih8.json": [
+      "H",
+      "H"
+    ],
+    "mfse4dasnu.json": [
+      "I",
+      "H"
+    ],
+    "0ukthqlnj3.json": [
+      "J",
+      "H"
+    ],
+    "zarxm4ljjr.json": [
+      "K",
+      "H"
+    ],
+    "sk4scshh71.json": [
+      "L",
+      "H"
+    ],
+    "dumoaeuvmw.json": [
+      "M",
+      "H"
+    ],
+    "emizjjyrit.json": [
+      "N",
+      "H"
+    ],
+    "idznffczum.json": [
+      "O",
+      "H"
+    ],
+    "3b1bqwc6vr.json": [
+      "P",
+      "H"
+    ],
+    "atcquxzhzq.json": [
+      "A",
+      "I"
+    ],
+    "wuh9bglsl5.json": [
+      "B",
+      "I"
+    ],
+    "1x7xkukxit.json": [
+      "C",
+      "I"
+    ],
+    "lrvgy706km.json": [
+      "D",
+      "I"
+    ],
+    "bno97iwqko.json": [
+      "E",
+      "I"
+    ],
+    "q5afjk854p.json": [
+      "F",
+      "I"
+    ],
+    "b1go3rgwap.json": [
+      "G",
+      "I"
+    ],
+    "ftplmvndyl.json": [
+      "H",
+      "I"
+    ],
+    "lzd5ckycnu.json": [
+      "I",
+      "I"
+    ],
+    "rfddw8bxhx.json": [
+      "J",
+      "I"
+    ],
+    "zhjgefbhnr.json": [
+      "K",
+      "I"
+    ],
+    "ndflfzqtnq.json": [
+      "L",
+      "I"
+    ],
+    "dlacrytrti.json": [
+      "M",
+      "I"
+    ],
+    "5mqayrngni.json": [
+      "N",
+      "I"
+    ],
+    "cfzpbkqtdd.json": [
+      "O",
+      "I"
+    ],
+    "q45bhovnrp.json": [
+      "P",
+      "I"
+    ],
+    "totdhyqgez.json": [
+      "A",
+      "J"
+    ],
+    "iufsaauspn.json": [
+      "B",
+      "J"
+    ],
+    "fzldswxtel.json": [
+      "C",
+      "J"
+    ],
+    "qbmvtzpjea.json": [
+      "D",
+      "J"
+    ],
+    "v8yp9yzpwo.json": [
+      "E",
+      "J"
+    ],
+    "y9sphmh3ae.json": [
+      "F",
+      "J"
+    ],
+    "h8d41sdgbt.json": [
+      "G",
+      "J"
+    ],
+    "1ji0bl8utq.json": [
+      "H",
+      "J"
+    ],
+    "kl5fcvctec.json": [
+      "I",
+      "J"
+    ],
+    "d9aqrlllak.json": [
+      "J",
+      "J"
+    ],
+    "pa5fxmowpq.json": [
+      "K",
+      "J"
+    ],
+    "8oltfxj9yi.json": [
+      "L",
+      "J"
+    ],
+    "vv03groobw.json": [
+      "M",
+      "J"
+    ],
+    "opoqtibcba.json": [
+      "N",
+      "J"
+    ],
+    "q04mdynpki.json": [
+      "O",
+      "J"
+    ],
+    "cgfounlbxl.json": [
+      "P",
+      "J"
+    ],
+    "ooakpb6cia.json": [
+      "A",
+      "K"
+    ],
+    "beznpglxoe.json": [
+      "B",
+      "K"
+    ],
+    "irwglqu0by.json": [
+      "C",
+      "K"
+    ],
+    "hst9zxbgla.json": [
+      "D",
+      "K"
+    ],
+    "1eijlhzsam.json": [
+      "E",
+      "K"
+    ],
+    "6apt9pi50k.json": [
+      "F",
+      "K"
+    ],
+    "esbw2xgh1e.json": [
+      "G",
+      "K"
+    ],
+    "xfysf0rkal.json": [
+      "H",
+      "K"
+    ],
+    "glk0css8sn.json": [
+      "I",
+      "K"
+    ],
+    "htdponcion.json": [
+      "J",
+      "K"
+    ],
+    "mtbet6www0.json": [
+      "K",
+      "K"
+    ],
+    "jhkgo9fqa0.json": [
+      "L",
+      "K"
+    ],
+    "tpcyv6pkkz.json": [
+      "M",
+      "K"
+    ],
+    "u0nawb5c8p.json": [
+      "N",
+      "K"
+    ],
+    "yb25brl5q0.json": [
+      "O",
+      "K"
+    ],
+    "dueh31unx7.json": [
+      "P",
+      "K"
+    ],
+    "tkt3t1umof.json": [
+      "A",
+      "L"
+    ],
+    "jzlholnboh.json": [
+      "B",
+      "L"
+    ],
+    "prgbj7wogu.json": [
+      "C",
+      "L"
+    ],
+    "pngpjq8mct.json": [
+      "D",
+      "L"
+    ],
+    "b1biuff2xo.json": [
+      "E",
+      "L"
+    ],
+    "akxsy7ph0n.json": [
+      "F",
+      "L"
+    ],
+    "ct785zj5tq.json": [
+      "G",
+      "L"
+    ],
+    "u8nwu32kg7.json": [
+      "H",
+      "L"
+    ],
+    "ld1xrkewig.json": [
+      "I",
+      "L"
+    ],
+    "d580xce6pl.json": [
+      "J",
+      "L"
+    ],
+    "93eobik5ga.json": [
+      "K",
+      "L"
+    ],
+    "rtstjzjhcg.json": [
+      "L",
+      "L"
+    ],
+    "sjtxrrlyaq.json": [
+      "M",
+      "L"
+    ],
+    "ustjqd5ozm.json": [
+      "N",
+      "L"
+    ],
+    "ipjkvd0ftt.json": [
+      "O",
+      "L"
+    ],
+    "isevdxnqv9.json": [
+      "P",
+      "L"
+    ],
+    "qnmivkpnhd.json": [
+      "A",
+      "M"
+    ],
+    "qkdhlx8ahq.json": [
+      "B",
+      "M"
+    ],
+    "womrvew7bu.json": [
+      "C",
+      "M"
+    ],
+    "oj8kmfdpzo.json": [
+      "D",
+      "M"
+    ],
+    "0tnwn2hpbq.json": [
+      "E",
+      "M"
+    ],
+    "6arq0oefiy.json": [
+      "F",
+      "M"
+    ],
+    "j93qsrorim.json": [
+      "G",
+      "M"
+    ],
+    "7qp3vrijit.json": [
+      "H",
+      "M"
+    ],
+    "9ryrneexsm.json": [
+      "I",
+      "M"
+    ],
+    "xmtj61iukw.json": [
+      "J",
+      "M"
+    ],
+    "l04s7ubiom.json": [
+      "K",
+      "M"
+    ],
+    "4l13j61k51.json": [
+      "L",
+      "M"
+    ],
+    "640dxw4dlq.json": [
+      "M",
+      "M"
+    ],
+    "o091l166ue.json": [
+      "N",
+      "M"
+    ],
+    "jvw9sjlqnx.json": [
+      "O",
+      "M"
+    ],
+    "mcp21lddom.json": [
+      "P",
+      "M"
+    ],
+    "odyp76rbyt.json": [
+      "A",
+      "N"
+    ],
+    "izfhw6j9vx.json": [
+      "B",
+      "N"
+    ],
+    "bdsknxfz71.json": [
+      "C",
+      "N"
+    ],
+    "2flw3ge5nm.json": [
+      "D",
+      "N"
+    ],
+    "wos4s8tjrc.json": [
+      "E",
+      "N"
+    ],
+    "k6mwmm5ybv.json": [
+      "F",
+      "N"
+    ],
+    "e3214pln4i.json": [
+      "G",
+      "N"
+    ],
+    "hcvkg7txli.json": [
+      "H",
+      "N"
+    ],
+    "8ur7bs1t06.json": [
+      "I",
+      "N"
+    ],
+    "9ezwla5ksl.json": [
+      "J",
+      "N"
+    ],
+    "0sdm7vwewh.json": [
+      "K",
+      "N"
+    ],
+    "m44mzriroe.json": [
+      "L",
+      "N"
+    ],
+    "ilylby5z2h.json": [
+      "M",
+      "N"
+    ],
+    "hmneznyb1c.json": [
+      "N",
+      "N"
+    ],
+    "h637zop8au.json": [
+      "O",
+      "N"
+    ],
+    "rpccyrq7ib.json": [
+      "P",
+      "N"
+    ],
+    "bswerj80ds.json": [
+      "A",
+      "O"
+    ],
+    "rwlw6f678w.json": [
+      "B",
+      "O"
+    ],
+    "wgptxnk5kk.json": [
+      "C",
+      "O"
+    ],
+    "3ym3atj8cx.json": [
+      "D",
+      "O"
+    ],
+    "jbmr4tzxb6.json": [
+      "E",
+      "O"
+    ],
+    "mli5k59emk.json": [
+      "F",
+      "O"
+    ],
+    "sxbumzpntz.json": [
+      "G",
+      "O"
+    ],
+    "7vm4a6graw.json": [
+      "H",
+      "O"
+    ],
+    "sjywnif3bl.json": [
+      "I",
+      "O"
+    ],
+    "yotzcoruwk.json": [
+      "J",
+      "O"
+    ],
+    "unjd5vvzfo.json": [
+      "K",
+      "O"
+    ],
+    "ci7upmwujr.json": [
+      "L",
+      "O"
+    ],
+    "fyzc9lkfva.json": [
+      "M",
+      "O"
+    ],
+    "pv4eemhf9r.json": [
+      "N",
+      "O"
+    ],
+    "k4sogtzyju.json": [
+      "O",
+      "O"
+    ],
+    "buvcasegb6.json": [
+      "P",
+      "O"
+    ],
+    "zk2vabfzho.json": [
+      "A",
+      "P"
+    ],
+    "3mxxdbl8lk.json": [
+      "B",
+      "P"
+    ],
+    "hpa9bjp0qo.json": [
+      "C",
+      "P"
+    ],
+    "keea0v0tso.json": [
+      "D",
+      "P"
+    ],
+    "4jkyjbx7cu.json": [
+      "E",
+      "P"
+    ],
+    "qdzi7ngcvv.json": [
+      "F",
+      "P"
+    ],
+    "vxxqlg2zpv.json": [
+      "G",
+      "P"
+    ],
+    "oei2scfpp1.json": [
+      "H",
+      "P"
+    ],
+    "ehw4osqugi.json": [
+      "I",
+      "P"
+    ],
+    "0kasincuqs.json": [
+      "J",
+      "P"
+    ],
+    "rzkskalj35.json": [
+      "K",
+      "P"
+    ],
+    "ifw26xruqd.json": [
+      "L",
+      "P"
+    ],
+    "cktk6k6rov.json": [
+      "M",
+      "P"
+    ],
+    "momsqqst1a.json": [
+      "N",
+      "P"
+    ],
+    "nhhmjvdi3g.json": [
+      "O",
+      "P"
+    ],
+    "kjbdrkvs0y.json": [
+      "P",
+      "P"
+    ]
+  }
+}

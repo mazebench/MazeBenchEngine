@@ -1,0 +1,276 @@
+{
+  "date": "2026-09-22",
+  "environment_version": "0.2.0",
+  "verifiers_version": "0.3.2.dev121",
+  "installation": "Built wheel installed in a fresh Python environment outside the repository.",
+  "game_runtime_type": "subprocess",
+  "win_threshold": 100,
+  "authored_gems": 87,
+  "tested_module_sha256": {
+    "__init__.py": "75039a25da895c17a2231f020ef99b689ed6d7961d763d1269b16fdf5567fe03",
+    "bridge.mjs": "4050aa5a830ea540a7dc3b00f6f3a7c00f32f28a7dedca0d410981768bd552e2",
+    "game.py": "8c06708a8e344687704a2e304b747b0b8b71b377030db31db745e8f902cfd8c6",
+    "models.py": "61e2a6d0d66f66de761068707e5e40398e3abb7f3dbc9f749e42541da617b656",
+    "taskset.py": "3090705ac23db5336e109fe0809876054d1926e12e0eb91a9114c30bbcac1292",
+    "tools.py": "2fa28dbcb7eaa2bad30b586a60797058b9cc02689346fc45ff52a6edc7471640"
+  },
+  "automated_environment_tests_passed": 21,
+  "runs": [
+    {
+      "model": "openai/gpt-4.1-mini",
+      "condition": "tools_on",
+      "harness": "prime_agent",
+      "harness_commit": "a7d791bc1be09793ed5f3ec05bf4cccbc60679ea",
+      "runtime_type": "prime",
+      "ok": true,
+      "stop_condition": "game_over",
+      "errors": [],
+      "metrics": {
+        "actions_used": 10.0,
+        "gems_collected": 0.0,
+        "rooms_visited": 1.0,
+        "success": 0.0
+      },
+      "rewards": {
+        "gem_score": {
+          "score": 0.0,
+          "weight": 1.0
+        }
+      },
+      "observed_tool_names": [
+        "ipython",
+        "mcp_list_tools_maze",
+        "mcp_call_maze"
+      ],
+      "game": {
+        "condition": "tools_on",
+        "snapshot_sha256": "f362ec5b28d7db9bb183a9b9c9abad1eae6bb7e118a7a5f5ad99092c3111c2db",
+        "start_room": "HxI",
+        "summary": {
+          "schema_version": 1,
+          "novelty_version": 2,
+          "updated_at": "2026-09-22T20:18:52.821Z",
+          "game_status": "action-limit",
+          "action_count": 10,
+          "action_limit": 10,
+          "room": "HxI",
+          "gems_collected": 0,
+          "gems_total": 100,
+          "rooms_visited": 1,
+          "unique_cells": 7,
+          "novelty_rate": 0.6,
+          "blocked_actions": 2,
+          "deaths": 0,
+          "resets": 1,
+          "undos": 0,
+          "camera_actions": 0
+        },
+        "actions": [
+          "up",
+          "up",
+          "up",
+          "up",
+          "left",
+          "left",
+          "left",
+          "left",
+          "right",
+          "reset"
+        ],
+        "invalid": false
+      }
+    },
+    {
+      "model": "anthropic/claude-haiku-4.5",
+      "condition": "tools_on",
+      "harness": "prime_agent",
+      "harness_commit": "a7d791bc1be09793ed5f3ec05bf4cccbc60679ea",
+      "runtime_type": "prime",
+      "ok": true,
+      "stop_condition": "game_over",
+      "errors": [],
+      "metrics": {
+        "actions_used": 10.0,
+        "gems_collected": 0.0,
+        "rooms_visited": 1.0,
+        "success": 0.0
+      },
+      "rewards": {
+        "gem_score": {
+          "score": 0.0,
+          "weight": 1.0
+        }
+      },
+      "observed_tool_names": [
+        "ipython",
+        "mcp_list_tools_maze",
+        "mcp_call_maze"
+      ],
+      "game": {
+        "condition": "tools_on",
+        "snapshot_sha256": "f362ec5b28d7db9bb183a9b9c9abad1eae6bb7e118a7a5f5ad99092c3111c2db",
+        "start_room": "HxI",
+        "summary": {
+          "schema_version": 1,
+          "novelty_version": 2,
+          "updated_at": "2026-09-22T20:18:43.347Z",
+          "game_status": "action-limit",
+          "action_count": 10,
+          "action_limit": 10,
+          "room": "HxI",
+          "gems_collected": 0,
+          "gems_total": 100,
+          "rooms_visited": 1,
+          "unique_cells": 5,
+          "novelty_rate": 0.4,
+          "blocked_actions": 4,
+          "deaths": 0,
+          "resets": 0,
+          "undos": 0,
+          "camera_actions": 0
+        },
+        "actions": [
+          "up",
+          "down",
+          "left",
+          "right",
+          "down",
+          "down",
+          "down",
+          "down",
+          "down",
+          "down"
+        ],
+        "invalid": false
+      }
+    },
+    {
+      "model": "openai/gpt-4.1-mini",
+      "condition": "tools_off",
+      "harness": "null",
+      "harness_commit": null,
+      "runtime_type": "prime",
+      "ok": true,
+      "stop_condition": "game_over",
+      "errors": [],
+      "metrics": {
+        "actions_used": 10.0,
+        "gems_collected": 0.0,
+        "rooms_visited": 1.0,
+        "success": 0.0
+      },
+      "rewards": {
+        "gem_score": {
+          "score": 0.0,
+          "weight": 1.0
+        }
+      },
+      "observed_tool_names": [
+        "maze_action",
+        "maze_observe",
+        "maze_sequence"
+      ],
+      "game": {
+        "condition": "tools_off",
+        "snapshot_sha256": "f362ec5b28d7db9bb183a9b9c9abad1eae6bb7e118a7a5f5ad99092c3111c2db",
+        "start_room": "HxI",
+        "summary": {
+          "schema_version": 1,
+          "novelty_version": 2,
+          "updated_at": "2026-09-22T20:18:00.565Z",
+          "game_status": "action-limit",
+          "action_count": 10,
+          "action_limit": 10,
+          "room": "HxI",
+          "gems_collected": 0,
+          "gems_total": 100,
+          "rooms_visited": 1,
+          "unique_cells": 10,
+          "novelty_rate": 0.9,
+          "blocked_actions": 0,
+          "deaths": 0,
+          "resets": 0,
+          "undos": 0,
+          "camera_actions": 0
+        },
+        "actions": [
+          "up",
+          "left",
+          "right",
+          "right",
+          "down",
+          "right",
+          "right",
+          "right",
+          "right",
+          "down"
+        ],
+        "invalid": false
+      }
+    },
+    {
+      "model": "anthropic/claude-haiku-4.5",
+      "condition": "tools_off",
+      "harness": "null",
+      "harness_commit": null,
+      "runtime_type": "prime",
+      "ok": true,
+      "stop_condition": "game_over",
+      "errors": [],
+      "metrics": {
+        "actions_used": 10.0,
+        "gems_collected": 0.0,
+        "rooms_visited": 1.0,
+        "success": 0.0
+      },
+      "rewards": {
+        "gem_score": {
+          "score": 0.0,
+          "weight": 1.0
+        }
+      },
+      "observed_tool_names": [
+        "maze_action",
+        "maze_observe",
+        "maze_sequence"
+      ],
+      "game": {
+        "condition": "tools_off",
+        "snapshot_sha256": "f362ec5b28d7db9bb183a9b9c9abad1eae6bb7e118a7a5f5ad99092c3111c2db",
+        "start_room": "HxI",
+        "summary": {
+          "schema_version": 1,
+          "novelty_version": 2,
+          "updated_at": "2026-09-22T20:17:55.210Z",
+          "game_status": "action-limit",
+          "action_count": 10,
+          "action_limit": 10,
+          "room": "HxI",
+          "gems_collected": 0,
+          "gems_total": 100,
+          "rooms_visited": 1,
+          "unique_cells": 9,
+          "novelty_rate": 0.8,
+          "blocked_actions": 1,
+          "deaths": 0,
+          "resets": 1,
+          "undos": 0,
+          "camera_actions": 0
+        },
+        "actions": [
+          "right",
+          "right",
+          "right",
+          "right",
+          "down",
+          "down",
+          "down",
+          "reset",
+          "left",
+          "left"
+        ],
+        "invalid": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,390 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "https://github.com/mazebench-temp/MazeBenchEngineUnitTest.git",
+  "sourceCommit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+  "sourceTree": "9d3cbdd2ad5767c932aeafab57febbca0d1dc8bd",
+  "abiVersion": 4,
+  "voxelStride": 5,
+  "wasm": {
+    "sourcePath": "apps/web/public/physics/voxel_physics.wasm",
+    "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+    "bytes": 542834
+  },
+  "files": [
+    {
+      "mode": "100644",
+      "path": "benchmarks/fixtures/mixed_3d_427.csv",
+      "sha256": "33e2eba3b9374685675284c478a31f3011ddd7afaae662036bb9cf7077abe012"
+    },
+    {
+      "mode": "100644",
+      "path": "benchmarks/puncher_search_benchmark.mjs",
+      "sha256": "d40e7145de7d3d399f1d2907a7355dd25bb9ace48e5a1ebadb82b126465836dd"
+    },
+    {
+      "mode": "100644",
+      "path": "benchmarks/search_benchmark.cpp",
+      "sha256": "9c7b16ed1aadf523170110e3ed77798b6bc3225b8bf96be475ab3c38cb20659d"
+    },
+    {
+      "mode": "100644",
+      "path": "benchmarks/turn_benchmark.cpp",
+      "sha256": "3c9cfb91dd12bce5b5bb1426cc295a3b2f832606bbebcbd913fa28573c5e940b"
+    },
+    {
+      "mode": "100644",
+      "path": "benchmarks/wasm_search_benchmark.mjs",
+      "sha256": "59164a000f72d11fc2a69847029d3dc7f5a89252abb8c1a114a9f36abffe1588"
+    },
+    {
+      "mode": "100644",
+      "path": "CMakeLists.txt",
+      "sha256": "437294fe15c0a6913fb71d48cdc9fae757d3ae9e3816b2e1c9ba2c5a46331917"
+    },
+    {
+      "mode": "100644",
+      "path": "include/voxelbench/physics.hpp",
+      "sha256": "3bbfc20bce9daa6e4a70f26e5470349b17a0860ff4f72124c9f4e4a6234eed2a"
+    },
+    {
+      "mode": "100644",
+      "path": "include/voxelbench/search.hpp",
+      "sha256": "a1b386773c75973872d5052aa691235977835e5b78cf22e848b0ed04a0a1db90"
+    },
+    {
+      "mode": "100644",
+      "path": "README.md",
+      "sha256": "30d2e9521b8fdd21bf39b778d35abac76e3306909fb64cbd614e3343ac2525ea"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics.cpp",
+      "sha256": "20bbd736327ae65d9c1f29f641749812bc193fcce4c2367e4f99c0f4a3f1e1d5"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/actor_lifts.inc",
+      "sha256": "2e72c22a9d3b8e9525e1ab96d6aac0b5f6aae8a07d3e81da94836fec63ea1930"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/command_state.inc",
+      "sha256": "5f8b69bfb7449bbcf2a2d76d25310647d01b8c882a58c3b0be9daa1fe8e5be43"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/cycle_public.inc",
+      "sha256": "5d023bc6e01330f13b286e6bbd9514e836dfbe6e17dc469d8e12af1a7a9e14bd"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/cycle.inc",
+      "sha256": "ea6cbef2c90249de726433057343f995ec1329cb979dd79ec7ac6f33b65924fd"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/gates.inc",
+      "sha256": "9be14cc25d6a3286c64c566f7a3372be34752502e41124955e93e583f3ed7b5f"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/gravity_motion.inc",
+      "sha256": "876e58b77b78b048fca6ade2a4a7754b9c6295f84c72112449cb29498e81617f"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/gravity_queries.inc",
+      "sha256": "09b314545f88fd375b8116efa8ba18e3597d4e0c1a9f6e25e5db21741a5e23cb"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/lifts.inc",
+      "sha256": "8b2573102057655ad1f08394a2fbf337e20f0ca7de0a226ef2f7931f3417545c"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/motion_support.inc",
+      "sha256": "e3a5abba0ae9b26c298a96f2c53f5b399740171a1e459bcb209f37534e6c53ab"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/movement.inc",
+      "sha256": "6036dec9e35b161a86df8b623a1d869ad3ac79163a8988c5fc519f5ea160bfe0"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/objects.inc",
+      "sha256": "7d5a8acf362c94da9d38918467931fca8c8df44bb055a1b189629f1f9d076b64"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/orange_mechanisms.inc",
+      "sha256": "33077e1e4d116f1eba76ac882254acb51e5f52c9916cd07d3f1168cb65338e58"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/passive_commands.inc",
+      "sha256": "5cda848a7775991fe62ddf31761676d1c2b83b5b970561fbdc92b7377ecab571"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/public_core.inc",
+      "sha256": "68d521d9cb022bfd3ed9635800250c7aab87695799f5c23b41a538af43589255"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/punchers.inc",
+      "sha256": "5937b5910802afe6ef5d29eed16ba90133ff57417d584a02a2b42c894f8e9862"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/simulate.inc",
+      "sha256": "0c0e5365247a3badeb4a51ceb3f62090a9efc9d4e60a07872177b3718721bf2e"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/slope_geometry.inc",
+      "sha256": "a5b0a111c107b578bc50f01510f811ceb428a65347d57252dcc76953fe77bb94"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/slope_motion.inc",
+      "sha256": "1940cbd94efefd1a45d3388e7a525da62a45db6dbdbcaf7446e2f9734e4d6213"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/slope_proposals.inc",
+      "sha256": "b3082e8397eb83bac43fbd30ca3da6a548d8aabc775b0da6c5fb398f846e49c9"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/tick.inc",
+      "sha256": "70e480286acaa07d92ce7890688b18de97fdcb081422af3d88a9df790892f6ae"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/translations.inc",
+      "sha256": "5d21b99e45d2a80f372fef9913be5b37b4e729d4c4dcbc6f3434fa7b6fe785ac"
+    },
+    {
+      "mode": "100644",
+      "path": "src/physics/workspace.inc",
+      "sha256": "8f762de8f597d4525357e3054e7bc5238b5125acc4b2d4607a66a0815341da21"
+    },
+    {
+      "mode": "100644",
+      "path": "src/search.cpp",
+      "sha256": "06fb0cf92fc068afc68358b634e4738d5413e3a353f223bb838b7f6e738dec18"
+    },
+    {
+      "mode": "100644",
+      "path": "src/wasm_api.cpp",
+      "sha256": "0934487668d97d006b445db40df4da05004fbb9e12ec454ee46a2238c9ce77d8"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/audit-regressions.test.mjs",
+      "sha256": "2e2a905573c978bceb78e9a6599a65d3da155812ab5af12f5121016aa22cf57a"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/clone-chain-vacancy.test.mjs",
+      "sha256": "791050676203ad521af6f9f5b1e8c8de9db33bdc5f8cb03610ccba83d7b632f0"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/clone-lifts.test.mjs",
+      "sha256": "1f7693fd754fbf933e9853187c16f37b3c852101eff7cf69444fff694aef202c"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/clone-stack.test.mjs",
+      "sha256": "aa5baeccba73d2f1b3ef3f715c88a61887aab49487f7bc50b24dbbe1aa96182f"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/clone-vacancy.test.mjs",
+      "sha256": "7004b5161e27bb7d1f58756757a04c6c4c45f6f2110bd985e4f4a65341152500"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/fixtures/dxl-search.json",
+      "sha256": "a4a9816ede52bad5461afa4046b4e853d722b1fd9cd2d3683a820e9f4346e24f"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/fixtures/hxo-orange-walls.json",
+      "sha256": "7764f117c937a3b0f5bc4890536121f70ea6a8ce1e68e53777607bc105c7341c"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/fixtures/pxp-supported-clone-component.json",
+      "sha256": "817ad5d4603fb222e2f4ace9dfcbe050491552b2fd2718e17f58c1b06a4dc1d2"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/floating-floor-slopes.test.mjs",
+      "sha256": "263e4d40c4f3835705aab080419e501b3385c10288d21ce4e07859cd16e44ba9"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/gate-blockers.test.mjs",
+      "sha256": "496183362edfa91337cd43bd788090d0b1be5ed34f3aef474483b361ca04170a"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/helpers/clone-chain-vacancy-fixtures.mjs",
+      "sha256": "96d8d74989cdc4785d5995f590765796968b4c3aa6015d4efab516463f64c2b5"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/helpers/clone-lift-fixtures.mjs",
+      "sha256": "554709e3df065a92e8fec2396d37af91a3f17387f6f9c16803219cbd0fabeaba"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/helpers/clone-vacancy-fixtures.mjs",
+      "sha256": "0ccff180d2df3f970ee3ab0410e3479ab462f988c6f23728a28165d2db3761ef"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/helpers/interlocked-fixtures.mjs",
+      "sha256": "46fa1b65cda7e62f148cbe32d6f5b4aeac63b90d62e5c4ae9975851755be6277"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/helpers/project-engine.mjs",
+      "sha256": "841f8855e09f3983395b5d2ebdf6569b5b4637c89b17d93b4ab548da120d4234"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/helpers/sloped-entity-fixtures.mjs",
+      "sha256": "0dedbac54741836f980a085863db31e85deb4933153a351b48d6afc31aa902bb"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/helpers/supported-clone-component-fixtures.mjs",
+      "sha256": "a9bc371b2cf11f8c17ca43cd8fb52b9f7caad864b2e9f6ec617af024c5e3f963"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/helpers/wrapping-clone-push-fixtures.mjs",
+      "sha256": "421b8571b56825555a8f48439fd1772c4374fb8f396eedb27efeebf2909e0620"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/interlocked-momentum.test.mjs",
+      "sha256": "f3c1870995255c7a8e4481f03a21754415055f7233d2ec15715fd055c7034a3a"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/invariants.test.mjs",
+      "sha256": "2028454d85d829c643fa9606bca997eb9836869b3e61287266b7028e45c97f0a"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/mounted-lift-contact.test.mjs",
+      "sha256": "058f26661720c57ffd6968833a4a4b7fa226612008c6594b6eccc804df3a6029"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/orange-wall-motion.test.mjs",
+      "sha256": "e8af016bbdd854963f9ec19e0f7bf5c1cb43db8a0ceef2a3d7e20f5183cad507"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/passive_differential.test.mjs",
+      "sha256": "e701b09fd27a4d5b94ff98d8435b5c89ac1375c5d5020b343f73e33260d01000"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/physics_tests.cpp",
+      "sha256": "3d51cf5f719296798cb83ef5b61cd5e6834c79b54f1df1058e153406d96b3b63"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/polycube-walking.test.mjs",
+      "sha256": "19fa2cc944ee8ad85671e1133ea941b70e49ce9df8cfc5f557bd9bcab31e11bd"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/project_suite.test.mjs",
+      "sha256": "04e528918ea9a560b06a297a52fe378bdb2cf0f06e1e444ce734b19928e876c9"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/puncher-command-start.test.mjs",
+      "sha256": "94d29c78a84e9f1b613956561d92671d620bafa9384c58e5976b69c5ee1ac57d"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/puncher-lifts.test.mjs",
+      "sha256": "dec209b39e837c658ea94bc96f9db67686d9cf55e7aeb2d60b73d122a6a003fa"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/puncher-passive.test.mjs",
+      "sha256": "306b0716cc9e3d6614d1d950538d2e8f93540d7bad4fceb5171d83dca7e5d616"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/puncher-search.test.mjs",
+      "sha256": "fd02454b00159ed164e3633e2ca39db001b2687e15721cb5598823ac6ca180df"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/remote-terrain.test.mjs",
+      "sha256": "35d7503eab3db0d7534b79f6e3d5d7df465835d00eda1910e0af3e755bd587b4"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/search-oracle.test.mjs",
+      "sha256": "7b3f734dac1e892348926cf553caa3d1be7ef339afa05dce15c771f2de9d17e0"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/slope-crest.test.mjs",
+      "sha256": "4ca12f40afce60440c3d9b44793a50b172d5aec4bfa896d8399aad5383cc78c0"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/slope-isolation.test.mjs",
+      "sha256": "88ec65df93796410973a4303fd3243c422d43a868ec534a672bb375f1305a885"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/sloped-entities.test.mjs",
+      "sha256": "c4b5a58a2ad7238fc4bc0ddb29c7a24cb4814b8db78eb5a71cbd1081779a10be"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/stack-carry.test.mjs",
+      "sha256": "700cdc03c420fe79ae3f0d2632a2f83fc48d267a74e3800934f8f3849443708f"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/supported-clone-component.test.mjs",
+      "sha256": "0e0cd720267fd4e84e5d353d93168f066476401bc85bbd4a241d18d86d0f78be"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/test-audit.test.mjs",
+      "sha256": "333cda3e4f03e23018232641966bf88784bd8dcdec365f6823395dd5c964a3a8"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/wasm_api.test.mjs",
+      "sha256": "a765b951432f1d4d4887655e7d7dc0a4006709d2019f9c02e3bffe13f6565446"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/wrapped-support.test.mjs",
+      "sha256": "0b4914553e17b7b97403f7e81207a1c7c413320234529eef354e6a8a5868750a"
+    },
+    {
+      "mode": "100644",
+      "path": "tests/wrapping-clone-push.test.mjs",
+      "sha256": "0feb8db2861e3f1ef57b5370bb5bd2b8347aab17ee8bdf05ca6e088bdef5a732"
+    }
+  ]
+}

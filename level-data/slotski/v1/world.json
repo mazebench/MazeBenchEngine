@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "slotski",
+  "title": "Slotski",
+  "levels": [{
+    "number": 1,
+    "title": "Classic Slotski",
+    "width": 4,
+    "height": 5,
+    "target": "A",
+    "exit_x": 1,
+    "blocks": [
+      { "id": "A", "x": 1, "y": 0, "width": 2, "height": 2 },
+      { "id": "B", "x": 0, "y": 0, "width": 1, "height": 2 },
+      { "id": "C", "x": 3, "y": 0, "width": 1, "height": 2 },
+      { "id": "D", "x": 0, "y": 2, "width": 1, "height": 2 },
+      { "id": "E", "x": 3, "y": 2, "width": 1, "height": 2 },
+      { "id": "F", "x": 1, "y": 2, "width": 2, "height": 1 },
+      { "id": "G", "x": 1, "y": 3, "width": 1, "height": 1 },
+      { "id": "H", "x": 2, "y": 3, "width": 1, "height": 1 },
+      { "id": "I", "x": 0, "y": 4, "width": 1, "height": 1 },
+      { "id": "J", "x": 3, "y": 4, "width": 1, "height": 1 }
+    ]
+  }]
+}

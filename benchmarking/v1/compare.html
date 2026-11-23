@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Compare MazeBench run heatmaps side by side on the same world map and color scale.">
+    <title>MazeBench — Compare heatmaps</title>
+    <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="../ui/launcher.css">
+    <link rel="stylesheet" href="../ui/compare.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <nav aria-label="Benchmark navigation">
+        <a class="back-link" href="./"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg><span>Back</span></a>
+        <strong class="page-title">Benchmark</strong>
+      </nav>
+      <div class="compare-actions">
+        <button id="screenshot-mode" type="button" disabled title="Show only heatmaps and model names. Press Escape or click to return.">Screenshot mode</button>
+        <button id="refresh-comparison" type="button">Refresh</button>
+      </div>
+    </header>
+    <main class="compare-main" tabindex="-1">
+      <div class="compare-heading">
+        <div><h1>Compare heatmaps</h1><p>Main World · Compare runs on the same map and color scale.</p></div>
+        <output id="comparison-status" role="status">Loading runs…</output>
+      </div>
+      <div class="compare-toolbar">
+        <div class="map-segments" role="group" aria-label="Map area">
+          <button type="button" id="explored-area" aria-pressed="true">Explored area</button>
+          <button type="button" id="full-world" aria-pressed="false">Full world</button>
+        </div>
+        <div class="comparison-settings">
+          <label class="scale-control"><span>Compare</span><select id="model-count"><option value="2">2 models</option><option value="3">3 models</option></select></label>
+          <label class="scale-control"><span>Color by</span><select id="color-scale"><option value="count">Visit count</option><option value="share">Share of visits</option></select></label>
+        </div>
+      </div>
+      <p id="comparison-note" class="comparison-note" hidden></p>
+      <div id="comparison-panels" class="comparison-grid"></div>
+      <div class="comparison-legend" id="comparison-legend" hidden>
+        <span><i class="unvisited-swatch"></i>Unvisited</span>
+        <div class="visit-gradient"><span id="legend-min">1</span><i></i><span id="legend-max"></span></div>
+        <span id="legend-label">Visits per tile · logarithmic scale</span>
+      </div>
+      <p class="compare-help">Hover or tap a tile to compare runs. With a map focused, use the arrow keys to explore.</p>
+      <p class="compare-help screenshot-help">In screenshot mode, press Escape or click anywhere to return.</p>
+      <details class="compare-details"><summary>How to read this comparison</summary><p>Maps share identical bounds, room labels, and colors. Visit count shows recorded visits to each tile; Share of visits divides each tile’s count by that run’s total visits, making different run lengths easier to compare. Colors use a shared logarithmic scale.</p><p>Visits include action endpoints and exact intermediate positions when recorded, including slides and punches. Height is collapsed onto the world map. Empty tiles have no recorded visits. These are exploration heatmaps, not terrain maps. Refresh to update an active run.</p><p>Imported runs are saved heatmap snapshots from the older leaderboard, with their original model and tool settings. They count the initial position and action endpoints; intermediate paths were not recorded. They remain available when the source site is offline.</p></details>
+    </main>
+    <script type="module" src="../ui/compare.mjs"></script>
+  </body>
+</html>

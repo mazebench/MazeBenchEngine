@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="The lightweight Three.js editor for the MazeBench main world.">
+    <title>MazeBench — Editor</title>
+    <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="../../render/v1/visual-effects.css">
+    <link rel="stylesheet" href="../../render/v1/cutaway-controls.css">
+  </head>
+  <body class="maze-editor">
+    <header class="editor-topbar">
+      <div class="editor-navigation">
+        <a class="back-link" href="../../" title="Back to the world map"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"></path></svg><span>Back</span></a>
+        <div class="editor-title"><strong>Editor</strong><span id="room-name">—</span></div>
+      </div>
+      <nav class="editor-actions" aria-label="Editor actions">
+        <a id="play-link" href="../../play/v1/">Play</a>
+        <button id="undo" type="button" title="Undo last edit (⌘Z / Ctrl+Z)" disabled>Undo</button>
+        <button id="save" type="button" title="Save room (⌘S / Ctrl+S)" disabled>Saved</button>
+        <details id="editor-menu" class="editor-menu">
+          <summary aria-label="More editor actions" title="More"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg></summary>
+          <div class="menu-items">
+            <button id="reset-view" type="button">Reset view<kbd>/</kbd></button>
+            <button id="eraser" type="button" aria-pressed="false" title="Erase one object">Eraser</button>
+            <a href="../../world-solver/v1/">World Solver<span aria-hidden="true">↗</span></a>
+          </div>
+        </details>
+      </nav>
+    </header>
+
+    <main class="editor-layout">
+      <section id="stage" class="editor-stage" aria-label="Three-dimensional level editor">
+        <canvas id="editor-canvas"></canvas>
+        <details class="cutaway-panel"><summary>Truncate</summary><div id="cutaway-controls" class="cutaway-controls" role="group" aria-label="Truncate room" hidden></div></details>
+        <div id="loading" class="loading"><progress id="load-progress" max="257" value="0" aria-label="Loading editor"></progress></div>
+        <div class="camera-pad" role="group" aria-label="Camera controls"></div>
+        <details class="camera-help">
+          <summary>Camera controls</summary>
+          <dl><div><dt>Rotate</dt><dd>A / D</dd></div><div><dt>Tilt</dt><dd>W / S</dd></div><div><dt>Pan</dt><dd>Arrow keys</dd></div><div><dt>Zoom</dt><dd>Q / E</dd></div><div><dt>Center</dt><dd>/</dd></div></dl>
+          <p>Right-drag or Alt-drag to move the camera.</p>
+        </details>
+      </section>
+
+      <aside class="editor-sidebar" aria-label="Editor tools and room settings">
+        <section class="panel tools-panel">
+          <div class="panel-heading"><div><span>Toolbox</span><strong id="tool-name">Floor</strong></div></div>
+          <p id="tool-description" class="description">Plain ground.</p>
+          <div id="toolbox" class="toolbox" aria-label="MazeBench tools"></div>
+        </section>
+
+        <section class="panel room-panel">
+          <div class="room-info">
+            <h2>World map</h2>
+            <dl class="stats"><div><dt>Gems in room</dt><dd id="gem-count">0</dd></div></dl>
+          </div>
+          <div id="room-grid" class="room-grid" aria-label="World room grid"></div>
+        </section>
+
+        <details class="panel solver-panel">
+          <summary>Gem solver</summary>
+          <div class="panel-content">
+          <label class="solver-weight">
+            <span>Physics interaction bias</span>
+            <input id="physics-interaction-weight" type="number" min="0" max="1000" step="1" value="0" inputmode="numeric">
+          </label>
+          <div class="solver-actions">
+            <button id="quick-solve" type="button">Fast A*</button>
+            <button id="exact-solve" type="button">BFS</button>
+            <button id="cancel-solve" type="button" disabled>Cancel</button>
+            <button id="replay-solution" type="button" disabled>Replay</button>
+          </div>
+          <output id="solver-result" class="solver-result" aria-live="polite"></output>
+          <div id="solver-path" class="solver-path" aria-label="Solver path"></div>
+          <div class="solver-actions solver-copy-actions">
+            <button id="copy-solution-udlr" type="button" disabled>Copy UDLR</button>
+          </div>
+          <output id="solver-copy-status" class="solver-result" role="status"></output>
+          <textarea id="solver-copy-fallback" class="solver-copy-fallback" aria-label="Solution to copy" readonly hidden></textarea>
+          </div>
+        </details>
+
+        <details class="panel transform-panel">
+          <summary>Transform room</summary>
+          <div class="transform-controls panel-content">
+            <fieldset class="transform-group">
+              <legend>Rotate 90°</legend>
+              <div class="transform-grid">
+                <button data-transform="left" type="button" aria-label="Rotate room 90° left">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6"/></svg><span>Left</span>
+                </button>
+                <button data-transform="right" type="button" aria-label="Rotate room 90° right">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 10a9 9 0 1 0-2 8M21 4v6h-6"/></svg><span>Right</span>
+                </button>
+              </div>
+            </fieldset>
+            <fieldset class="transform-group">
+              <legend>Flip</legend>
+              <div class="transform-grid">
+                <button data-transform="horizontal" type="button" aria-label="Flip room horizontally">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18" stroke-dasharray="2 3"/><path d="m3 8 5 4-5 4V8Zm18 0-5 4 5 4V8Z"/></svg><span>Horizontal</span>
+                </button>
+                <button data-transform="vertical" type="button" aria-label="Flip room vertically">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18" stroke-dasharray="2 3"/><path d="m8 3 4 5 4-5H8Zm0 18 4-5 4 5H8Z"/></svg><span>Vertical</span>
+                </button>
+              </div>
+            </fieldset>
+          </div>
+        </details>
+
+        <details class="panel cell-panel">
+          <summary>Cell inspector</summary>
+          <div class="panel-content">
+          <div class="panel-heading"><div><span>Selected 3D cell</span><strong id="cell-position">—</strong></div></div>
+          <label class="raw-field">
+            <span>Objects (JSON)</span>
+            <textarea id="cell-value" rows="7" spellcheck="false" disabled></textarea>
+          </label>
+          <button id="apply-cell" type="button" disabled>Apply object JSON</button>
+          <p class="file-info">File <span id="file-name">—</span></p>
+          </div>
+        </details>
+
+        <p id="status" class="status" role="status" aria-live="polite" hidden></p>
+      </aside>
+    </main>
+
+    <div id="generic-dialog" class="generic-dialog" hidden>
+      <form id="generic-form" class="generic-card" role="dialog" aria-modal="true" aria-labelledby="generic-title" aria-describedby="generic-message">
+        <span class="generic-eyebrow">Generic numbered family</span>
+        <h2 id="generic-title">Choose object ID</h2>
+        <p id="generic-message">Pieces with the same number move as one object.</p>
+        <label class="generic-field">
+          <span>ID (0 or more)</span>
+          <input id="generic-id" inputmode="numeric" autocomplete="off" value="0">
+        </label>
+        <small id="generic-error" class="generic-error" role="alert"></small>
+        <div class="generic-actions">
+          <button id="generic-cancel" type="button">Cancel</button>
+          <button class="primary" type="submit">Select</button>
+        </div>
+      </form>
+    </div>
+
+    <script type="module" src="./main.mjs"></script>
+    <script type="module" src="../../ui/control-pad-feedback.mjs"></script>
+  </body>
+</html>

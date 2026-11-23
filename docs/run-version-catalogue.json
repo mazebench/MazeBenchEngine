@@ -1,0 +1,1417 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-24T18:02:31.203Z",
+  "runs": [
+    {
+      "id": "run-2026-09-04T19-29-31-992Z-772688",
+      "model": "gpt-6-astra",
+      "provider": "codex",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 21219,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "d2a613cffc4a1024eeb951872d3497ce2fb82d708f8cf2b9e6f158bf08c7bb7b",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b",
+          "history": [
+            {
+              "action": 3877,
+              "before_sha256": "a86773c977288bc8766fff804a08b4d93af28309dfe0eac0bf2dc4f0d917d5bc",
+              "after_sha256": "005562157166dfc706e306de3e23ffc4e8a1d57bed118d6b9ef96d65b3beaf7c"
+            },
+            {
+              "action": 11686,
+              "before_sha256": "005562157166dfc706e306de3e23ffc4e8a1d57bed118d6b9ef96d65b3beaf7c",
+              "after_sha256": "5f360486d88e4bd99d899254019626b36fe2979e9e32627a5c9a82748099d7b5"
+            },
+            {
+              "action": 12280,
+              "before_sha256": "5f360486d88e4bd99d899254019626b36fe2979e9e32627a5c9a82748099d7b5",
+              "after_sha256": "fa89255e3c7c250d75494aa06f24b08593556254a4b9f83395805a467e9d4fff"
+            }
+          ]
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "fd2cbbb5027ecbcfea39973f0a9eba3c0150eed8a050df2b6b6be45e0bf3a4ae",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": null,
+          "available_sha256": null,
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: fd2cbbb5027ecbcfea39973f0a9eba3c0150eed8a050df2b6b6be45e0bf3a4ae",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-04T20-45-49-194Z-ff5fb0",
+      "model": "claude-fable-5-1",
+      "provider": "claude-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 24219,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "411dd996437673cd55707a16ecbe1164d2d3253d5c454a267a33bf7b84d1ae62",
+        "engine": {
+          "version": null,
+          "sha256": "005562157166dfc706e306de3e23ffc4e8a1d57bed118d6b9ef96d65b3beaf7c",
+          "source_commit": null,
+          "runtime_sha256": "9cfacdfac14d17a2fe240f1121de78f04ef57220cce54f6feeb672005aa386af",
+          "history": [
+            {
+              "action": 1211,
+              "before_sha256": "a86773c977288bc8766fff804a08b4d93af28309dfe0eac0bf2dc4f0d917d5bc",
+              "after_sha256": "005562157166dfc706e306de3e23ffc4e8a1d57bed118d6b9ef96d65b3beaf7c"
+            }
+          ]
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "b4e7784fe60d17b8d10864954e9a6f602bc09b2fa84eabb80442395ef8a19a7b",
+          "policy": "frozen",
+          "edited": false,
+          "available_sha256": "b4e7784fe60d17b8d10864954e9a6f602bc09b2fa84eabb80442395ef8a19a7b",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 005562157166dfc706e306de3e23ffc4e8a1d57bed118d6b9ef96d65b3beaf7c\nRecorded world inventory SHA-256: b4e7784fe60d17b8d10864954e9a6f602bc09b2fa84eabb80442395ef8a19a7b",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-04T21-14-59-598Z-899f4f",
+      "model": "gpt-5.6-terra",
+      "provider": "codex",
+      "observation_mode": "ascii",
+      "world": "ice-maze",
+      "actions": 40,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "5f678f12e9cad01c87d4c0bc93ed9b84d6062087b26d93f49c7c73d8db447186",
+        "engine": {
+          "version": null,
+          "sha256": null,
+          "source_commit": null,
+          "runtime_sha256": null
+        },
+        "world": {
+          "name": "Ice Maze",
+          "version": null,
+          "sha256": null,
+          "policy": "frozen",
+          "edited": false
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-04T21-17-50-410Z-751d81",
+      "model": "gpt-6-astra",
+      "provider": "codex",
+      "observation_mode": "ascii",
+      "world": "ice-maze",
+      "actions": 1023,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "d95a8bafb605d27c59b18716ed1ade680fcdb73aa4ed5b0665f7fc69fef4ce3b",
+        "engine": {
+          "version": null,
+          "sha256": null,
+          "source_commit": null,
+          "runtime_sha256": null
+        },
+        "world": {
+          "name": "Ice Maze",
+          "version": null,
+          "sha256": null,
+          "policy": "frozen",
+          "edited": false
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-06T14-58-58-900Z-c3d736",
+      "model": "gpt-6-astra",
+      "provider": "codex",
+      "observation_mode": "ascii",
+      "world": "slotski",
+      "actions": 1120,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "2b5571b91c10687845b4091de5be64e9493b170d643a5e9636b1f05c3aaa1437",
+        "engine": {
+          "version": null,
+          "sha256": null,
+          "source_commit": null,
+          "runtime_sha256": null
+        },
+        "world": {
+          "name": "Slotski",
+          "version": null,
+          "sha256": null,
+          "policy": "frozen",
+          "edited": false
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-07T07-19-50-272Z-73b8a4",
+      "model": "gpt-6-astra",
+      "provider": "codex",
+      "observation_mode": "ascii",
+      "world": "slotski",
+      "actions": 302,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "2a49d8ad5c9093b99efd449bf751f12f2f6874eee09403e74741003c49541362",
+        "engine": {
+          "version": null,
+          "sha256": null,
+          "source_commit": null,
+          "runtime_sha256": null
+        },
+        "world": {
+          "name": "Slotski",
+          "version": null,
+          "sha256": null,
+          "policy": "frozen",
+          "edited": false
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-07T20-06-12-768Z-cba537",
+      "model": "gpt-6-astra",
+      "provider": "codex",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 20673,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "9e87e32f71b22d0ab7f017625a4fe15a496143f034d8faa41561120b62f80b11",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "fd2cbbb5027ecbcfea39973f0a9eba3c0150eed8a050df2b6b6be45e0bf3a4ae",
+          "policy": "next-entry-v1",
+          "edited": true,
+          "observed_revision": 4,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: fd2cbbb5027ecbcfea39973f0a9eba3c0150eed8a050df2b6b6be45e0bf3a4ae",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-13T21-25-28-703Z-c83a85",
+      "model": "claude-fable-5-1",
+      "provider": "claude-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 1585,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "c797f93187c0bd17426da5b255e7ded8ff0c4ee936e8f458c26ccf637d0ad5a8",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "fd2cbbb5027ecbcfea39973f0a9eba3c0150eed8a050df2b6b6be45e0bf3a4ae",
+          "policy": "next-entry-v1",
+          "edited": true,
+          "observed_revision": 1,
+          "available_sha256": "5d151e3d5ec38638440f93363e954ad56a1655935c459f79278a44174c8bb4b2",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: fd2cbbb5027ecbcfea39973f0a9eba3c0150eed8a050df2b6b6be45e0bf3a4ae",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-21T16-57-15-302Z-10a142",
+      "model": "grok-4.7",
+      "provider": "grok-build",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 87,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "b4f88c78de4de2f8841884905a52505abca10f7fb3a4e9be19a99e102640cd1e",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-21T17-19-08-534Z-23614e",
+      "model": "grok-4.7",
+      "provider": "grok-build",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 65,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "3066ec376d93426412243a7e2eb8adb8e01c54d6f3d790b474fbe64267f93811",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-21T18-02-53-635Z-e2a946",
+      "model": "grok-4.7",
+      "provider": "grok-build",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 1920,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "8d2db0733da399876196015e2b2c9d9c39e22fe0da447132f6588e9aa51f4e98",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-21T18-02-58-432Z-ddbd31",
+      "model": "grok-4.7",
+      "provider": "grok-build",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 1422,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "dfbbedc74de31bd69196dede3c6191039f3224e286682d34636fed845dd32867",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-22T18-38-54-351Z-8d1ed6",
+      "model": "claude-opus-5-5",
+      "provider": "claude-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 4605,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "1179ef72afe4d43d30613f63ad9496a98ab8ebb3651034a51b1dcc5d12b77b73",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-22T19-30-28-581Z-d9f00a",
+      "model": "gpt-6-luna",
+      "provider": "codex",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 2157,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "b13027ba861a26346bedcc8c4b5c0127913b22e229a6511f98ebdca9c2493d14",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-23T00-41-35-777Z-5d1547",
+      "model": "claude-opus-5-5",
+      "provider": "claude-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 54045,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "6a97b267aa949249c96bc266586d27c362f7d67733abc72acf69ae3aff2ab017",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-23T03-36-36-028Z-7912b5",
+      "model": "gpt-6-sol",
+      "provider": "codex",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 1957,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "c91693a8609a236c3cf703e723e68f68eb7713e4eda98f0fceb058c9a84abd48",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-23T04-01-30-149Z-fd83b3",
+      "model": "gpt-6-sol",
+      "provider": "codex",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 1518,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "a35ef2967dc678670ab787d425d01ae8a3fec6faeacca4b798f0906a2b689c9b",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-23T05-19-03-538Z-257b8c",
+      "model": "gpt-6-sol",
+      "provider": "codex",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 4049,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "f1db7ebc14d3bf90231394764eb28da3555d42da3efee8f8e98f5d9a4ff35db1",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-23T05-19-05-117Z-01f1f4",
+      "model": "gpt-6-sol",
+      "provider": "codex",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 20380,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "148d98ba1aa2cac42e429732385982fcbe16a5eea8ad777ef516e21b7a41a7d5",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-29T04-50-14-768Z-f669cd",
+      "model": "claude-sonnet-5-5",
+      "provider": "claude-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 1710,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "bdcbda9ae26b3d88032f99742b2b2e2e250f1276405e7640455f0b79c265644c",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-29T04-50-16-421Z-16d817",
+      "model": "claude-sonnet-5-5",
+      "provider": "claude-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 2986,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "b0297676624456f2d311ec761dd75554552b07c920064fc3afd136310820fd21",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-29T05-26-57-343Z-271b9d",
+      "model": "gemini-3.8-flash-high",
+      "provider": "antigravity",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 293,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "a2a2a289edb3445a7f4a67a58d757d464e14b6992aea5487ed91fb866e64db38",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-30T03-52-50-969Z-62c889",
+      "model": "gpt-6.1-sol",
+      "provider": "codex",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 16803,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "110d57251a07321a2869139aeb9df09ce0242d4c9f3c3dc8536985f444f12e02",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-30T03-52-52-514Z-10a6a2",
+      "model": "gpt-6.1-sol",
+      "provider": "codex",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 17594,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "77b31f92473ccd7dc88e32855bc762dcd60abf794192f4673cc0bde32b26b2e5",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: 405d8fcbd7ecb2d7be6591f92f54de810750c75e05471a77ae8c738042fb3b5d",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-07T18-37-25-286Z-96376c",
+      "model": "claude-haiku-5-5",
+      "provider": "claude-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 4229,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "2e8eda9b4efe7fbe3cfe947789d5acfd1aa8ddfb908500197f8f08936e8dcb47",
+        "engine": {
+          "version": null,
+          "sha256": "0300351f0bb78fe78aa96f7c003f20b738c381215faf85719e53f306278b820b",
+          "source_commit": null,
+          "runtime_sha256": "04435f26cc2d5bbbab2e8cd9c58580b63fb7b8d72a36ba63aa69687dc9392183",
+          "history": [
+            {
+              "action": 4027,
+              "before_sha256": "448ce656c7811d5a094864b7d50959c26816805d3784864a6b27f76012490127",
+              "after_sha256": "0300351f0bb78fe78aa96f7c003f20b738c381215faf85719e53f306278b820b"
+            }
+          ]
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "4b801d386ba49d4d37b694efb101b5a0b2817f8c575e8717150a230b7f62d863",
+          "policy": "next-entry-v1",
+          "edited": true,
+          "observed_revision": 79,
+          "available_sha256": "4fffae08fb77505d77c7eff5235a73cff505e903927931a85fe2cb17e6706e2f",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 0300351f0bb78fe78aa96f7c003f20b738c381215faf85719e53f306278b820b\nRecorded world inventory SHA-256: 4b801d386ba49d4d37b694efb101b5a0b2817f8c575e8717150a230b7f62d863",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-07T18-37-26-839Z-73fe5e",
+      "model": "claude-haiku-5-5",
+      "provider": "claude-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 10272,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "72b9bb6c87b7fca741c3b5e2b533142a56bb9d8b651bca228c9b6a0d52479353",
+        "engine": {
+          "version": null,
+          "sha256": "0300351f0bb78fe78aa96f7c003f20b738c381215faf85719e53f306278b820b",
+          "source_commit": null,
+          "runtime_sha256": "04435f26cc2d5bbbab2e8cd9c58580b63fb7b8d72a36ba63aa69687dc9392183",
+          "history": [
+            {
+              "action": 3786,
+              "before_sha256": "448ce656c7811d5a094864b7d50959c26816805d3784864a6b27f76012490127",
+              "after_sha256": "0300351f0bb78fe78aa96f7c003f20b738c381215faf85719e53f306278b820b"
+            }
+          ]
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "4b801d386ba49d4d37b694efb101b5a0b2817f8c575e8717150a230b7f62d863",
+          "policy": "next-entry-v1",
+          "edited": true,
+          "observed_revision": 79,
+          "available_sha256": "4fffae08fb77505d77c7eff5235a73cff505e903927931a85fe2cb17e6706e2f",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 0300351f0bb78fe78aa96f7c003f20b738c381215faf85719e53f306278b820b\nRecorded world inventory SHA-256: 4b801d386ba49d4d37b694efb101b5a0b2817f8c575e8717150a230b7f62d863",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-12T19-47-48-008Z-49d891",
+      "model": "muse-wonder-1.0",
+      "provider": "muse-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 419,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "b3934b7c39243f75da40af3162d6a10e20a6beba87f27b1a832716ebd814a5dd",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-12T19-47-50-318Z-7e2f40",
+      "model": "muse-wonder-1.0",
+      "provider": "muse-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 237,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "68564a35069fe620e478f0133335991ce2071e9daa47b43039e6c8326d884b4d",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-14T05-04-44-815Z-49c674",
+      "model": "gemini-4-argon-high",
+      "provider": "antigravity",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 12431,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "05416fb4d3b542ebd4f4e022850387659f27384714c30c29d6723c89f7039d8e",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-14T05-04-51-008Z-166704",
+      "model": "gemini-4-argon-high",
+      "provider": "antigravity",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 2243,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "57aadee2942ba749b192dd82de6308765b0dd0f4067a4cf22c759edf0652334c",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-14T05-10-25-470Z-067962",
+      "model": "muse-wonder-full-1.0",
+      "provider": "muse-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 4556,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "ed39355d200e5712f6ac0dee7c90843ede08e569210d4efe5e88c777b22f9bc2",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-14T05-10-27-941Z-d7466d",
+      "model": "muse-wonder-full-1.0",
+      "provider": "muse-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 6485,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "697308c40e2b560ee20307d35a40f9c2dbae15ed608ba51716c12f29c2fd64f0",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "policy": "next-entry-v1",
+          "edited": true,
+          "observed_revision": 8,
+          "available_sha256": "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-14T05-52-34-592Z-91ae58",
+      "model": "claude-opus-5-5",
+      "provider": "claude-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 7416,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "4f258ac74769aa3aa5b4bd59b139186ea0d03fc49918feb8a1da37fafdd2f965",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-14T15-46-25-607Z-999359",
+      "model": "muse-spark-1.3",
+      "provider": "muse-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 1177,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "4ce1acba38f91a6de0b808e6597fb94fc5e87ac0c667983a00027120fee16610",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-14T15-46-32-375Z-c321ce",
+      "model": "muse-spark-1.2",
+      "provider": "muse-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 860,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "ad55424eccfab6acce6f93d8380c86daf49aa22b0f962bf5601bdfcc3b29cd28",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": 0,
+          "available_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-23T17-52-26-807Z-674902",
+      "model": "k3.1-pro",
+      "provider": "kimi-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 5995,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "8740bf2f0db817228ef32474b91e9b077ced47ff863b8f52e90ba647c60f8db1",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+          "policy": "next-entry-v1",
+          "edited": true,
+          "observed_revision": 0,
+          "available_sha256": "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+          "parent_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189"
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-23T18-04-24-153Z-c7f954",
+      "model": "k3.1-pro",
+      "provider": "kimi-code",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 190,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "9405833e739137e7087f81c379228b1c585dfb62fcde40bc6bb51af41cb524db",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+          "policy": "next-entry-v1",
+          "edited": true,
+          "observed_revision": 0,
+          "available_sha256": "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+          "parent_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189"
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-23T21-38-27-136Z-e809f5",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "provider": "prime-agent",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 10223,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "b97812faa040415655eab3404c27f2b452ed1646afea107c35ffd6ce4f06d69e",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+          "policy": "next-entry-v1",
+          "edited": true,
+          "observed_revision": 0,
+          "available_sha256": "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+          "parent_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189"
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-23T21-38-28-532Z-e2a66a",
+      "model": "qwen/qwen3.8-27b",
+      "provider": "prime-agent",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 3016,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "138dd942147789bc86ca4d9be33927517fa275dc9af1cb3a9bac4237e9dfabe6",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+          "policy": "next-entry-v1",
+          "edited": true,
+          "observed_revision": 0,
+          "available_sha256": "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+          "parent_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189"
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-23T21-38-29-944Z-89d9b7",
+      "model": "meta/muse-spark-open",
+      "provider": "prime-agent",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 6549,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "aa75fad8ae1cb97491b38b8e8cf1751d13952b8dd0060fbc4c0e2880309dfcb3",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+          "policy": "next-entry-v1",
+          "edited": true,
+          "observed_revision": 0,
+          "available_sha256": "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+          "parent_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189"
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-10-23T21-47-43-438Z-e8a63a",
+      "model": "nvidia/nemotron-3.5-lightning",
+      "provider": "prime-agent",
+      "observation_mode": "ascii",
+      "world": "main-world",
+      "actions": 1347,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "e00af20a553cfeff1310fbce6ece5961dd323caca716896cda8dbaedaa8eac6c",
+        "engine": {
+          "version": "1.1",
+          "sha256": "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6",
+          "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+          "runtime_sha256": "114e5b0113515a9960da2c1a6e6095981e51aeaa2d138bf15bad3c01ab151fc3"
+        },
+        "world": {
+          "name": "Main World",
+          "version": "1.1",
+          "sha256": "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+          "policy": "next-entry-v1",
+          "edited": true,
+          "observed_revision": 0,
+          "available_sha256": "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+          "parent_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189"
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: 5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6\nRecorded world inventory SHA-256: f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    },
+    {
+      "id": "run-2026-09-07T22-45-53-370Z-eb3ed8",
+      "model": "gpt-6-astra",
+      "provider": "codex",
+      "observation_mode": "vision",
+      "world": "main-world",
+      "actions": 1877,
+      "benchmark_version": {
+        "schema_version": 1,
+        "evidence": "manifest",
+        "manifest_sha256": "51dcc32969be878675bc0351be37069b2ae6b523cdb7047a50181e1472310900",
+        "engine": {
+          "version": null,
+          "sha256": "e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915",
+          "source_commit": null,
+          "runtime_sha256": "31fb648bf424dc38ab0eb967627f20b72a0d1348d886f4927a050418ea8e601b"
+        },
+        "world": {
+          "name": "Main World",
+          "version": null,
+          "sha256": "fd2cbbb5027ecbcfea39973f0a9eba3c0150eed8a050df2b6b6be45e0bf3a4ae",
+          "policy": "next-entry-v1",
+          "edited": false,
+          "observed_revision": null,
+          "available_sha256": null,
+          "parent_sha256": null
+        },
+        "label": "v1.1",
+        "detail": "Benchmark v1.1\nRun created in MazeBenchBenchmarking.\nVersion labels identify the repository generation.\nRecorded engine SHA-256: e39b0991d639a290cbb43a273fc3cf336105afc5192e1dd94098b3fb87573915\nRecorded world inventory SHA-256: fd2cbbb5027ecbcfea39973f0a9eba3c0150eed8a050df2b6b6be45e0bf3a4ae",
+        "benchmark_release": "1.1",
+        "classification": "repository-generation"
+      }
+    }
+  ]
+}

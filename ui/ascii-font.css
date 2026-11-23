@@ -1,0 +1,27 @@
+@font-face {
+  font-family: "MazeBench ASCII";
+  src: url("./fonts/mazebench-ascii.woff") format("woff");
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "MazeBench ASCII Coptic";
+  src: url("./fonts/mazebench-ascii-coptic.woff") format("woff");
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  unicode-range: U+03E2-03EF;
+}
+
+:root {
+  --ascii-font-family: "MazeBench ASCII", "MazeBench ASCII Coptic", monospace;
+}
+
+.ascii-board {
+  font-kerning: none;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "clig" 0, "calt" 0, "kern" 0;
+  font-synthesis: none;
+}

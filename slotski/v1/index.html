@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Slotski · MazeBench</title>
+    <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header><a href="../../">MazeBench</a><nav aria-label="Games"><a href="../../play/v1/">Main World</a><a href="../../ice-maze/v1/">Ice Maze</a><a href="./" aria-current="page">Slotski</a><a href="../../benchmarking/v1/?world=slotski">Benchmark →</a></nav></header>
+  <main>
+    <section class="play-area">
+      <div class="heading"><div><p class="eyebrow">World 03 · Level 1 of 1</p><h1>Slotski</h1></div><span id="move-count">0 moves</span></div>
+      <div class="board-shell"><div id="board" role="group" aria-label="Slotski board"></div><div class="exit">↓ EXIT ↓</div></div>
+      <p id="status" role="status" aria-live="polite">Select a block, then move it with the arrow keys.</p>
+    </section>
+    <aside>
+      <p class="eyebrow">One block. One cell.</p><h2>Bring A to the exit.</h2>
+      <p>Move the orange 2×2 panel to the bottom center. Blocks keep their shape and cannot push or overlap each other.</p>
+      <div class="controls"><strong id="selection">Block A selected</strong><div class="arrows"><button data-direction="U" aria-label="Move selected block up">↑</button><button data-direction="L" aria-label="Move selected block left">←</button><button data-direction="D" aria-label="Move selected block down">↓</button><button data-direction="R" aria-label="Move selected block right">→</button></div><div class="secondary"><button id="undo">Undo</button><button id="reset">Reset</button></div></div>
+      <form id="commands"><label for="sequence">Try a move sequence</label><input id="sequence" placeholder="IR JL GD HD" autocomplete="off" spellcheck="false"><button type="submit">Apply moves</button></form>
+      <p class="hint">Use <code>AU BD CL</code>, <code>a up, b down c left</code>, or repeats such as <code>AU3</code> and <code>a up 3 times</code>.</p>
+      <a class="benchmark-link" href="../../benchmarking/v1/?world=slotski">Start an agent evaluation →</a>
+      <details><summary>ASCII board</summary><pre id="ascii"></pre></details>
+    </aside>
+  </main>
+  <script type="module" src="./main.mjs"></script>
+</body>
+</html>

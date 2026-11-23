@@ -1,0 +1,83 @@
+.cutaway-panel {
+  position: absolute;
+  z-index: 12;
+  top: 14px;
+  right: 14px;
+  width: 100px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 20px;
+  background: rgba(24, 29, 35, .86);
+  box-shadow: 0 5px 20px rgba(0, 0, 0, .15);
+  backdrop-filter: blur(18px);
+  color: #f1f3f5;
+  user-select: none;
+}
+.cutaway-panel:has(.cutaway-controls[hidden]), .is-ascii .cutaway-panel { display: none; }
+.cutaway-panel > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 11px;
+  border-radius: inherit;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: #aab5c0;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.cutaway-panel > summary::-webkit-details-marker { display: none; }
+.cutaway-panel > summary::after { content: '›'; font-size: 18px; font-weight: 400; line-height: 1; }
+.cutaway-panel[open] > summary::after { transform: rotate(90deg); }
+.cutaway-panel > summary:hover { color: #f1f3f5; background: rgba(255, 255, 255, .04); }
+.cutaway-panel > summary:focus-visible { outline: 2px solid #83b7ff; outline-offset: 3px; }
+.cutaway-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 9px;
+}
+.cutaway-panel .cutaway-title { display: none; }
+.cutaway-controls[hidden], .is-ascii .cutaway-controls { display: none; }
+.cutaway-title { font-size: 11px; font-weight: 600; color: #aab5c0; }
+.cutaway-readout { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cutaway-controls input { accent-color: #83b7ff; cursor: pointer; }
+.cutaway-controls input[type="range"] { min-height: 0; border: 0; border-radius: 0; background: transparent; }
+.cutaway-height {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 28px;
+  height: clamp(80px, 22vh, 180px);
+  margin: 3px 0;
+  padding: 0;
+  touch-action: none;
+}
+.cutaway-layer { font-size: 10px; color: #aab5c0; white-space: nowrap; }
+.cutaway-controls .cutaway-reset {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: #83b7ff;
+  cursor: pointer;
+}
+.cutaway-reset:disabled { color: #75818d; cursor: default; }
+.cutaway-follow { display: flex; align-items: center; gap: 6px; width: 100%; padding-top: 4px; cursor: pointer; }
+.cutaway-follow input { display: block; flex: 0 0 14px; width: 14px; height: 14px; min-height: 0; margin: 0; padding: 0; }
+.cutaway-follow span { font-size: 10px; line-height: 1.35; text-align: left; }
+.cutaway-visibility { width: 100%; border-top: 1px solid rgba(255, 255, 255, .09); padding-top: 9px; }
+.cutaway-visibility label { display: flex; justify-content: space-between; gap: 4px; font-size: 9px; color: #aab5c0; }
+.cutaway-visibility output { color: #f1f3f5; font-variant-numeric: tabular-nums; }
+.cutaway-visibility input { width: 100%; margin: 8px 0 0; padding: 0; }
+.cutaway-controls :focus-visible { outline: 2px solid #83b7ff; outline-offset: 4px; }
+@media (max-width: 850px), (max-height: 600px) {
+  .cutaway-panel { top: 10px; right: 10px; width: 88px; border-radius: 16px; }
+  .cutaway-panel > summary { padding: 0 9px; }
+  .cutaway-controls { gap: 5px; padding: 0 7px 7px; }
+  .cutaway-height { height: clamp(60px, 15vh, 100px); }
+}

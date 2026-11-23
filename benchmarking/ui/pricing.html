@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Model pricing — MazeBench</title>
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../v1/styles.css">
+  <link rel="stylesheet" href="./launcher.css">
+  <link rel="stylesheet" href="./pricing.css">
+  <script type="module" src="./pricing.mjs"></script>
+</head>
+<body>
+  <header class="topbar"><nav aria-label="MazeBench navigation"><a class="back-link" href="../v1/">‹ Benchmark</a><strong class="page-title">Pricing</strong></nav><button id="refresh-pricing" type="button">Refresh prices</button></header>
+  <main class="pricing-main">
+    <div class="pricing-heading"><div><h1>Model pricing</h1><p>API-equivalent rates in USD per 1 million tokens.</p></div><span class="pricing-unit">$/1M tokens</span></div>
+    <section class="pricing-controls" aria-label="Pricing filters">
+      <label class="pricing-search"><span class="sr-only">Search models, companies or agents</span><input id="pricing-search" type="search" placeholder="Search models, companies or agents…" autocomplete="off"></label>
+      <div id="coverage-filter" class="pricing-segments" role="group" aria-label="Pricing coverage">
+        <button type="button" data-value="all" aria-pressed="true">All <span></span></button>
+        <button type="button" data-value="missing" aria-pressed="false">Missing <span></span></button>
+        <button type="button" data-value="partial" aria-pressed="false">Incomplete <span></span></button>
+        <button type="button" data-value="unpublished" aria-pressed="false">Unpublished <span></span></button>
+        <button type="button" data-value="configured" aria-pressed="false">Configured <span></span></button>
+      </div>
+      <div class="pricing-filter-row"><div id="speed-filter" class="pricing-segments" role="group" aria-label="Speed"><button type="button" data-value="all" aria-pressed="true">All speeds</button><button type="button" data-value="standard" aria-pressed="false">Standard</button><button type="button" data-value="fast" aria-pressed="false">Fast</button></div><button id="runs-only" type="button" aria-pressed="false">With runs</button></div>
+    </section>
+    <p id="pricing-status" class="pricing-status" role="status" aria-live="polite">Loading model catalog and saved runs…</p>
+    <details class="pricing-status"><summary>Automatic pricing sources</summary><p>Checked every 6 hours while the local report service is running. Failed checks retry after 5 minutes. Last working prices stay available offline.</p><div id="pricing-sources">Checking sources…</div></details>
+    <div class="pricing-table-wrap" tabindex="0" role="region" aria-label="Model prices, scroll horizontally for all columns">
+      <table class="pricing-table"><caption class="sr-only">Input, cached input and output prices per million tokens, with pricing coverage and sources.</caption><thead><tr><th scope="col">Model</th><th scope="col">Input</th><th scope="col">Cached input</th><th scope="col">Output</th><th scope="col">Coverage</th><th scope="col">Details</th></tr></thead><tbody id="pricing-rows"></tbody></table>
+    </div>
+    <p id="pricing-empty" hidden>No models match these filters.</p>
+    <p class="pricing-footnote">These rates power run cost estimates. A dash means missing, never free. Cache writes and long-context rates are under Details. Subscription charges, sandbox fees and unreported usage are excluded.</p>
+  </main>
+</body>
+</html>

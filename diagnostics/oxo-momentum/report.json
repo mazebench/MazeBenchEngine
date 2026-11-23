@@ -1,0 +1,72 @@
+{
+  "room": "OxO",
+  "file": "k4sogtzyju.json",
+  "input": "U Rx3 D Rx9 Ux4 R U Lx7 D L U Rx4 Dx4 L Ux3 R U Lx4 D Lx2 Ux2 Rx5",
+  "move": 58,
+  "wasmMatches": true,
+  "wasmSha256": "7b040e2258f77754c1d05f2bcd71517a294e07943ea7ce27694a43903d40bb11",
+  "allCommandsMatchIsolatedUpstream": true,
+  "unitTestingAdapterAndFixtureMatch": true,
+  "independentOneTileExpectationMatches": true,
+  "ramps": [
+    [
+      14,
+      12,
+      1
+    ],
+    [
+      14,
+      13,
+      1
+    ],
+    [
+      14,
+      14,
+      1
+    ]
+  ],
+  "observed": {
+    "ticks": 1,
+    "bodyDisplacement": [
+      1,
+      0,
+      0
+    ],
+    "frames": [
+      {
+        "tick": 1,
+        "body": [
+          9,
+          1,
+          1
+        ],
+        "player": [
+          9,
+          5,
+          1
+        ]
+      }
+    ]
+  },
+  "control": {
+    "ticks": 1,
+    "bodyDisplacement": [
+      1,
+      0,
+      0
+    ]
+  },
+  "addedSupportControl": {
+    "support": [
+      10,
+      5,
+      0
+    ],
+    "ticks": 1,
+    "bodyDisplacement": [
+      1,
+      0,
+      0
+    ]
+  }
+}

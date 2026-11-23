@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Inspect a live MazeBench model evaluation record.">
+    <title>MazeBench — Agent record</title>
+    <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="../ui/vision.css">
+    <link rel="stylesheet" href="../ui/run-charts.css">
+    <link rel="stylesheet" href="../ui/run.css">
+  </head>
+  <body class="run-page">
+    <header class="topbar">
+      <nav aria-label="Benchmark navigation">
+        <a class="back-link" href="./"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg><span>Back</span></a>
+        <strong>Run</strong>
+      </nav>
+      <output id="connection-status" class="connection-status" aria-live="polite">Loading record…</output>
+    </header>
+
+    <main class="run-main">
+      <section id="load-error" class="load-error" hidden>
+        <span class="eyebrow">Record unavailable</span>
+        <h1 id="error-title">This evaluation could not be loaded.</h1>
+        <p id="error-copy"></p>
+        <a class="button-link" href="./">Return to agent records</a>
+      </section>
+
+      <div id="run-content" hidden>
+        <section id="model-hero" class="model-hero">
+          <div id="model-monogram" class="model-monogram" aria-hidden="true">T</div>
+          <div class="model-copy">
+            <span id="run-kicker" class="eyebrow">Model evaluation</span>
+            <h1 id="run-title">Loading model…</h1>
+            <p id="run-subtitle">Preparing the run record.</p>
+            <details class="run-details"><summary>Run details</summary><code id="run-id"></code><p id="world-update-status" hidden></p></details>
+          </div>
+          <div class="run-actions">
+            <span id="run-status" class="status-pill">loading</span>
+            <button id="pause-run" type="button">Pause</button>
+            <button id="resume-run" class="primary" type="button" hidden>Resume</button>
+            <details class="run-menu"><summary aria-label="More run actions">•••</summary><div>
+              <button id="stop-run" type="button">Stop run</button>
+              <button id="delete-run" class="danger" type="button">Delete run</button>
+            </div></details>
+          </div>
+        </section>
+
+        <section id="pair-compare" class="pair-compare" aria-label="Matched evaluation pair" hidden></section>
+
+        <div id="run-failure" class="run-failure" role="alert" hidden>
+          <strong>Run failed</strong>
+          <p id="run-failure-reason"></p>
+          <button id="retry-new-run" type="button">Start a new run with these settings</button>
+        </div>
+
+        <section class="stat-grid" aria-label="Run statistics">
+          <div><span>Actions</span><strong id="stat-actions">—</strong></div>
+          <div><span>Gems</span><strong id="stat-gems">—</strong></div>
+          <div><span>Rooms</span><strong id="stat-rooms">—</strong></div>
+          <div><span>Unique cells</span><strong id="stat-cells">—</strong></div>
+        </section>
+
+        <div class="run-tabs" role="tablist" aria-label="Run views">
+          <button id="tab-overview" type="button" role="tab" aria-selected="true" aria-controls="view-overview" data-run-tab="overview">Overview</button>
+          <button id="tab-analysis" type="button" role="tab" aria-selected="false" aria-controls="view-analysis" data-run-tab="analysis" tabindex="-1">Analysis</button>
+          <button id="tab-activity" type="button" role="tab" aria-selected="false" aria-controls="view-activity" data-run-tab="activity" tabindex="-1">Activity</button>
+        </div>
+        <section id="view-overview" role="tabpanel" aria-labelledby="tab-overview" data-run-panel="overview">
+          <div class="overview-grid">
+          <article class="panel board-panel">
+            <header class="panel-heading">
+              <div><span>Live observation</span><strong id="board-room">Room —</strong></div>
+              <code id="board-move">move 0</code>
+            </header>
+            <div class="playback-controls" aria-label="ASCII move playback">
+              <div class="transport-controls">
+                <button id="frame-first" type="button" aria-label="First move">|←</button>
+                <button id="frame-previous" type="button" aria-label="Previous move">←</button>
+                <button id="frame-play" class="play-button" type="button">▶ Play</button>
+                <button id="frame-next" type="button" aria-label="Next move">→</button>
+                <button id="frame-last" type="button" aria-label="Latest move">→|</button>
+              </div>
+              <label class="frame-scrubber-label">
+                <span class="visually-hidden">Move</span>
+                <input id="frame-scrubber" type="range" min="0" max="0" value="0" step="1">
+              </label>
+              <output id="frame-position">0 / 0</output>
+              <label class="replay-speed">
+                <span>Delay</span>
+                <input id="replay-speed" type="number" min="20" max="5000" step="10" value="30" inputmode="numeric">
+                <b>ms</b>
+              </label>
+            </div>
+            <div class="board-wrap">
+              <div id="board" class="ascii-board" role="img" aria-label="Current ASCII maze board"></div>
+            </div>
+            <footer class="board-footer"><span id="frame-source">Live engine frame</span><span id="board-legend">Move history playback</span></footer>
+          </article>
+
+          <article class="panel chart-panel progress-panel">
+            <header class="panel-heading">
+              <div><span>Objective</span><strong>Run progress</strong></div>
+              <code id="progress-value">—</code>
+            </header>
+            <canvas id="progress-chart" width="900" height="260" aria-label="Gem and action progress"></canvas>
+          </article>
+
+          </div>
+        </section>
+        <section id="view-analysis" role="tabpanel" aria-labelledby="tab-analysis" data-run-panel="analysis" hidden>
+          <p id="analysis-status" class="section-status" role="status">Select Analysis to load charts.</p>
+        <article class="panel token-panel" aria-label="Context token usage">
+          <header class="panel-heading">
+            <div><span>Usage</span><strong>Tokens &amp; estimated API cost</strong></div>
+            <code id="token-current">Waiting for telemetry…</code>
+          </header>
+          <div class="token-totals" aria-label="Cumulative token usage and estimated API cost">
+            <div><span>Input</span><strong id="token-total-input">—</strong><small>Includes cached input</small></div>
+            <div><span>Cached input</span><strong id="token-total-cached">—</strong><small id="token-cache-rate">—</small></div>
+            <div><span>Output</span><strong id="token-total-output">—</strong><small>Includes reasoning tokens</small></div>
+            <div><span>Estimated API cost</span><strong id="token-api-cost">—</strong><small>USD · Standard API equivalent</small></div>
+          </div>
+          <div class="token-chart-wrap">
+            <svg id="token-chart" viewBox="0 0 1100 230" role="img" aria-label="Context tokens over elapsed run time"></svg>
+            <output id="token-tooltip" class="token-tooltip" hidden></output>
+          </div>
+          <footer class="token-footer">
+            <div class="token-legend"><span><i class="token-line"></i>Context tokens</span><span><i class="token-threshold"></i>Compaction trigger</span><span><i class="token-marker"></i>Compacted</span></div>
+            <span id="token-detail">Updates after each model response.</span>
+          </footer>
+          <details class="token-cost-basis"><summary>Pricing and measurement details</summary><p id="token-pricing-detail">Waiting for usage data.</p><p>Context is the last reported token count and updates after model responses. Pending tool output and ongoing generation may bring the next compaction closer.</p><a id="token-pricing-source" target="_blank" rel="noreferrer" hidden>Official pricing source</a></details>
+        </article>
+
+          <div class="stat-grid secondary-stats">
+          <div><span>Novelty</span><strong id="stat-novelty">—</strong></div>
+          <div><span>Blocked</span><strong id="stat-blocked">—</strong></div>
+          <div><span>Deaths</span><strong id="stat-deaths">—</strong></div>
+          <div><span>Tokens</span><strong id="stat-tokens">—</strong></div>
+          </div>
+          <div class="analysis-grid">
+          <article class="panel heatmap-panel">
+            <header class="panel-heading">
+              <div><span>Spatial behavior</span><strong>Move heatmap</strong></div>
+              <code id="heatmap-count">0 visits</code>
+            </header>
+            <div class="canvas-wrap"><canvas id="heatmap" width="640" height="640" aria-label="Heatmap of positions visited"></canvas></div>
+            <footer class="heat-legend"><span>low</span><i></i><i></i><i></i><i></i><span>high</span></footer>
+            <a id="compare-heatmap" class="compare-link" href="./compare.html">Compare with another run ↗</a>
+          </article>
+
+          <article class="panel chart-panel novelty-panel">
+            <header class="panel-heading">
+              <div><span>Behavior over time</span><strong>Novelty trace</strong></div>
+              <code id="novelty-value">—</code>
+            </header>
+            <div class="novelty-controls">
+              <label for="novelty-window">Rolling window</label>
+              <select id="novelty-window">
+                <option value="10">10 moves</option>
+                <option value="25">25 moves</option>
+                <option value="50">50 moves</option>
+                <option value="100" selected>100 moves</option>
+                <option value="250">250 moves</option>
+                <option value="500">500 moves</option>
+                <option value="1000">1,000 moves</option>
+                <option value="custom">Custom…</option>
+              </select>
+              <input id="novelty-window-custom" type="number" min="1" step="1" value="100" aria-label="Custom rolling window in moves" hidden>
+              <output id="novelty-window-value" aria-live="polite">—</output>
+            </div>
+            <canvas id="novelty-chart" width="900" height="260" aria-label="Novelty rate across actions"></canvas>
+          </article>
+
+          </div>
+        <article id="ice-level-timings" class="panel ice-level-timings" aria-labelledby="ice-level-timings-title" hidden>
+          <header class="panel-heading">
+            <div><span>Level completion</span><strong id="ice-level-timings-title">Time per level</strong></div>
+            <code id="ice-level-timings-summary"></code>
+          </header>
+          <div class="ice-level-table-wrap" tabindex="0" role="region" aria-label="Scrollable Ice Maze level times">
+            <table class="ice-level-table" aria-describedby="ice-level-timings-note">
+              <thead><tr><th scope="col">Level</th><th scope="col">Result</th><th scope="col">Elapsed time</th><th scope="col">Actions</th></tr></thead>
+              <tbody id="ice-level-timings-body"></tbody>
+            </table>
+          </div>
+          <p id="ice-level-timings-note" class="ice-level-timings-note">Wall-clock time from entering each level to its solving action. Level 1 starts at run creation, including startup. Includes thinking, tool calls, and pauses; excludes the wait between solved levels. Actions include blocked moves, undo, and reset; exclude the next-level action. An unfinished level shows time spent so far.</p>
+        </article>
+
+
+
+        </section>
+        <section id="view-activity" role="tabpanel" aria-labelledby="tab-activity" data-run-panel="activity" hidden>
+          <p id="activity-status" class="section-status" role="status">Select Activity to load the record.</p>
+          <div class="activity-grid">
+          <article class="panel feed-panel">
+            <header class="panel-heading">
+              <div><span>Model trace</span><strong>Agent activity</strong></div>
+              <code id="feed-count">0 events</code>
+            </header>
+            <div id="feed" class="feed"></div>
+          </article>
+
+          <article class="panel context-panel">
+            <header class="panel-heading">
+              <div><span>Run environment</span><strong id="workspace-title">Python workspace</strong></div>
+              <code id="isolation-status">—</code>
+            </header>
+            <div class="context-split">
+              <section>
+                <h3>Workspace files</h3>
+                <div id="workspace-files" class="file-list"></div>
+              </section>
+              <section>
+                <h3>Continuations</h3>
+                <strong id="continuations" class="large-value">0</strong>
+                <p id="final-message" class="final-message">No final model message yet.</p>
+              </section>
+            </div>
+          </article>
+          </div>
+        </section>
+        <section id="view-interviews" aria-labelledby="interview-title" data-run-panel="interviews" hidden>
+        <section class="interview-panel" aria-labelledby="interview-title">
+          <header class="interview-heading">
+            <div class="interview-mark" aria-hidden="true">?</div>
+            <div>
+              <span class="eyebrow">Run interviews</span>
+              <h2 id="interview-title">Branch and ask the model</h2>
+              <p>Each new chat snapshots the benchmark at that moment. You can branch while it runs, while paused, or after stopping.</p>
+            </div>
+            <div class="interview-heading-actions">
+              <span id="interview-state" class="fork-badge">Waiting for thread</span>
+              <button id="new-interview" class="primary" type="button">＋ New chat</button>
+            </div>
+          </header>
+          <div class="interview-workspace">
+            <aside class="interview-library" aria-label="Interview chats">
+              <div class="interview-library-heading">
+                <span>Chats</span>
+                <strong id="interview-count">0</strong>
+              </div>
+              <div id="interview-list" class="interview-list"></div>
+            </aside>
+            <div class="interview-conversation">
+              <div class="interview-conversation-heading">
+                <div>
+                  <strong id="interview-active-title">Select or create a chat</strong>
+                  <span id="interview-snapshot">A new chat branches from the latest benchmark moment.</span>
+                </div>
+                <button id="end-interview" type="button" disabled>End chat</button>
+              </div>
+              <div class="fork-guarantee">
+                <span>Benchmark thread</span><strong>untouched</strong>
+                <i aria-hidden="true">→</i>
+                <span>Selected branch</span><strong id="interview-fork">not created</strong>
+              </div>
+              <div id="interview-messages" class="interview-messages" aria-live="polite">
+                <div class="interview-empty">
+                  <strong>No chat selected.</strong>
+                  <p>Create a chat, type any question, and ask the forked model.</p>
+                </div>
+              </div>
+              <form id="interview-form" class="interview-composer">
+                <label for="interview-question">Your question</label>
+                <textarea id="interview-question" rows="3" maxlength="12000" placeholder="Type any question about what the model saw, chose, or would do differently…" required></textarea>
+                <div>
+                  <span id="interview-status">Create a chat to snapshot the latest benchmark state.</span>
+                  <button id="interview-send" class="primary" type="submit" disabled>Ask model</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </section>
+        </section>
+      </div>
+    </main>
+
+    <script type="module" src="../ui/run.mjs"></script>
+    <script type="module" src="../ui/token-chart.mjs"></script>
+  </body>
+</html>

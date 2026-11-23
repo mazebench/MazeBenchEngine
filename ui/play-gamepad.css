@@ -1,0 +1,31 @@
+.controller-panel { padding-top: 4px; padding-bottom: 4px; }
+.controller-help { padding: 4px 0 12px; font-size: 12px; line-height: 1.5; }
+.controller-help p { margin: 0 0 12px; color: var(--muted); }
+.controller-help dl { display: grid; gap: 10px; margin: 0; }
+.controller-help dl div { display: grid; gap: 2px; }
+.controller-help dt { color: var(--muted); }
+.controller-help dd { margin: 0; }
+:is(.play-controls, .viewport) .camera-pad .pad-button.is-gamepad-active { background: #a78bfae6; color: #0a0e20; }
+.play-controls .movement-pad .pad-button.is-gamepad-active { background: #6cd7ffe6; color: #0a0e20; }
+.pad-button.is-gamepad-active kbd { color: #e7eaff; }
+.zoom-controls button.is-gamepad-active { background: #ffffff24; }
+.play-actions button.is-gamepad-active { background: #ffffff24; }
+body.is-controller-active { grid-template-rows: minmax(0, 1fr); overflow: hidden; }
+.is-controller-active :is(.topbar, .play-topbar, .inspector, .play-sidebar, .play-controls,
+  .camera-pad, .zoom-controls, .room-actions, .room-highlights, .hover-room-label,
+  .cutaway-panel, .ascii-toolbar) { display: none !important; }
+.is-controller-active .play-layout {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+/* The toolbar is hidden, so the board gets the entire viewport row. */
+.is-controller-active .ascii-view { grid-template-rows: minmax(0, 1fr); }
+.is-controller-active .ascii-scroll {
+  min-width: 0;
+  min-height: 0;
+  place-items: safe center;
+}
+@media (max-width: 850px) {
+  .controller-panel { grid-column: 1 / -1; grid-row: 5; padding: 0 12px; }
+}

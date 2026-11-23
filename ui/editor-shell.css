@@ -1,0 +1,166 @@
+/* Shared level and unit-test editor shell. Keep application-specific panels in their adapters. */
+.maze-editor {
+  color-scheme: dark;
+  --bg: #090a0c;
+  --panel: #1c1c1e;
+  --raised: #2c2c2e;
+  --line: #ffffff14;
+  --text: #f5f5f7;
+  --muted: #98989f;
+  --accent: #0a84ff;
+  --cyan: #6cd7ff;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+:where(.maze-editor) * { box-sizing: border-box; }
+:where(.maze-editor) [hidden] { display: none !important; }
+.maze-editor { height: 100%; margin: 0; overflow: hidden; }
+.maze-editor { display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--bg); color: var(--text); }
+:where(.maze-editor) button, :where(.maze-editor) input, :where(.maze-editor) select, :where(.maze-editor) textarea { font: inherit; color: var(--text); border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }
+:where(.maze-editor) button, :where(.maze-editor) summary { cursor: pointer; }
+:where(.maze-editor) button, :where(.maze-editor) a, :where(.maze-editor) summary { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+:where(.maze-editor) button:disabled { cursor: default; opacity: .35; }
+:where(.maze-editor) button:not(:disabled, .pad-button):hover { border-color: #ffffff38; }
+:where(.maze-editor) button:focus-visible, :where(.maze-editor) a:focus-visible, :where(.maze-editor) summary:focus-visible, :where(.maze-editor) input:focus-visible, :where(.maze-editor) select:focus-visible, :where(.maze-editor) textarea:focus-visible { outline: 2px solid #64b5ff; outline-offset: 3px; }
+:where(.maze-editor) a { color: inherit; text-decoration: none; }
+:where(.maze-editor) summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; list-style: none; font-size: 13px; font-weight: 550; }
+:where(.maze-editor) summary::-webkit-details-marker { display: none; }
+:where(.maze-editor) summary::after { content: "›"; color: var(--muted); font-size: 21px; font-weight: 400; }
+:where(.maze-editor) details[open] > summary::after { transform: rotate(90deg); }
+:where(.maze-editor) .editor-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 68px; padding: 12px 24px; border-bottom: 1px solid var(--line); background: #151517; z-index: 10; }
+:where(.maze-editor) .editor-navigation, :where(.maze-editor) .editor-title, :where(.maze-editor) .editor-actions { display: flex; align-items: center; }
+:where(.maze-editor) .editor-navigation { gap: 18px; min-width: 0; }
+:where(.maze-editor) .editor-title { gap: 10px; white-space: nowrap; }
+:where(.maze-editor) .editor-title strong { font-size: 15px; font-weight: 600; }
+:where(.maze-editor) :is(#room-name, .editor-room-name) { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+:where(.maze-editor) .back-link { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 0 12px 0 9px; border: 1px solid #ffffff0a; border-radius: 12px; background: #ffffff08; color: #64b5ff; font-size: 15px; font-weight: 550; }
+:where(.maze-editor) .back-link span { display: block; line-height: 20px; }
+:where(.maze-editor) .back-link svg { display: block; flex-shrink: 0; width: 20px; height: 20px; transform: translateY(-.5px); fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+:where(.maze-editor) .back-link:hover { background: #0a84ff1a; }
+:where(.maze-editor) .editor-actions { gap: 6px; }
+:where(.maze-editor) .editor-actions > a, :where(.maze-editor) .editor-actions > button, :where(.maze-editor) .editor-menu > summary { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 14px; border: 0; border-radius: 12px; background: #ffffff08; font-size: 14px; font-weight: 550; white-space: nowrap; }
+:where(.maze-editor) .editor-actions > a:hover, :where(.maze-editor) .editor-actions > button:not(:disabled):hover, :where(.maze-editor) .editor-menu > summary:hover { background: #ffffff14; }
+:where(.maze-editor) .editor-actions > button:not(:disabled):active { background: #ffffff24; }
+:where(.maze-editor) .editor-actions > .primary { background: var(--accent); color: #fff; }
+:where(.maze-editor) .editor-actions > .primary:not(:disabled):hover { background: #339aff; }
+:where(.maze-editor) .editor-menu { position: relative; }
+:where(.maze-editor) .editor-menu > summary { width: 44px; padding: 0; }
+:where(.maze-editor) .editor-menu > summary::after { content: none; }
+:where(.maze-editor) .editor-menu > summary svg { width: 22px; height: 22px; fill: currentColor; }
+:where(.maze-editor) .editor-menu[open] > summary { background: #ffffff14; }
+:where(.maze-editor) .menu-items { position: absolute; right: 0; top: calc(100% + 10px); width: 210px; padding: 6px; border: 1px solid #ffffff1c; border-radius: 16px; background: #242426; box-shadow: 0 12px 36px #0008; }
+:where(.maze-editor) .menu-items button, :where(.maze-editor) .menu-items a { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 44px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; font-size: 14px; }
+:where(.maze-editor) .menu-items button:hover, :where(.maze-editor) .menu-items a:hover { background: #ffffff0d; }
+:where(.maze-editor) .menu-items kbd, :where(.maze-editor) .menu-items a span { color: var(--muted); font: inherit; }
+:where(.maze-editor) .menu-items .is-current { background: #ff453a1a; color: #ff9b94; }
+:where(.maze-editor) .editor-layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; min-height: 0; }
+:where(.maze-editor) .editor-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #050608; }
+:where(.maze-editor) .editor-stage canvas { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+:where(.maze-editor) .editor-stage.is-ready .loading { display: none; }
+:where(.maze-editor) .editor-stage:not(.is-ready) .camera-pad { visibility: hidden; }
+:where(.maze-editor) .editor-sidebar { display: grid; align-content: start; gap: 10px; padding: 12px; min-height: 0; overflow: auto; overscroll-behavior: contain; border-left: 1px solid var(--line); background: #151517; scrollbar-color: #48484a transparent; }
+:where(.maze-editor) .panel { min-width: 0; padding: 16px; border-radius: 18px; background: var(--panel); }
+:where(.maze-editor) details.panel { padding: 4px 16px; }
+:where(.maze-editor) .panel-content { padding: 8px 0 12px; }
+:where(.maze-editor) .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+:where(.maze-editor) .panel-heading > div { display: grid; gap: 4px; }
+:where(.maze-editor) .panel-heading span, :where(.maze-editor) .raw-field > span { color: var(--muted); font-size: 12px; }
+:where(.maze-editor) .panel-heading strong { font-size: 17px; font-weight: 550; }
+:where(.maze-editor) .description { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+:where(.maze-editor) .tools-panel .description { min-height: 36px; }
+:where(.maze-editor) .room-panel { display: grid; grid-template-columns: minmax(0, 1fr) 128px; align-items: start; gap: 12px; }
+:where(.maze-editor) .room-info h2 { margin: 0; font-size: 13px; font-weight: 550; }
+:where(.maze-editor) .room-grid { display: grid; grid-template-columns: repeat(16, 1fr); gap: 2px; }
+:where(.maze-editor) .room-grid button { aspect-ratio: 1; min-width: 0; padding: 0; border: 0; border-radius: 2px; background: #3a3a3c; }
+:where(.maze-editor) .room-grid button:hover { background: #69696e; }
+:where(.maze-editor) .room-grid button.is-current { background: var(--accent); box-shadow: 0 0 0 2px #64b5ff; }
+:where(.maze-editor) .stats { margin: 20px 0 0; }
+:where(.maze-editor) .stats dt { color: var(--muted); font-size: 12px; }
+:where(.maze-editor) .stats dd { margin: 5px 0 0; font-size: 22px; font-weight: 550; }
+
+:where(.maze-editor) .toolbox { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 2px; }
+:where(.maze-editor) .tool {
+  position: relative; aspect-ratio: 1; min-width: 0; padding: 0; overflow: hidden;
+  background: radial-gradient(circle at 50% 42%, #252b33, #0d1014 76%);
+  color: #fff; font-size: 8px; font-weight: 700;
+}
+:where(.maze-editor) .tool::before {
+  content: ""; position: absolute; inset: 9px; border-radius: 3px;
+  background: var(--tool-color, #333); opacity: .72;
+  transform: rotate(30deg) skew(-5deg, -5deg);
+}
+:where(.maze-editor) .tool canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+:where(.maze-editor) .tool.has-preview::before { opacity: 0; }
+:where(.maze-editor) .tool span {
+  position: absolute; right: 3px; bottom: 3px; z-index: 1; min-width: 15px; padding: 1px 3px;
+  border-radius: 2px; background: #050608c9; text-align: center;
+  text-shadow: 0 1px 2px #000, 0 0 3px #000;
+}
+:where(.maze-editor) .tool[data-generic-family] span { min-width: 20px; color: var(--cyan); }
+:where(.maze-editor) .tool.eraser-tool::before {
+  content: "×"; inset: 0; display: grid; place-items: center; background: none;
+  color: #ff7b72; font-size: 30px; opacity: 1; transform: none;
+}
+:where(.maze-editor) .tool.eraser-tool span { right: 50%; bottom: 3px; transform: translateX(50%); color: #ff9b94; font-size: 7px; }
+:where(.maze-editor) .tool.is-current { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan); }
+:where(.maze-editor) .tool.eraser-tool.is-current { border-color: #ff7b72; box-shadow: 0 0 0 1px #ff7b72; }
+
+/* Keep the existing toolbox artwork, labels, and tile treatment. */
+:where(.maze-editor) .tool { border: 1px solid #2a3038; border-radius: 4px; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+:where(.maze-editor) .tool:not(:disabled):hover { border-color: #65717e; }
+:where(.maze-editor) .raw-field { display: grid; gap: 8px; }
+:where(.maze-editor) .raw-field textarea { width: 100%; min-height: 120px; padding: 10px; resize: vertical; font: 11px/1.5 ui-monospace, monospace; }
+:where(.maze-editor) #apply-cell { width: 100%; min-height: 44px; margin-top: 10px; font-size: 12px; }
+:where(.maze-editor) .file-info { overflow-wrap: anywhere; margin: 12px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+:where(.maze-editor) .file-info span { display: block; }
+:where(.maze-editor) .transform-grid, :where(.maze-editor) .solver-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+:where(.maze-editor) .transform-grid button, :where(.maze-editor) .solver-actions button { min-height: 44px; padding: 0 8px; font-size: 12px; }
+:where(.maze-editor) .transform-controls { display: grid; gap: 16px; }
+:where(.maze-editor) .transform-group { min-width: 0; margin: 0; padding: 0; border: 0; }
+:where(.maze-editor) .transform-group legend { margin-bottom: 8px; padding: 0; color: var(--muted); font-size: 12px; }
+:where(.maze-editor) .transform-grid button { display: flex; align-items: center; justify-content: center; gap: 10px; }
+:where(.maze-editor) .transform-grid svg { flex-shrink: 0; width: 18px; height: 18px; fill: none; stroke: var(--cyan); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+:where(.maze-editor) .solver-weight { display: grid; grid-template-columns: 1fr 64px; align-items: center; gap: 6px 10px; margin: 12px 0; font-size: 12px; }
+:where(.maze-editor) .solver-weight input { width: 64px; height: 44px; padding: 0 10px; font-size: 13px; }
+:where(.maze-editor) .solver-result { display: block; margin-top: 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+:where(.maze-editor) .solver-path { overflow: auto; max-height: 90px; margin-top: 10px; padding: 10px; border-radius: 10px; background: #090a0c; color: var(--cyan); font: 12px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; }
+:where(.maze-editor) .solver-result:empty, :where(.maze-editor) .solver-path:empty { display: none; }
+:where(.maze-editor) .solver-copy-actions { margin-top: 10px; grid-template-columns: 1fr; }
+:where(.maze-editor) .solver-copy-fallback { width: 100%; min-height: 80px; margin-top: 10px; padding: 10px; resize: vertical; font: 12px/1.5 ui-monospace, monospace; }
+:where(.maze-editor) .status { margin: 0; padding: 4px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+:where(.maze-editor) .status.is-error { color: #ff7b72; }
+:where(.maze-editor) .generic-dialog { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: #0009; backdrop-filter: blur(8px); }
+:where(.maze-editor) .generic-card { width: min(370px, 100%); padding: 24px; border: 1px solid var(--line); border-radius: 24px; background: var(--panel); box-shadow: 0 24px 80px #0009; }
+:where(.maze-editor) .generic-eyebrow, :where(.maze-editor) .generic-field span { color: var(--muted); font-size: 12px; }
+:where(.maze-editor) .generic-card h2 { margin: 8px 0; font-size: 22px; font-weight: 600; }
+:where(.maze-editor) .generic-card p { margin: 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+:where(.maze-editor) .generic-field { display: grid; gap: 8px; }
+:where(.maze-editor) .generic-field input { width: 100%; height: 48px; padding: 0 12px; font-size: 17px; }
+:where(.maze-editor) .generic-error { display: block; min-height: 20px; padding-top: 6px; color: #ff7b72; font-size: 12px; }
+:where(.maze-editor) .generic-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+:where(.maze-editor) .generic-actions button { min-height: 44px; padding: 0 18px; }
+:where(.maze-editor) .generic-actions .primary { border: 0; background: var(--accent); color: #fff; }
+@media (max-width: 850px) {
+  :where(.maze-editor) .editor-topbar { padding: 10px 16px; }
+  :where(.maze-editor) .editor-navigation { gap: 12px; }
+  :where(.maze-editor) .editor-layout { grid-template-columns: 1fr; grid-template-rows: minmax(200px, 1fr) minmax(220px, 42%); }
+  :where(.maze-editor) .editor-sidebar { border-left: 0; border-top: 1px solid var(--line); }
+  :where(.maze-editor) .toolbox { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); }
+  :where(.maze-editor) .tools-panel .description { min-height: 0; }
+  :where(.maze-editor) .room-panel { grid-template-columns: minmax(0, 1fr) 128px; }
+}
+@media (max-width: 540px) {
+  :where(.maze-editor) .editor-topbar { gap: 8px; min-height: 64px; padding: 10px 12px; }
+  :where(.maze-editor) .editor-navigation { gap: 10px; }
+  :where(.maze-editor) .editor-title strong { display: none; }
+  :where(.maze-editor) .editor-title { gap: 0; }
+  :where(.maze-editor) .back-link { gap: 3px; padding: 0 9px 0 6px; font-size: 14px; }
+  :where(.maze-editor) .editor-actions { gap: 3px; }
+  :where(.maze-editor) .editor-actions > a, :where(.maze-editor) .editor-actions > button { padding: 0 9px; font-size: 13px; }
+  :where(.maze-editor) .editor-menu > summary { width: 36px; }
+  :where(.maze-editor) .editor-sidebar { padding: 10px; }
+}
+@media (max-height: 560px) and (max-width: 850px) {
+  .maze-editor { overflow: auto; }
+  :where(.maze-editor) .editor-layout { min-height: 660px; }
+}

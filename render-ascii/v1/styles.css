@@ -1,0 +1,113 @@
+@import url("../../ui/ascii-font.css");
+
+.ascii-view {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: #050608;
+}
+
+.ascii-view[hidden] { display: none; }
+
+.ascii-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #252b32;
+  background: #0b0e12;
+  color: #8f969f;
+  font-size: 9px;
+}
+
+.ascii-toolbar strong {
+  margin-right: auto;
+  color: #6cd7ff;
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.ascii-camera {
+  min-width: 118px;
+  color: #d6bd94;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ascii-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.ascii-toolbar input[type="checkbox"] { accent-color: #6cd7ff; }
+
+.ascii-toolbar input[type="text"] {
+  width: 88px;
+  height: 25px;
+  padding: 0 6px;
+  border: 1px solid #2a3038;
+  border-radius: 3px;
+  background: #171b21;
+  color: #f3eadb;
+  font: inherit;
+}
+
+.ascii-scroll {
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 22px 24px 42px;
+}
+
+.ascii-frame {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+}
+
+.ascii-board {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #252b32;
+  border-radius: 4px;
+  background: #080a0d;
+  box-shadow: 0 16px 70px #000a;
+  font-family: var(--ascii-font-family);
+  font-size: clamp(6px, 1.05vmin, 12px);
+  font-variant-ligatures: none;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: .86;
+  white-space: pre;
+}
+
+.ascii-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  max-width: 720px;
+  color: #8f969f;
+  font-size: 8px;
+}
+
+.ascii-legend span { white-space: nowrap; }
+.ascii-legend b { font-size: 11px; }
+
+.play-stage.is-ascii > canvas { visibility: hidden; }
+.play-stage.is-ascii .camera-help { z-index: 3; }
+
+@media (max-width: 760px) {
+  .ascii-toolbar { gap: 7px; padding-right: 7px; }
+  .ascii-toolbar strong { font-size: 8px; }
+  .ascii-camera { min-width: 0; font-size: 8px; }
+  .ascii-toolbar input[type="text"] { width: 58px; }
+  .ascii-scroll { place-items: start center; padding: 12px 10px 82px; }
+  .ascii-board { padding: 8px; font-size: 6px; }
+}

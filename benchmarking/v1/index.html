@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Launch local Codex, Claude Code, and Grok Build MazeBench evaluations and browse agent run records.">
+    <title>MazeBench — Benchmark</title>
+    <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="../ui/vision.css">
+    <link rel="stylesheet" href="../ui/launcher.css">
+  </head>
+  <body class="records-page">
+    <header class="topbar">
+      <nav aria-label="MazeBench navigation">
+        <a class="back-link" href="../../" title="Back to the world map"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"></path></svg><span>Back</span></a>
+        <strong class="page-title">Benchmark</strong>
+      </nav>
+      <output id="connection-status" class="connection-status" aria-live="polite">Connecting…</output>
+    </header>
+
+    <main class="records-main">
+      <section class="launch-panel" aria-labelledby="launch-title">
+        <div class="launch-heading">
+          <div>
+            <h1 id="launch-title">New run</h1>
+            <p id="world-description">Explore Main World from room H×I.</p>
+          </div>
+          <div class="goal-chip"><strong id="world-objective">Collect 100 gems</strong></div>
+        </div>
+        <form id="launch-form" class="launch-controls">
+          <label class="world-select"><span>World</span><select id="world"><option value="main-world">Main World</option><option value="ice-maze">Ice Maze</option><option value="slotski">Slotski</option></select></label>
+          <label id="observation-option"><span>Observations</span><select id="observation-mode"><option value="ascii">ASCII text</option><option value="vision">Vision · 3D images</option></select></label>
+          <label><span>Coding</span><select id="coding-mode"><option value="off">Off</option><option value="python">Python only</option><option value="any">Any language</option></select></label>
+          <label><span>Agent</span><select id="provider"><option value="codex">Codex</option><option value="claude-code">Claude Code</option><option value="grok-build">Grok Build</option><option value="antigravity">Google Antigravity</option><option value="muse-code">Meta Muse Code</option><option value="kimi-code">Kimi Code</option><option value="prime-agent">Prime Agent</option></select></label>
+          <label><span>Model</span><select id="model" required></select></label>
+          <label><span>Reasoning</span><select id="effort" required></select></label>
+          <details class="run-options">
+            <summary><span>Run options</span><span id="run-options-summary">Unlimited actions</span></summary>
+            <div class="options-fields">
+              <label><span>Action limit</span><select id="action-limit"><option value="100">100 actions</option><option value="1000">1,000 actions</option><option value="unlimited" selected>Unlimited</option></select></label>
+              <label id="sequence-option" hidden><span>Action sequences</span><select id="sequence-enabled"><option value="true">Allowed · batch moves</option><option value="false">Disabled · one move per call</option></select></label>
+            </div>
+          </details>
+          <div class="launch-actions">
+            <button id="launch-single" class="primary" type="submit" disabled>Launch run</button>
+            <button id="launch-pair" type="button" disabled>Launch matched pair</button>
+          </div>
+        </form>
+        <p id="launch-note" class="launch-note">A matched pair compares coding off with Python only or the selected Any language tier.</p>
+        <p id="launch-status" class="launch-status" role="status" aria-live="polite"></p>
+        <details id="runtime-details" class="runtime-status">
+          <summary><span>Agent setup</span><span id="agent-readiness" role="status" aria-live="polite">Checking…</span></summary>
+          <div class="runtime-content">
+            <div><strong id="codex-version">Checking agent…</strong><span id="codex-update-status"></span></div>
+            <button id="check-codex" type="button">Check for updates</button>
+          </div>
+        </details>
+        <section id="vision-preview" class="vision-preview" hidden aria-labelledby="vision-preview-title">
+          <div class="vision-preview-copy"><h2 id="vision-preview-title">Vision preview</h2><p>The agent sees the room in 3D and can rotate the camera, move, and review earlier frames.</p><label>Preview room <select id="vision-room"><option value="HxI">H×I · starting room</option><option value="HxH">H×H · gem room</option><option value="LxN">L×N · ice &amp; buttons</option></select></label><div class="vision-camera"><button id="vision-left" type="button">↶ Rotate</button><button id="vision-tilt" type="button">Change view</button><button id="vision-right" type="button">Rotate ↷</button></div><p id="vision-preview-status" role="status">Preparing preview…</p></div>
+          <figure><img id="vision-preview-image" width="1024" height="1024" alt="3D image of the current MazeBench room, as seen by the agent"><figcaption>Green player · light-blue gems · current room only</figcaption></figure>
+        </section>
+      </section>
+
+      <section id="agent-prompts" class="prompt-panel" aria-labelledby="prompt-title">
+        <details id="prompt-details">
+          <summary>
+            <span class="prompt-heading"><span id="prompt-title" role="heading" aria-level="2">Agent prompt</span><span>Read the instructions sent when a run starts.</span></span>
+            <span id="prompt-context" class="prompt-context">Current launch settings</span>
+          </summary>
+          <div class="prompt-content">
+            <div class="prompt-toolbar">
+              <p id="prompt-description">Updates with the settings above. Choose a coding tier to read its exact prompt.</p>
+              <button id="copy-prompt" type="button" disabled>Copy prompt</button>
+            </div>
+            <p id="prompt-status" class="prompt-status" role="status" aria-live="polite">Loading prompt…</p>
+            <pre id="prompt-text" tabindex="0" aria-label="Full launch prompt" hidden></pre>
+          </div>
+        </details>
+      </section>
+
+      <section class="records-section" aria-labelledby="runs-title">
+        <div class="records-heading">
+          <div>
+            <h2 id="runs-title">Runs</h2>
+            <p>Open a run to follow its progress and results.</p>
+          </div>
+          <div class="records-actions">
+            <a class="compare-link" href="./compare.html">Compare heatmaps</a>
+            <span id="record-count"></span>
+            <button id="refresh" class="icon-button" type="button" aria-label="Refresh runs" title="Refresh runs"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M19.3 12A7.5 7.5 0 1 0 18 17"></path></svg></button>
+          </div>
+        </div>
+        <div class="run-filters" role="group" aria-label="Filter and sort runs">
+          <label><span>Company</span><select id="run-company"><option value="">All companies</option></select></label>
+          <label><span>Model</span><select id="run-model"><option value="">All models</option></select></label>
+          <label><span>Sort</span><select id="run-sort"><option value="newest">Newest first</option><option value="company">Company, then model</option><option value="model">Model name</option></select></label>
+        </div>
+        <div id="run-list" class="record-grid" aria-busy="true"><p class="empty-copy">Loading runs…</p></div>
+        <nav id="run-pagination" class="run-pagination" aria-label="Run pages" hidden>
+          <button id="previous-runs" type="button">Previous</button>
+          <span id="run-page" aria-live="polite"></span>
+          <button id="next-runs" type="button">Next</button>
+        </nav>
+      </section>
+    </main>
+
+    <script type="module" src="../ui/launcher.mjs"></script>
+  </body>
+</html>

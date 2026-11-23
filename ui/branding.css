@@ -1,0 +1,6 @@
+/* The minotaur SVG is shared with the test lab and every page favicon. */
+.mazebench-logo { display: inline-block; flex-shrink: 0; width: 28px; height: 28px; object-fit: contain; vertical-align: middle; }
+.brand .mazebench-logo { margin-right: 10px; }
+
+.current-version { display: inline-flex; align-items: center; flex: 0 0 auto; padding: 3px 8px; border: 1px solid #ffffff0c; border-radius: 7px; background: #ffffff05; color: #92959d; font: 500 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; letter-spacing: 0; }
+.current-version[hidden] { display: none; }

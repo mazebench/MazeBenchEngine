@@ -1,0 +1,98 @@
+.camera-pad, .movement-pad {
+  position: absolute;
+  bottom: 20px;
+  left: max(20px, env(safe-area-inset-left));
+  display: grid;
+  grid-template: repeat(3, 52px) / repeat(3, 52px);
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+.pad-button, .pad-label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #a78bfa66;
+  border-radius: 0;
+  background: #0a0e20d1;
+  color: #e7eaff;
+}
+.pad-button {
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 4px;
+  font: 400 10px/1 ui-monospace, "SFMono-Regular", monospace;
+  touch-action: none;
+  transition: background 140ms ease, color 140ms ease;
+}
+.pad-button:disabled { opacity: .35; cursor: default; }
+.camera-pad .pad-button:not(:disabled, :active, .is-active, .is-key-active, .is-pointer-active):hover { background: #a78bfa24; }
+.movement-pad .pad-button:not(:disabled, :active, .is-active, .is-key-active, .is-pointer-active):hover { background: #6cd7ff24; }
+#tilt-up, .movement-pad [data-direction="up"] { grid-area: 1 / 2; border-bottom: 0; }
+#rotate-left, .movement-pad [data-direction="left"] { grid-area: 2 / 1; border-right: 0; }
+#rotate-right, .movement-pad [data-direction="right"] { grid-area: 2 / 3; border-left: 0; }
+#tilt-down, .movement-pad [data-direction="down"] { grid-area: 3 / 2; border-top: 0; }
+.pad-label { grid-area: 2 / 2; color: #a78bfa; font: 10px ui-monospace, "SFMono-Regular", monospace; letter-spacing: 0.08em; }
+.pad-arrow { width: 0; height: 0; }
+.pad-arrow.up { border-left: 18px solid transparent; border-right: 18px solid transparent; border-bottom: 30px solid currentColor; }
+.pad-arrow.right { border-top: 18px solid transparent; border-bottom: 18px solid transparent; border-left: 30px solid currentColor; }
+.pad-arrow.down { border-left: 18px solid transparent; border-right: 18px solid transparent; border-top: 30px solid currentColor; }
+.pad-arrow.left { border-top: 18px solid transparent; border-bottom: 18px solid transparent; border-right: 30px solid currentColor; }
+.pad-button kbd {
+  position: absolute;
+  left: calc(50% + var(--pad-key-x, 0px));
+  top: calc(50% + var(--pad-key-y, 0px));
+  transform: translate(-50%, -50%);
+  color: #0a0e20;
+  font: 400 10px/1 ui-monospace, "SFMono-Regular", monospace;
+  opacity: .55;
+  pointer-events: none;
+}
+#tilt-up { --pad-key-y: 5px; }
+#tilt-down { --pad-key-y: -5px; }
+#rotate-left { --pad-key-x: 5px; }
+#rotate-right { --pad-key-x: -5px; }
+.zoom-controls { bottom: 20px; right: max(20px, env(safe-area-inset-right)); display: grid; border-radius: 18px; overflow: hidden; }
+.zoom-controls button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 80px;
+  height: 52px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 29px;
+  font-weight: 300;
+  touch-action: none;
+}
+.zoom-controls button > span { width: 20px; }
+.zoom-controls kbd { display: grid; place-items: center; width: 22px; height: 24px; border: 1px solid #ffffff30; border-radius: 5px; color: #d1d1d6; font: 12px ui-monospace, "SFMono-Regular", monospace; }
+.zoom-controls button + button { border-top: 1px solid var(--line); }
+.zoom-controls button:focus-visible { outline-offset: -4px; border-radius: 12px; }
+
+.movement-pad { left: auto; right: max(20px, env(safe-area-inset-right)); }
+.movement-pad .pad-button, .movement-pad .pad-label { border-color: #6cd7ff66; }
+.movement-pad .pad-label { color: #6cd7ff; }
+:is(.camera-pad, .movement-pad) .pad-button:is(:active, .is-active, .is-key-active, .is-pointer-active) {
+  background: #a78bfae6;
+  color: #0a0e20;
+}
+.movement-pad .pad-button:is(:active, .is-active, .is-key-active, .is-pointer-active) {
+  background: #6cd7ffe6;
+}
+.pad-button:is(:active, .is-active, .is-key-active, .is-pointer-active) kbd { color: #e7eaff; }
+.zoom-controls { user-select: none; }
+
+@media (max-width: 540px) {
+  .camera-pad, .movement-pad { grid-template: repeat(3, 44px) / repeat(3, 44px); bottom: 12px; }
+  .camera-pad { left: max(12px, env(safe-area-inset-left)); }
+  .movement-pad { right: max(12px, env(safe-area-inset-right)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pad-button { transition: none; }
+}
