@@ -23,10 +23,12 @@ export async function recoveryFailure(run, { directory = runDirectory(run.id), t
   if (run.provider === 'antigravity' && run.status === 'failed' && run.error === STARTUP_ERROR) {
     directory = await directoryFor(run, directory).catch(() => null);
     const evidence = directory && await antigravityStartupCandidate(directory);
-    if (evidence) return { ...run, recovery_repair: STARTUP_REPAIR,
-      recovery_error: evidence.provider_error === 'authentication failed or timed out'
-        ? 'Provider startup failed before initialization; no model or tool activity occurred.'
-        : 'Temporary network failure before provider initialization; no model or tool activity occurred.' };
+    if (evidence) {
+      let reason = 'Provider startup failed before initialization; no model or tool activity occurred.';
+      if (evidence.provider_error.startsWith('Eligibility check failed: ')) reason = 'Temporary network failure before provider initialization; no model or tool activity occurred.';
+      if (evidence.provider_error === 'context canceled') reason = 'Antigravity startup was canceled before initialization with zero turns and zero tokens.';
+      return { ...run, recovery_repair: STARTUP_REPAIR, recovery_error: reason };
+    }
   }
   if (run.provider === 'antigravity' && run.status === 'failed' && isRejectedMcpError(run.error)) {
     directory = await directoryFor(run, directory).catch(() => null);

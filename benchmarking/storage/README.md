@@ -75,13 +75,15 @@ No API inference is required to run those tests.
 Antigravity zero-work startup failures are recovered by
 `benchmarking/recover-antigravity-startup.mjs`. A network/eligibility or timed-out
 authentication check may emit a single error result before initialization;
-older immutable runners incorrectly flag that as model activity. Recovery
+older immutable runners incorrectly flag that as model activity. The same audit
+also accepts the exact startup error `context canceled`. Recovery
 requires exactly one event in that attempt, no conversation, response, turns,
 duration or token usage, and no subsequent MCP activity. It verifies the pinned
 runtime and checkpoint, archives the flag and lifecycle metadata, and resumes
 the original conversation without changing any game history. Actual pre-init
 model/tool activity remains blocked. Explicit and automatic Resume share this
-audited path; repeated ambiguous authentication failures have bounded retries.
+audited path. Repeated startup cancellations and ambiguous authentication
+failures have bounded retries.
 
 ## Recovering rejected Antigravity tool calls
 

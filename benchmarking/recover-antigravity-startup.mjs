@@ -32,7 +32,7 @@ export function inspectStartupFailure(event) {
   assert.equal(r.duration_seconds, 0); assert.equal(r.num_turns, 0);
   assert.deepEqual(Object.keys(r.usage).sort(), ['cache_read_tokens', 'input_tokens', 'output_tokens', 'thinking_tokens', 'total_tokens']);
   assert(Object.values(r.usage).every(value => value === 0), 'Startup failure contains model usage.');
-  assert(typeof r.error === 'string' && (r.error === 'authentication failed or timed out' ||
+  assert(typeof r.error === 'string' && (r.error === 'context canceled' || r.error === 'authentication failed or timed out' ||
     /^Eligibility check failed: /.test(r.error) && /connect: connection refused|timeout|timed out|temporary failure|no such host/i.test(r.error)),
   'Not a recognized zero-work provider startup failure.');
   return { turn_id: event._turn_id, failed_at: event._received_at, provider_error: r.error,
