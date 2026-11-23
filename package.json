@@ -64,7 +64,7 @@
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "three": "^0.184.0",
-    "undici": "6.24.1"
+    "undici": "6.29.1"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
@@ -85,12 +85,12 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "16.4.0",
     "mazebench-playwright": "npm:playwright@1.62.1",
-    "react-server-dom-webpack": "19.2.6",
+    "react-server-dom-webpack": "19.3.1",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.59.3",
-    "vinext": "1.0.0-beta.2",
-    "vite": "8.0.13",
+    "typescript-eslint": "8.73.0",
+    "vinext": "1.4.6",
+    "vite": "8.3.8",
     "wrangler": "4.92.0"
   },
   "type": "module"
