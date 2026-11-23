@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="MazeBench native world exploration tools.">
+    <title>MazeBench — World Solver</title>
+    <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <header>
+      <nav><a href="../../">← World</a><a href="../../editor/v1/">Editor</a></nav>
+      <div><strong>World Solver</strong><span>connected-world / v1</span></div>
+      <output id="status" aria-live="polite">Loading H×I…</output>
+    </header>
+    <main>
+      <section class="map-panel">
+        <div class="pixel-map">
+          <canvas id="world-canvas" width="256" height="256" aria-label="256 by 256 World BFS visit map"></canvas>
+        </div>
+        <div id="random-legend" class="legend" hidden>
+          <span><i class="room-swatch"></i> reached room</span>
+          <span><i class="old-swatch"></i> visit older than 50 ticks</span>
+          <span><i class="recent-swatch"></i> last 50 ticks</span>
+          <span><i class="current-swatch"></i> current</span>
+        </div>
+        <div id="bfs-legend" class="legend">
+          <span><i class="open-room-swatch"></i> open / searching room</span>
+          <span><i class="searched-room-swatch"></i> searched / exhausted room</span>
+          <span><i class="exit-swatch"></i> neighboring-room exit</span>
+          <span><i class="gem-room-swatch"></i> gem found in room</span>
+          <span><i class="current-swatch"></i> current search position</span>
+        </div>
+        <output id="map-room-details">Hover a room to see its coordinate and gems.</output>
+      </section>
+      <aside>
+        <section class="panel mode-selector" aria-label="Solver mode">
+          <button id="mode-bfs" type="button" aria-pressed="true">Exact BFS</button>
+          <button id="mode-dfs" type="button" aria-pressed="false">DFS Meta</button>
+          <button id="mode-super" type="button" aria-pressed="false">Super A*</button>
+          <button id="mode-row" type="button" aria-pressed="false">Row A*</button>
+          <button id="mode-random" type="button" aria-pressed="false">Random agent</button>
+        </section>
+        <section class="panel intro">
+          <span>Starter room</span>
+          <strong>H×I</strong>
+          <p id="intro-description">Runs one exact BFS in each newly reached room. Every room resets to authored state, uses its first discovered entrance, and is searched only once.</p>
+        </section>
+        <section id="random-stats" class="panel stats" hidden>
+          <div><span>Actions / sec</span><strong id="actions-per-second">0</strong></div>
+          <div><span>Actions</span><strong id="actions">0</strong></div>
+          <div><span>Rooms reached</span><strong id="rooms">0</strong></div>
+          <div><span>Gems collected</span><strong id="gems">0</strong></div>
+          <div><span>Death undos</span><strong id="undos">0</strong></div>
+          <div><span>Softlock teleports</span><strong id="teleports">0</strong></div>
+          <div><span>Current room</span><strong id="current-room">H×I</strong></div>
+        </section>
+        <section id="bfs-stats" class="panel stats">
+          <div><span>Actions / sec</span><strong id="bfs-actions-per-second">0</strong></div>
+          <div><span>State visits / sec</span><strong id="states-per-second">0</strong></div>
+          <div><span>States explored</span><strong id="exact-states">0</strong></div>
+          <div><span>Rooms reached</span><strong id="bfs-rooms">0</strong></div>
+          <div><span>Rooms searched</span><strong id="bfs-processed-rooms">0</strong></div>
+          <div><span>Gems collectible</span><strong id="bfs-gems">0</strong></div>
+          <div><span>Current room</span><strong id="bfs-current-room">H×I</strong></div>
+          <div><span>Board states</span><strong id="expanded-states">0</strong></div>
+          <div><span>Actions tested</span><strong id="tested-actions">0</strong></div>
+          <div><span>Room-exit states</span><strong id="edge-states">0</strong></div>
+          <div><span>Unique exit tiles</span><strong id="exit-tiles">0</strong></div>
+          <div><span>Board-state arena</span><strong id="state-capacity">0</strong></div>
+          <div><span>Active searches</span><strong id="active-searches">0</strong></div>
+          <div><span>Search slices</span><strong id="search-slices">0</strong></div>
+          <div><span>A* weight</span><strong id="heuristic-weight">0</strong></div>
+          <div><span>Opportunities</span><strong id="opportunities">0</strong></div>
+          <div><span>Current row targets</span><strong id="row-targets">0</strong></div>
+          <div><span>Current row visited</span><strong id="row-visited">0</strong></div>
+          <div><span>Rows discovered</span><strong id="rows-discovered">0</strong></div>
+          <div><span>Coverage complete</span><strong id="row-coverage">No</strong></div>
+        </section>
+        <section class="panel actions">
+          <button id="restart" class="primary" type="button">Restart World BFS</button>
+          <button id="stop" type="button">Stop</button>
+        </section>
+      </aside>
+    </main>
+    <script type="module" src="./main.mjs"></script>
+  </body>
+</html>

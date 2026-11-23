@@ -1,0 +1,27 @@
+# Stock Verifiers MCP chat loop: game controls only, no code executor.
+model = "openai/gpt-4.1-mini"
+num_tasks = 1
+num_rollouts = 1
+max_concurrent = 1
+push = false
+
+[env.taskset]
+id = "mazebench"
+condition = "tools_off"
+max_actions = 1000
+
+[env.agent]
+max_turns = 2000
+
+[env.agent.harness]
+id = "null"
+
+[env.agent.runtime]
+type = "prime"
+cpu = 2
+memory = 4
+disk = 10
+
+[env.agent.timeout]
+setup = 1800
+rollout = 3600

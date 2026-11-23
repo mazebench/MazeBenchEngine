@@ -1,0 +1,17 @@
+{
+  "name": "MazeBenchEngineUnitTest",
+  "kind": "command",
+  "command": [
+    "npm",
+    "run",
+    "dev",
+    "--",
+    "--hostname",
+    "127.0.0.1",
+    "--port",
+    "{port}"
+  ],
+  "cwd": ".",
+  "port": 43101,
+  "url": "http://127.0.0.1:43101"
+}

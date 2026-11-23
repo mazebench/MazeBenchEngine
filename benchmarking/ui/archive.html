@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Older runs — MazeBench</title>
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../v1/styles.css"><link rel="stylesheet" href="./archive.css">
+  <script type="module" src="./archive.mjs"></script>
+</head>
+<body>
+  <header class="topbar"><nav aria-label="MazeBench navigation"><a href="../v1/">‹ Benchmark</a><strong>Older runs</strong><a href="../../outputs/version-audit/catalogue.html">Versions</a></nav><span class="archive-tag">Read only</span></header>
+  <main class="archive-main">
+    <section id="library">
+      <div class="archive-heading"><div><h1>Older runs</h1><p>Original recordings from the v1.0 generation.</p></div></div>
+      <div class="archive-filters"><input id="search" type="search" placeholder="Search models, agents, or run IDs…" aria-label="Search archived runs"><div class="segments" aria-label="Archive filter" role="group"><button data-filter="all" aria-pressed="true">All runs</button><button data-filter="favorite" aria-pressed="false">★ Favorites</button><button data-filter="video" aria-pressed="false">Videos</button></div></div>
+      <p id="library-status" role="status">Loading archive…</p><progress id="library-progress" aria-label="Loading archive"></progress>
+      <div id="archive-grid"></div>
+      <div class="archive-pagination"><button id="previous">‹ Previous</button><span id="page-label"></span><button id="next">Next ›</button></div>
+    </section>
+    <section id="detail" hidden>
+      <button id="back" class="back">‹ All older runs</button>
+      <header class="detail-heading"><img id="detail-logo" alt=""><div><h1 id="model"></h1><p id="condition"></p></div><span id="version" class="archive-tag"></span></header>
+      <div id="detail-metrics" class="archive-metrics"></div>
+      <p id="detail-status" role="status"></p>
+      <div class="archive-layout">
+        <section class="archive-panel replay-panel" aria-label="Recorded playback">
+          <div class="panel-heading"><h2>Recorded replay</h2><div class="segments" aria-label="Replay view" role="group"><button id="ascii-tab" aria-pressed="true">ASCII</button><button id="video-tab" aria-pressed="false" hidden>Video</button></div></div>
+          <video id="video" controls preload="metadata" playsinline hidden></video>
+          <div id="ascii-player"><div class="ascii-stage"><pre id="ascii" aria-label="Recorded observation"></pre></div><div class="scrub-row"><button id="play" aria-label="Play recorded frames">▶</button><input id="scrub" type="range" min="0" max="0" value="0" aria-label="Recorded frame"><span id="frame-count"></span></div><div class="playback-footer"><span id="frame-caption"></span><div class="segments" role="group" aria-label="Playback speed"><button data-speed="1" aria-pressed="true">1×</button><button data-speed="2" aria-pressed="false">2×</button><button data-speed="4" aria-pressed="false">4×</button><button data-speed="10" aria-pressed="false">10×</button></div></div></div>
+        </section>
+        <section class="archive-panel"><div class="panel-heading"><h2>Player visits</h2><a id="compare" href="../v1/compare.html">Compare ↗</a></div><canvas id="heatmap" role="img" aria-label="Recorded player visit heatmap"></canvas><p id="heatmap-status" class="muted"></p></section>
+      </div>
+      <details class="archive-panel provenance"><summary>Version history <span id="evidence-label"></span></summary><p id="evidence-description"></p><p><a id="version-commit" hidden target="_blank" rel="noopener noreferrer">View the assigned commit on GitHub ↗</a></p><div id="version-candidates" class="candidate-list"></div><p id="board-hash" class="hash"></p><a href="../../outputs/version-audit/catalogue.html">Open the full version catalogue ↗</a></details>
+    </section>
+  </main>
+</body>
+</html>

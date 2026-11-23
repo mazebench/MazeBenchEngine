@@ -1,0 +1,29 @@
+{
+  "source_commit": "344f9bea876599e468d4a1ba05d1357a81666a58",
+  "files": {
+    "benchmarking/v1/supervisor.mjs": {
+      "before": "b41402c47d8a59a05e813df563d821711ad2ff7162c32724eeb4d141d590582c",
+      "after": "057e7bb2fd3762cd4473b712dcb22b00a5c4ead5dd06d8127818eca6e1bdbb32"
+    },
+    "engine/v1/adapter.mjs": {
+      "before": "90a00cbca061e31954907c0a31e7df6262f5b78701a7e0cb1daea48fd407847e",
+      "after": "10cde67ebfbfd7a11045b11160c102beb959ff731b5e64cd055002c36b10e913"
+    },
+    "engine/v1/upstream.json": {
+      "before": "a3723cce8b6273328e8e435372eb215aad551887579538cc6ed505cddb6425ae",
+      "after": "d5703e731535e9a5087ebfe61725a2a69e1b46beba9217c5b207478c61f3b0dd"
+    },
+    "engine/v1/upstream.mjs": {
+      "before": "ba51d67c29b06e66b7afc95749e5597a96290873954a62e412c8365690e6b6a5",
+      "after": "b25a15849814966684f5b46aa2afb62e10c440331447caf2a6bd0117e2d8ece1"
+    },
+    "engine/v1/voxel_physics.wasm": {
+      "before": "a86773c977288bc8766fff804a08b4d93af28309dfe0eac0bf2dc4f0d917d5bc",
+      "after": "005562157166dfc706e306de3e23ffc4e8a1d57bed118d6b9ef96d65b3beaf7c"
+    },
+    "play/v1/connected-world-session.mjs": {
+      "before": "ee0f3e02fa3e0b8ade890a4fd2094ac659bf108a0b00688edac790cefd383e71",
+      "after": "edd8e28271e594d51f57314c5734cb8106461e17bca916a6da7b2954b32a35fa"
+    }
+  }
+}

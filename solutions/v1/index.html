@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MazeBench — Solutions</title>
+    <link rel="icon" type="image/svg+xml" href="../../favicon.svg"><meta name="description" content="Build and replay verified routes through MazeBench from any starting room."><link rel="stylesheet" href="./styles.css"><link rel="stylesheet" href="../../render/v1/cutaway-controls.css"></head>
+<body>
+<header class="topbar"><div class="identity"><a class="back" href="../../"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>Back</a><strong>Solutions</strong></div><div class="top-actions"><output id="save-state" role="status" hidden></output><button id="restart-solution" title="Stop verification, remove this solution, and choose a starting room for a new run" disabled>Remove solution &amp; restart</button><button id="import" disabled>Import JSON</button><input id="import-file" type="file" accept=".json,application/json" aria-label="Import solution JSON" hidden><button id="full-solution" disabled>Full solution</button><button id="export" disabled>Export routes</button></div></header>
+<main>
+  <section class="workspace">
+    <div class="workspace-heading"><h1 id="room-name">H×I</h1><button id="return-current" hidden>Return to current spot</button></div>
+    <div class="stage" id="stage"><canvas id="room-canvas" aria-label="3D room. Tap a tile to move there."></canvas>
+      <details class="cutaway-panel"><summary>Truncate</summary><div id="cutaway-controls" class="cutaway-controls" role="group" aria-label="Truncate room" hidden></div></details>
+      <div id="loading" class="loading"><progress id="load-progress" max="256" value="0" aria-label="Loading Solutions"></progress></div>
+      <div class="stage-caption"><span id="view-note">Tap a tile to move there</span><button id="clear-target" aria-label="Clear target" hidden>×</button></div>
+      <div class="camera-pad" role="group" aria-label="Camera controls">
+            <button id="tilt-up" class="pad-button" type="button" aria-label="Tilt camera up" aria-keyshortcuts="W" title="Tilt up (W)"><span class="pad-arrow up" aria-hidden="true"></span><kbd aria-hidden="true">W</kbd></button>
+            <button id="rotate-left" class="pad-button" type="button" aria-label="Rotate camera left" aria-keyshortcuts="A" title="Rotate left (A)"><span class="pad-arrow left" aria-hidden="true"></span><kbd aria-hidden="true">A</kbd></button>
+            <span class="pad-label" aria-hidden="true">CAM</span>
+            <button id="rotate-right" class="pad-button" type="button" aria-label="Rotate camera right" aria-keyshortcuts="D" title="Rotate right (D)"><span class="pad-arrow right" aria-hidden="true"></span><kbd aria-hidden="true">D</kbd></button>
+            <button id="tilt-down" class="pad-button" type="button" aria-label="Tilt camera down" aria-keyshortcuts="S" title="Tilt down (S)"><span class="pad-arrow down" aria-hidden="true"></span><kbd aria-hidden="true">S</kbd></button>
+          </div>
+      <div class="zoom-controls" role="group" aria-label="Zoom"><button id="zoom-in" aria-label="Zoom in">+<kbd>Q</kbd></button><button id="zoom-out" aria-label="Zoom out">−<kbd>E</kbd></button></div>
+      <div class="movement-pad" role="group" aria-label="Movement controls">
+            <button class="pad-button" data-direction="up" type="button" aria-label="Move up" aria-keyshortcuts="ArrowUp" title="Move up (↑)" disabled><span class="pad-arrow up" aria-hidden="true"></span></button>
+            <button class="pad-button" data-direction="left" type="button" aria-label="Move left" aria-keyshortcuts="ArrowLeft" title="Move left (←)" disabled><span class="pad-arrow left" aria-hidden="true"></span></button>
+            <span class="pad-label" aria-hidden="true">MOVE</span>
+            <button class="pad-button" data-direction="right" type="button" aria-label="Move right" aria-keyshortcuts="ArrowRight" title="Move right (→)" disabled><span class="pad-arrow right" aria-hidden="true"></span></button>
+            <button class="pad-button" data-direction="down" type="button" aria-label="Move down" aria-keyshortcuts="ArrowDown" title="Move down (↓)" disabled><span class="pad-arrow down" aria-hidden="true"></span></button>
+          </div>
+    </div>
+    <div class="route-toolbar"><div class="route-buttons"><button id="find-gem" class="primary" disabled>Find next gem</button><button id="undo" title="Undo last move (Z or ⌘/Ctrl+Z)" aria-keyshortcuts="z Meta+z Control+z" disabled><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4 3 8l4 4M3 8h8a5 5 0 0 1 0 10"/></svg>Undo</button><label class="search-limit">Search time<select id="search-time"><option value="15000">15 sec</option><option value="60000" selected>1 min</option><option value="180000">3 min</option><option value="600000">10 min</option><option value="1800000">30 min</option><option value="3600000">1 hour</option><option value="unlimited">No time limit</option></select></label><button id="cancel" hidden>Cancel search</button></div><span id="path-length">0 moves from H×I</span></div>
+    <p id="status" role="status" aria-live="polite">Loading the world…</p>
+    <p id="import-notice" class="import-notice" role="status" aria-live="polite" hidden></p>
+    <section id="target-panel" class="panel target-panel" hidden><div><h2>Adjust target</h2><span id="target-room"></span></div><div class="coordinates"><label>X<input id="target-x" type="number" min="0" max="15"></label><label>Y<input id="target-y" type="number" min="0" max="15"></label><label>Height<input id="target-z" type="number" placeholder="Any"></label><button id="find-target" class="primary">Find again · A*</button></div></section>
+    <section class="panel routes-panel"><div class="section-heading"><h2>Saved runs <span id="route-count">0</span></h2></div><div id="routes" class="route-list"><p class="empty">Runs appear here when you reach a gem, enter another room, or finish a planned route.</p></div></section>
+  </section>
+  <aside>
+    <section class="panel progress-panel"><span class="eyebrow">Your progress</span><div class="progress-grid"><div><strong id="rooms-count">1 <small>/ 256</small></strong><span>Rooms visited</span></div><div><strong id="gems-count">0 <small>/ —</small></strong><span>Gems collected</span></div></div><progress id="coverage" value="1" max="256" aria-label="Rooms visited"></progress></section>
+    <section class="panel map-panel"><div class="section-heading"><h2>World map</h2><span id="map-room">H×I</span></div><div id="world-map" class="world-map" aria-label="Choose a room to inspect"></div><p id="map-gems" class="map-gems"></p><div class="map-legend"><span><i class="legend-visited"></i>Visited</span><span><i class="legend-current"></i>Current</span><span><i class="legend-remaining"></i>Gems left</span><span><i class="legend-collected"></i>Gems collected</span></div><p class="map-hint">Only visited rooms can be selected.</p></section>
+    <section class="panel sequence-panel" aria-labelledby="sequence-title">
+      <h2 id="sequence-title">Move sequence</h2>
+      <textarea id="move-sequence" rows="3" aria-label="UDLR sequence" placeholder="Paste UDLR, e.g. DRRDLU" spellcheck="false" autocapitalize="characters" aria-describedby="sequence-status"></textarea>
+      <div class="sequence-actions"><button id="run-sequence" type="button" disabled>Run sequence</button><button id="stop-sequence" type="button" disabled>Stop</button></div>
+      <output id="sequence-status" role="status" aria-live="polite"></output>
+    </section>
+    <section class="panel"><div class="section-heading"><h2>Spawn points</h2><span id="spot-count">1</span></div><div id="spots" class="spots"></div></section>
+    <details class="panel help"><summary>How Solutions works</summary><p>Choose a starting room in the popup when beginning a new solution. Each room begins at its authored player position with its original blocks. Each starting room keeps its own local routes. A solution starting outside H×I proves reachability from that room, not from the game's usual start.</p><p>Enter rooms to visit them. Green rooms are visited. Only visited rooms and their accessible spawn points can be selected.</p><p>Full solution combines saved runs using up, down, left, right, and go to room. A room must be visited before go to room can return to its original start. Saved spawns expand into all setup moves from the chosen start or a room start.</p><p>Spawn points are created automatically only when entering a room. Gems and planned route endpoints never create selectable spawns. Selecting a room start or saved spot resets the room; collected gems stay removed. Ice and punch moves finish before a spot can resume.</p><p>Undo removes the last move, including moves in generated routes. Use Z or ⌘/Ctrl+Z. It restores the previous room and board; other saved branches are kept.</p><p>Tap a tile to automatically find and follow an A* route. You can adjust its coordinates and search again if needed. Search runs in the background and every saved route is replayed with the engine. Use Search time beside the search buttons for harder puzzles, up to an hour or without a time limit; cancel at any time. A time or memory limit does not mean a destination is unreachable. Routes are valid, but not guaranteed shortest.</p><p>Remove solution &amp; restart in the top row asks for confirmation before stopping verification, removing the current solution, and opening the starting-room picker for a new run.</p><p>Spots and routes save automatically in this browser. Import JSON reads the file's starting room and opens that solution automatically. If that room already has saved moves, you can review the replacement before importing. Export keeps a portable copy with the chosen starting room and move sequences. Changing the world or engine starts a separate collection.</p></details>
+  </aside>
+</main>
+<dialog id="moves-dialog"><div class="section-heading"><h2 id="moves-title">Move sequence</h2><button id="close-moves" aria-label="Close move sequence">×</button></div><label id="full-path-label"><input id="full-path" type="checkbox"> Include spawn setup</label><p id="moves-summary"></p><p id="moves-note" class="empty" hidden></p><textarea id="moves-text" readonly aria-label="Generated move sequence"></textarea><button id="copy-moves" class="primary">Copy moves</button></dialog>
+<dialog id="restart-dialog" aria-labelledby="restart-title" aria-describedby="restart-description"><h2 id="restart-title">Remove solution &amp; restart?</h2><p id="restart-description" class="dialog-description"></p><div class="dialog-actions"><button id="cancel-restart" autofocus>Cancel</button><button id="confirm-restart" class="destructive">Remove &amp; restart</button></div></dialog>
+<dialog id="start-dialog" aria-labelledby="start-title" aria-describedby="start-description">
+  <header class="start-picker-header">
+    <div><h2 id="start-title">Choose your starting room</h2><p id="start-description">Explore the room previews or find a coordinate.</p></div>
+    <button id="close-start" type="button" aria-label="Close starting room picker">×</button>
+  </header>
+  <div class="start-picker-body">
+    <section class="start-map-panel" aria-label="Choose a room">
+      <div class="start-map-toolbar">
+        <div class="start-picker-search"><input id="start-search" type="search" aria-label="Find room" placeholder="Find room · H×I" autocomplete="off" spellcheck="false" maxlength="20"><button id="start-saved-filter" type="button" aria-pressed="false">Saved</button></div>
+        <div class="start-shortcuts"><button id="start-default" type="button">H×I · Game start</button><button id="start-current" type="button">Current solution</button></div>
+      </div>
+      <div class="start-map-viewport"><div id="start-map" role="group" aria-label="World starting rooms. Use the direction keys to select a room."></div></div>
+      <div class="start-map-caption"><div class="start-map-legend"><span><i class="start-legend-selected"></i>Selected</span><span><i class="start-legend-saved"></i>Saved</span></div><p id="start-results" role="status" aria-live="polite"></p></div>
+    </section>
+    <section class="start-room-detail" aria-labelledby="start-preview-name">
+      <div class="start-preview-heading"><span id="start-preview-badge">Starting room</span><h3 id="start-preview-name">H×I</h3></div>
+      <figure class="start-preview-figure"><canvas id="start-preview" width="320" height="320" role="img" aria-label="Room preview"></canvas><figcaption>Room layout · top view<span><i class="start-player-dot"></i>Start <i class="start-gem-dot"></i>Gem</span></figcaption></figure>
+      <dl class="start-room-stats"><div><dt>Gems</dt><dd id="start-gem-count">—</dd></div><div><dt>Player start</dt><dd id="start-spawn">—</dd></div></dl>
+      <div class="start-save-info" aria-live="polite"><strong id="start-save-title">Fresh start</strong><p id="start-save-detail"></p></div>
+    </section>
+  </div>
+  <footer class="start-picker-footer"><p>Each starting room keeps its own solution.</p><div class="dialog-actions"><button id="cancel-start" type="button">Cancel</button><button id="confirm-start" type="button" class="primary">Open solution</button></div></footer>
+  <input id="start-room" type="hidden">
+</dialog>
+<dialog id="import-replace-dialog" aria-labelledby="import-replace-title" aria-describedby="import-replace-description"><h2 id="import-replace-title">Replace this room's solution?</h2><p id="import-replace-description" class="dialog-description"></p><div class="dialog-actions"><button id="cancel-import-replace" autofocus>Cancel</button><button id="confirm-import-replace" class="destructive">Replace and import</button></div></dialog>
+<dialog id="import-world-dialog" aria-labelledby="import-world-title" aria-describedby="import-world-description"><h2 id="import-world-title">Recheck with the current world?</h2><p id="import-world-file"></p><p id="import-world-description">The rooms or engine have changed since this file was saved. Replay the saved moves with the current engine and rooms to rebuild visited rooms, entrances, and collected gems. Invalid moves or saved spawns will be skipped, and replay will continue from the last valid position. A small notice will show what was removed.</p><div class="dialog-actions"><button id="cancel-import-world" autofocus>Cancel</button><button id="confirm-import-world" class="primary">Import and recheck</button></div></dialog>
+<script type="module" src="./main.mjs"></script>
+<script type="module" src="../../ui/control-pad-feedback.mjs"></script>
+</body></html>

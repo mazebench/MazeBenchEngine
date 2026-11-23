@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/mazebench-temp/MazeBenchSite",
+  "commit": "94b32e75a963d623313c6d1c80406af0e5a58604",
+  "source_file": "games/ice_maze/level_list.json",
+  "source_sha256": "75340c6bd5f83290b66cdf101611bb04fb9f413333c191086fc333ef9c3dda09",
+  "imported_sha256": "c59f12e98e6d4b69fa52aeae2991f66b490be6f2af29e738bd0f3c51dc8d7acd",
+  "level_count": 30,
+  "validation": "Every board preserved in source order; all original solution replays passed. Solution paths and solver statistics omitted."
+}

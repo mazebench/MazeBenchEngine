@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Thirty original Ice Maze puzzles. Slide every player together and cover all the slippery goal tiles.">
+  <title>MazeBench — Ice Maze</title>
+    <link rel="icon" type="image/svg+xml" href="../../favicon.svg"><link rel="stylesheet" href="./styles.css"><link rel="stylesheet" href="../../ui/branding.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../../"><img class="mazebench-logo" src="../../favicon.svg" width="28" height="28" alt="">MazeBench <span>World 02</span></a>
+    <nav aria-label="Worlds"><a href="../../">Main World</a><a href="./" aria-current="page">Ice Maze</a><a href="../../benchmarking/v1/?world=ice-maze">Benchmark</a></nav>
+  </header>
+  <main>
+    <section class="intro"><div><p class="eyebrow">Thirty puzzles. One direction together.</p><h1>Ice Maze</h1><p>Slide every player onto a goal. The ice won’t let you stop halfway.</p></div><div class="progress"><strong id="progress-count">0 / 30</strong><span>levels solved</span><progress id="world-progress" max="30" value="0" aria-label="Levels solved"></progress></div></section>
+    <div class="layout">
+      <section class="game" aria-labelledby="level-title">
+        <header class="game-heading"><div><span class="eyebrow">Current puzzle</span><h2 id="level-title">Level 1</h2></div><div class="metrics"><span><b id="moves">0</b> moves</span><span><b id="covered">0 / 1</b> goals</span></div></header>
+        <div class="board-wrap"><canvas id="board" role="img" aria-label="Ice Maze board"></canvas><p id="loading" role="status">Loading the ice…</p></div>
+        <div class="game-status"><p id="status" role="status" aria-live="polite">Use arrow keys or WASD to slide.</p><button id="next-level" class="primary" hidden>Next level →</button></div>
+        <footer class="game-controls"><div><button id="undo" disabled>↶ Undo <kbd>Z</kbd></button><button id="reset">Reset <kbd>R</kbd></button></div><div class="dpad" aria-label="Movement controls"><button data-direction="up" aria-label="Slide up">↑</button><button data-direction="left" aria-label="Slide left">←</button><button data-direction="down" aria-label="Slide down">↓</button><button data-direction="right" aria-label="Slide right">→</button></div></footer>
+      </section>
+      <aside>
+        <section class="level-panel"><header><h2>Choose a level</h2><span id="level-total">1–30</span></header><div id="level-list" class="level-list" aria-label="Numbered Ice Maze levels"></div><p>Thirty separate boards, played in order. Pick any level to practice.</p></section>
+        <section class="rules"><h2>How to play</h2><div class="legend"><span><i class="player"></i>Player</span><span><i class="goal"></i>Goal</span><span><i class="wall"></i>Wall</span></div><p>Every direction moves <strong>all players together</strong>. They slide until a wall, the edge, or another player stops them.</p><p>Goals are slippery too. <strong>Cover every goal at the same time</strong>, after everyone has stopped. A player already on a goal still moves.</p><p class="hint">Arrow keys / WASD · swipe · Z undo · R reset</p></section>
+      </aside>
+    </div>
+    <footer class="source-note">The original 30 puzzles from MazeBenchSite · Your play progress is saved in this browser.</footer>
+  </main>
+  <script type="module" src="./main.mjs"></script>
+</body>
+</html>

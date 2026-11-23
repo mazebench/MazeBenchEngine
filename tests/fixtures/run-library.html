@@ -1,0 +1,57 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Run library browser regression checks</title>
+<h1>Run library browser regression checks</h1>
+<output id="result">Checking…</output>
+<div id="cards"></div>
+<script type="module">
+  // Open /tests/fixtures/run-library.html on the local server. Synthetic data
+  // exercises rendering without launching, changing, or deleting real runs.
+  import { RunListView } from "/benchmarking/ui/run-library.mjs";
+  const container = document.getElementById("cards");
+  const result = document.getElementById("result");
+  const assert = (condition, message) => { if (!condition) throw Error(message); };
+  try {
+    const runs = Array.from({ length: 1000 }, (_, index) => ({
+      id: `fixture-${index}`, model: "<img src=x> fixture", effort: "high", status: "paused",
+      created_at: "2026-10-03T00:00:00Z", paused_at: "2026-10-03T00:02:00Z", action_count: index
+    }));
+    const view = new RunListView(container);
+    view.update(runs);
+    assert(container.children.length === 24, "A thousand records must create only 24 cards.");
+    assert(!container.querySelector(".record-model img"), "Model labels must stay plain text.");
+    assert(container.querySelector(".record-model").textContent === runs[0].model, "Model slug must render literally.");
+    assert([...container.querySelectorAll("img")].every(image => image.src.endsWith("/assets/model-logos/openai.svg")), "Logos must come from the fixed local asset map.");
+    const status = container.querySelector(".record-status");
+    assert(!status.textContent && status.getAttribute("aria-label") === "paused" && status.dataset.tone === "gray", "Status must be an accessible dot without visible description.");
+    const cards = [...container.children];
+    const link = cards[0].querySelector("a");
+    link.focus();
+    const observer = new MutationObserver(() => {});
+    observer.observe(container, { childList: true, attributes: true, characterData: true, subtree: true });
+    view.update(structuredClone(runs));
+    assert(observer.takeRecords().length === 0, "Unchanged refresh must not mutate cards.");
+    assert(document.activeElement === link, "Refresh must preserve keyboard focus.");
+    observer.disconnect();
+    const changed = structuredClone(runs);
+    changed[0].action_count = 1234;
+    changed[0].runner_active = true;
+    view.update(changed);
+    assert(cards.every((card, index) => container.children[index] === card), "Updated cards must reuse their nodes.");
+    assert(cards[0].querySelector(".record-metrics b").textContent === (1234).toLocaleString(), "Changed score must render.");
+    assert(cards[0].querySelector("button").disabled, "Running records must not be deletable.");
+    view.update(runs, 1);
+    assert(container.querySelector("a").getAttribute("href").endsWith("fixture-24"), "Next page must start at record 24.");
+    assert(view.update(runs, 99).page === 41 && container.children.length === 16, "Final page must clamp and show 16 records.");
+    assert(view.update(runs.slice(0, 25)).page === 1 && container.children.length === 1, "Page must recover after deletions.");
+    view.update([]);
+    assert(container.querySelector(".records-empty") && view.cards.size === 0, "Empty list must release old cards.");
+    view.update(runs);
+    assert(container.children.length === 24 && !container.querySelector(".records-empty"), "Runs must return after empty state.");
+    container.replaceChildren();
+    result.textContent = "Passed: 1,000 runs, bounded pagination, unchanged refresh, live updates, keyboard focus, and empty states.";
+  } catch (error) {
+    result.textContent = `FAILED: ${error.message}`;
+    console.error(error);
+  }
+</script>

@@ -1,0 +1,41 @@
+// Operator retry of this observed provider-capacity failure, with the full
+// existing capability/checkpoint checks and no changes to game or agent state.
+import assert from "node:assert/strict";
+import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { BenchmarkSupervisor } from "../benchmarking/v1/supervisor.mjs";
+
+const id = "run-2026-09-04T19-29-31-992Z-772688";
+assert.equal(process.argv[2], id);
+const root = path.resolve(import.meta.dirname, "..");
+const directory = path.join(os.homedir(), "records/mazebench-benchmark", id);
+const original = await readFile(path.join(directory, "run.json"), "utf8");
+const metadata = JSON.parse(original);
+assert.equal(metadata.id, id); assert.equal(metadata.status, "failed");
+assert.equal(metadata.error, "Error running remote compact task: Selected model is at capacity. Please try a different model.");
+assert.equal(metadata.model, "gpt-6-astra"); assert.equal(metadata.tools_enabled, false);
+const summary = JSON.parse(await readFile(path.join(directory, "summary.json"), "utf8"));
+assert.equal(summary.action_count, 8272); assert.equal(summary.gems_collected, 8);
+const events = (await readFile(path.join(directory, "agent-events.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
+assert.equal(events.at(-1).type, "turn.failed");
+assert.equal(events.at(-1).error.message, metadata.error);
+const supervisor = new BenchmarkSupervisor(root);
+await supervisor.verifyRunCapabilityBoundary(metadata, directory);
+const response = await fetch(`http://localhost:8080/api/benchmark/v1/runs/${id}`);
+assert(response.ok); const live = await response.json();
+assert.equal(live.runner_active, false); assert.equal(live.status, "failed");
+assert.equal(await readFile(path.join(directory, "run.json"), "utf8"), original);
+const backup = path.join(directory, "repairs", `capacity-retry-${Date.now()}`);
+await mkdir(backup, { mode: 0o700 });
+await copyFile(path.join(directory, "run.json"), path.join(backup, "run.before.json"));
+const retry = { at: new Date().toISOString(), reason: "User requested retry of provider capacity failure during compaction.", previous_error: metadata.error, action_count: 8272, checkpoint_verified: true, backup };
+await writeFile(path.join(backup, "retry.json"), JSON.stringify(retry, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+metadata.recoveries = [...(metadata.recoveries || []), retry];
+metadata.status = "paused"; metadata.error = null; metadata.completed_at = null;
+metadata.paused_at = retry.at; metadata.updated_at = retry.at;
+const temporary = path.join(directory, `run.json.${process.pid}.retry-tmp`);
+await writeFile(temporary, JSON.stringify(metadata, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+await rename(temporary, path.join(directory, "run.json"));
+await supervisor.verifyRunCapabilityBoundary(metadata, directory);
+console.log({ id, status: metadata.status, action_count: 8272, gems: 8, backup });

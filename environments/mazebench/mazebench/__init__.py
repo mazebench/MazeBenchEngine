@@ -1,14 +1,5 @@
-from .legacy import LegacyMazeEnv, load_environment
-from .mazebench import (
-    MazeBenchConfig,
-    MazeBenchTaskset,
-    load_taskset,
-)
+"""Standard Verifiers v1 taskset; harnesses are supplied by Verifiers."""
 
-__all__ = [
-    "LegacyMazeEnv",
-    "MazeBenchConfig",
-    "MazeBenchTaskset",
-    "load_environment",
-    "load_taskset",
-]
+from .taskset import MazeBenchTaskset
+
+__all__ = ["MazeBenchTaskset"]

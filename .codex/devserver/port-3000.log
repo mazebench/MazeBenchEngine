@@ -1,6 +1,0 @@
-
-> maze-bench@1.0.0 dev
-> node --watch server.js
-
-MazeBench running at http://127.0.0.1:3000
-Failed running 'server.js'. Waiting for file changes before restarting...

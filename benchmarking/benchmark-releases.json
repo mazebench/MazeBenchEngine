@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "engines": {
+    "5d054099c25c6e2d2f55838405cd4647959070d9cf694aaa28989ba9bf1869f6": {
+      "version": "1.1",
+      "source_commit": "ab76ae5a84bd5fc4fa5ba8b1b7dd54075998f2fc",
+      "evidence": "Matches engine/v1/upstream.json and MazeJam's pinned physics/v1.1.wasm. Directory names are not release versions."
+    }
+  },
+  "worlds": {
+    "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189": {
+      "version": "1.1",
+      "edited": false,
+      "source_commit": "4886f2ef2ae9e6a6720e562a87880e2004ce1a80",
+      "evidence": "File-hash inventory of MazeJam vendor/campaigns/maze-v1.1.provenance.json."
+    },
+    "f3ce65f75938bafb9f1631f1da5a2c8ff0b0e2b01eb6814dec752df5d71997bd": {
+      "version": "1.1",
+      "edited": true,
+      "parent_sha256": "e00aa39d32e7e97b9f26e72dfa03de4e71316bbda00974717de8f69008703189",
+      "evidence": "Matches authenticated revision 8 of the v1.1 world in October 12/14 runs, and the October 23 runs' immutable starting world."
+    }
+  }
+}

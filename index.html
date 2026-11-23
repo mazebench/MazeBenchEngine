@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="A dependency-free canvas map of the complete MazeBench main world."
+    >
+    <title>MazeBench — Main World Map</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+    <link rel="stylesheet" href="./render/v1/styles.css">
+    <link rel="stylesheet" href="./render/v1/visual-effects.css">
+    <link rel="stylesheet" href="./ui/flyover.css">
+    <link rel="stylesheet" href="./ui/play-gamepad.css">
+    <link rel="stylesheet" href="./ui/branding.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="identity">
+        <img class="mazebench-logo" src="./favicon.svg" width="28" height="28" alt="">
+        <div>
+          <strong>MazeBench</strong>
+        </div>
+      </div>
+
+      <div class="runtime-meta" aria-live="polite">
+        <output id="status" hidden></output>
+      </div>
+
+      <nav class="map-controls" aria-label="Main navigation">
+        <a id="play-link" class="nav-link primary" href="./play/v1/?room=HxI">Play from beginning</a>
+        <a id="editor-link" class="nav-link" href="./editor/v1/?room=HxI">Editor</a>
+        <a class="nav-link" href="./benchmarking/v1/">Benchmark</a>
+        <a class="nav-link" href="./solutions/v1/">Solutions</a>
+        <a class="nav-link" href="./replays/v1/">Replays</a>
+        <a class="nav-link" href="./object-lab/">Object lab</a>
+        <a class="nav-link" href="./unit-tests/">Unit tests</a>
+      </nav>
+    </header>
+
+    <main
+      id="viewport"
+      class="viewport is-loading"
+      tabindex="0"
+      aria-label="Complete 16 by 16 MazeBench world map. Drag to freely rotate and tilt. Hold A and D to rotate, W and S to tilt, arrow keys to pan, Q and E to zoom, and slash to center. Controller: left stick or D-pad pans, right stick rotates and tilts, ZL zooms in and ZR zooms out."
+    >
+      <div id="stage" class="stage">
+        <canvas id="world" aria-label="Three-dimensional MazeBench main world"></canvas>
+      </div>
+      <svg id="room-highlights" class="room-highlights" aria-hidden="true">
+        <g id="selected-highlight" class="room-highlight selected-highlight" hidden>
+          <polygon class="highlight-halo"></polygon>
+          <polygon class="highlight-face"></polygon>
+        </g>
+        <g id="hover-highlight" class="room-highlight hover-highlight" hidden>
+          <polygon class="highlight-halo"></polygon>
+          <polygon class="highlight-face"></polygon>
+        </g>
+      </svg>
+      <div id="hover-room-label" class="hover-room-label" aria-hidden="true" hidden></div>
+      <div id="loading" class="loading-card">
+        <progress id="load-progress" max="256" value="0" aria-label="Loading world"></progress>
+      </div>
+      <noscript>This map needs JavaScript to read and draw the level text files.</noscript>
+
+      <div class="camera-pad" role="group" aria-label="Camera controls">
+        <button id="tilt-up" class="pad-button" type="button" aria-label="Tilt camera up" aria-keyshortcuts="W" title="Tilt up (W)"><span class="pad-arrow up" aria-hidden="true"></span><kbd aria-hidden="true">W</kbd></button>
+        <button id="rotate-left" class="pad-button" type="button" aria-label="Rotate camera left" aria-keyshortcuts="A" title="Rotate left (A); hold to turn freely"><span class="pad-arrow left" aria-hidden="true"></span><kbd aria-hidden="true">A</kbd></button>
+        <span class="pad-label" aria-hidden="true">CAM</span>
+        <button id="rotate-right" class="pad-button" type="button" aria-label="Rotate camera right" aria-keyshortcuts="D" title="Rotate right (D); hold to turn freely"><span class="pad-arrow right" aria-hidden="true"></span><kbd aria-hidden="true">D</kbd></button>
+        <button id="tilt-down" class="pad-button" type="button" aria-label="Tilt camera down" aria-keyshortcuts="S" title="Tilt down (S)"><span class="pad-arrow down" aria-hidden="true"></span><kbd aria-hidden="true">S</kbd></button>
+      </div>
+
+      <div id="room-actions" class="room-actions floating-panel" role="group" aria-label="Selected room" hidden>
+        <output id="selected-room" aria-live="polite"></output>
+        <a id="room-play" class="nav-link primary" href="./play/v1/?room=HxI">Play</a>
+        <a id="room-edit" class="nav-link" href="./editor/v1/?room=HxI">Edit</a>
+        <button id="dismiss-room" class="dismiss-room" type="button" aria-label="Dismiss room selection" aria-keyshortcuts="Escape" title="Dismiss selection (Esc)"><span aria-hidden="true">×</span></button>
+      </div>
+
+      <div class="zoom-controls floating-panel" role="group" aria-label="Map zoom">
+        <button id="zoom-in" type="button" aria-label="Zoom in" aria-keyshortcuts="Q" title="Zoom in (Q); hold for continuous zoom"><span aria-hidden="true">+</span><kbd aria-hidden="true">Q</kbd></button>
+        <button id="zoom-out" type="button" aria-label="Zoom out" aria-keyshortcuts="E" title="Zoom out (E); hold for continuous zoom"><span aria-hidden="true">−</span><kbd aria-hidden="true">E</kbd></button>
+      </div>
+    </main>
+
+    <footer class="inspector">
+      <p>Select a room to play or edit it</p>
+    </footer>
+
+    <script type="module" src="./ui/world-main.mjs"></script>
+    <script type="module" src="./ui/control-pad-feedback.mjs"></script>
+  </body>
+</html>

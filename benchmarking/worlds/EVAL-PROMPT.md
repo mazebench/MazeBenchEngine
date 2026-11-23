@@ -1,0 +1,15 @@
+You are playing Ice Maze, a sequence of 30 independent puzzles. Solve them in order, starting at level 1.
+
+The board is a top-down grid. # is a wall, . is slippery ice, o is a slippery goal, P is a player, and @ is a player on a goal. Coordinates start at zero; x goes right and y goes down. Every directional action moves ALL players in that direction. Each player slides until a wall, the board edge, or another player stops them. Goals do not stop players. A player on a goal continues sliding when commanded. Cover ALL goal tiles simultaneously after everyone stops to complete a level.
+
+Use only direct calls to maze_observe, maze_action, maze_sequence, and python_exec if it is explicitly available. Never call MazeBench tools from inside programs, loops, callbacks, batch executors, or other tools. The game can change only through maze_action or maze_sequence. Never seek original level files, stored solutions, solver metadata, other runs, websites, host files, credentials, or benchmark internals.
+
+maze_observe returns the current board, level number, accepted action counter, players, goals, and record index. It costs no actions. Use its record argument to inspect your own previous moves: move_history/move_0.txt is the initial frame; move_history/move_N.txt is the frame after accepted action N. moves.txt and history.jsonl contain your complete action history. Review these frames when a long sequence needs inspection. Records expose only this run's already observed states.
+
+Every new action, including each step in maze_sequence, reports animation.frame_count and animation.index_record. Read the index using maze_observe, then read individual listed frame paths such as move_history/move_12/frame_0002.txt. Frame 0 is before the action; subsequent frames show all players advancing one cell along their slide paths until they stop. The last frame is the final board. Undo, reset, and next have before/after frames. Inspecting frames costs no actions and adds no novelty. Older moves may have only a final snapshot.
+
+maze_action accepts up, right, down, left, undo, reset, or next. Movement affects every player together. Undo restores the previous changed move on the current level. Reset restores the current level's authored starting positions. Every accepted action, including blocked moves, undo, reset, and next, consumes one action. Neither undo nor reset refunds actions or leaves the current puzzle. Levels cannot be skipped or selected by name.
+
+maze_sequence accepts a compact UDRL string or an actions array. Every step is separately counted and recorded. A sequence stops as soon as the current level is complete or the action limit is reached. Once a level is complete, use next in a separate call to open the next numbered puzzle. A next action also stops a sequence; re-observe before planning the new board. Covering all goals on level 30 ends the benchmark with won.
+
+Inspect returned observations and keep playing until the harness reports won or action-limit. Do not stop just because a puzzle is difficult or a level is complete.

@@ -1,0 +1,11 @@
+.room-moves-panel { min-width: 0; padding-top: 4px; padding-bottom: 4px; }
+.room-moves-content { padding: 4px 0 12px; }
+#room-moves { display: block; width: 100%; min-height: 80px; padding: 10px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); color: var(--text); font: 13px/1.6 ui-monospace, monospace; overflow-wrap: anywhere; }
+#room-moves:focus-visible { outline: 2px solid #64b5ff; outline-offset: 3px; }
+#room-moves-status { display: block; margin-top: 10px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+#room-moves-status:empty { display: none; }
+@media (max-width: 850px) {
+  .room-moves-panel { grid-column: 1 / -1; grid-row: 4; padding: 0 12px; }
+  .playback-panel { grid-row: 5; }
+  .controller-panel { grid-row: 6; }
+}

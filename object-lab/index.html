@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Object lab · MazeBench</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../ui/ascii-font.css">
+  <link rel="stylesheet" href="../ui/editor-controls.css">
+  <link rel="stylesheet" href="../ui/object-lab.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../"><img src="../favicon.svg" width="27" height="27" alt="">MazeBench<span>/</span><strong>Object lab</strong></a>
+    <nav aria-label="Main navigation"><a href="../benchmarking/v1/">Benchmark</a><a href="../play/v1/">Play</a></nav>
+  </header>
+  <main class="layout">
+    <section class="workbench" aria-label="Object preview">
+      <div id="loading" role="status"><progress id="load-progress" max="3" value="0"></progress><span>Preparing the object lab…</span></div>
+      <div id="lab" hidden>
+        <header class="object-heading">
+          <div class="object-title"><button id="choose-object" class="object-picker-button" aria-haspopup="dialog" aria-controls="object-picker"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="5" height="5" rx="1"/><rect x="12" y="3" width="5" height="5" rx="1"/><rect x="3" y="12" width="5" height="5" rx="1"/><rect x="12" y="12" width="5" height="5" rx="1"/></svg>Choose object<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></button><h1><span id="selected-object-dot" class="object-dot" aria-hidden="true"></span><span id="object-name">Object lab</span></h1></div>
+          <div class="segments" aria-label="Lab mode"><button id="inspect-mode" aria-pressed="true">Inspect</button><button id="play-mode" aria-pressed="false">Play room</button></div>
+        </header>
+        <p id="object-description" class="description"></p>
+        <div class="comparison">
+        <div class="object-controls">
+          <div id="orientation-control" class="control"><span id="orientation-label">Direction</span><div id="orientations" class="segments" aria-labelledby="orientation-label"></div></div>
+          <div id="state-control" class="control"><span id="state-label">State</span><div id="states" class="segments" aria-labelledby="state-label"></div></div>
+          <label id="body-control" class="control">Body ID<input id="body-id" type="number" min="0" max="999" value="0"></label>
+        </div>
+        <div class="preview-grid">
+          <section class="preview">
+            <header><h2>3D</h2><div class="view-actions"><output id="camera-heading">0°</output><details id="camera-settings" class="camera-settings"><summary title="Camera angle">Camera<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></summary><div class="segments" id="camera-pitch" aria-label="Camera tilt" aria-keyshortcuts="W S" title="W: tilt up · S: tilt down"><button data-pitch="0">Top</button><button data-pitch="1">High</button><button data-pitch="2" aria-pressed="true">Angled</button><button data-pitch="3">Low</button><button data-pitch="4">Side</button></div></details></div></header>
+            <div class="canvas-wrap"><canvas id="scene" aria-label="3D object preview"></canvas><div id="lab-camera-pad" class="camera-pad" role="group" aria-label="Camera controls"></div></div>
+          </section>
+          <section class="preview text-preview"><header><h2>ASCII <span class="text-kind">/ Unicode</span></h2><button id="copy-text" class="quiet" title="Copy text view"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="10" rx="2"/><path d="M12 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/></svg>Copy</button></header><div class="text-stage"><pre id="ascii" class="ascii-board" aria-label="Text object preview"></pre></div></section>
+        </div>
+        <div class="preview-footer"><span><kbd>WASD</kbd> Camera</span><div id="glyphs" class="glyphs"></div></div>
+        <section id="play-controls" class="play-controls" hidden>
+          <div class="play-help"><span id="move-count">0 moves</span><p id="play-hint"></p><output id="play-status" aria-live="polite"></output></div>
+          <div class="play-actions"><div class="dpad" aria-label="Movement"><button data-move="up" aria-label="Move up">↑</button><button data-move="left" aria-label="Move left">←</button><button data-move="down" aria-label="Move down">↓</button><button data-move="right" aria-label="Move right">→</button></div><button id="undo">Undo</button><button id="reset">Reset</button></div>
+        </section>
+        </div>
+        <section id="generic-reference" class="generic-reference" hidden aria-labelledby="generic-heading">
+          <header><h2 id="generic-heading">Numbered objects</h2><button id="view-bodies" aria-pressed="false">View all together</button></header>
+          <p id="generic-description"></p>
+          <div id="generic-gallery" class="generic-gallery" aria-label="Choose a body ID"></div>
+          <p id="generic-world-usage" class="world-usage" role="status"></p>
+        </section>
+        <details class="reference disclosure">
+          <summary>All rotations<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></summary>
+          <div class="reference-content">
+          <div id="rotation-gallery" class="rotation-gallery" aria-label="Rotations in text"></div>
+          <p id="render-note"></p>
+          </div>
+        </details>
+        <details id="symbol-review" class="disclosure">
+          <summary>Symbol review<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></summary>
+          <div class="audit-content"><p id="audit-status" role="status">Check object symbols and numbered bodies in Main World.</p><div id="audit-results"></div></div>
+        </details>
+        <details class="guide disclosure"><summary>How it works<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></summary><div><p>Use WASD or the camera pad to look around. In Play room, use the arrow keys or movement pad to move. Undo goes back one move; Reset restores your setup.</p><p>The text view uses the benchmark’s actual renderer. Each tile has a 4 × 4 character face; tilting changes how much of its top and side you see. Character size stays fixed.</p><p>Actors can hide buttons and other fixtures. Retracted orange walls reveal the surface covering them. Clone and weightless-body symbols can change with the identities present in a room.</p></div></details>
+        <output id="notice" class="notice" role="status"></output>
+      </div>
+    </section>
+  </main>
+  <dialog id="object-picker" aria-labelledby="object-picker-title">
+    <header class="picker-heading"><h2 id="object-picker-title">Choose an object</h2><button id="close-picker" class="icon-button" aria-label="Close object picker"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button></header>
+    <label class="search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input id="search" type="search" placeholder="Search objects…" aria-label="Find an object" autofocus></label>
+    <div id="object-list"></div>
+  </dialog>
+  <script type="module" src="../ui/object-lab.mjs"></script>
+</body>
+</html>

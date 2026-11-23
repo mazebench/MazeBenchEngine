@@ -1,22 +1,29 @@
 .DS_Store
+outputs/
+work/
+.zig-cache/
+.zig-global-cache/
 node_modules/
-npm-debug.log*
+.build/
+apps/web/dist/
+apps/web/.next/
+apps/web/.vinext/
+apps/web/out/
+/unit-tests/
+apps/web/.wrangler/
+.wrangler/
+dist/
 coverage/
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.env
-.venv/
+*.tsbuildinfo
+npm-debug.log*
+.env*
+environments/mazebench/mazebench/runtime/
 
-# outputs from `prime eval run`
-/outputs/
-/environments/*/outputs/
+# Run records live outside this repository; also exclude local copies/exports.
+/records/
+/.mazebench/
+run-[0-9][0-9][0-9][0-9]-*/
 
-# local user content: draft/online world game dirs and site-local state
-/games/draft-*/
-/games/online-*/
-/data/
-
-# staged by scripts/build-python-runtime.js before building the wheel
-/mazebench_cli/_runtime/
-/dist/
+# Transient locks for the tracked append-only version catalogue.
+/benchmarking/version-registry.mjs.lock
+/benchmarking/version-registry.mjs.*.tmp
